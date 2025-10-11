@@ -1,4 +1,54 @@
-# Welcome to your Lovable project
+# Milk Collection App 🥛
+
+Offline-capable milk collection management system for dairy farmers and collectors.
+
+## Features
+
+- ✅ **Offline Support**: Full offline functionality with IndexedDB storage
+- 🔍 **Farmer Search**: Real-time autocomplete search for farmers
+- ⚖️ **Bluetooth Scale Integration**: Connect to Bluetooth scales (HC-05, HM-10)
+- 📋 **Receipt Management**: Track and sync pending collections
+- 🔄 **Auto-Sync**: Automatically syncs data when online
+- 📱 **PWA Ready**: Install as a mobile app
+- 📊 **Export Data**: Export receipts as TXT or CSV files
+
+## Database Tables
+
+### farmers
+- farmer_id (Primary Key)
+- name
+- route
+- route_name
+
+### app_users
+- user_id (Primary Key)
+- password
+- role
+
+### milk_collection
+- farmer_id
+- route
+- section (AM/PM)
+- weight
+- collected_by
+- price_per_liter
+- total_amount
+- collection_date
+
+## Usage
+
+1. **Login**: Use your user ID and password (works offline after first login)
+2. **Search Farmer**: Start typing farmer ID or name to see suggestions
+3. **Enter Weight**: Connect Bluetooth scale or enter manually
+4. **Save Collection**: Data saves locally and syncs when online
+5. **View Receipts**: Check pending receipts and sync status
+
+## Offline Capabilities
+
+- Login with previously saved credentials
+- Search farmers from local cache
+- Save milk collections locally
+- Auto-sync when connection restored
 
 ## Project info
 
@@ -59,6 +109,10 @@ This project is built with:
 - React
 - shadcn-ui
 - Tailwind CSS
+- Supabase (Backend & Database)
+- IndexedDB (Offline Storage)
+- Web Bluetooth API
+- Service Workers (PWA)
 
 ## How can I deploy this project?
 
