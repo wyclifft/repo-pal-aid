@@ -33,11 +33,16 @@ export const ReceiptList = () => {
 
     for (const receipt of unsyncedReceipts) {
       const milkData = {
+        reference_no: receipt.reference_no || `MC-${Date.now()}-${receipt.farmer_id}`,
         farmer_id: receipt.farmer_id,
+        farmer_name: receipt.farmer_name,
         route: receipt.route,
+        route_name: receipt.route_name,
+        member_route: receipt.member_route,
         section: receipt.section,
         weight: receipt.weight,
         collected_by: receipt.collected_by,
+        clerk_name: receipt.clerk_name,
         price_per_liter: receipt.price_per_liter,
         total_amount: receipt.total_amount,
         collection_date: receipt.collection_date,

@@ -70,13 +70,17 @@ const Index = () => {
 
     const orderId = Date.now();
     const total = weight * pricePerLiter;
+    const referenceNo = `MC-${Date.now()}-${farmerId}`;
 
     const milkData: MilkCollection = {
+      reference_no: referenceNo,
       farmer_id: farmerId,
+      farmer_name: farmerName,
       route,
       section,
       weight: parseFloat(weight.toFixed(2)),
       collected_by: currentUser ? currentUser.user_id : null,
+      clerk_name: currentUser ? currentUser.user_id : 'unknown',
       price_per_liter: parseFloat(pricePerLiter.toFixed(2)),
       total_amount: parseFloat(total.toFixed(2)),
       collection_date: new Date(),
