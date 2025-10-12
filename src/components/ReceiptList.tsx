@@ -49,10 +49,25 @@ export const ReceiptList = () => {
       };
 
       try {
-        const { error } = await supabase.from('milk_collection').insert([milkData]);
-        if (!error) {
+        // Check if record already exists to prevent duplicates
+        const { data: existing } = await supabase
+          .from('milk_collection')
+          .select('reference_no')
+          .eq('reference_no', milkData.reference_no)
+          .maybeSingle();
+
+        if (!existing) {
+          const { error } = await supabase.from('milk_collection').insert([milkData]);
+          if (!error) {
+            saveReceipt({ ...receipt, synced: true });
+            console.log(`Receipt for ${receipt.farmer_id} synced ✅`);
+          } else {
+            console.error('Insert error:', error);
+          }
+        } else {
+          // Already exists, mark as synced
           saveReceipt({ ...receipt, synced: true });
-          console.log(`Receipt for ${receipt.farmer_id} synced ✅`);
+          console.log(`Receipt for ${receipt.farmer_id} already exists, marked as synced ✅`);
         }
       } catch (err) {
         console.error('Sync error:', err);

@@ -30,28 +30,16 @@ const Index = () => {
 
   const { saveReceipt } = useIndexedDB();
 
-  useEffect(() => {
-    const savedUser = localStorage.getItem('loggedInUser');
-    if (savedUser) {
-      try {
-        const user = JSON.parse(savedUser);
-        setCurrentUser(user);
-      } catch (err) {
-        console.error('Error parsing saved user:', err);
-      }
-    }
-  }, []);
+  // No auto-login on page refresh - user must log in manually
 
   const handleLogin = (user: AppUser, offline: boolean) => {
     setCurrentUser(user);
     setIsOffline(offline);
-    localStorage.setItem('loggedInUser', JSON.stringify(user));
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
     setIsOffline(false);
-    localStorage.removeItem('loggedInUser');
     toast.success('Logged out successfully');
   };
 
@@ -91,15 +79,27 @@ const Index = () => {
     // Save to IndexedDB
     saveReceipt(milkData);
 
-    // Try to sync online
+    // Try to sync online and prevent duplicates
     if (navigator.onLine) {
       try {
-        const { error } = await supabase.from('milk_collection').insert([milkData]);
-        if (!error) {
-          saveReceipt({ ...milkData, synced: true });
-          toast.success('Collection saved and synced');
+        // Check if record already exists
+        const { data: existing } = await supabase
+          .from('milk_collection')
+          .select('reference_no')
+          .eq('reference_no', referenceNo)
+          .maybeSingle();
+
+        if (!existing) {
+          const { error } = await supabase.from('milk_collection').insert([milkData]);
+          if (!error) {
+            saveReceipt({ ...milkData, synced: true });
+            toast.success('Collection saved and synced');
+          } else {
+            toast.warning('Saved locally, will sync when online');
+          }
         } else {
-          toast.warning('Saved locally, will sync when online');
+          saveReceipt({ ...milkData, synced: true });
+          toast.success('Collection already synced');
         }
       } catch (err) {
         console.error('Save error:', err);
