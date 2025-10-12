@@ -25,11 +25,16 @@ export interface AppUser {
 }
 
 export interface MilkCollection {
+  reference_no?: string;
   farmer_id: string;
+  farmer_name: string;
   route: string;
+  route_name?: string;
+  member_route?: string;
   section: string;
   weight: number;
   collected_by: string | null;
+  clerk_name: string;
   price_per_liter: number;
   total_amount: number;
   collection_date: Date;
