@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+ import { useState, useEffect, useCallback } from 'react';
 import { supabase, type Farmer } from '@/lib/supabase';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 
