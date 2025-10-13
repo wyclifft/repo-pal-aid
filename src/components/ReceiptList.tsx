@@ -35,7 +35,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       const milkData = {
         reference_no: receipt.reference_no || `MC-${Date.now()}-${receipt.farmer_id}`,
         farmer_id: receipt.farmer_id,
-        farmer_name: receipt.farmer_name,
+        farmer_name: receipt.farmer_name || receipt.farmer_id || 'Unknown',
         route: receipt.route,
         route_name: receipt.route_name,
         member_route: receipt.member_route,
