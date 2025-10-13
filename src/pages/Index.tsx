@@ -27,6 +27,7 @@ const Index = () => {
   // Receipt modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [currentReceipt, setCurrentReceipt] = useState<MilkCollection | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const { saveReceipt } = useIndexedDB();
 
@@ -112,6 +113,9 @@ const Index = () => {
     // Show receipt
     setCurrentReceipt(milkData);
     setReceiptModalOpen(true);
+    
+    // Trigger refresh of receipt list
+    setRefreshTrigger(prev => prev + 1);
 
     // Reset form
     setFarmerId('');
@@ -261,7 +265,7 @@ const Index = () => {
 
         {/* Receipts Card */}
         <div id="receipts-card" className="scroll-mt-20">
-          <ReceiptList />
+          <ReceiptList refreshTrigger={refreshTrigger} />
         </div>
       </div>
 

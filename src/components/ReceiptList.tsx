@@ -4,7 +4,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateTextReport, generateCSVReport } from '@/utils/fileExport';
 import { toast } from 'sonner';
 
-export const ReceiptList = () => {
+export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => {
   const [unsyncedReceipts, setUnsyncedReceipts] = useState<MilkCollection[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const { getUnsyncedReceipts, saveReceipt, isReady } = useIndexedDB();
@@ -21,7 +21,7 @@ export const ReceiptList = () => {
 
   useEffect(() => {
     loadPendingReceipts();
-  }, [isReady]);
+  }, [isReady, refreshTrigger]);
 
   const syncPendingReceipts = async () => {
     if (!navigator.onLine || unsyncedReceipts.length === 0) {
