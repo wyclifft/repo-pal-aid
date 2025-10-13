@@ -6,24 +6,15 @@
     <title>Milk Collection App</title>
     <meta name="description" content="Offline-capable milk collection management system" />
     <meta name="theme-color" content="#10b981">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Milk Collect">
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="./manifest.json">
 
     <meta property="og:title" content="Milk Collection App" />
     <meta property="og:description" content="Offline-capable milk collection management system" />
     <meta property="og:type" content="website" />
-
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('Service Worker registered ✅'))
-            .catch(err => console.error('Service Worker registration failed:', err));
-        });
-      }
-    </script>
   </head>
 
   <body>
