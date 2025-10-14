@@ -20,9 +20,8 @@ const Index = () => {
   const [section, setSection] = useState('');
   const [searchValue, setSearchValue] = useState('');
 
-  // Weight and price
+  // Weight
   const [weight, setWeight] = useState(0);
-  const [pricePerLiter, setPricePerLiter] = useState(50);
 
   // Receipt modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
@@ -57,61 +56,118 @@ const Index = () => {
       return;
     }
 
-    const orderId = Date.now();
-    const total = weight * pricePerLiter;
-    const referenceNo = `MC-${Date.now()}-${farmerId}`;
+    const todayDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const referenceNo = `MC-${todayDate}-${farmerId}-${section}`;
 
-    const milkData: MilkCollection = {
-      reference_no: referenceNo,
-      farmer_id: farmerId,
-      farmer_name: farmerName,
-      route,
-      section,
-      weight: parseFloat(weight.toFixed(2)),
-      collected_by: currentUser ? currentUser.user_id : null,
-      clerk_name: currentUser ? currentUser.user_id : 'unknown',
-      price_per_liter: parseFloat(pricePerLiter.toFixed(2)),
-      total_amount: parseFloat(total.toFixed(2)),
-      collection_date: new Date(),
-      orderId,
-      synced: false,
-    };
-
-    // Save to IndexedDB
-    saveReceipt(milkData);
-
-    // Try to sync online and prevent duplicates
+    // Try to sync online with accumulation
     if (navigator.onLine) {
       try {
-        // Check if record already exists
+        // Check if record already exists for this farmer, date, and section
         const { data: existing } = await supabase
           .from('milk_collection')
-          .select('reference_no')
-          .eq('reference_no', referenceNo)
+          .select('*')
+          .eq('farmer_id', farmerId)
+          .eq('section', section)
+          .gte('collection_date', `${todayDate}T00:00:00`)
+          .lte('collection_date', `${todayDate}T23:59:59`)
           .maybeSingle();
 
-        if (!existing) {
+        if (existing) {
+          // Accumulate weight
+          const newWeight = parseFloat((existing.weight + weight).toFixed(2));
+          const { error } = await supabase
+            .from('milk_collection')
+            .update({ 
+              weight: newWeight,
+              collection_date: new Date()
+            })
+            .eq('reference_no', existing.reference_no);
+
+          if (!error) {
+            const updatedData: MilkCollection = {
+              ...existing,
+              weight: newWeight,
+              collection_date: new Date(),
+              synced: true,
+            };
+            saveReceipt(updatedData);
+            toast.success(`Weight accumulated: ${newWeight.toFixed(1)} Kg total`);
+            setCurrentReceipt(updatedData);
+          } else {
+            throw error;
+          }
+        } else {
+          // Create new record
+          const milkData: MilkCollection = {
+            reference_no: referenceNo,
+            farmer_id: farmerId,
+            farmer_name: farmerName,
+            route,
+            section,
+            weight: parseFloat(weight.toFixed(2)),
+            collected_by: currentUser ? currentUser.user_id : null,
+            clerk_name: currentUser ? currentUser.user_id : 'unknown',
+            price_per_liter: 0,
+            total_amount: 0,
+            collection_date: new Date(),
+            orderId: Date.now(),
+            synced: false,
+          };
+
           const { error } = await supabase.from('milk_collection').insert([milkData]);
           if (!error) {
             saveReceipt({ ...milkData, synced: true });
             toast.success('Collection saved and synced');
+            setCurrentReceipt({ ...milkData, synced: true });
           } else {
-            toast.warning('Saved locally, will sync when online');
+            throw error;
           }
-        } else {
-          saveReceipt({ ...milkData, synced: true });
-          toast.success('Collection already synced');
         }
       } catch (err) {
         console.error('Save error:', err);
+        // Save locally on error
+        const milkData: MilkCollection = {
+          reference_no: referenceNo,
+          farmer_id: farmerId,
+          farmer_name: farmerName,
+          route,
+          section,
+          weight: parseFloat(weight.toFixed(2)),
+          collected_by: currentUser ? currentUser.user_id : null,
+          clerk_name: currentUser ? currentUser.user_id : 'unknown',
+          price_per_liter: 0,
+          total_amount: 0,
+          collection_date: new Date(),
+          orderId: Date.now(),
+          synced: false,
+        };
+        saveReceipt(milkData);
+        setCurrentReceipt(milkData);
         toast.warning('Saved locally, will sync when online');
       }
     } else {
+      // Offline mode - save locally
+      const milkData: MilkCollection = {
+        reference_no: referenceNo,
+        farmer_id: farmerId,
+        farmer_name: farmerName,
+        route,
+        section,
+        weight: parseFloat(weight.toFixed(2)),
+        collected_by: currentUser ? currentUser.user_id : null,
+        clerk_name: currentUser ? currentUser.user_id : 'unknown',
+        price_per_liter: 0,
+        total_amount: 0,
+        collection_date: new Date(),
+        orderId: Date.now(),
+        synced: false,
+      };
+      saveReceipt(milkData);
+      setCurrentReceipt(milkData);
       toast.warning('Saved locally, will sync when online');
     }
 
     // Show receipt
-    setCurrentReceipt(milkData);
     setReceiptModalOpen(true);
     
     // Trigger refresh of receipt list
@@ -252,8 +308,7 @@ const Index = () => {
           <WeightInput
             weight={weight}
             onWeightChange={setWeight}
-            pricePerLiter={pricePerLiter}
-            onPriceChange={setPricePerLiter}
+            currentUserRole={currentUser.role}
           />
           <button
             onClick={handleSaveCollection}

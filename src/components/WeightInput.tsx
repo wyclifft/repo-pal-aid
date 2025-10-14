@@ -5,17 +5,16 @@ import { toast } from 'sonner';
 interface WeightInputProps {
   weight: number;
   onWeightChange: (weight: number) => void;
-  pricePerLiter: number;
-  onPriceChange: (price: number) => void;
+  currentUserRole: string;
 }
 
-export const WeightInput = ({ weight, onWeightChange, pricePerLiter, onPriceChange }: WeightInputProps) => {
+export const WeightInput = ({ weight, onWeightChange, currentUserRole }: WeightInputProps) => {
   const [manualWeight, setManualWeight] = useState('');
   const [scaleConnected, setScaleConnected] = useState(false);
   const [scaleType, setScaleType] = useState<ScaleType>('Unknown');
   const [isConnecting, setIsConnecting] = useState(false);
-
-  const totalAmount = weight * pricePerLiter;
+  
+  const isClerk1 = currentUserRole === 'clerk1';
 
   const handleConnectScale = async () => {
     setIsConnecting(true);
@@ -74,40 +73,27 @@ export const WeightInput = ({ weight, onWeightChange, pricePerLiter, onPriceChan
         )}
       </div>
 
-      <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-        <p className="text-sm font-semibold text-gray-700 mb-2">Manual Weight Entry</p>
-        <div className="flex gap-2">
-          <input
-            type="number"
-            placeholder="Manual Weight (Kg)"
-            step="0.1"
-            value={manualWeight}
-            onChange={(e) => setManualWeight(e.target.value)}
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
-          />
-          <button
-            onClick={handleManualWeight}
-            className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
-          >
-            Use Manual
-          </button>
+      {isClerk1 && (
+        <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+          <p className="text-sm font-semibold text-gray-700 mb-2">Manual Weight Entry</p>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              placeholder="Manual Weight (Kg)"
+              step="0.1"
+              value={manualWeight}
+              onChange={(e) => setManualWeight(e.target.value)}
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
+            />
+            <button
+              onClick={handleManualWeight}
+              className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
+            >
+              Use Manual
+            </button>
+          </div>
         </div>
-      </div>
-
-      <div className="mb-6">
-        <input
-          type="number"
-          placeholder="Price per Liter (Ksh)"
-          step="0.01"
-          value={pricePerLiter}
-          onChange={(e) => onPriceChange(parseFloat(e.target.value) || 0)}
-          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
-        />
-      </div>
-
-      <p className="text-2xl font-bold text-[#10b981] text-center mb-4">
-        Total: {totalAmount.toFixed(2)} Ksh
-      </p>
+      )}
     </div>
   );
 };

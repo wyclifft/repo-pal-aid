@@ -41,14 +41,6 @@ export const ReceiptModal = ({ receipt, open, onClose }: ReceiptModalProps) => {
                 <td className="py-2">{receipt.weight} Kg</td>
               </tr>
               <tr className="border-b">
-                <th className="text-left py-2 font-semibold">Rate</th>
-                <td className="py-2">Ksh {receipt.price_per_liter}</td>
-              </tr>
-              <tr className="border-b">
-                <th className="text-left py-2 font-semibold">Total</th>
-                <td className="py-2 font-bold">Ksh {receipt.total_amount}</td>
-              </tr>
-              <tr className="border-b">
                 <th className="text-left py-2 font-semibold">Collector</th>
                 <td className="py-2">{receipt.collected_by}</td>
               </tr>

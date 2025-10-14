@@ -4,7 +4,7 @@ export const generateTextReport = (receipts: MilkCollection[]) => {
   const text = receipts
     .map(
       (r) =>
-        `Farmer: ${r.farmer_id}\nRoute: ${r.route}\nSection: ${r.section}\nWeight: ${r.weight} Kg\nTotal: ${r.total_amount} Ksh\nDate: ${new Date(r.collection_date).toLocaleString()}\n---`
+        `Farmer: ${r.farmer_id}\nRoute: ${r.route}\nSection: ${r.section}\nWeight: ${r.weight} Kg\nDate: ${new Date(r.collection_date).toLocaleString()}\n---`
     )
     .join('\n\n');
 
@@ -18,14 +18,12 @@ export const generateTextReport = (receipts: MilkCollection[]) => {
 };
 
 export const generateCSVReport = (receipts: MilkCollection[]) => {
-  const headers = ['Farmer ID', 'Route', 'Section', 'Weight (Kg)', 'Price/L', 'Total (Ksh)', 'Collector', 'Date'];
+  const headers = ['Farmer ID', 'Route', 'Section', 'Weight (Kg)', 'Collector', 'Date'];
   const rows = receipts.map((r) => [
     r.farmer_id,
     r.route,
     r.section,
     r.weight,
-    r.price_per_liter,
-    r.total_amount,
     r.collected_by || '',
     new Date(r.collection_date).toLocaleString(),
   ]);
