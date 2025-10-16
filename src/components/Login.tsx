@@ -12,6 +12,8 @@ export const Login = ({ onLogin }: LoginProps) => {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [deviceStatus, setDeviceStatus] = useState<'pending' | 'approved' | null>(null);
+  const [currentDeviceId, setCurrentDeviceId] = useState<string>('');
   const { isReady, saveUser, getUser } = useIndexedDB();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -72,16 +74,22 @@ export const Login = ({ onLogin }: LoginProps) => {
               approved: false,
             }]);
             
-            toast.error('New device detected. Please wait for admin approval.');
+            setDeviceStatus('pending');
+            setCurrentDeviceId(deviceId);
+            toast.error('New device detected. Awaiting admin approval.');
             setLoading(false);
             return;
           }
 
           if (!deviceData.approved) {
+            setDeviceStatus('pending');
+            setCurrentDeviceId(deviceId);
             toast.error('Device pending approval. Contact administrator.');
             setLoading(false);
             return;
           }
+
+          setDeviceStatus('approved');
 
           // Update last used timestamp
           await supabase
@@ -129,6 +137,35 @@ export const Login = ({ onLogin }: LoginProps) => {
         <h2 className="text-3xl font-bold mb-6 text-center text-[#667eea]">
           🥛 Milk Collection
         </h2>
+        
+        {deviceStatus === 'pending' && (
+          <div className="mb-6 p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">⏳</span>
+              <div className="flex-1">
+                <h3 className="font-semibold text-yellow-800 mb-2">Device Pending Approval</h3>
+                <p className="text-sm text-yellow-700 mb-2">
+                  Your device has been registered and is waiting for administrator approval.
+                </p>
+                <div className="bg-white p-2 rounded border border-yellow-300 mt-2">
+                  <p className="text-xs font-mono text-gray-600 break-all">
+                    <strong>Device ID:</strong> {currentDeviceId.substring(0, 60)}...
+                  </p>
+                </div>
+                <p className="text-xs text-yellow-600 mt-2">
+                  Contact your administrator to approve this device.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {deviceStatus === 'approved' && (
+          <div className="mb-4 p-3 bg-green-50 border border-green-400 rounded-lg text-center">
+            <span className="text-green-700 font-semibold">✓ Device Approved</span>
+          </div>
+        )}
+        
         <form onSubmit={handleLogin} className="space-y-4">
           <input
             type="text"
