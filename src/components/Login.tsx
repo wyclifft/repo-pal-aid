@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { supabase, type AppUser } from '@/lib/supabase';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
-import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId } from '@/utils/deviceFingerprint';
+import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceInfo } from '@/utils/deviceFingerprint';
 
 interface LoginProps {
   onLogin: (user: AppUser, isOffline: boolean) => void;
@@ -61,11 +61,14 @@ export const Login = ({ onLogin }: LoginProps) => {
           }
 
           if (!deviceData) {
-            // New device - register it as pending approval
+            // New device - register it as pending approval with detailed info
+            const deviceInfo = getDeviceInfo();
+            const deviceName = `${deviceInfo.browser} on ${deviceInfo.os} (${deviceInfo.deviceType})`;
+            
             await supabase.from('approved_devices').insert([{
               user_id: userId,
               device_id: deviceId,
-              device_name: navigator.userAgent.substring(0, 100),
+              device_name: deviceName,
               approved: false,
             }]);
             
