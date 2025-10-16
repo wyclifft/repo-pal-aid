@@ -33,8 +33,8 @@ export const ReceiptModal = ({ receipt, open, onClose }: ReceiptModalProps) => {
                 <td className="py-2">{receipt.route}</td>
               </tr>
               <tr className="border-b">
-                <th className="text-left py-2 font-semibold">Section</th>
-                <td className="py-2">{receipt.section}</td>
+                <th className="text-left py-2 font-semibold">Session</th>
+                <td className="py-2">{receipt.session}</td>
               </tr>
               <tr className="border-b">
                 <th className="text-left py-2 font-semibold">Weight</th>

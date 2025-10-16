@@ -17,7 +17,7 @@ const Index = () => {
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
   const [route, setRoute] = useState('');
-  const [section, setSection] = useState('');
+  const [session, setSession] = useState('');
   const [searchValue, setSearchValue] = useState('');
 
   // Weight
@@ -51,23 +51,23 @@ const Index = () => {
   };
 
   const handleSaveCollection = async () => {
-    if (!farmerId || !route || !weight || !section) {
-      toast.error('Enter farmer, route, section, and weight');
+    if (!farmerId || !route || !weight || !session) {
+      toast.error('Enter farmer, route, session, and weight');
       return;
     }
 
     const todayDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    const referenceNo = `MC-${todayDate}-${farmerId}-${section}`;
+    const referenceNo = `MC-${todayDate}-${farmerId}-${session}`;
 
     // Try to sync online with accumulation
     if (navigator.onLine) {
       try {
-        // Check if record already exists for this farmer, date, and section
+        // Check if record already exists for this farmer, date, and session
         const { data: existing } = await supabase
           .from('milk_collection')
           .select('*')
           .eq('farmer_id', farmerId)
-          .eq('section', section)
+          .eq('session', session)
           .gte('collection_date', `${todayDate}T00:00:00`)
           .lte('collection_date', `${todayDate}T23:59:59`)
           .maybeSingle();
@@ -103,7 +103,7 @@ const Index = () => {
             farmer_id: farmerId,
             farmer_name: farmerName,
             route,
-            section,
+            session,
             weight: parseFloat(weight.toFixed(2)),
             collected_by: currentUser ? currentUser.user_id : null,
             clerk_name: currentUser ? currentUser.user_id : 'unknown',
@@ -131,7 +131,7 @@ const Index = () => {
           farmer_id: farmerId,
           farmer_name: farmerName,
           route,
-          section,
+          session,
           weight: parseFloat(weight.toFixed(2)),
           collected_by: currentUser ? currentUser.user_id : null,
           clerk_name: currentUser ? currentUser.user_id : 'unknown',
@@ -152,7 +152,7 @@ const Index = () => {
         farmer_id: farmerId,
         farmer_name: farmerName,
         route,
-        section,
+        session,
         weight: parseFloat(weight.toFixed(2)),
         collected_by: currentUser ? currentUser.user_id : null,
         clerk_name: currentUser ? currentUser.user_id : 'unknown',
@@ -177,7 +177,7 @@ const Index = () => {
     setFarmerId('');
     setFarmerName('');
     setRoute('');
-    setSection('');
+    setSession('');
     setSearchValue('');
     setWeight(0);
   };
@@ -293,11 +293,11 @@ const Index = () => {
             className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 mb-3"
           />
           <select
-            value={section}
-            onChange={(e) => setSection(e.target.value)}
+            value={session}
+            onChange={(e) => setSession(e.target.value)}
             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
           >
-            <option value="">Select Section</option>
+            <option value="">Select Session</option>
             <option value="AM">AM (Morning)</option>
             <option value="PM">PM (Evening)</option>
           </select>

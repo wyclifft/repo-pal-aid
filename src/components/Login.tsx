@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { supabase, type AppUser } from '@/lib/supabase';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
+import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId } from '@/utils/deviceFingerprint';
 
 interface LoginProps {
   onLogin: (user: AppUser, isOffline: boolean) => void;
@@ -28,6 +29,13 @@ export const Login = ({ onLogin }: LoginProps) => {
 
     setLoading(true);
 
+    // Get or generate device ID
+    let deviceId = getStoredDeviceId();
+    if (!deviceId) {
+      deviceId = generateDeviceFingerprint();
+      setStoredDeviceId(deviceId);
+    }
+
     if (navigator.onLine) {
       try {
         const { data, error } = await supabase
@@ -40,6 +48,45 @@ export const Login = ({ onLogin }: LoginProps) => {
         if (error) throw error;
 
         if (data) {
+          // Check if device is approved
+          const { data: deviceData, error: deviceError } = await supabase
+            .from('approved_devices')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('device_id', deviceId)
+            .maybeSingle();
+
+          if (deviceError && deviceError.code !== 'PGRST116') {
+            throw deviceError;
+          }
+
+          if (!deviceData) {
+            // New device - register it as pending approval
+            await supabase.from('approved_devices').insert([{
+              user_id: userId,
+              device_id: deviceId,
+              device_name: navigator.userAgent.substring(0, 100),
+              approved: false,
+            }]);
+            
+            toast.error('New device detected. Please wait for admin approval.');
+            setLoading(false);
+            return;
+          }
+
+          if (!deviceData.approved) {
+            toast.error('Device pending approval. Contact administrator.');
+            setLoading(false);
+            return;
+          }
+
+          // Update last used timestamp
+          await supabase
+            .from('approved_devices')
+            .update({ last_used: new Date().toISOString() })
+            .eq('user_id', userId)
+            .eq('device_id', deviceId);
+
           const userWithPassword = { ...data, password };
           saveUser(userWithPassword);
           onLogin(data, false);

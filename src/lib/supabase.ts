@@ -31,7 +31,7 @@ export interface MilkCollection {
   route: string;
   route_name?: string;
   member_route?: string;
-  section: string;
+  session: string;
   weight: number;
   collected_by: string | null;
   clerk_name: string;

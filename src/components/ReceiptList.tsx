@@ -39,7 +39,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
         route: receipt.route,
         route_name: receipt.route_name,
         member_route: receipt.member_route,
-        section: receipt.section,
+        session: receipt.session,
         weight: receipt.weight,
         collected_by: receipt.collected_by,
         clerk_name: receipt.clerk_name,
