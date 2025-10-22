@@ -34,7 +34,7 @@ export const Login = ({ onLogin }: LoginProps) => {
     // Get or generate device ID
     let deviceId = getStoredDeviceId();
     if (!deviceId) {
-      deviceId = generateDeviceFingerprint();
+      deviceId = await generateDeviceFingerprint();
       setStoredDeviceId(deviceId);
     }
 

@@ -1,5 +1,5 @@
-// Generate a unique device fingerprint
-export const generateDeviceFingerprint = (): string => {
+// Generate a unique device fingerprint using SHA-256 hash
+export const generateDeviceFingerprint = async (): Promise<string> => {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   
@@ -20,7 +20,15 @@ export const generateDeviceFingerprint = (): string => {
     canvasFingerprint: canvasData,
   };
   
-  return btoa(JSON.stringify(fingerprint));
+  // Convert fingerprint to string and hash it
+  const fingerprintString = JSON.stringify(fingerprint);
+  const encoder = new TextEncoder();
+  const data = encoder.encode(fingerprintString);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  return hashHex;
 };
 
 // Parse device information for display
