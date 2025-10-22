@@ -67,13 +67,25 @@ export const Login = ({ onLogin }: LoginProps) => {
             const deviceInfo = getDeviceInfo();
             const deviceName = `${deviceInfo.browser} on ${deviceInfo.os} (${deviceInfo.deviceType})`;
             
-            await supabase.from('approved_devices').insert([{
-              user_id: userId,
-              device_id: deviceId,
-              device_name: deviceName,
-              approved: false,
-            }]);
+            const { data: insertData, error: insertError } = await supabase
+              .from('approved_devices')
+              .insert([
+                {
+                  user_id: userId,
+                  device_id: deviceId,
+                  device_name: deviceName,
+                  approved: false
+                }
+              ]);
+
+            if (insertError) {
+              console.error('Insert error:', insertError);
+              toast.error(`Failed to register device: ${insertError.message}`);
+              setLoading(false);
+              return;
+            }
             
+            console.log('Device registered:', insertData);
             setDeviceStatus('pending');
             setCurrentDeviceId(deviceId);
             toast.error('New device detected. Awaiting admin approval.');
