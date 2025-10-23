@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -33,6 +33,10 @@ export const useIndexedDB = () => {
 
       if (!database.objectStoreNames.contains('app_users')) {
         database.createObjectStore('app_users', { keyPath: 'user_id' });
+      }
+
+      if (!database.objectStoreNames.contains('device_approvals')) {
+        database.createObjectStore('device_approvals', { keyPath: 'device_id' });
       }
     };
 
@@ -113,6 +117,24 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
+  const saveDeviceApproval = useCallback((deviceId: string, userId: string, approved: boolean) => {
+    if (!db) return;
+    const tx = db.transaction('device_approvals', 'readwrite');
+    const store = tx.objectStore('device_approvals');
+    store.put({ device_id: deviceId, user_id: userId, approved, last_synced: new Date().toISOString() });
+  }, [db]);
+
+  const getDeviceApproval = useCallback((deviceId: string): Promise<{ device_id: string; user_id: string; approved: boolean; last_synced: string } | undefined> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject('DB not ready');
+      const tx = db.transaction('device_approvals', 'readonly');
+      const store = tx.objectStore('device_approvals');
+      const request = store.get(deviceId);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }, [db]);
+
   return {
     db,
     isReady,
@@ -122,5 +144,7 @@ export const useIndexedDB = () => {
     getUser,
     saveReceipt,
     getUnsyncedReceipts,
+    saveDeviceApproval,
+    getDeviceApproval,
   };
 };

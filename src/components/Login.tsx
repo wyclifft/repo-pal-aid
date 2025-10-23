@@ -14,7 +14,7 @@ export const Login = ({ onLogin }: LoginProps) => {
   const [loading, setLoading] = useState(false);
   const [deviceStatus, setDeviceStatus] = useState<'pending' | 'approved' | null>(null);
   const [currentDeviceId, setCurrentDeviceId] = useState<string>('');
-  const { isReady, saveUser, getUser } = useIndexedDB();
+  const { isReady, saveUser, getUser, saveDeviceApproval, getDeviceApproval } = useIndexedDB();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,12 +96,17 @@ export const Login = ({ onLogin }: LoginProps) => {
           if (!deviceData.approved) {
             setDeviceStatus('pending');
             setCurrentDeviceId(deviceId);
+            // Cache the pending status
+            saveDeviceApproval(deviceId, userId, false);
             toast.error('Device pending approval. Contact administrator.');
             setLoading(false);
             return;
           }
 
           setDeviceStatus('approved');
+          
+          // Cache the approved status locally
+          saveDeviceApproval(deviceId, userId, true);
 
           // Update last used timestamp
           await supabase
@@ -127,13 +132,43 @@ export const Login = ({ onLogin }: LoginProps) => {
         const user = await getUser(userId);
         if (!user) {
           toast.error('No saved user found for offline login.');
-        } else if (user.password === password) {
-          console.log('✅ Offline login success:', user.user_id);
-          onLogin(user, true);
-          toast.success('Offline login successful');
-        } else {
-          toast.error('Invalid credentials (offline)');
+          setLoading(false);
+          return;
         }
+        
+        if (user.password !== password) {
+          toast.error('Invalid credentials (offline)');
+          setLoading(false);
+          return;
+        }
+
+        // Check cached device approval status
+        const cachedApproval = await getDeviceApproval(deviceId);
+        
+        if (!cachedApproval) {
+          toast.error('Device not registered. Connect to internet to register this device.');
+          setLoading(false);
+          return;
+        }
+
+        if (cachedApproval.user_id !== userId) {
+          toast.error('Device registered to different user. Contact administrator.');
+          setLoading(false);
+          return;
+        }
+
+        if (!cachedApproval.approved) {
+          setDeviceStatus('pending');
+          setCurrentDeviceId(deviceId);
+          toast.error('Device not approved. Connect to internet to check approval status.');
+          setLoading(false);
+          return;
+        }
+
+        console.log('✅ Offline login success with approved device:', user.user_id);
+        setDeviceStatus('approved');
+        onLogin(user, true);
+        toast.success('Offline login successful');
       } catch (err) {
         console.error('Offline login error:', err);
         toast.error('Offline login failed');
