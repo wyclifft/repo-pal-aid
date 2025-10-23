@@ -31,43 +31,84 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
 
     setIsSyncing(true);
 
+    // Group receipts by farmer_id, session, and date
+    const groupedReceipts = new Map<string, MilkCollection[]>();
+    
     for (const receipt of unsyncedReceipts) {
+      const dateStr = new Date(receipt.collection_date).toISOString().split('T')[0];
+      const key = `${receipt.farmer_id}-${receipt.session}-${dateStr}`;
+      
+      if (!groupedReceipts.has(key)) {
+        groupedReceipts.set(key, []);
+      }
+      groupedReceipts.get(key)!.push(receipt);
+    }
+
+    // Process each group
+    for (const [key, receipts] of groupedReceipts.entries()) {
+      const firstReceipt = receipts[0];
+      const totalWeight = receipts.reduce((sum, r) => sum + r.weight, 0);
+      const dateStr = new Date(firstReceipt.collection_date).toISOString().split('T')[0];
+      
       const milkData = {
-        reference_no: receipt.reference_no || `MC-${Date.now()}-${receipt.farmer_id}`,
-        farmer_id: receipt.farmer_id,
-        farmer_name: receipt.farmer_name || receipt.farmer_id || 'Unknown',
-        route: receipt.route,
-        route_name: receipt.route_name,
-        member_route: receipt.member_route,
-        session: receipt.session,
-        weight: receipt.weight,
-        collected_by: receipt.collected_by,
-        clerk_name: receipt.clerk_name,
-        price_per_liter: receipt.price_per_liter,
-        total_amount: receipt.total_amount,
-        collection_date: receipt.collection_date,
+        reference_no: firstReceipt.reference_no || `MC-${dateStr}-${firstReceipt.farmer_id}-${firstReceipt.session}`,
+        farmer_id: firstReceipt.farmer_id,
+        farmer_name: firstReceipt.farmer_name || firstReceipt.farmer_id || 'Unknown',
+        route: firstReceipt.route,
+        route_name: firstReceipt.route_name,
+        member_route: firstReceipt.member_route,
+        session: firstReceipt.session,
+        weight: parseFloat(totalWeight.toFixed(2)),
+        collected_by: firstReceipt.collected_by,
+        clerk_name: firstReceipt.clerk_name,
+        price_per_liter: firstReceipt.price_per_liter,
+        total_amount: firstReceipt.total_amount,
+        collection_date: firstReceipt.collection_date,
       };
 
       try {
-        // Check if record already exists to prevent duplicates
+        // Check if record already exists
         const { data: existing } = await supabase
           .from('milk_collection')
-          .select('reference_no')
-          .eq('reference_no', milkData.reference_no)
+          .select('*')
+          .eq('farmer_id', firstReceipt.farmer_id)
+          .eq('session', firstReceipt.session)
+          .gte('collection_date', `${dateStr}T00:00:00`)
+          .lte('collection_date', `${dateStr}T23:59:59`)
           .maybeSingle();
 
-        if (!existing) {
+        if (existing) {
+          // Accumulate weight to existing record
+          const newWeight = parseFloat((existing.weight + totalWeight).toFixed(2));
+          const { error } = await supabase
+            .from('milk_collection')
+            .update({ 
+              weight: newWeight,
+              collection_date: new Date()
+            })
+            .eq('reference_no', existing.reference_no);
+
+          if (!error) {
+            // Mark all local receipts in this group as synced
+            receipts.forEach(receipt => {
+              saveReceipt({ ...receipt, synced: true });
+            });
+            console.log(`✅ Accumulated ${receipts.length} collections for ${firstReceipt.farmer_id}: ${newWeight} Kg total`);
+          } else {
+            console.error('Update error:', error);
+          }
+        } else {
+          // Insert new record with accumulated weight
           const { error } = await supabase.from('milk_collection').insert([milkData]);
           if (!error) {
-            saveReceipt({ ...receipt, synced: true });
-            console.log(`Receipt for ${receipt.farmer_id} synced ✅`);
+            // Mark all local receipts in this group as synced
+            receipts.forEach(receipt => {
+              saveReceipt({ ...receipt, synced: true });
+            });
+            console.log(`✅ Synced ${receipts.length} collections for ${firstReceipt.farmer_id}: ${totalWeight} Kg total`);
           } else {
             console.error('Insert error:', error);
           }
-        } else {
-          // Already exists, mark as synced
-          saveReceipt({ ...receipt, synced: true });
-          console.log(`Receipt for ${receipt.farmer_id} already exists, marked as synced ✅`);
         }
       } catch (err) {
         console.error('Sync error:', err);
@@ -123,7 +164,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
               key={receipt.orderId}
               className="p-3 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm"
             >
-              Farmer: {receipt.farmer_id} ({receipt.total_amount.toFixed(2)} Ksh) ⚠️ Pending Sync
+              Farmer: {receipt.farmer_id} ({receipt.weight.toFixed(2)} Kg) ⚠️ Pending Sync
             </li>
           ))}
         </ul>
