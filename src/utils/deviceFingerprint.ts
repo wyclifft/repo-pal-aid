@@ -1,3 +1,8 @@
+/**
+ * Device Fingerprinting Utilities
+ * Generate unique device fingerprints and parse device information
+ */
+
 // Generate a unique device fingerprint using SHA-256 hash
 export const generateDeviceFingerprint = async (): Promise<string> => {
   const canvas = document.createElement('canvas');
