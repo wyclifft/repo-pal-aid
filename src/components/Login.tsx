@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase, type AppUser } from '@/lib/supabase';
+import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
 import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceInfo } from '@/utils/deviceFingerprint';
@@ -50,42 +51,30 @@ export const Login = ({ onLogin }: LoginProps) => {
         if (error) throw error;
 
         if (data) {
-          // Check if device is approved
-          const { data: deviceData, error: deviceError } = await supabase
-            .from('approved_devices')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('device_id', deviceId)
-            .maybeSingle();
-
-          if (deviceError && deviceError.code !== 'PGRST116') {
-            throw deviceError;
-          }
+          // Check device approval status from MySQL
+          const deviceData = await mysqlApi.devices.getByDeviceId(deviceId);
 
           if (!deviceData) {
-            // New device - register it as pending approval with detailed info
+            // New device - register it as pending approval
             const deviceInfo = getDeviceInfo();
-            const deviceName = `${deviceInfo.browser} on ${deviceInfo.os} (${deviceInfo.deviceType})`;
+            const deviceInfoStr = `${deviceInfo.browser} on ${deviceInfo.os} (${deviceInfo.deviceType})`;
             
-            const { data: insertData, error: insertError } = await supabase
-              .from('approved_devices')
-              .insert([
-                {
-                  user_id: userId,
-                  device_id: deviceId,
-                  device_name: deviceName,
-                  approved: false
-                }
-              ]);
+            const newDevice = await mysqlApi.devices.upsert({
+              device_id: deviceId,
+              user_id: userId,
+              approved: false,
+              device_info: deviceInfoStr,
+            });
 
-            if (insertError) {
-              console.error('Insert error:', insertError);
-              toast.error(`Failed to register device: ${insertError.message}`);
+            if (!newDevice) {
+              toast.error('Failed to register device');
               setLoading(false);
               return;
             }
             
-            console.log('Device registered:', insertData);
+            console.log('Device registered:', newDevice);
+            // Cache the pending status
+            await saveDeviceApproval(deviceId, userId, false);
             setDeviceStatus('pending');
             setCurrentDeviceId(deviceId);
             toast.error('New device detected. Awaiting admin approval.');
@@ -97,7 +86,7 @@ export const Login = ({ onLogin }: LoginProps) => {
             setDeviceStatus('pending');
             setCurrentDeviceId(deviceId);
             // Cache the pending status
-            saveDeviceApproval(deviceId, userId, false);
+            await saveDeviceApproval(deviceId, userId, false);
             toast.error('Device pending approval. Contact administrator.');
             setLoading(false);
             return;
@@ -106,14 +95,10 @@ export const Login = ({ onLogin }: LoginProps) => {
           setDeviceStatus('approved');
           
           // Cache the approved status locally
-          saveDeviceApproval(deviceId, userId, true);
+          await saveDeviceApproval(deviceId, userId, true);
 
-          // Update last used timestamp
-          await supabase
-            .from('approved_devices')
-            .update({ last_used: new Date().toISOString() })
-            .eq('user_id', userId)
-            .eq('device_id', deviceId);
+          // Update last sync timestamp
+          await mysqlApi.devices.update(deviceId, { user_id: userId });
 
           const userWithPassword = { ...data, password };
           saveUser(userWithPassword);

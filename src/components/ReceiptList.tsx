@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { supabase, type MilkCollection } from '@/lib/supabase';
+import { type MilkCollection } from '@/lib/supabase';
+import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateTextReport, generateCSVReport } from '@/utils/fileExport';
 import { toast } from 'sonner';
@@ -57,7 +58,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
         route: firstReceipt.route,
         route_name: firstReceipt.route_name,
         member_route: firstReceipt.member_route,
-        session: firstReceipt.session,
+        session: firstReceipt.session as 'AM' | 'PM',
         weight: parseFloat(totalWeight.toFixed(2)),
         collected_by: firstReceipt.collected_by,
         clerk_name: firstReceipt.clerk_name,
@@ -67,47 +68,42 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       };
 
       try {
-        // Check if record already exists
-        const { data: existing } = await supabase
-          .from('milk_collection')
-          .select('*')
-          .eq('farmer_id', firstReceipt.farmer_id)
-          .eq('session', firstReceipt.session)
-          .gte('collection_date', `${dateStr}T00:00:00`)
-          .lte('collection_date', `${dateStr}T23:59:59`)
-          .maybeSingle();
+        // Check if record already exists in MySQL
+        const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
+          firstReceipt.farmer_id,
+          firstReceipt.session,
+          `${dateStr}T00:00:00`,
+          `${dateStr}T23:59:59`
+        );
 
-        if (existing) {
+        if (existing && existing.reference_no) {
           // Accumulate weight to existing record
           const newWeight = parseFloat((existing.weight + totalWeight).toFixed(2));
-          const { error } = await supabase
-            .from('milk_collection')
-            .update({ 
-              weight: newWeight,
-              collection_date: new Date()
-            })
-            .eq('reference_no', existing.reference_no);
+          const updated = await mysqlApi.milkCollection.update(existing.reference_no, {
+            weight: newWeight,
+            collection_date: new Date()
+          });
 
-          if (!error) {
+          if (updated) {
             // Mark all local receipts in this group as synced
             receipts.forEach(receipt => {
               saveReceipt({ ...receipt, synced: true });
             });
             console.log(`✅ Accumulated ${receipts.length} collections for ${firstReceipt.farmer_id}: ${newWeight} Kg total`);
           } else {
-            console.error('Update error:', error);
+            console.error('Update error: Failed to update MySQL record');
           }
         } else {
           // Insert new record with accumulated weight
-          const { error } = await supabase.from('milk_collection').insert([milkData]);
-          if (!error) {
+          const created = await mysqlApi.milkCollection.create(milkData);
+          if (created) {
             // Mark all local receipts in this group as synced
             receipts.forEach(receipt => {
               saveReceipt({ ...receipt, synced: true });
             });
             console.log(`✅ Synced ${receipts.length} collections for ${firstReceipt.farmer_id}: ${totalWeight} Kg total`);
           } else {
-            console.error('Insert error:', error);
+            console.error('Insert error: Failed to create MySQL record');
           }
         }
       } catch (err) {

@@ -4,7 +4,8 @@ import { FarmerSearch } from '@/components/FarmerSearch';
 import { WeightInput } from '@/components/WeightInput';
 import { ReceiptList } from '@/components/ReceiptList';
 import { ReceiptModal } from '@/components/ReceiptModal';
-import { supabase, type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
+import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
+import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
 
@@ -59,31 +60,26 @@ const Index = () => {
     const todayDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
     const referenceNo = `MC-${todayDate}-${farmerId}-${session}`;
 
-    // Try to sync online with accumulation
+    // Try to sync online with accumulation using MySQL API
     if (navigator.onLine) {
       try {
         // Check if record already exists for this farmer, date, and session
-        const { data: existing } = await supabase
-          .from('milk_collection')
-          .select('*')
-          .eq('farmer_id', farmerId)
-          .eq('session', session)
-          .gte('collection_date', `${todayDate}T00:00:00`)
-          .lte('collection_date', `${todayDate}T23:59:59`)
-          .maybeSingle();
+        const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
+          farmerId,
+          session,
+          `${todayDate}T00:00:00`,
+          `${todayDate}T23:59:59`
+        );
 
-        if (existing) {
+        if (existing && existing.reference_no) {
           // Accumulate weight
           const newWeight = parseFloat((existing.weight + weight).toFixed(2));
-          const { error } = await supabase
-            .from('milk_collection')
-            .update({ 
-              weight: newWeight,
-              collection_date: new Date()
-            })
-            .eq('reference_no', existing.reference_no);
+          const updated = await mysqlApi.milkCollection.update(existing.reference_no, {
+            weight: newWeight,
+            collection_date: new Date()
+          });
 
-          if (!error) {
+          if (updated) {
             const updatedData: MilkCollection = {
               ...existing,
               weight: newWeight,
@@ -94,7 +90,7 @@ const Index = () => {
             toast.success(`Weight accumulated: ${newWeight.toFixed(1)} Kg total`);
             setCurrentReceipt(updatedData);
           } else {
-            throw error;
+            throw new Error('Failed to update MySQL record');
           }
         } else {
           // Create new record
@@ -103,7 +99,7 @@ const Index = () => {
             farmer_id: farmerId,
             farmer_name: farmerName,
             route,
-            session,
+            session: session as 'AM' | 'PM',
             weight: parseFloat(weight.toFixed(2)),
             collected_by: currentUser ? currentUser.user_id : null,
             clerk_name: currentUser ? currentUser.user_id : 'unknown',
@@ -114,13 +110,16 @@ const Index = () => {
             synced: false,
           };
 
-          const { error } = await supabase.from('milk_collection').insert([milkData]);
-          if (!error) {
+          const created = await mysqlApi.milkCollection.create({
+            ...milkData,
+            session: session as 'AM' | 'PM'
+          });
+          if (created) {
             saveReceipt({ ...milkData, synced: true });
-            toast.success('Collection saved and synced');
+            toast.success('Collection saved and synced to MySQL');
             setCurrentReceipt({ ...milkData, synced: true });
           } else {
-            throw error;
+            throw new Error('Failed to create MySQL record');
           }
         }
       } catch (err) {
@@ -131,7 +130,7 @@ const Index = () => {
           farmer_id: farmerId,
           farmer_name: farmerName,
           route,
-          session,
+          session: session as 'AM' | 'PM',
           weight: parseFloat(weight.toFixed(2)),
           collected_by: currentUser ? currentUser.user_id : null,
           clerk_name: currentUser ? currentUser.user_id : 'unknown',
@@ -152,7 +151,7 @@ const Index = () => {
         farmer_id: farmerId,
         farmer_name: farmerName,
         route,
-        session,
+        session: session as 'AM' | 'PM',
         weight: parseFloat(weight.toFixed(2)),
         collected_by: currentUser ? currentUser.user_id : null,
         clerk_name: currentUser ? currentUser.user_id : 'unknown',

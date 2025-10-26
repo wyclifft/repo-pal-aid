@@ -1,5 +1,6 @@
  import { useState, useEffect, useCallback } from 'react';
-import { supabase, type Farmer } from '@/lib/supabase';
+import { type Farmer } from '@/lib/supabase';
+import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 
 interface FarmerSearchProps {
@@ -23,13 +24,7 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
 
     if (navigator.onLine) {
       try {
-        const { data, error } = await supabase
-          .from('farmers')
-          .select('farmer_id, name, route, route_name')
-          .or(`farmer_id.ilike.%${query}%,name.ilike.%${query}%`)
-          .limit(10);
-
-        if (error) throw error;
+        const data = await mysqlApi.farmers.search(query);
         setSuggestions(data || []);
       } catch (err) {
         console.error('Farmer search error:', err);
@@ -53,16 +48,15 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
     searchFarmers(searchQuery);
   }, [searchQuery, searchFarmers]);
 
-  // Sync farmers to local on mount and when online
+  // Sync farmers from MySQL API to local on mount and when online
   useEffect(() => {
     const syncFarmers = async () => {
       if (navigator.onLine) {
         try {
-          const { data, error } = await supabase.from('farmers').select('*');
-          if (error) throw error;
-          if (data) {
+          const data = await mysqlApi.farmers.getAll();
+          if (data && data.length > 0) {
             saveFarmers(data);
-            console.log(`✅ Synced ${data.length} farmers locally`);
+            console.log(`✅ Synced ${data.length} farmers locally from MySQL`);
           }
         } catch (err) {
           console.error('Farmer sync error:', err);
@@ -75,31 +69,23 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
     return () => window.removeEventListener('online', syncFarmers);
   }, [saveFarmers]);
 
-  // Subscribe to realtime updates
+  // Poll for farmers updates every 5 minutes when online
   useEffect(() => {
-    const channel = supabase
-      .channel('farmers-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'farmers' },
-        (payload) => {
-          const farmer = payload.new || payload.old;
-          if (farmer) {
-            console.log(`✅ Farmer updated (${payload.eventType}): ${(farmer as Farmer).name}`);
-            // Refresh local cache
-            if (navigator.onLine) {
-              supabase.from('farmers').select('*').then(({ data }) => {
-                if (data) saveFarmers(data);
-              });
-            }
-          }
-        }
-      )
-      .subscribe();
+    if (!navigator.onLine) return;
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const interval = setInterval(async () => {
+      try {
+        const data = await mysqlApi.farmers.getAll();
+        if (data) {
+          saveFarmers(data);
+          console.log(`✅ Refreshed ${data.length} farmers from MySQL`);
+        }
+      } catch (err) {
+        console.error('Farmer refresh error:', err);
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    return () => clearInterval(interval);
   }, [saveFarmers]);
 
   const handleSelect = (farmer: Farmer) => {
