@@ -263,7 +263,7 @@ Create a `.env` file on your server with:
 MYSQL_HOST=localhost
 MYSQL_DATABASE=maddasys_milk_collection_pwa
 MYSQL_USER=maddasys_pwa_user
-MYSQL_PASSWORD=[your password]
+MYSQL_PASSWORD=0741899183Mutee
 MYSQL_PORT=3306
 
 # API Configuration
