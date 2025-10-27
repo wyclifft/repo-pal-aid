@@ -109,16 +109,36 @@ RewriteRule ^api/(.*)$ http://127.0.0.1:3000/api/$1 [P,L]
 
 ---
 
-## Step 6: Start the Application
+## Step 6: Configure .htaccess
+
+**IMPORTANT**: Update the `.htaccess` file in `/public_html/api/milk-collection-api/`:
+
+1. Replace `/home/username/` with your actual cPanel username
+2. Update Node.js path if using a different version
+
+Example for username `maddasys`:
+```apache
+PassengerAppRoot /home/maddasys/public_html/api/milk-collection-api
+```
+
+---
+
+## Step 7: Start the Application
 
 1. Go back to **Setup Node.js App** in cPanel
 2. Find your application
 3. Click **Start** or **Restart**
 4. Wait for status to show "Running"
 
+**If you see server.js code when visiting the URL:**
+1. Check that Node.js app is "Running" in cPanel
+2. Verify `.htaccess` has correct username path
+3. Click "Restart" in Node.js App interface
+4. Clear browser cache and try again
+
 ---
 
-## Step 7: Test the API
+## Step 8: Test the API
 
 ### Health Check
 ```bash
@@ -144,7 +164,7 @@ Open your PWA and try searching for a farmer. Check browser console for API call
 
 ---
 
-## Step 8: Enable SSL (HTTPS)
+## Step 9: Enable SSL (HTTPS)
 
 1. In cPanel, go to **SSL/TLS Status**
 2. Enable **AutoSSL** for your domain
@@ -154,6 +174,15 @@ Open your PWA and try searching for a farmer. Check browser console for API call
 ---
 
 ## Troubleshooting
+
+### Seeing server.js Code Instead of API Response
+**This is the most common issue!**
+- Ensure Node.js app is "Running" in cPanel (not "Stopped")
+- Edit `.htaccess` and replace `/home/username/` with your actual cPanel username
+- Example: `/home/maddasys/public_html/api/milk-collection-api`
+- Click "Restart" button in Node.js App interface
+- Wait 10-15 seconds, then test again
+- Clear browser cache (Ctrl+Shift+Delete)
 
 ### Application Won't Start
 - Check Node.js version compatibility

@@ -1,18 +1,20 @@
-# cPanel Node.js .htaccess configuration
-# This file helps route traffic through the Node.js application
+# Prevent direct access to source files
+<Files "*.js">
+  Order Deny,Allow
+  Deny from all
+</Files>
 
-RewriteEngine On
-RewriteBase /
+# Allow access through Passenger/Node.js only
+PassengerEnabled on
+PassengerAppRoot /home/username/public_html/api/milk-collection-api
+PassengerAppType node
+PassengerStartupFile server.js
+PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node
 
-# Don't rewrite files or directories
-RewriteCond %{REQUEST_FILENAME} -f [OR]
-RewriteCond %{REQUEST_FILENAME} -d
-RewriteRule ^ - [L]
+# Set environment to production
+SetEnv NODE_ENV production
 
-# Rewrite everything else to your app entry point
-RewriteRule ^ server.js [L]
-
-# CORS Headers (if not handled by Express)
+# CORS Headers
 Header set Access-Control-Allow-Origin "*"
 Header set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
 Header set Access-Control-Allow-Headers "Content-Type, Authorization"
