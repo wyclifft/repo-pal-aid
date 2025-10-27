@@ -37,7 +37,7 @@
    - **Node.js version**: 14.x or higher
    - **Application mode**: Production
    - **Application root**: `/home/username/public_html/api/milk-collection-api`
-   - **Application URL**: `milkcollection.maddasystems.co.ke/api`
+   - **Application URL**: `api.maddasystems.co.ke`
    - **Application startup file**: `server.js`
    - **Passenger log file**: Leave default
 
@@ -55,8 +55,8 @@ In the Node.js App interface:
 
 ```
 MYSQL_HOST=localhost
-MYSQL_DATABASE=maddasys_milk_collection_pwa
-MYSQL_USER=maddasys_pwa_user
+MYSQL_DATABASE=maddasys_delicop
+MYSQL_USER=maddasys_wycliff
 MYSQL_PASSWORD=0741899183Mutee
 MYSQL_PORT=3306
 PORT=3000
@@ -123,7 +123,7 @@ RewriteRule ^api/(.*)$ http://127.0.0.1:3000/api/$1 [P,L]
 
 ### Health Check
 ```bash
-curl https://milkcollection.maddasystems.co.ke/api/health
+curl http://api.maddasystems.co.ke/health
 ```
 
 Expected response:
@@ -137,7 +137,7 @@ Expected response:
 
 ### Test Farmers Endpoint
 ```bash
-curl https://milkcollection.maddasystems.co.ke/api/farmers
+curl http://api.maddasystems.co.ke/farmers
 ```
 
 ### Test from Frontend
@@ -228,7 +228,7 @@ Set up cron job in cPanel:
    - **Weekday**: *
    - **Command**:
    ```bash
-   mysqldump -u maddasys_pwa_user -p'0741899183Mutee' maddasys_milk_collection_pwa > ~/backups/milk_db_$(date +\%Y\%m\%d).sql
+   mysqldump -u maddasys_wycliff -p'0741899183Mutee' maddasys_delicop > ~/backups/milk_db_$(date +\%Y\%m\%d).sql
    ```
 
 ---
@@ -289,10 +289,10 @@ Add to `.htaccess`:
 
 ## Quick Reference
 
-- **API Base URL**: `https://milkcollection.maddasystems.co.ke/api/`
+- **API Base URL**: `http://api.maddasystems.co.ke/`
 - **Application Path**: `/home/username/public_html/api/milk-collection-api`
 - **Node.js Version**: 14.x or higher
-- **Database**: maddasys_milk_collection_pwa
+- **Database**: maddasys_delicop
 - **Port**: 3000 (internal)
 
 ---

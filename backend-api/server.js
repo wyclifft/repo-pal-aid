@@ -16,16 +16,16 @@ const devicesRoutes = require('./routes/devices');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// Middleware - Optimized for low RAM usage
 app.use(helmet());
 app.use(cors({
   origin: '*', // Configure specific domains in production
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(morgan('combined')); // Logging
+app.use(express.json({ limit: '1mb' })); // Reduced from 10mb
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(morgan('tiny')); // Reduced logging for less RAM
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
