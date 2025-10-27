@@ -1,20 +1,25 @@
-# Prevent direct access to source files
-<Files "*.js">
-  Order Deny,Allow
-  Deny from all
-</Files>
+# IMPORTANT: Replace 'username' below with your actual cPanel username
+# Example: If your username is 'maddasys', change /home/username/ to /home/maddasys/
 
-# Allow access through Passenger/Node.js only
 PassengerEnabled on
 PassengerAppRoot /home/username/public_html/api/milk-collection-api
 PassengerAppType node
 PassengerStartupFile server.js
 PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node
 
-# Set environment to production
 SetEnv NODE_ENV production
+SetEnv MYSQL_HOST localhost
+SetEnv MYSQL_DATABASE maddasys_delicop
+SetEnv MYSQL_USER maddasys_wycliff
+SetEnv MYSQL_PASSWORD 0741899183Mutee
+SetEnv MYSQL_PORT 3306
+SetEnv PORT 3000
 
-# CORS Headers
 Header set Access-Control-Allow-Origin "*"
 Header set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
-Header set Access-Control-Allow-Headers "Content-Type, Authorization"
+Header set Access-Control-Allow-Headers "Content-Type"
+
+<Files "*.js">
+  Order Deny,Allow
+  Deny from all
+</Files>
