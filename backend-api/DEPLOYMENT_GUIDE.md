@@ -12,9 +12,8 @@
 ### Option A: Using File Manager
 1. Log in to cPanel
 2. Go to **File Manager**
-3. Navigate to your domain's directory (e.g., `/public_html/api/`)
-4. Create a new folder called `milk-collection-api`
-5. Upload all backend files:
+3. Navigate to `/public_html/api/`
+4. Upload all backend files to `milk-collection-api` folder:
    - `server.js`
    - `package.json`
    - `.htaccess`
@@ -25,7 +24,7 @@
 
 ### Option B: Using FTP/SFTP
 1. Connect via FileZilla or similar FTP client
-2. Upload entire `backend-api` folder to `/public_html/api/`
+2. Upload entire `backend-api` folder contents to `/public_html/api/milk-collection-api/`
 
 ---
 
@@ -37,7 +36,7 @@
    - **Node.js version**: 14.x or higher
    - **Application mode**: Production
    - **Application root**: `/home/username/public_html/api/milk-collection-api`
-   - **Application URL**: `api.maddasystems.co.ke`
+   - **Application URL**: `backend.maddasystems.co.ke`
    - **Application startup file**: `server.js`
    - **Passenger log file**: Leave default
 
@@ -80,7 +79,7 @@ npm install
 ### Via SSH
 1. SSH into your server:
 ```bash
-ssh username@milkcollection.maddasystems.co.ke
+ssh username@backend.maddasystems.co.ke
 ```
 
 2. Navigate and install:
@@ -123,7 +122,7 @@ RewriteRule ^api/(.*)$ http://127.0.0.1:3000/api/$1 [P,L]
 
 ### Health Check
 ```bash
-curl http://api.maddasystems.co.ke/health
+curl http://backend.maddasystems.co.ke/api/health
 ```
 
 Expected response:
@@ -137,7 +136,7 @@ Expected response:
 
 ### Test Farmers Endpoint
 ```bash
-curl http://api.maddasystems.co.ke/farmers
+curl http://backend.maddasystems.co.ke/api/farmers
 ```
 
 ### Test from Frontend
@@ -289,7 +288,7 @@ Add to `.htaccess`:
 
 ## Quick Reference
 
-- **API Base URL**: `http://api.maddasystems.co.ke/`
+- **API Base URL**: `http://backend.maddasystems.co.ke/api/`
 - **Application Path**: `/home/username/public_html/api/milk-collection-api`
 - **Node.js Version**: 14.x or higher
 - **Database**: maddasys_delicop

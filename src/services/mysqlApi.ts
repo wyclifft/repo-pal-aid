@@ -3,7 +3,7 @@
  * Handles all communication with the MySQL backend at http://api.maddasystems.co.ke/
  */
 
-const API_BASE_URL = 'http://api.maddasystems.co.ke';
+const API_BASE_URL = 'http://backend.maddasystems.co.ke';
 
 interface ApiResponse<T> {
   success: boolean;
