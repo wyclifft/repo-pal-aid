@@ -4,10 +4,10 @@
 ---
 
 ## Overview
-- **Domain**: backend.maddasystems.co.ke
+- **Domain**: https://backend.maddasystems.co.ke
 - **Directory**: `/home/username/public_html/api/milk-collection-api`
-- **Database**: maddasys_delicop
-- **User**: maddasys_wycliff
+- **Database**: maddasys_milk_collection_pwa
+- **User**: maddasys_tesh
 - **Files to Upload**: `server.js`, `package.json`, `.htaccess`
 
 ---
@@ -141,7 +141,7 @@ Upload **ONLY these 3 files** to `/public_html/api/milk-collection-api/`:
 ## Step 8: Test the API
 
 ### Test in Browser:
-Open: `http://backend.maddasystems.co.ke/api/health`
+Open: `https://backend.maddasystems.co.ke/api/health`
 
 **Expected Response**:
 ```json
@@ -155,13 +155,13 @@ Open: `http://backend.maddasystems.co.ke/api/health`
 ### Test via cURL:
 ```bash
 # Health check
-curl http://backend.maddasystems.co.ke/api/health
+curl https://backend.maddasystems.co.ke/api/health
 
 # Get farmers
-curl http://backend.maddasystems.co.ke/api/farmers
+curl https://backend.maddasystems.co.ke/api/farmers
 
 # Search farmer
-curl "http://backend.maddasystems.co.ke/api/farmers?search=John"
+curl "https://backend.maddasystems.co.ke/api/farmers?search=John"
 ```
 
 ---
@@ -172,7 +172,7 @@ curl "http://backend.maddasystems.co.ke/api/farmers?search=John"
 2. Find `backend.maddasystems.co.ke`
 3. Click **Run AutoSSL**
 4. Wait for certificate to be issued (2-5 minutes)
-5. Your API will now work with HTTPS:
+5. Your API will now work with HTTPS (already configured):
    - `https://backend.maddasystems.co.ke/api/health`
 
 ---
@@ -193,7 +193,7 @@ curl "http://backend.maddasystems.co.ke/api/farmers?search=John"
 4. Click **Restart** in Node.js App interface
 5. Wait 15 seconds
 6. Clear browser cache (Ctrl+Shift+Delete)
-7. Try again: `http://backend.maddasystems.co.ke/api/health`
+7. Try again: `https://backend.maddasystems.co.ke/api/health`
 
 ---
 
@@ -206,8 +206,9 @@ curl "http://backend.maddasystems.co.ke/api/farmers?search=John"
 
 **Solution**:
 1. View error logs in Node.js App interface
-2. Check that `server.js` has no syntax errors
-3. Try stopping and starting the app again
+2. Check database credentials are correct
+3. Check that `server.js` has no syntax errors
+4. Try stopping and starting the app again
 
 ---
 
@@ -218,8 +219,8 @@ curl "http://backend.maddasystems.co.ke/api/farmers?search=John"
 **Solution**:
 1. Verify database credentials in `.htaccess`:
    ```apache
-   SetEnv MYSQL_DATABASE maddasys_delicop
-   SetEnv MYSQL_USER maddasys_wycliff
+   SetEnv MYSQL_DATABASE maddasys_milk_collection_pwa
+   SetEnv MYSQL_USER maddasys_tesh
    SetEnv MYSQL_PASSWORD 0741899183Mutee
    ```
 2. Test database connection via phpMyAdmin
@@ -326,10 +327,10 @@ tail -f ~/logs/*.log
 
 | Item | Value |
 |------|-------|
-| **Domain** | backend.maddasystems.co.ke |
+| **Domain** | https://backend.maddasystems.co.ke |
 | **Directory** | /home/username/public_html/api/milk-collection-api |
-| **Database** | maddasys_delicop |
-| **DB User** | maddasys_wycliff |
+| **Database** | maddasys_milk_collection_pwa |
+| **DB User** | maddasys_tesh |
 | **Node Version** | 14.x or higher |
 | **Port** | 3000 (internal) |
 | **Files** | server.js, package.json, .htaccess |

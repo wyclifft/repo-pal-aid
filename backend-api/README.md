@@ -30,10 +30,10 @@ backend-api/
 
 ## 🌐 Domain & Path
 
-- **URL**: `http://backend.maddasystems.co.ke/api/`
+- **URL**: `https://backend.maddasystems.co.ke/api/`
 - **Directory**: `/home/username/public_html/api/milk-collection-api`
-- **Database**: maddasys_delicop
-- **User**: maddasys_wycliff
+- **Database**: maddasys_milk_collection_pwa
+- **User**: maddasys_tesh
 
 ---
 
@@ -102,7 +102,7 @@ DELETE /api/devices/:deviceId   # Delete device
 
 6. **Test**:
    ```bash
-   curl http://backend.maddasystems.co.ke/api/health
+   curl https://backend.maddasystems.co.ke/api/health
    ```
 
 📖 **Full Guide**: See `DEPLOYMENT_GUIDE.md` for complete step-by-step instructions
@@ -115,8 +115,8 @@ All configuration is done via environment variables in `.htaccess`:
 
 ```apache
 SetEnv MYSQL_HOST localhost
-SetEnv MYSQL_DATABASE maddasys_delicop
-SetEnv MYSQL_USER maddasys_wycliff
+SetEnv MYSQL_DATABASE maddasys_milk_collection_pwa
+SetEnv MYSQL_USER maddasys_tesh
 SetEnv MYSQL_PASSWORD 0741899183Mutee
 SetEnv MYSQL_PORT 3306
 SetEnv PORT 3000
@@ -141,8 +141,8 @@ SetEnv PORT 3000
 ```bash
 # Set environment variables
 export MYSQL_HOST=localhost
-export MYSQL_DATABASE=maddasys_delicop
-export MYSQL_USER=maddasys_wycliff
+export MYSQL_DATABASE=maddasys_milk_collection_pwa
+export MYSQL_USER=maddasys_tesh
 export MYSQL_PASSWORD=0741899183Mutee
 
 # Start server

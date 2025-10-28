@@ -1,9 +1,9 @@
 /**
  * MySQL REST API Service
- * Handles all communication with the MySQL backend at http://api.maddasystems.co.ke/
+ * Handles all communication with the MySQL backend at https://backend.maddasystems.co.ke/
  */
 
-const API_BASE_URL = 'http://backend.maddasystems.co.ke';
+const API_BASE_URL = 'https://backend.maddasystems.co.ke/api';
 
 interface ApiResponse<T> {
   success: boolean;
