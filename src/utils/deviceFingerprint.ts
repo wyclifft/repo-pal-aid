@@ -36,6 +36,90 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
   return hashHex;
 };
 
+// Extract actual device name from user agent
+export const getDeviceName = (): string => {
+  const ua = navigator.userAgent;
+  
+  // Samsung devices
+  const samsungMatch = ua.match(/SM-[A-Z0-9]+|Samsung[- ]([A-Za-z0-9 ]+)/i);
+  if (samsungMatch) {
+    const model = samsungMatch[1] || samsungMatch[0];
+    return `Samsung ${model.replace(/SM-/i, '').replace(/_/g, ' ').trim()}`;
+  }
+  
+  // Infinix devices
+  const infinixMatch = ua.match(/Infinix[- ]([A-Za-z0-9 ]+)/i);
+  if (infinixMatch) {
+    return `Infinix ${infinixMatch[1].trim()}`;
+  }
+  
+  // Tecno devices
+  const tecnoMatch = ua.match(/TECNO[- ]([A-Za-z0-9 ]+)/i);
+  if (tecnoMatch) {
+    return `Tecno ${tecnoMatch[1].trim()}`;
+  }
+  
+  // Xiaomi/Redmi devices
+  const xiaomiMatch = ua.match(/(Redmi|Mi|Xiaomi)[- ]?([A-Za-z0-9 ]+)/i);
+  if (xiaomiMatch) {
+    return `${xiaomiMatch[1]} ${xiaomiMatch[2].trim()}`;
+  }
+  
+  // Oppo devices
+  const oppoMatch = ua.match(/OPPO[- ]([A-Za-z0-9 ]+)/i);
+  if (oppoMatch) {
+    return `Oppo ${oppoMatch[1].trim()}`;
+  }
+  
+  // Vivo devices
+  const vivoMatch = ua.match(/vivo[- ]([A-Za-z0-9 ]+)/i);
+  if (vivoMatch) {
+    return `Vivo ${vivoMatch[1].trim()}`;
+  }
+  
+  // Huawei devices
+  const huaweiMatch = ua.match(/HUAWEI[- ]([A-Za-z0-9 ]+)/i);
+  if (huaweiMatch) {
+    return `Huawei ${huaweiMatch[1].trim()}`;
+  }
+  
+  // iPhone models
+  const iphoneMatch = ua.match(/iPhone(\d+[,\d]*)?/i);
+  if (iphoneMatch) {
+    return iphoneMatch[1] ? `iPhone ${iphoneMatch[1].replace(',', '.')}` : 'iPhone';
+  }
+  
+  // iPad models
+  const ipadMatch = ua.match(/iPad(\d+[,\d]*)?/i);
+  if (ipadMatch) {
+    return ipadMatch[1] ? `iPad ${ipadMatch[1].replace(',', '.')}` : 'iPad';
+  }
+  
+  // Generic Android device
+  if (ua.includes('Android')) {
+    const androidMatch = ua.match(/Android[^;]*; ([^)]+)\)/i);
+    if (androidMatch) {
+      const device = androidMatch[1].trim();
+      // Clean up common patterns
+      const cleanDevice = device
+        .replace(/Build\/.*/i, '')
+        .replace(/^\s*;\s*/, '')
+        .trim();
+      if (cleanDevice && cleanDevice !== 'Android' && !cleanDevice.includes('Linux')) {
+        return cleanDevice;
+      }
+    }
+    return 'Android Device';
+  }
+  
+  // Desktop devices
+  if (ua.includes('Windows')) return 'Windows PC';
+  if (ua.includes('Mac')) return 'Mac';
+  if (ua.includes('Linux')) return 'Linux PC';
+  
+  return 'Unknown Device';
+};
+
 // Parse device information for display
 export const getDeviceInfo = () => {
   const ua = navigator.userAgent;

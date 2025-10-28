@@ -3,7 +3,7 @@ import { supabase, type AppUser } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
-import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceInfo } from '@/utils/deviceFingerprint';
+import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName } from '@/utils/deviceFingerprint';
 
 interface LoginProps {
   onLogin: (user: AppUser, isOffline: boolean) => void;
@@ -56,14 +56,13 @@ export const Login = ({ onLogin }: LoginProps) => {
 
           if (!deviceData) {
             // New device - register it as pending approval
-            const deviceInfo = getDeviceInfo();
-            const deviceInfoStr = `${deviceInfo.browser} on ${deviceInfo.os} (${deviceInfo.deviceType})`;
+            const deviceName = getDeviceName();
             
             const newDevice = await mysqlApi.devices.upsert({
               device_id: deviceId,
               user_id: userId,
               approved: false,
-              device_info: deviceInfoStr,
+              device_info: deviceName,
             });
 
             if (!newDevice) {
