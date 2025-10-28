@@ -32,11 +32,11 @@ export const Login = ({ onLogin }: LoginProps) => {
 
     setLoading(true);
 
-    // Get or generate device ID
-    let deviceId = getStoredDeviceId();
-    if (!deviceId) {
-      deviceId = await generateDeviceFingerprint();
-      setStoredDeviceId(deviceId);
+    // Get or generate device fingerprint
+    let deviceFingerprint = getStoredDeviceId();
+    if (!deviceFingerprint) {
+      deviceFingerprint = await generateDeviceFingerprint();
+      setStoredDeviceId(deviceFingerprint);
     }
 
     if (navigator.onLine) {
@@ -51,31 +51,31 @@ export const Login = ({ onLogin }: LoginProps) => {
         if (error) throw error;
 
         if (data) {
-          // Check device approval status from MySQL
-          const deviceData = await mysqlApi.devices.getByDeviceId(deviceId);
+          // Check device approval status from MySQL using fingerprint
+          const deviceData = await mysqlApi.devices.getByFingerprint(deviceFingerprint);
 
           if (!deviceData) {
-            // New device - register it as pending approval
+            // New device - register it and get backend-generated ID
             const deviceName = getDeviceName();
             
-            const newDevice = await mysqlApi.devices.upsert({
-              device_id: deviceId,
+            const newDevice = await mysqlApi.devices.register({
+              device_fingerprint: deviceFingerprint,
               user_id: userId,
               approved: false,
               device_info: deviceName,
             });
 
-            if (!newDevice) {
+            if (!newDevice || !newDevice.id) {
               toast.error('Failed to register device');
               setLoading(false);
               return;
             }
             
-            console.log('Device registered:', newDevice);
-            // Cache the pending status
-            await saveDeviceApproval(deviceId, userId, false);
+            console.log('Device registered with ID:', newDevice.id);
+            // Cache the pending status with backend-generated ID
+            await saveDeviceApproval(String(newDevice.id), userId, false);
             setDeviceStatus('pending');
-            setCurrentDeviceId(deviceId);
+            setCurrentDeviceId(String(newDevice.id));
             toast.error('New device detected. Awaiting admin approval.');
             setLoading(false);
             return;
@@ -83,9 +83,9 @@ export const Login = ({ onLogin }: LoginProps) => {
 
           if (!deviceData.approved) {
             setDeviceStatus('pending');
-            setCurrentDeviceId(deviceId);
+            setCurrentDeviceId(String(deviceData.id));
             // Cache the pending status
-            await saveDeviceApproval(deviceId, userId, false);
+            await saveDeviceApproval(String(deviceData.id), userId, false);
             toast.error('Device pending approval. Contact administrator.');
             setLoading(false);
             return;
@@ -93,11 +93,11 @@ export const Login = ({ onLogin }: LoginProps) => {
 
           setDeviceStatus('approved');
           
-          // Cache the approved status locally
-          await saveDeviceApproval(deviceId, userId, true);
+          // Cache the approved status locally with backend ID
+          await saveDeviceApproval(String(deviceData.id), userId, true);
 
           // Update last sync timestamp
-          await mysqlApi.devices.update(deviceId, { user_id: userId });
+          await mysqlApi.devices.update(deviceData.id, { user_id: userId });
 
           const userWithPassword = { ...data, password };
           saveUser(userWithPassword);
@@ -126,8 +126,8 @@ export const Login = ({ onLogin }: LoginProps) => {
           return;
         }
 
-        // Check cached device approval status
-        const cachedApproval = await getDeviceApproval(deviceId);
+        // Check cached device approval status using the stored device ID
+        const cachedApproval = await getDeviceApproval(deviceFingerprint);
         
         if (!cachedApproval) {
           toast.error('Device not registered. Connect to internet to register this device.');
@@ -143,7 +143,7 @@ export const Login = ({ onLogin }: LoginProps) => {
 
         if (!cachedApproval.approved) {
           setDeviceStatus('pending');
-          setCurrentDeviceId(deviceId);
+          setCurrentDeviceId(cachedApproval.device_id);
           toast.error('Device not approved. Connect to internet to check approval status.');
           setLoading(false);
           return;

@@ -66,10 +66,11 @@ DELETE /api/milk-collection/:ref            # Delete collection
 
 ### Devices
 ```bash
-GET /api/devices/:deviceId      # Get device info
-POST /api/devices               # Register/update device
-PUT /api/devices/:deviceId      # Update device status
-DELETE /api/devices/:deviceId   # Delete device
+GET /api/devices/fingerprint/:fingerprint   # Get device by fingerprint
+GET /api/devices/:id                        # Get device by ID
+POST /api/devices                           # Register new device (returns auto-generated ID)
+PUT /api/devices/:id                        # Update device status
+DELETE /api/devices/:id                     # Delete device
 ```
 
 ---

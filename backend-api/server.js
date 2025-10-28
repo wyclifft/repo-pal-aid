@@ -165,42 +165,55 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Devices endpoints
-    if (path.startsWith('/api/devices/') && method === 'GET') {
+    if (path.startsWith('/api/devices/fingerprint/') && method === 'GET') {
+      const fingerprint = decodeURIComponent(path.split('/')[4]);
+      const [rows] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [fingerprint]);
+      if (rows.length === 0) return sendJSON(res, { success: false, error: 'Device not found' }, 404);
+      return sendJSON(res, { success: true, data: rows[0] });
+    }
+
+    if (path.startsWith('/api/devices/') && method === 'GET' && path.split('/').length === 4) {
       const deviceId = path.split('/')[3];
-      const [rows] = await pool.query('SELECT * FROM approved_devices WHERE device_id = ?', [deviceId]);
+      const [rows] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [deviceId]);
       if (rows.length === 0) return sendJSON(res, { success: false, error: 'Device not found' }, 404);
       return sendJSON(res, { success: true, data: rows[0] });
     }
 
     if (path === '/api/devices' && method === 'POST') {
       const body = await parseBody(req);
-      const [existing] = await pool.query('SELECT id FROM approved_devices WHERE device_id = ?', [body.device_id]);
+      const [existing] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
+      
       if (existing.length > 0) {
-        await pool.query('UPDATE approved_devices SET user_id = ?, approved = ?, device_info = ? WHERE device_id = ?',
-          [body.user_id, body.approved ?? true, body.device_info || null, body.device_id]);
+        // Update existing device
+        await pool.query('UPDATE approved_devices SET user_id = ?, approved = ?, device_info = ?, last_sync = NOW() WHERE device_fingerprint = ?',
+          [body.user_id, body.approved ?? false, body.device_info || null, body.device_fingerprint]);
+        return sendJSON(res, { success: true, data: existing[0], message: 'Device updated' });
       } else {
-        await pool.query('INSERT INTO approved_devices (device_id, user_id, approved, device_info) VALUES (?, ?, ?, ?)',
-          [body.device_id, body.user_id, body.approved ?? true, body.device_info || null]);
+        // Insert new device - MySQL auto-generates id
+        const [result] = await pool.query(
+          'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, ?, ?, NOW())',
+          [body.device_fingerprint, body.user_id, body.approved ?? false, body.device_info || null]
+        );
+        const [newDevice] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [result.insertId]);
+        return sendJSON(res, { success: true, data: newDevice[0], message: 'Device registered' }, 201);
       }
-      return sendJSON(res, { success: true, message: 'Device registered' });
     }
 
     if (path.startsWith('/api/devices/') && method === 'PUT') {
       const deviceId = path.split('/')[3];
       const body = await parseBody(req);
-      const updates = [];
+      const updates = ['last_sync = NOW()'];
       const values = [];
       if (body.approved !== undefined) { updates.push('approved = ?'); values.push(body.approved); }
       if (body.user_id) { updates.push('user_id = ?'); values.push(body.user_id); }
-      if (updates.length === 0) return sendJSON(res, { success: false, error: 'No fields to update' }, 400);
       values.push(deviceId);
-      await pool.query(`UPDATE approved_devices SET ${updates.join(', ')} WHERE device_id = ?`, values);
+      await pool.query(`UPDATE approved_devices SET ${updates.join(', ')} WHERE id = ?`, values);
       return sendJSON(res, { success: true, message: 'Device updated' });
     }
 
     if (path.startsWith('/api/devices/') && method === 'DELETE') {
       const deviceId = path.split('/')[3];
-      await pool.query('DELETE FROM approved_devices WHERE device_id = ?', [deviceId]);
+      await pool.query('DELETE FROM approved_devices WHERE id = ?', [deviceId]);
       return sendJSON(res, { success: true, message: 'Device deleted' });
     }
 

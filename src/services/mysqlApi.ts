@@ -223,31 +223,39 @@ export const milkCollectionApi = {
 // ==================== APPROVED DEVICES API ====================
 
 export interface ApprovedDevice {
-  id?: number;
-  device_id: string;
+  id: number;
+  device_fingerprint: string;
   user_id: string;
   approved: boolean;
   device_info?: string;
-  last_synced?: string;
+  last_sync?: string;
   created_at?: string;
 }
 
 export const devicesApi = {
   /**
-   * Get device approval status
+   * Get device by fingerprint
    */
-  getByDeviceId: async (deviceId: string): Promise<ApprovedDevice | null> => {
+  getByFingerprint: async (fingerprint: string): Promise<ApprovedDevice | null> => {
+    const response = await apiRequest<ApprovedDevice>(`/devices/fingerprint/${encodeURIComponent(fingerprint)}`);
+    return response.data || null;
+  },
+
+  /**
+   * Get device by ID
+   */
+  getById: async (deviceId: number): Promise<ApprovedDevice | null> => {
     const response = await apiRequest<ApprovedDevice>(`/devices/${deviceId}`);
     return response.data || null;
   },
 
   /**
-   * Register new device or update existing
+   * Register new device (backend generates ID)
    */
-  upsert: async (device: {
-    device_id: string;
+  register: async (device: {
+    device_fingerprint: string;
     user_id: string;
-    approved?: boolean;
+    approved: boolean;
     device_info?: string;
   }): Promise<ApprovedDevice | null> => {
     const response = await apiRequest<ApprovedDevice>('/devices', {
@@ -258,9 +266,9 @@ export const devicesApi = {
   },
 
   /**
-   * Update device status
+   * Update device status by ID
    */
-  update: async (deviceId: string, updates: { approved?: boolean; user_id?: string }): Promise<ApprovedDevice | null> => {
+  update: async (deviceId: number, updates: { approved?: boolean; user_id?: string }): Promise<ApprovedDevice | null> => {
     const response = await apiRequest<ApprovedDevice>(`/devices/${deviceId}`, {
       method: 'PUT',
       body: JSON.stringify(updates),
@@ -269,9 +277,9 @@ export const devicesApi = {
   },
 
   /**
-   * Delete device
+   * Delete device by ID
    */
-  delete: async (deviceId: string): Promise<boolean> => {
+  delete: async (deviceId: number): Promise<boolean> => {
     const response = await apiRequest(`/devices/${deviceId}`, {
       method: 'DELETE',
     });
