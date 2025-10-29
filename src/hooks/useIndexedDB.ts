@@ -126,6 +126,13 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
+  const deleteReceipt = useCallback((orderId: number) => {
+    if (!db) return;
+    const tx = db.transaction('receipts', 'readwrite');
+    const store = tx.objectStore('receipts');
+    store.delete(orderId);
+  }, [db]);
+
   const saveDeviceApproval = useCallback((deviceFingerprint: string, backendId: number | null, userId: string, approved: boolean) => {
     if (!db) return;
     const tx = db.transaction('device_approvals', 'readwrite');
@@ -159,6 +166,7 @@ export const useIndexedDB = () => {
     getUser,
     saveReceipt,
     getUnsyncedReceipts,
+    deleteReceipt,
     saveDeviceApproval,
     getDeviceApproval,
   };

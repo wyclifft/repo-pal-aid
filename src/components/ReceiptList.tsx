@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => {
   const [unsyncedReceipts, setUnsyncedReceipts] = useState<MilkCollection[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
-  const { getUnsyncedReceipts, saveReceipt, isReady } = useIndexedDB();
+  const { getUnsyncedReceipts, deleteReceipt, isReady } = useIndexedDB();
 
   const loadPendingReceipts = async () => {
     if (!isReady) return;
@@ -85,9 +85,9 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
           });
 
           if (updated) {
-            // Mark all local receipts in this group as synced
+            // Delete all local receipts in this group after successful sync
             receipts.forEach(receipt => {
-              saveReceipt({ ...receipt, synced: true });
+              deleteReceipt(receipt.orderId!);
             });
             console.log(`✅ Accumulated ${receipts.length} collections for ${firstReceipt.farmer_id}: ${newWeight} Kg total`);
           } else {
@@ -97,9 +97,9 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
           // Insert new record with accumulated weight
           const created = await mysqlApi.milkCollection.create(milkData);
           if (created) {
-            // Mark all local receipts in this group as synced
+            // Delete all local receipts in this group after successful sync
             receipts.forEach(receipt => {
-              saveReceipt({ ...receipt, synced: true });
+              deleteReceipt(receipt.orderId!);
             });
             console.log(`✅ Synced ${receipts.length} collections for ${firstReceipt.farmer_id}: ${totalWeight} Kg total`);
           } else {
