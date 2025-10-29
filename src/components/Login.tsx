@@ -72,10 +72,10 @@ export const Login = ({ onLogin }: LoginProps) => {
             }
             
             console.log('Device registered with ID:', newDevice.id);
-            // Cache the pending status with backend-generated ID
-            await saveDeviceApproval(String(newDevice.id), userId, false);
+            // Cache the pending status using fingerprint as key
+            await saveDeviceApproval(deviceFingerprint, newDevice.id, userId, false);
             setDeviceStatus('pending');
-            setCurrentDeviceId(String(newDevice.id));
+            setCurrentDeviceId(deviceFingerprint);
             toast.error('New device detected. Awaiting admin approval.');
             setLoading(false);
             return;
@@ -83,9 +83,9 @@ export const Login = ({ onLogin }: LoginProps) => {
 
           if (!deviceData.approved) {
             setDeviceStatus('pending');
-            setCurrentDeviceId(String(deviceData.id));
+            setCurrentDeviceId(deviceFingerprint);
             // Cache the pending status
-            await saveDeviceApproval(String(deviceData.id), userId, false);
+            await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, false);
             toast.error('Device pending approval. Contact administrator.');
             setLoading(false);
             return;
@@ -93,8 +93,8 @@ export const Login = ({ onLogin }: LoginProps) => {
 
           setDeviceStatus('approved');
           
-          // Cache the approved status locally with backend ID
-          await saveDeviceApproval(String(deviceData.id), userId, true);
+          // Cache the approved status locally using fingerprint as key
+          await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, true);
 
           // Update last sync timestamp
           await mysqlApi.devices.update(deviceData.id, { user_id: userId });
@@ -126,7 +126,7 @@ export const Login = ({ onLogin }: LoginProps) => {
           return;
         }
 
-        // Check cached device approval status using the stored device ID
+        // Check cached device approval status using fingerprint
         const cachedApproval = await getDeviceApproval(deviceFingerprint);
         
         if (!cachedApproval) {
@@ -143,7 +143,7 @@ export const Login = ({ onLogin }: LoginProps) => {
 
         if (!cachedApproval.approved) {
           setDeviceStatus('pending');
-          setCurrentDeviceId(cachedApproval.device_id);
+          setCurrentDeviceId(deviceFingerprint);
           toast.error('Device not approved. Connect to internet to check approval status.');
           setLoading(false);
           return;
@@ -180,7 +180,7 @@ export const Login = ({ onLogin }: LoginProps) => {
                 </p>
                 <div className="bg-white p-2 rounded border border-yellow-300 mt-2">
                   <p className="text-xs font-mono text-gray-600 break-all">
-                    <strong>Device ID:</strong> {currentDeviceId.substring(0, 60)}...
+                    <strong>Device:</strong> {currentDeviceId.substring(0, 40)}...
                   </p>
                 </div>
                 <p className="text-xs text-yellow-600 mt-2">

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -35,9 +35,11 @@ export const useIndexedDB = () => {
         database.createObjectStore('app_users', { keyPath: 'user_id' });
       }
 
-      if (!database.objectStoreNames.contains('device_approvals')) {
-        database.createObjectStore('device_approvals', { keyPath: 'device_id' });
+      // Recreate device_approvals with new keyPath (fingerprint instead of device_id)
+      if (database.objectStoreNames.contains('device_approvals')) {
+        database.deleteObjectStore('device_approvals');
       }
+      database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
     };
 
     request.onsuccess = (event) => {
@@ -117,19 +119,25 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
-  const saveDeviceApproval = useCallback((deviceId: string, userId: string, approved: boolean) => {
+  const saveDeviceApproval = useCallback((deviceFingerprint: string, backendId: number | null, userId: string, approved: boolean) => {
     if (!db) return;
     const tx = db.transaction('device_approvals', 'readwrite');
     const store = tx.objectStore('device_approvals');
-    store.put({ device_id: deviceId, user_id: userId, approved, last_synced: new Date().toISOString() });
+    store.put({ 
+      device_fingerprint: deviceFingerprint, 
+      backend_id: backendId,
+      user_id: userId, 
+      approved, 
+      last_synced: new Date().toISOString() 
+    });
   }, [db]);
 
-  const getDeviceApproval = useCallback((deviceId: string): Promise<{ device_id: string; user_id: string; approved: boolean; last_synced: string } | undefined> => {
+  const getDeviceApproval = useCallback((deviceFingerprint: string): Promise<{ device_fingerprint: string; backend_id: number | null; user_id: string; approved: boolean; last_synced: string } | undefined> => {
     return new Promise((resolve, reject) => {
       if (!db) return reject('DB not ready');
       const tx = db.transaction('device_approvals', 'readonly');
       const store = tx.objectStore('device_approvals');
-      const request = store.get(deviceId);
+      const request = store.get(deviceFingerprint);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
