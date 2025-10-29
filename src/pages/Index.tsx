@@ -69,7 +69,7 @@ const Index = () => {
           session,
           `${todayDate}T00:00:00`,
           `${todayDate}T23:59:59`
-        );
+        ).catch(() => null);
 
         if (existing && existing.reference_no) {
           // Accumulate weight
@@ -100,7 +100,7 @@ const Index = () => {
             farmer_name: farmerName,
             route,
             session: session as 'AM' | 'PM',
-            weight: parseFloat(weight.toFixed(2)),
+            weight: parseFloat(Number(weight).toFixed(2)),
             collected_by: currentUser ? currentUser.user_id : null,
             clerk_name: currentUser ? currentUser.user_id : 'unknown',
             price_per_liter: 0,
@@ -131,7 +131,7 @@ const Index = () => {
           farmer_name: farmerName,
           route,
           session: session as 'AM' | 'PM',
-          weight: parseFloat(weight.toFixed(2)),
+          weight: parseFloat(Number(weight).toFixed(2)),
           collected_by: currentUser ? currentUser.user_id : null,
           clerk_name: currentUser ? currentUser.user_id : 'unknown',
           price_per_liter: 0,
@@ -152,7 +152,7 @@ const Index = () => {
         farmer_name: farmerName,
         route,
         session: session as 'AM' | 'PM',
-        weight: parseFloat(weight.toFixed(2)),
+        weight: parseFloat(Number(weight).toFixed(2)),
         collected_by: currentUser ? currentUser.user_id : null,
         clerk_name: currentUser ? currentUser.user_id : 'unknown',
         price_per_liter: 0,

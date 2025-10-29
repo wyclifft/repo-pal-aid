@@ -48,7 +48,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
     // Process each group
     for (const [key, receipts] of groupedReceipts.entries()) {
       const firstReceipt = receipts[0];
-      const totalWeight = receipts.reduce((sum, r) => sum + r.weight, 0);
+      const totalWeight = receipts.reduce((sum, r) => sum + Number(r.weight || 0), 0);
       const dateStr = new Date(firstReceipt.collection_date).toISOString().split('T')[0];
       
       const milkData = {
@@ -62,8 +62,8 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
         weight: parseFloat(totalWeight.toFixed(2)),
         collected_by: firstReceipt.collected_by,
         clerk_name: firstReceipt.clerk_name,
-        price_per_liter: firstReceipt.price_per_liter,
-        total_amount: firstReceipt.total_amount,
+        price_per_liter: Number(firstReceipt.price_per_liter || 0),
+        total_amount: Number(firstReceipt.total_amount || 0),
         collection_date: firstReceipt.collection_date,
       };
 
@@ -78,7 +78,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
 
         if (existing && existing.reference_no) {
           // Accumulate weight to existing record
-          const newWeight = parseFloat((existing.weight + totalWeight).toFixed(2));
+          const newWeight = parseFloat((Number(existing.weight || 0) + totalWeight).toFixed(2));
           const updated = await mysqlApi.milkCollection.update(existing.reference_no, {
             weight: newWeight,
             collection_date: new Date()
@@ -160,7 +160,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
               key={receipt.orderId}
               className="p-3 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm"
             >
-              Farmer: {receipt.farmer_id} ({receipt.weight.toFixed(2)} Kg) ⚠️ Pending Sync
+              Farmer: {receipt.farmer_id} ({Number(receipt.weight || 0).toFixed(2)} Kg) ⚠️ Pending Sync
             </li>
           ))}
         </ul>
