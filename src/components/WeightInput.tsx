@@ -13,8 +13,6 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole }: WeightI
   const [scaleConnected, setScaleConnected] = useState(false);
   const [scaleType, setScaleType] = useState<ScaleType>('Unknown');
   const [isConnecting, setIsConnecting] = useState(false);
-  
-  const isClerk1 = currentUserRole === 'clerk1';
 
   const handleConnectScale = async () => {
     setIsConnecting(true);
@@ -73,27 +71,25 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole }: WeightI
         )}
       </div>
 
-      {isClerk1 && (
-        <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-          <p className="text-sm font-semibold text-gray-700 mb-2">Manual Weight Entry</p>
-          <div className="flex gap-2">
-            <input
-              type="number"
-              placeholder="Manual Weight (Kg)"
-              step="0.1"
-              value={manualWeight}
-              onChange={(e) => setManualWeight(e.target.value)}
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
-            />
-            <button
-              onClick={handleManualWeight}
-              className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
-            >
-              Use Manual
-            </button>
-          </div>
+      <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+        <p className="text-sm font-semibold text-gray-700 mb-2">Manual Weight Entry</p>
+        <div className="flex gap-2">
+          <input
+            type="number"
+            placeholder="Manual Weight (Kg)"
+            step="0.1"
+            value={manualWeight}
+            onChange={(e) => setManualWeight(e.target.value)}
+            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
+          />
+          <button
+            onClick={handleManualWeight}
+            className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
+          >
+            Apply
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 };
