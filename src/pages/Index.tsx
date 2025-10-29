@@ -73,7 +73,7 @@ const Index = () => {
 
         if (existing && existing.reference_no) {
           // Accumulate weight
-          const newWeight = parseFloat((existing.weight + weight).toFixed(2));
+          const newWeight = parseFloat((Number(existing.weight) + Number(weight)).toFixed(2));
           const updated = await mysqlApi.milkCollection.update(existing.reference_no, {
             weight: newWeight,
             collection_date: new Date()
