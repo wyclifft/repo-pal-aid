@@ -39,6 +39,9 @@ export const Login = ({ onLogin }: LoginProps) => {
       setStoredDeviceId(deviceFingerprint);
     }
 
+    // Check cached device approval first (works offline and online)
+    const cachedApproval = await getDeviceApproval(deviceFingerprint);
+    
     if (navigator.onLine) {
       try {
         const { data, error } = await supabase
@@ -51,53 +54,74 @@ export const Login = ({ onLogin }: LoginProps) => {
         if (error) throw error;
 
         if (data) {
-          // Check device approval status from MySQL using fingerprint
-          const deviceData = await mysqlApi.devices.getByFingerprint(deviceFingerprint);
+          // Try to check device approval status from MySQL
+          let deviceData = null;
+          try {
+            deviceData = await mysqlApi.devices.getByFingerprint(deviceFingerprint);
+          } catch (apiError) {
+            console.warn('MySQL API unavailable, using cached approval:', apiError);
+            // Fall back to cached approval if API fails
+          }
 
-          if (!deviceData) {
-            // New device - register it and get backend-generated ID
-            const deviceName = getDeviceName();
-            
-            const newDevice = await mysqlApi.devices.register({
-              device_fingerprint: deviceFingerprint,
-              user_id: userId,
-              approved: false,
-              device_info: deviceName,
-            });
-
-            if (!newDevice || !newDevice.id) {
-              toast.error('Failed to register device');
+          // If API is available, sync with backend
+          if (deviceData !== null) {
+            if (!deviceData.approved) {
+              setDeviceStatus('pending');
+              setCurrentDeviceId(deviceFingerprint);
+              // Update cache
+              await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, false);
+              toast.error('Device pending approval. Contact administrator.');
               setLoading(false);
               return;
             }
+
+            setDeviceStatus('approved');
+            // Update cache with latest approval status
+            await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, true);
             
-            console.log('Device registered with ID:', newDevice.id);
-            // Cache the pending status using fingerprint as key
-            await saveDeviceApproval(deviceFingerprint, newDevice.id, userId, false);
-            setDeviceStatus('pending');
-            setCurrentDeviceId(deviceFingerprint);
-            toast.error('New device detected. Awaiting admin approval.');
-            setLoading(false);
-            return;
+            // Update last sync timestamp (best effort)
+            try {
+              await mysqlApi.devices.update(deviceData.id, { user_id: userId });
+            } catch (updateError) {
+              console.warn('Failed to update device sync time:', updateError);
+            }
+          } else if (!deviceData && !cachedApproval) {
+            // New device - try to register it
+            try {
+              const deviceName = getDeviceName();
+              const newDevice = await mysqlApi.devices.register({
+                device_fingerprint: deviceFingerprint,
+                user_id: userId,
+                approved: false,
+                device_info: deviceName,
+              });
+
+              if (newDevice && newDevice.id) {
+                console.log('Device registered with ID:', newDevice.id);
+                await saveDeviceApproval(deviceFingerprint, newDevice.id, userId, false);
+                setDeviceStatus('pending');
+                setCurrentDeviceId(deviceFingerprint);
+                toast.error('New device detected. Awaiting admin approval.');
+                setLoading(false);
+                return;
+              }
+            } catch (registerError) {
+              console.warn('Failed to register device, may need internet:', registerError);
+              toast.error('Cannot register device. Check internet connection.');
+              setLoading(false);
+              return;
+            }
+          } else if (cachedApproval) {
+            // Use cached approval when API is unavailable
+            if (!cachedApproval.approved) {
+              setDeviceStatus('pending');
+              setCurrentDeviceId(deviceFingerprint);
+              toast.warning('Using cached device status. Device pending approval.');
+              setLoading(false);
+              return;
+            }
+            setDeviceStatus('approved');
           }
-
-          if (!deviceData.approved) {
-            setDeviceStatus('pending');
-            setCurrentDeviceId(deviceFingerprint);
-            // Cache the pending status
-            await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, false);
-            toast.error('Device pending approval. Contact administrator.');
-            setLoading(false);
-            return;
-          }
-
-          setDeviceStatus('approved');
-          
-          // Cache the approved status locally using fingerprint as key
-          await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, true);
-
-          // Update last sync timestamp
-          await mysqlApi.devices.update(deviceData.id, { user_id: userId });
 
           const userWithPassword = { ...data, password };
           saveUser(userWithPassword);
@@ -108,7 +132,7 @@ export const Login = ({ onLogin }: LoginProps) => {
         }
       } catch (err) {
         console.error('Login error', err);
-        toast.error('Login failed (online)');
+        toast.error('Login failed. Check credentials.');
       }
     } else {
       console.log('🔒 Offline login attempt...');

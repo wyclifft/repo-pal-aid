@@ -11,6 +11,7 @@ interface ApiResponse<T> {
   error?: string;
   details?: string;
   message?: string;
+  offline?: boolean;
 }
 
 /**
@@ -45,6 +46,15 @@ async function apiRequest<T>(
     }
 
     const data = await response.json();
+
+    // Handle 503 (Service Unavailable) gracefully for offline mode
+    if (response.status === 503 && data.offline) {
+      return {
+        success: false,
+        error: data.message || 'Service temporarily unavailable',
+        offline: true,
+      };
+    }
 
     if (!response.ok) {
       throw new Error(data.error || `HTTP error! status: ${response.status}`);
