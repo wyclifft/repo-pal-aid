@@ -102,7 +102,14 @@ export const useIndexedDB = () => {
     if (!db) return;
     const tx = db.transaction('receipts', 'readwrite');
     const store = tx.objectStore('receipts');
-    store.put(receipt);
+    
+    // Ensure orderId exists for IndexedDB key
+    const receiptWithId = {
+      ...receipt,
+      orderId: receipt.orderId || Date.now(),
+    };
+    
+    store.put(receiptWithId);
   }, [db]);
 
   const getUnsyncedReceipts = useCallback((): Promise<MilkCollection[]> => {

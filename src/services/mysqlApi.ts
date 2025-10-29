@@ -20,6 +20,15 @@ async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
+  // Check if offline before attempting fetch
+  if (!navigator.onLine) {
+    console.warn(`[OFFLINE] API request skipped: ${endpoint}`);
+    return {
+      success: false,
+      error: 'No internet connection. Operating in offline mode.',
+    };
+  }
+
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
