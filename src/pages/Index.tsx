@@ -80,15 +80,13 @@ const Index = () => {
           });
 
           if (updated) {
-            const updatedData: MilkCollection = {
+            toast.success(`Weight accumulated: ${newWeight.toFixed(1)} Kg total`);
+            setCurrentReceipt({
               ...existing,
               weight: newWeight,
               collection_date: new Date(),
               synced: true,
-            };
-            saveReceipt(updatedData);
-            toast.success(`Weight accumulated: ${newWeight.toFixed(1)} Kg total`);
-            setCurrentReceipt(updatedData);
+            });
           } else {
             throw new Error('Failed to update MySQL record');
           }
@@ -115,7 +113,6 @@ const Index = () => {
             session: session as 'AM' | 'PM'
           });
           if (created) {
-            saveReceipt({ ...milkData, synced: true });
             toast.success('Collection saved and synced to MySQL');
             setCurrentReceipt({ ...milkData, synced: true });
           } else {

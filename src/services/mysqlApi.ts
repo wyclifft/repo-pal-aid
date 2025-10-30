@@ -191,7 +191,7 @@ export const milkCollectionApi = {
    * Get milk collection by reference number
    */
   getByReference: async (referenceNo: string): Promise<MilkCollection | null> => {
-    const response = await apiRequest<MilkCollection>(`/milk-collection/ref/${referenceNo}`);
+    const response = await apiRequest<MilkCollection>(`/milk-collection/${referenceNo}`);
     return response.data || null;
   },
 
@@ -215,30 +215,30 @@ export const milkCollectionApi = {
   /**
    * Create new milk collection
    */
-  create: async (collection: Omit<MilkCollection, 'id' | 'created_at' | 'updated_at'>): Promise<MilkCollection | null> => {
-    const response = await apiRequest<MilkCollection>('/milk-collection', {
+  create: async (collection: Omit<MilkCollection, 'id' | 'created_at' | 'updated_at'>): Promise<boolean> => {
+    const response = await apiRequest<any>('/milk-collection', {
       method: 'POST',
       body: JSON.stringify(collection),
     });
-    return response.data || null;
+    return response.success || false;
   },
 
   /**
    * Update milk collection (for weight accumulation)
    */
-  update: async (referenceNo: string, updates: { weight: number; collection_date?: Date | string }): Promise<MilkCollection | null> => {
-    const response = await apiRequest<MilkCollection>(`/milk-collection/ref/${referenceNo}`, {
+  update: async (referenceNo: string, updates: { weight: number; collection_date?: Date | string }): Promise<boolean> => {
+    const response = await apiRequest<any>(`/milk-collection/${referenceNo}`, {
       method: 'PUT',
       body: JSON.stringify(updates),
     });
-    return response.data || null;
+    return response.success || false;
   },
 
   /**
    * Delete milk collection
    */
   delete: async (referenceNo: string): Promise<boolean> => {
-    const response = await apiRequest(`/milk-collection/ref/${referenceNo}`, {
+    const response = await apiRequest(`/milk-collection/${referenceNo}`, {
       method: 'DELETE',
     });
     return response.success;

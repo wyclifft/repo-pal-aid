@@ -79,31 +79,31 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
         if (existing && existing.reference_no) {
           // Accumulate weight to existing record
           const newWeight = parseFloat((Number(existing.weight || 0) + totalWeight).toFixed(2));
-          const updated = await mysqlApi.milkCollection.update(existing.reference_no, {
+          const updateSuccess = await mysqlApi.milkCollection.update(existing.reference_no, {
             weight: newWeight,
             collection_date: new Date()
           });
 
-          if (updated) {
+          if (updateSuccess) {
             // Delete all local receipts in this group after successful sync
-            receipts.forEach(receipt => {
-              deleteReceipt(receipt.orderId!);
-            });
+            for (const receipt of receipts) {
+              await deleteReceipt(receipt.orderId!);
+            }
             console.log(`✅ Accumulated ${receipts.length} collections for ${firstReceipt.farmer_id}: ${newWeight} Kg total`);
           } else {
-            console.error('Update error: Failed to update MySQL record');
+            console.error('❌ Update failed for MySQL record');
           }
         } else {
           // Insert new record with accumulated weight
-          const created = await mysqlApi.milkCollection.create(milkData);
-          if (created) {
+          const createSuccess = await mysqlApi.milkCollection.create(milkData);
+          if (createSuccess) {
             // Delete all local receipts in this group after successful sync
-            receipts.forEach(receipt => {
-              deleteReceipt(receipt.orderId!);
-            });
+            for (const receipt of receipts) {
+              await deleteReceipt(receipt.orderId!);
+            }
             console.log(`✅ Synced ${receipts.length} collections for ${firstReceipt.farmer_id}: ${totalWeight} Kg total`);
           } else {
-            console.error('Insert error: Failed to create MySQL record');
+            console.error('❌ Insert failed for MySQL record');
           }
         }
       } catch (err) {
