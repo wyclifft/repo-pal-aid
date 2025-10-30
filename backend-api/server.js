@@ -193,15 +193,13 @@ const server = http.createServer(async (req, res) => {
       const [existing] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
       
       if (existing.length > 0) {
-        // Update existing device
-        await pool.query('UPDATE approved_devices SET user_id = ?, approved = ?, device_info = ?, last_sync = NOW() WHERE device_fingerprint = ?',
-          [body.user_id, body.approved ?? false, body.device_info || null, body.device_fingerprint]);
-        return sendJSON(res, { success: true, data: existing[0], message: 'Device updated' });
+        // Device exists - return existing device WITHOUT changing approved status
+        return sendJSON(res, { success: true, data: existing[0], message: 'Device already registered' });
       } else {
-        // Insert new device - MySQL auto-generates id
+        // Insert new device - ALWAYS set approved to FALSE for new devices
         const [result] = await pool.query(
-          'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, ?, ?, NOW())',
-          [body.device_fingerprint, body.user_id, body.approved ?? false, body.device_info || null]
+          'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, FALSE, ?, NOW())',
+          [body.device_fingerprint, body.user_id, body.device_info || null]
         );
         const [newDevice] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [result.insertId]);
         return sendJSON(res, { success: true, data: newDevice[0], message: 'Device registered' }, 201);
@@ -213,11 +211,12 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const updates = ['last_sync = NOW()'];
       const values = [];
-      if (body.approved !== undefined) { updates.push('approved = ?'); values.push(body.approved); }
+      // ONLY allow updating user_id and device_info - NEVER approved status
       if (body.user_id) { updates.push('user_id = ?'); values.push(body.user_id); }
+      if (body.device_info) { updates.push('device_info = ?'); values.push(body.device_info); }
       values.push(deviceId);
       await pool.query(`UPDATE approved_devices SET ${updates.join(', ')} WHERE id = ?`, values);
-      return sendJSON(res, { success: true, message: 'Device updated' });
+      return sendJSON(res, { success: true, message: 'Device synced' });
     }
 
     if (path.startsWith('/api/devices/') && method === 'DELETE') {
