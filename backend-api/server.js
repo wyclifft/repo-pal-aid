@@ -157,13 +157,13 @@ const server = http.createServer(async (req, res) => {
       const updates = [];
       const values = [];
       if (body.weight !== undefined) {
-        updates.push('weight = ?', 'total_amount = weight * price_per_liter');
+        updates.push('weight = ?');
         values.push(body.weight);
       }
       if (body.collection_date) { updates.push('collection_date = ?'); values.push(body.collection_date); }
       if (updates.length === 0) return sendJSON(res, { success: false, error: 'No fields to update' }, 400);
       values.push(ref);
-      await pool.query(`UPDATE milk_collection SET ${updates.join(', ')} WHERE reference_no = ?`, values);
+      await pool.query(`UPDATE milk_collection SET ${updates.join(', ')}, updated_at = NOW() WHERE reference_no = ?`, values);
       return sendJSON(res, { success: true, message: 'Collection updated' });
     }
 
