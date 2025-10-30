@@ -18,6 +18,7 @@ const Index = () => {
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
   const [route, setRoute] = useState('');
+  const [routeName, setRouteName] = useState('');
   const [session, setSession] = useState('');
   const [searchValue, setSearchValue] = useState('');
 
@@ -48,6 +49,7 @@ const Index = () => {
     setFarmerId(farmer.farmer_id);
     setFarmerName(farmer.name);
     setRoute(farmer.route);
+    setRouteName(farmer.route_name || '');
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
   };
 
@@ -97,6 +99,7 @@ const Index = () => {
             farmer_id: farmerId,
             farmer_name: farmerName,
             route,
+            route_name: routeName,
             session: session as 'AM' | 'PM',
             weight: parseFloat(Number(weight).toFixed(2)),
             collected_by: currentUser ? currentUser.user_id : null,
@@ -127,6 +130,7 @@ const Index = () => {
           farmer_id: farmerId,
           farmer_name: farmerName,
           route,
+          route_name: routeName,
           session: session as 'AM' | 'PM',
           weight: parseFloat(Number(weight).toFixed(2)),
           collected_by: currentUser ? currentUser.user_id : null,
@@ -148,6 +152,7 @@ const Index = () => {
         farmer_id: farmerId,
         farmer_name: farmerName,
         route,
+        route_name: routeName,
         session: session as 'AM' | 'PM',
         weight: parseFloat(Number(weight).toFixed(2)),
         collected_by: currentUser ? currentUser.user_id : null,

@@ -33,12 +33,15 @@ CREATE TABLE IF NOT EXISTS farmers (
 -- 3. Create milk_collection table
 CREATE TABLE IF NOT EXISTS milk_collection (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  referenceNo VARCHAR(100) UNIQUE NOT NULL,
+  reference_no VARCHAR(100) UNIQUE NOT NULL,
   farmer_id VARCHAR(50) NOT NULL,
+  farmer_name VARCHAR(255) DEFAULT NULL,
   session ENUM('AM', 'PM') NOT NULL,
+  route_name VARCHAR(255) DEFAULT NULL,
   weight DECIMAL(10,2) NOT NULL,
-  price DECIMAL(10,2) NOT NULL,
-  total_amount DECIMAL(10,2) GENERATED ALWAYS AS (weight * price) STORED,
+  clerk_name VARCHAR(100) DEFAULT NULL,
+  price_per_liter DECIMAL(10,2) NOT NULL,
+  total_amount DECIMAL(10,2) GENERATED ALWAYS AS (weight * price_per_liter) STORED,
   collection_date DATE NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -46,7 +49,7 @@ CREATE TABLE IF NOT EXISTS milk_collection (
   INDEX idx_farmer_id (farmer_id),
   INDEX idx_session (session),
   INDEX idx_collection_date (collection_date),
-  INDEX idx_reference (referenceNo)
+  INDEX idx_reference (reference_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================

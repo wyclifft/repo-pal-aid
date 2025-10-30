@@ -128,18 +128,37 @@ const server = http.createServer(async (req, res) => {
 
     if (path.startsWith('/api/milk-collection/') && method === 'GET') {
       const ref = path.split('/')[3];
-      const [rows] = await pool.query('SELECT * FROM milk_collection WHERE referenceNo = ?', [ref]);
+      const [rows] = await pool.query('SELECT * FROM milk_collection WHERE reference_no = ?', [ref]);
       if (rows.length === 0) return sendJSON(res, { success: false, error: 'Collection not found' }, 404);
       return sendJSON(res, { success: true, data: rows[0] });
     }
 
     if (path === '/api/milk-collection' && method === 'POST') {
       const body = await parseBody(req);
+    
+      // ✅ 1. Auto-generate reference_no if missing
+      const reference_no = body.reference_no || `REF-${Date.now()}`;
+    
+      // ✅ 2. Use correct column name: price_per_liter
+      const price_per_liter = body.price_per_liter || body.price || 0;
+    
+      // ✅ 3. Auto-calculate total_amount if not provided
+      const total_amount = body.total_amount || (body.weight ? (body.weight * price_per_liter) : 0);
+    
+      // ✅ 4. Extract full names for receipt display
+      const farmer_name = body.farmer_name || null;
+      const route_name = body.route_name || null;
+      const clerk_name = body.clerk_name || body.collected_by || null;
+    
+      // ✅ 5. Insert into DB safely
       await pool.query(
-        'INSERT INTO milk_collection (referenceNo, farmer_id, session, weight, price, total_amount, collection_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [body.referenceNo, body.farmer_id, body.session, body.weight, body.price, body.total_amount, body.collection_date]
+        `INSERT INTO milk_collection 
+          (reference_no, farmer_id, farmer_name, session, route_name, weight, clerk_name, price_per_liter, total_amount, collection_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [reference_no, body.farmer_id, farmer_name, body.session, route_name, body.weight, clerk_name, price_per_liter, total_amount, body.collection_date]
       );
-      return sendJSON(res, { success: true, message: 'Collection created' }, 201);
+    
+      return sendJSON(res, { success: true, message: 'Collection created', reference_no }, 201);
     }
 
     if (path.startsWith('/api/milk-collection/') && method === 'PUT') {
@@ -148,19 +167,19 @@ const server = http.createServer(async (req, res) => {
       const updates = [];
       const values = [];
       if (body.weight !== undefined) {
-        updates.push('weight = ?', 'total_amount = weight * price');
+        updates.push('weight = ?', 'total_amount = weight * price_per_liter');
         values.push(body.weight);
       }
       if (body.collection_date) { updates.push('collection_date = ?'); values.push(body.collection_date); }
       if (updates.length === 0) return sendJSON(res, { success: false, error: 'No fields to update' }, 400);
       values.push(ref);
-      await pool.query(`UPDATE milk_collection SET ${updates.join(', ')} WHERE referenceNo = ?`, values);
+      await pool.query(`UPDATE milk_collection SET ${updates.join(', ')} WHERE reference_no = ?`, values);
       return sendJSON(res, { success: true, message: 'Collection updated' });
     }
 
     if (path.startsWith('/api/milk-collection/') && method === 'DELETE') {
       const ref = path.split('/')[3];
-      await pool.query('DELETE FROM milk_collection WHERE referenceNo = ?', [ref]);
+      await pool.query('DELETE FROM milk_collection WHERE reference_no = ?', [ref]);
       return sendJSON(res, { success: true, message: 'Collection deleted' });
     }
 
