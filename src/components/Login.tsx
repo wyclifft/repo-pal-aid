@@ -54,6 +54,38 @@ export const Login = ({ onLogin }: LoginProps) => {
         if (error) throw error;
 
         if (data) {
+          // Check if device was registered offline (has null backend_id)
+          if (cachedApproval && cachedApproval.backend_id === null) {
+            console.log('📡 Syncing offline-registered device to backend...');
+            try {
+              const deviceName = getDeviceName();
+              const newDevice = await mysqlApi.devices.register({
+                device_fingerprint: deviceFingerprint,
+                user_id: userId,
+                approved: false,
+                device_info: deviceName,
+              });
+
+              if (newDevice && newDevice.id) {
+                console.log('✅ Device synced with backend ID:', newDevice.id);
+                await saveDeviceApproval(deviceFingerprint, newDevice.id, userId, false);
+                setDeviceStatus('pending');
+                setCurrentDeviceId(deviceFingerprint);
+                toast.warning('Device synced. Awaiting admin approval.');
+                setLoading(false);
+                return;
+              }
+            } catch (syncError) {
+              console.warn('Failed to sync device to backend:', syncError);
+              // Continue with cached offline state
+              setDeviceStatus('pending');
+              setCurrentDeviceId(deviceFingerprint);
+              toast.warning('Using cached device status. Device pending approval.');
+              setLoading(false);
+              return;
+            }
+          }
+
           // Try to check device approval status from MySQL
           let deviceData = null;
           try {
@@ -154,7 +186,15 @@ export const Login = ({ onLogin }: LoginProps) => {
         const cachedApproval = await getDeviceApproval(deviceFingerprint);
         
         if (!cachedApproval) {
-          toast.error('Device not registered. Connect to internet to register this device.');
+          // Register device offline - will sync when online
+          console.log('📱 Registering device offline...');
+          
+          // Save to IndexedDB with pending status and null backend ID (will sync when online)
+          await saveDeviceApproval(deviceFingerprint, null, userId, false);
+          
+          setDeviceStatus('pending');
+          setCurrentDeviceId(deviceFingerprint);
+          toast.warning('Device registered offline. Requires admin approval when online.');
           setLoading(false);
           return;
         }
@@ -168,7 +208,7 @@ export const Login = ({ onLogin }: LoginProps) => {
         if (!cachedApproval.approved) {
           setDeviceStatus('pending');
           setCurrentDeviceId(deviceFingerprint);
-          toast.error('Device not approved. Connect to internet to check approval status.');
+          toast.warning('Device pending approval. Will check status when online.');
           setLoading(false);
           return;
         }
