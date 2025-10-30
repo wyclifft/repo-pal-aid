@@ -29,6 +29,10 @@ export const ReceiptModal = ({ receipt, open, onClose }: ReceiptModalProps) => {
                 <td className="py-2">{receipt.farmer_name}</td>
               </tr>
               <tr className="border-b">
+                <th className="text-left py-2 font-semibold">Route</th>
+                <td className="py-2">{receipt.route}</td>
+              </tr>
+              <tr className="border-b">
                 <th className="text-left py-2 font-semibold">Farmer ID</th>
                 <td className="py-2">{receipt.farmer_id}</td>
               </tr>

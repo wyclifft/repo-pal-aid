@@ -55,6 +55,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
         reference_no: firstReceipt.reference_no || `MC-${dateStr}-${firstReceipt.farmer_id}-${firstReceipt.session}`,
         farmer_id: firstReceipt.farmer_id,
         farmer_name: firstReceipt.farmer_name || firstReceipt.farmer_id || 'Unknown',
+        route: firstReceipt.route || 'Unknown',
         session: firstReceipt.session as 'AM' | 'PM',
         weight: parseFloat(totalWeight.toFixed(2)),
         clerk_name: firstReceipt.clerk_name,

@@ -143,9 +143,9 @@ const server = http.createServer(async (req, res) => {
     
       await pool.query(
         `INSERT INTO milk_collection 
-          (reference_no, farmer_id, farmer_name, session, weight, clerk_name, collection_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [reference_no, body.farmer_id, farmer_name, body.session, body.weight, clerk_name, body.collection_date]
+          (reference_no, farmer_id, farmer_name, route, session, weight, clerk_name, collection_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [reference_no, body.farmer_id, farmer_name, body.route, body.session, body.weight, clerk_name, body.collection_date]
       );
     
       return sendJSON(res, { success: true, message: 'Collection created', reference_no }, 201);

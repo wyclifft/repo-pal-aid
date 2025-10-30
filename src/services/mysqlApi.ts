@@ -145,6 +145,7 @@ export interface MilkCollection {
   reference_no?: string;
   farmer_id: string;
   farmer_name: string;
+  route: string;
   session: 'AM' | 'PM';
   weight: number;
   clerk_name: string;
