@@ -55,15 +55,9 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
         reference_no: firstReceipt.reference_no || `MC-${dateStr}-${firstReceipt.farmer_id}-${firstReceipt.session}`,
         farmer_id: firstReceipt.farmer_id,
         farmer_name: firstReceipt.farmer_name || firstReceipt.farmer_id || 'Unknown',
-        route: firstReceipt.route,
-        route_name: firstReceipt.route_name,
-        member_route: firstReceipt.member_route,
         session: firstReceipt.session as 'AM' | 'PM',
         weight: parseFloat(totalWeight.toFixed(2)),
-        collected_by: firstReceipt.collected_by,
         clerk_name: firstReceipt.clerk_name,
-        price_per_liter: Number(firstReceipt.price_per_liter || 0),
-        total_amount: Number(firstReceipt.total_amount || 0),
         collection_date: firstReceipt.collection_date,
       };
 

@@ -136,26 +136,16 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/milk-collection' && method === 'POST') {
       const body = await parseBody(req);
     
-      // ✅ 1. Auto-generate reference_no if missing
+      // Auto-generate reference_no if missing
       const reference_no = body.reference_no || `REF-${Date.now()}`;
-    
-      // ✅ 2. Use correct column name: price_per_liter
-      const price_per_liter = body.price_per_liter || body.price || 0;
-    
-      // ✅ 3. Auto-calculate total_amount if not provided
-      const total_amount = body.total_amount || (body.weight ? (body.weight * price_per_liter) : 0);
-    
-      // ✅ 4. Extract full names for receipt display
       const farmer_name = body.farmer_name || null;
-      const route_name = body.route_name || null;
-      const clerk_name = body.clerk_name || body.collected_by || null;
+      const clerk_name = body.clerk_name || null;
     
-      // ✅ 5. Insert into DB safely
       await pool.query(
         `INSERT INTO milk_collection 
-          (reference_no, farmer_id, farmer_name, session, route_name, weight, clerk_name, price_per_liter, total_amount, collection_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [reference_no, body.farmer_id, farmer_name, body.session, route_name, body.weight, clerk_name, price_per_liter, total_amount, body.collection_date]
+          (reference_no, farmer_id, farmer_name, session, weight, clerk_name, collection_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [reference_no, body.farmer_id, farmer_name, body.session, body.weight, clerk_name, body.collection_date]
       );
     
       return sendJSON(res, { success: true, message: 'Collection created', reference_no }, 201);

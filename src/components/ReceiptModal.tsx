@@ -25,12 +25,12 @@ export const ReceiptModal = ({ receipt, open, onClose }: ReceiptModalProps) => {
           <table className="w-full">
             <tbody>
               <tr className="border-b">
-                <th className="text-left py-2 font-semibold">Farmer</th>
-                <td className="py-2">{receipt.farmer_name} ({receipt.farmer_id})</td>
+                <th className="text-left py-2 font-semibold">Farmer Name</th>
+                <td className="py-2">{receipt.farmer_name}</td>
               </tr>
               <tr className="border-b">
-                <th className="text-left py-2 font-semibold">Route</th>
-                <td className="py-2">{receipt.route_name || receipt.route}</td>
+                <th className="text-left py-2 font-semibold">Farmer ID</th>
+                <td className="py-2">{receipt.farmer_id}</td>
               </tr>
               <tr className="border-b">
                 <th className="text-left py-2 font-semibold">Session</th>
@@ -42,7 +42,7 @@ export const ReceiptModal = ({ receipt, open, onClose }: ReceiptModalProps) => {
               </tr>
               <tr className="border-b">
                 <th className="text-left py-2 font-semibold">Collector</th>
-                <td className="py-2">{receipt.clerk_name || receipt.collected_by}</td>
+                <td className="py-2">{receipt.clerk_name}</td>
               </tr>
               <tr>
                 <th className="text-left py-2 font-semibold">Date</th>

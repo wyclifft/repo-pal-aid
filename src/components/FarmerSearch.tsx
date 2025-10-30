@@ -122,7 +122,6 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
               <div className="text-sm">{farmer.name}</div>
               <div className="text-xs opacity-75">
                 Route: {farmer.route || 'N/A'}
-                {farmer.route_name ? ` - ${farmer.route_name}` : ''}
               </div>
             </div>
           ))}

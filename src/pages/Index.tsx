@@ -18,7 +18,6 @@ const Index = () => {
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
   const [route, setRoute] = useState('');
-  const [routeName, setRouteName] = useState('');
   const [session, setSession] = useState('');
   const [searchValue, setSearchValue] = useState('');
 
@@ -49,7 +48,6 @@ const Index = () => {
     setFarmerId(farmer.farmer_id);
     setFarmerName(farmer.name);
     setRoute(farmer.route);
-    setRouteName(farmer.route_name || '');
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
   };
 
@@ -98,14 +96,9 @@ const Index = () => {
             reference_no: referenceNo,
             farmer_id: farmerId,
             farmer_name: farmerName,
-            route,
-            route_name: routeName,
             session: session as 'AM' | 'PM',
             weight: parseFloat(Number(weight).toFixed(2)),
-            collected_by: currentUser ? currentUser.user_id : null,
             clerk_name: currentUser ? currentUser.user_id : 'unknown',
-            price_per_liter: 0,
-            total_amount: 0,
             collection_date: new Date(),
             orderId: Date.now(),
             synced: false,
@@ -129,14 +122,9 @@ const Index = () => {
           reference_no: referenceNo,
           farmer_id: farmerId,
           farmer_name: farmerName,
-          route,
-          route_name: routeName,
           session: session as 'AM' | 'PM',
           weight: parseFloat(Number(weight).toFixed(2)),
-          collected_by: currentUser ? currentUser.user_id : null,
           clerk_name: currentUser ? currentUser.user_id : 'unknown',
-          price_per_liter: 0,
-          total_amount: 0,
           collection_date: new Date(),
           orderId: Date.now(),
           synced: false,
@@ -151,14 +139,9 @@ const Index = () => {
         reference_no: referenceNo,
         farmer_id: farmerId,
         farmer_name: farmerName,
-        route,
-        route_name: routeName,
         session: session as 'AM' | 'PM',
         weight: parseFloat(Number(weight).toFixed(2)),
-        collected_by: currentUser ? currentUser.user_id : null,
         clerk_name: currentUser ? currentUser.user_id : 'unknown',
-        price_per_liter: 0,
-        total_amount: 0,
         collection_date: new Date(),
         orderId: Date.now(),
         synced: false,
