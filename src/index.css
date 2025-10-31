@@ -103,11 +103,6 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 
-  /* Thermal print styles for Z Report */
-  .thermal-print {
-    display: none;
-  }
-
   @media print {
     body {
       @apply bg-white text-black;
@@ -115,17 +110,13 @@ All colors MUST be HSL.
       padding: 0 !important;
     }
     
-    .print\:hidden {
+    .print\:hidden,
+    .screen-only {
       display: none !important;
     }
     
     .print\:block {
       display: block !important;
-    }
-    
-    /* Hide everything except thermal print */
-    body > *:not(.thermal-print) {
-      display: none !important;
     }
     
     .thermal-print {
@@ -136,8 +127,8 @@ All colors MUST be HSL.
       font-family: 'Courier New', monospace;
       font-size: 10pt;
       line-height: 1.3;
-      color: #000;
-      background: #fff;
+      color: #000 !important;
+      background: #fff !important;
     }
     
     .thermal-header {
@@ -167,5 +158,10 @@ All colors MUST be HSL.
       size: 58mm auto;
       margin: 0;
     }
+  }
+  
+  /* Hide thermal print on screen */
+  .thermal-print {
+    display: none;
   }
 }
