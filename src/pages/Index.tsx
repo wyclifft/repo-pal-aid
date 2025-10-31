@@ -290,7 +290,18 @@ const Index = () => {
           />
           <select
             value={session}
-            onChange={(e) => setSession(e.target.value)}
+            onChange={(e) => {
+              const selectedSession = e.target.value;
+              const currentHour = new Date().getHours();
+              
+              // Block AM selection after 12 PM (noon)
+              if (selectedSession === 'AM' && currentHour >= 12) {
+                toast.error('Cannot select AM session after 12:00 PM');
+                return;
+              }
+              
+              setSession(selectedSession);
+            }}
             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
           >
             <option value="">Select Session</option>
