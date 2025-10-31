@@ -4,7 +4,7 @@ import { mysqlApi, type ZReportData } from '@/services/mysqlApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Download, Printer, Calendar, Receipt } from 'lucide-react';
+import { ArrowLeft, Download, Printer, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF, printThermalZReport } from '@/utils/pdfExport';
 
@@ -69,20 +69,16 @@ const ZReport = () => {
   };
 
   const handlePrint = () => {
-    window.print();
+    if (reportData) {
+      printThermalZReport(reportData);
+      toast.success('Thermal print initiated');
+    }
   };
 
   const handleDownloadPDF = () => {
     if (reportData) {
       generateZReportPDF(reportData);
       toast.success('PDF downloaded successfully');
-    }
-  };
-
-  const handleThermalPrint = () => {
-    if (reportData) {
-      printThermalZReport(reportData);
-      toast.success('Thermal print initiated');
     }
   };
 
@@ -105,10 +101,6 @@ const ZReport = () => {
           </Button>
           <h1 className="text-xl font-bold text-[#667eea]">Z Report</h1>
           <div className="flex gap-2">
-            <Button onClick={handleThermalPrint} variant="outline" size="sm">
-              <Receipt className="mr-2 h-4 w-4" />
-              58mm
-            </Button>
             <Button onClick={handlePrint} variant="outline" size="sm">
               <Printer className="mr-2 h-4 w-4" />
               Print
