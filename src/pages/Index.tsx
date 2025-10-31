@@ -233,6 +233,15 @@ const Index = () => {
           >
             📋 Receipts
           </button>
+          <button
+            onClick={() => {
+              setSidebarOpen(false);
+              window.location.href = '/z-report';
+            }}
+            className="block w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+          >
+            📊 Z Report
+          </button>
         </div>
       </nav>
 

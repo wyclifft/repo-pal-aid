@@ -305,9 +305,56 @@ export const devicesApi = {
   },
 };
 
+// ==================== Z-REPORT API ====================
+
+export interface ZReportData {
+  date: string;
+  totals: {
+    liters: number;
+    farmers: number;
+    entries: number;
+  };
+  byRoute: {
+    [route: string]: {
+      AM: MilkCollection[];
+      PM: MilkCollection[];
+      total: number;
+    };
+  };
+  bySession: {
+    AM: {
+      entries: number;
+      liters: number;
+    };
+    PM: {
+      entries: number;
+      liters: number;
+    };
+  };
+  byCollector: {
+    [collector: string]: {
+      farmers: number;
+      entries: number;
+      liters: number;
+    };
+  };
+  collections: MilkCollection[];
+}
+
+export const zReportApi = {
+  /**
+   * Get Z Report for a specific date
+   */
+  get: async (date: string): Promise<ZReportData | null> => {
+    const response = await apiRequest<ZReportData>(`/z-report?date=${date}`);
+    return response.data || null;
+  },
+};
+
 // Export all APIs
 export const mysqlApi = {
   farmers: farmersApi,
   milkCollection: milkCollectionApi,
   devices: devicesApi,
+  zReport: zReportApi,
 };

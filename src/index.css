@@ -102,4 +102,22 @@ All colors MUST be HSL.
   body {
     @apply bg-background text-foreground;
   }
+
+  @media print {
+    body {
+      @apply bg-white text-black;
+    }
+    
+    .print\:hidden {
+      display: none !important;
+    }
+    
+    .print\:block {
+      display: block !important;
+    }
+    
+    @page {
+      margin: 2cm;
+    }
+  }
 }

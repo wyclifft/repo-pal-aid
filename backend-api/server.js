@@ -173,6 +173,82 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, message: 'Collection deleted' });
     }
 
+    // Z-Report endpoint
+    if (path === '/api/z-report' && method === 'GET') {
+      const date = parsedUrl.query.date || new Date().toISOString().split('T')[0];
+      
+      // Fetch all collections for the specified date
+      const [collections] = await pool.query(
+        `SELECT * FROM milk_collection 
+         WHERE DATE(collection_date) = ? 
+         ORDER BY session, route, farmer_name`,
+        [date]
+      );
+
+      // Calculate totals
+      const totalLiters = collections.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0);
+      const totalFarmers = new Set(collections.map(c => c.farmer_id)).size;
+      const totalEntries = collections.length;
+
+      // Group by route
+      const byRoute = collections.reduce((acc, c) => {
+        if (!acc[c.route]) {
+          acc[c.route] = { AM: [], PM: [], total: 0 };
+        }
+        acc[c.route][c.session].push(c);
+        acc[c.route].total += parseFloat(c.weight || 0);
+        return acc;
+      }, {});
+
+      // Group by session
+      const bySession = {
+        AM: collections.filter(c => c.session === 'AM'),
+        PM: collections.filter(c => c.session === 'PM')
+      };
+
+      // Group by collector
+      const byCollector = collections.reduce((acc, c) => {
+        const collector = c.clerk_name || 'Unknown';
+        if (!acc[collector]) {
+          acc[collector] = { entries: 0, liters: 0, farmers: new Set() };
+        }
+        acc[collector].entries++;
+        acc[collector].liters += parseFloat(c.weight || 0);
+        acc[collector].farmers.add(c.farmer_id);
+        return acc;
+      }, {});
+
+      // Convert collector farmers Set to count
+      Object.keys(byCollector).forEach(key => {
+        byCollector[key].farmers = byCollector[key].farmers.size;
+      });
+
+      return sendJSON(res, {
+        success: true,
+        data: {
+          date,
+          totals: {
+            liters: parseFloat(totalLiters.toFixed(2)),
+            farmers: totalFarmers,
+            entries: totalEntries
+          },
+          byRoute,
+          bySession: {
+            AM: {
+              entries: bySession.AM.length,
+              liters: parseFloat(bySession.AM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0).toFixed(2))
+            },
+            PM: {
+              entries: bySession.PM.length,
+              liters: parseFloat(bySession.PM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0).toFixed(2))
+            }
+          },
+          byCollector,
+          collections
+        }
+      });
+    }
+
     // Devices endpoints
     if (path.startsWith('/api/devices/fingerprint/') && method === 'GET') {
       const fingerprint = decodeURIComponent(path.split('/')[4]);
