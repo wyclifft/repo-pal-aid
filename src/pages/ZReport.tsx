@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Download, Printer, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
-import { generateZReportPDF, printThermalZReport } from '@/utils/pdfExport';
+import { generateZReportPDF } from '@/utils/pdfExport';
 
 const ZReport = () => {
   const navigate = useNavigate();
@@ -69,10 +69,7 @@ const ZReport = () => {
   };
 
   const handlePrint = () => {
-    if (reportData) {
-      printThermalZReport(reportData);
-      toast.success('Thermal print initiated');
-    }
+    window.print();
   };
 
   const handleDownloadPDF = () => {
@@ -136,10 +133,41 @@ const ZReport = () => {
 
         {reportData && (
           <>
-            {/* Print Header - Only visible on print */}
-            <div className="hidden print:block text-center mb-6">
-              <h1 className="text-3xl font-bold mb-2">Milk Collection Z Report</h1>
-              <p className="text-lg text-gray-600">Date: {new Date(reportData.date).toLocaleDateString()}</p>
+            {/* Thermal Print Layout - Only visible on print */}
+            <div className="thermal-print">
+              <div className="thermal-header">MILK COLLECTION Z REPORT</div>
+              <div className="thermal-divider">--------------------------------</div>
+              <div className="thermal-line">DATE: {new Date(reportData.date).toLocaleDateString()}</div>
+              <div className="thermal-line">TIME: {new Date().toLocaleTimeString()}</div>
+              <div className="thermal-divider">--------------------------------</div>
+              <div className="thermal-section">
+                <div className="thermal-line">Total Entries: {reportData.totals.entries}</div>
+                <div className="thermal-line">Total Farmers: {reportData.totals.farmers}</div>
+                <div className="thermal-line">Total Litres: {reportData.totals.liters.toFixed(2)}</div>
+              </div>
+              <div className="thermal-divider">--------------------------------</div>
+              <div className="thermal-section">
+                <div className="thermal-line thermal-bold">BY SESSION:</div>
+                <div className="thermal-line">Morning: {reportData.bySession.AM.entries} ({reportData.bySession.AM.liters.toFixed(2)}L)</div>
+                <div className="thermal-line">Evening: {reportData.bySession.PM.entries} ({reportData.bySession.PM.liters.toFixed(2)}L)</div>
+              </div>
+              <div className="thermal-divider">--------------------------------</div>
+              <div className="thermal-section">
+                <div className="thermal-line thermal-bold">BY ROUTE:</div>
+                {Object.entries(reportData.byRoute).map(([route, data]) => (
+                  <div key={route} className="thermal-line">{route}: {data.total.toFixed(2)}L</div>
+                ))}
+              </div>
+              <div className="thermal-divider">--------------------------------</div>
+              <div className="thermal-section">
+                <div className="thermal-line thermal-bold">BY COLLECTOR:</div>
+                {Object.entries(reportData.byCollector).map(([collector, data]) => (
+                  <div key={collector} className="thermal-line">{collector}: {data.liters.toFixed(2)}L</div>
+                ))}
+              </div>
+              <div className="thermal-divider">--------------------------------</div>
+              <div className="thermal-line">Generated: {new Date().toLocaleString()}</div>
+              <div className="thermal-divider">--------------------------------</div>
             </div>
 
             {/* Summary Totals */}
