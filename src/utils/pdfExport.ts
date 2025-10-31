@@ -1,5 +1,85 @@
 import type { ZReportData } from '@/services/mysqlApi';
 
+export const printThermalZReport = (reportData: ZReportData) => {
+  const printWindow = window.open('', '', 'width=300,height=600');
+  if (!printWindow) return;
+
+  const content = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Z Report - Thermal Print</title>
+      <style>
+        @media print {
+          @page {
+            size: 58mm auto;
+            margin: 0;
+          }
+        }
+        body {
+          width: 58mm;
+          margin: 0;
+          padding: 4mm;
+          font-family: 'Courier New', monospace;
+          font-size: 10pt;
+          line-height: 1.3;
+        }
+        .center { text-align: center; }
+        .line { border-top: 1px dashed #000; margin: 2mm 0; }
+        .bold { font-weight: bold; }
+        .title { font-size: 11pt; font-weight: bold; }
+        .section { margin: 2mm 0; }
+      </style>
+    </head>
+    <body>
+      <div class="center title">MILK COLLECTION Z REPORT</div>
+      <div class="line"></div>
+      <div class="section">
+        <div>DATE: ${new Date(reportData.date).toLocaleDateString()}</div>
+        <div>TIME: ${new Date().toLocaleTimeString()}</div>
+      </div>
+      <div class="line"></div>
+      <div class="section center bold">
+        <div>Total Entries: ${reportData.totals.entries}</div>
+        <div>Total Farmers: ${reportData.totals.farmers}</div>
+        <div>Total Litres: ${reportData.totals.liters.toFixed(2)}</div>
+      </div>
+      <div class="line"></div>
+      <div class="section">
+        <div class="bold">BY SESSION:</div>
+        <div>Morning: ${reportData.bySession.AM.entries} (${reportData.bySession.AM.liters.toFixed(2)}L)</div>
+        <div>Evening: ${reportData.bySession.PM.entries} (${reportData.bySession.PM.liters.toFixed(2)}L)</div>
+      </div>
+      <div class="line"></div>
+      <div class="section">
+        <div class="bold">BY ROUTE:</div>
+        ${Object.entries(reportData.byRoute).map(([route, data]) => 
+          `<div>${route}: ${data.total.toFixed(2)}L</div>`
+        ).join('')}
+      </div>
+      <div class="line"></div>
+      <div class="section">
+        <div class="bold">BY COLLECTOR:</div>
+        ${Object.entries(reportData.byCollector).map(([collector, data]) => 
+          `<div>${collector}: ${data.liters.toFixed(2)}L</div>`
+        ).join('')}
+      </div>
+      <div class="line"></div>
+      <div class="center">Generated: ${new Date().toLocaleString()}</div>
+    </body>
+    </html>
+  `;
+
+  printWindow.document.write(content);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+    printWindow.close();
+  }, 250);
+};
+
 export const generateZReportPDF = (reportData: ZReportData) => {
   // Create a formatted text version of the report
   let content = `MILK COLLECTION Z REPORT\n`;
