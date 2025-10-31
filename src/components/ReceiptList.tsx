@@ -32,12 +32,13 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
 
     setIsSyncing(true);
 
-    // Group receipts by farmer_id, session, and date
+    // Group receipts by farmer_id, session, and month
     const groupedReceipts = new Map<string, MilkCollection[]>();
     
     for (const receipt of unsyncedReceipts) {
-      const dateStr = new Date(receipt.collection_date).toISOString().split('T')[0];
-      const key = `${receipt.farmer_id}-${receipt.session}-${dateStr}`;
+      const date = new Date(receipt.collection_date);
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const key = `${receipt.farmer_id}-${receipt.session}-${monthKey}`;
       
       if (!groupedReceipts.has(key)) {
         groupedReceipts.set(key, []);
@@ -49,10 +50,15 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
     for (const [key, receipts] of groupedReceipts.entries()) {
       const firstReceipt = receipts[0];
       const totalWeight = receipts.reduce((sum, r) => sum + Number(r.weight || 0), 0);
-      const dateStr = new Date(firstReceipt.collection_date).toISOString().split('T')[0];
+      const date = new Date(firstReceipt.collection_date);
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      
+      // Get start and end of the month
+      const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+      const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
       
       const milkData = {
-        reference_no: firstReceipt.reference_no || `MC-${dateStr}-${firstReceipt.farmer_id}-${firstReceipt.session}`,
+        reference_no: firstReceipt.reference_no || `MC-${monthKey}-${firstReceipt.farmer_id}-${firstReceipt.session}`,
         farmer_id: firstReceipt.farmer_id,
         farmer_name: firstReceipt.farmer_name || firstReceipt.farmer_id || 'Unknown',
         route: firstReceipt.route || 'Unknown',
@@ -63,16 +69,16 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       };
 
       try {
-        // Check if record already exists in MySQL
+        // Check if record already exists in MySQL for this month
         const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
           firstReceipt.farmer_id,
           firstReceipt.session,
-          `${dateStr}T00:00:00`,
-          `${dateStr}T23:59:59`
+          monthStart.toISOString(),
+          monthEnd.toISOString()
         );
 
         if (existing && existing.reference_no) {
-          // Accumulate weight to existing record
+          // Accumulate weight to existing monthly record
           const newWeight = parseFloat((Number(existing.weight || 0) + totalWeight).toFixed(2));
           const updateSuccess = await mysqlApi.milkCollection.update(existing.reference_no, {
             weight: newWeight,
@@ -84,7 +90,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
             for (const receipt of receipts) {
               await deleteReceipt(receipt.orderId!);
             }
-            console.log(`✅ Accumulated ${receipts.length} collections for ${firstReceipt.farmer_id}: ${newWeight} Kg total`);
+            console.log(`✅ Accumulated ${receipts.length} collections for ${firstReceipt.farmer_id}: ${newWeight} Kg monthly total`);
           } else {
             console.error('❌ Update failed for MySQL record');
           }

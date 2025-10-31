@@ -57,22 +57,29 @@ const Index = () => {
       return;
     }
 
-    const todayDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    const referenceNo = `MC-${todayDate}-${farmerId}-${session}`;
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const monthKey = `${year}-${month}`; // YYYY-MM format
+    const referenceNo = `MC-${monthKey}-${farmerId}-${session}`;
 
-    // Try to sync online with accumulation using MySQL API
+    // Get start and end of current month
+    const monthStart = new Date(year, now.getMonth(), 1);
+    const monthEnd = new Date(year, now.getMonth() + 1, 0, 23, 59, 59);
+
+    // Try to sync online with monthly accumulation using MySQL API
     if (navigator.onLine) {
       try {
-        // Check if record already exists for this farmer, date, and session
+        // Check if record already exists for this farmer, session, and current month
         const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
           farmerId,
           session,
-          `${todayDate}T00:00:00`,
-          `${todayDate}T23:59:59`
+          monthStart.toISOString(),
+          monthEnd.toISOString()
         ).catch(() => null);
 
         if (existing && existing.reference_no) {
-          // Accumulate weight
+          // Accumulate weight for the month
           const newWeight = parseFloat((Number(existing.weight) + Number(weight)).toFixed(2));
           const updated = await mysqlApi.milkCollection.update(existing.reference_no, {
             weight: newWeight,
@@ -80,7 +87,7 @@ const Index = () => {
           });
 
           if (updated) {
-            toast.success(`Weight accumulated: ${newWeight.toFixed(1)} Kg total`);
+            toast.success(`Monthly total: ${newWeight.toFixed(1)} Kg`);
             setCurrentReceipt({
               ...existing,
               weight: newWeight,
