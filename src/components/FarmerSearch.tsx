@@ -2,6 +2,8 @@
 import { type Farmer } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { Progress } from '@/components/ui/progress';
+import { Loader2 } from 'lucide-react';
 
 interface FarmerSearchProps {
   onSelectFarmer: (farmer: Farmer) => void;
@@ -12,6 +14,9 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
   const [searchQuery, setSearchQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<Farmer[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(0);
+  const [farmerCount, setFarmerCount] = useState(0);
   const { getFarmers, saveFarmers } = useIndexedDB();
 
   const searchFarmers = useCallback(async (query: string) => {
@@ -52,14 +57,34 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
   useEffect(() => {
     const syncFarmers = async () => {
       if (navigator.onLine) {
+        setIsSyncing(true);
+        setSyncProgress(0);
+        setFarmerCount(0);
+        
         try {
+          setSyncProgress(30);
           const data = await mysqlApi.farmers.getAll();
+          setSyncProgress(60);
+          
           if (data && data.length > 0) {
-            saveFarmers(data);
+            setFarmerCount(data.length);
+            setSyncProgress(80);
+            await saveFarmers(data);
+            setSyncProgress(100);
             console.log(`✅ Synced ${data.length} farmers locally from MySQL`);
+            
+            // Keep success state visible for a moment
+            setTimeout(() => {
+              setIsSyncing(false);
+              setSyncProgress(0);
+            }, 1500);
+          } else {
+            setIsSyncing(false);
           }
         } catch (err) {
           console.error('Farmer sync error:', err);
+          setIsSyncing(false);
+          setSyncProgress(0);
         }
       }
     };
@@ -97,6 +122,29 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
 
   return (
     <div className="relative w-full">
+      {/* Sync Loading Overlay */}
+      {isSyncing && (
+        <div className="mb-4 p-4 bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-lg shadow-sm">
+          <div className="flex items-center gap-3 mb-3">
+            <Loader2 className="h-5 w-5 animate-spin text-purple-600" />
+            <span className="font-semibold text-purple-900">
+              {syncProgress < 100 ? 'Syncing Farmers...' : '✓ Sync Complete!'}
+            </span>
+          </div>
+          
+          <Progress value={syncProgress} className="h-2 mb-2" />
+          
+          <div className="flex justify-between items-center text-sm">
+            <span className="text-purple-700">
+              {syncProgress < 100 ? 'Loading farmer data' : `${farmerCount} farmers synced`}
+            </span>
+            <span className="font-mono text-purple-600 font-semibold">
+              {syncProgress}%
+            </span>
+          </div>
+        </div>
+      )}
+      
       <input
         type="text"
         placeholder="Search Farmer (ID or Name)"
@@ -109,6 +157,7 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
         onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea] mb-3"
         autoComplete="off"
+        disabled={isSyncing}
       />
       {showSuggestions && suggestions.length > 0 && (
         <div className="absolute z-[9999] w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
