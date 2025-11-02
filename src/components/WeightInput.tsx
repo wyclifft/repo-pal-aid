@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { connectBluetoothScale, type ScaleType } from '@/services/bluetooth';
 import { toast } from 'sonner';
+import { Scale } from 'lucide-react';
 
 interface WeightInputProps {
   weight: number;
@@ -47,7 +48,8 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole }: WeightI
   return (
     <div className="bg-white rounded-xl p-6 shadow-lg">
       <h3 className="text-xl font-bold mb-4 text-[#667eea] flex items-center gap-2">
-        ⚖️ Milk Weight
+        <Scale className="h-6 w-6" />
+        Milk Weight
       </h3>
 
       <div className="mb-6">

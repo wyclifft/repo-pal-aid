@@ -186,36 +186,29 @@ const Index = () => {
   };
 
   const handleTestPrint = () => {
-    if (!currentReceipt) {
-      toast.error('No receipt available to print');
-      return;
-    }
-    
     toast.success('Test print initiated');
     const printWindow = window.open('', '_blank');
     if (printWindow) {
       printWindow.document.write(`
         <html>
           <head>
-            <title>Test Receipt</title>
+            <title>Test Print</title>
             <style>
-              body { font-family: monospace; padding: 20px; }
-              table { width: 100%; border-collapse: collapse; }
-              th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-              th { font-weight: bold; }
+              body { 
+                font-family: Arial, sans-serif; 
+                padding: 40px; 
+                text-align: center;
+              }
+              h1 { 
+                font-size: 48px; 
+                color: #667eea; 
+                margin: 0;
+              }
             </style>
           </head>
           <body>
-            <h2>Receipt (Test Print)</h2>
-            <table>
-              <tr><th>Farmer Name</th><td>${currentReceipt.farmer_name}</td></tr>
-              <tr><th>Route</th><td>${currentReceipt.route}</td></tr>
-              <tr><th>Farmer ID</th><td>${currentReceipt.farmer_id}</td></tr>
-              <tr><th>Session</th><td>${currentReceipt.session}</td></tr>
-              <tr><th>Weight</th><td>${currentReceipt.weight} Kg</td></tr>
-              <tr><th>Collector</th><td>${currentReceipt.clerk_name}</td></tr>
-              <tr><th>Date</th><td>${new Date(currentReceipt.collection_date).toLocaleString()}</td></tr>
-            </table>
+            <h1>Testing Print</h1>
+            <p style="font-size: 24px; color: #333;">It is working!</p>
           </body>
         </html>
       `);

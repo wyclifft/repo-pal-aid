@@ -4,6 +4,7 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateTextReport, generateCSVReport } from '@/utils/fileExport';
 import { toast } from 'sonner';
+import { ClipboardList } from 'lucide-react';
 
 export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => {
   const [unsyncedReceipts, setUnsyncedReceipts] = useState<MilkCollection[]>([]);
@@ -149,7 +150,8 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
   return (
     <div className="bg-white rounded-xl p-6 shadow-lg">
       <h3 className="text-xl font-bold mb-4 text-[#667eea] flex items-center gap-2">
-        📋 Pending Receipts
+        <ClipboardList className="h-6 w-6" />
+        Pending Receipts
       </h3>
 
       {unsyncedReceipts.length === 0 ? (
