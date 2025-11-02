@@ -8,6 +8,7 @@ import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer } from 'lucide-react';
 
 const Index = () => {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -184,6 +185,46 @@ const Index = () => {
     }
   };
 
+  const handleTestPrint = () => {
+    if (!currentReceipt) {
+      toast.error('No receipt available to print');
+      return;
+    }
+    
+    toast.success('Test print initiated');
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Test Receipt</title>
+            <style>
+              body { font-family: monospace; padding: 20px; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+              th { font-weight: bold; }
+            </style>
+          </head>
+          <body>
+            <h2>Receipt (Test Print)</h2>
+            <table>
+              <tr><th>Farmer Name</th><td>${currentReceipt.farmer_name}</td></tr>
+              <tr><th>Route</th><td>${currentReceipt.route}</td></tr>
+              <tr><th>Farmer ID</th><td>${currentReceipt.farmer_id}</td></tr>
+              <tr><th>Session</th><td>${currentReceipt.session}</td></tr>
+              <tr><th>Weight</th><td>${currentReceipt.weight} Kg</td></tr>
+              <tr><th>Collector</th><td>${currentReceipt.clerk_name}</td></tr>
+              <tr><th>Date</th><td>${new Date(currentReceipt.collection_date).toLocaleString()}</td></tr>
+            </table>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
+    }
+    setSidebarOpen(false);
+  };
+
   if (!currentUser) {
     return <Login onLogin={handleLogin} />;
   }
@@ -195,9 +236,9 @@ const Index = () => {
         <div className="flex items-center justify-between px-4 py-3">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="text-2xl p-1 hover:bg-gray-100 rounded"
+            className="p-2 hover:bg-gray-100 rounded"
           >
-            ☰
+            <Menu className="h-6 w-6 text-gray-700" />
           </button>
           <h1 className="text-xl font-bold text-[#667eea]">Milk Collection</h1>
           <button
@@ -218,36 +259,47 @@ const Index = () => {
         <div className="p-4">
           <button
             onClick={() => setSidebarOpen(false)}
-            className="text-2xl mb-4 hover:bg-gray-100 rounded p-1"
+            className="mb-4 hover:bg-gray-100 rounded p-2"
           >
-            ✕
+            <X className="h-6 w-6 text-gray-700" />
           </button>
           <button
             onClick={() => scrollToSection('farmer-card')}
-            className="block w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
           >
-            👤 Farmer
+            <User className="h-5 w-5 text-[#667eea]" />
+            Farmer
           </button>
           <button
             onClick={() => scrollToSection('weight-card')}
-            className="block w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
           >
-            ⚖️ Weight
+            <Scale className="h-5 w-5 text-[#667eea]" />
+            Weight
           </button>
           <button
             onClick={() => scrollToSection('receipts-card')}
-            className="block w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
           >
-            📋 Receipts
+            <FileText className="h-5 w-5 text-[#667eea]" />
+            Receipts
+          </button>
+          <button
+            onClick={handleTestPrint}
+            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+          >
+            <Printer className="h-5 w-5 text-[#667eea]" />
+            Test Print
           </button>
           <button
             onClick={() => {
               setSidebarOpen(false);
               window.location.href = '/z-report';
             }}
-            className="block w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
           >
-            📊 Z Report
+            <BarChart3 className="h-5 w-5 text-[#667eea]" />
+            Z Report
           </button>
         </div>
       </nav>
@@ -271,7 +323,8 @@ const Index = () => {
         {/* Farmer Card */}
         <div id="farmer-card" className="bg-white rounded-xl p-6 shadow-lg scroll-mt-20">
           <h3 className="text-xl font-bold mb-4 text-[#667eea] flex items-center gap-2">
-            👤 Farmer Details
+            <User className="h-6 w-6" />
+            Farmer Details
           </h3>
           <FarmerSearch onSelectFarmer={handleSelectFarmer} value={searchValue} />
           <input
