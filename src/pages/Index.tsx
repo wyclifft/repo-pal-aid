@@ -37,11 +37,15 @@ const Index = () => {
   const handleLogin = (user: AppUser, offline: boolean) => {
     setCurrentUser(user);
     setIsOffline(offline);
+    // Store user in localStorage for other pages to access
+    localStorage.setItem('currentUser', JSON.stringify(user));
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
     setIsOffline(false);
+    // Clear user from localStorage
+    localStorage.removeItem('currentUser');
     toast.success('Logged out successfully');
   };
 

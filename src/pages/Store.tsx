@@ -47,10 +47,14 @@ const Store = () => {
     if (userStr) {
       try {
         const user = JSON.parse(userStr);
-        setSoldBy(user.name || user.user_id || '');
+        // Use user_id as the clerk name since there's no separate name field
+        setSoldBy(user.user_id || '');
+        console.log('Loaded user for sold_by:', user.user_id);
       } catch (e) {
         console.error('Failed to parse user:', e);
       }
+    } else {
+      console.warn('No currentUser found in localStorage');
     }
   };
 
