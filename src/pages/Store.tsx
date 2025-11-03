@@ -32,12 +32,13 @@ const Store = () => {
   const [showFarmerDropdown, setShowFarmerDropdown] = useState(false);
   const farmerInputRef = useRef<HTMLInputElement>(null);
   
-  const { getFarmers } = useIndexedDB();
+  const { getFarmers, saveSale, getUnsyncedSales, deleteSale } = useIndexedDB();
 
   useEffect(() => {
     loadItems();
     loadFarmers();
     loadLoggedInUser();
+    syncPendingSales();
   }, []);
 
   const loadLoggedInUser = () => {
@@ -46,7 +47,7 @@ const Store = () => {
     if (userStr) {
       try {
         const user = JSON.parse(userStr);
-        setSoldBy(user.user_id || '');
+        setSoldBy(user.name || user.user_id || '');
       } catch (e) {
         console.error('Failed to parse user:', e);
       }
@@ -127,6 +128,33 @@ const Store = () => {
     setFilteredFarmers([]);
   };
 
+  const syncPendingSales = async () => {
+    if (!navigator.onLine) return;
+    
+    try {
+      const pendingSales = await getUnsyncedSales();
+      if (pendingSales.length === 0) return;
+      
+      console.log(`Syncing ${pendingSales.length} pending sales...`);
+      
+      for (const sale of pendingSales) {
+        try {
+          const success = await mysqlApi.sales.create(sale);
+          if (success && sale.id) {
+            await deleteSale(sale.id);
+            console.log(`Synced sale ${sale.id}`);
+          }
+        } catch (error) {
+          console.error('Failed to sync sale:', error);
+        }
+      }
+      
+      toast.success('Offline sales synced successfully');
+    } catch (error) {
+      console.error('Failed to sync sales:', error);
+    }
+  };
+
   const handleSellSubmit = async () => {
     if (!selectedItem || !quantity || !farmerId || !farmerName || !soldBy) {
       toast.error('Please fill all required fields');
@@ -158,24 +186,42 @@ const Store = () => {
       setSubmitting(true);
       setSyncing(true);
       
-      const success = await mysqlApi.sales.create(sale);
-      
-      if (success) {
-        toast.success(`Sale recorded: ${qty} x ${selectedItem.descript}`);
+      if (navigator.onLine) {
+        // Online: save to server
+        const success = await mysqlApi.sales.create(sale);
         
-        // Print receipt
-        printReceipt(sale, qty);
-        
-        setSellDialogOpen(false);
-        
-        // Refresh to update stock
-        await loadItems();
+        if (success) {
+          toast.success(`Sale recorded: ${qty} x ${selectedItem.descript}`);
+          printReceipt(sale, qty);
+          setSellDialogOpen(false);
+          await loadItems();
+        } else {
+          toast.error('Failed to record sale');
+        }
       } else {
-        toast.error('Failed to record sale');
+        // Offline: save to IndexedDB
+        await saveSale(sale);
+        toast.success(`Sale saved offline: ${qty} x ${selectedItem.descript}. Will sync when online.`);
+        printReceipt(sale, qty);
+        setSellDialogOpen(false);
       }
     } catch (error) {
-      toast.error('Error recording sale');
-      console.error(error);
+      // If online request fails, save offline
+      if (navigator.onLine) {
+        console.error('Online save failed, saving offline:', error);
+        try {
+          await saveSale(sale);
+          toast.warning('Saved offline. Will sync when connection is restored.');
+          printReceipt(sale, qty);
+          setSellDialogOpen(false);
+        } catch (offlineError) {
+          toast.error('Error saving sale');
+          console.error(offlineError);
+        }
+      } else {
+        toast.error('Error recording sale');
+        console.error(error);
+      }
     } finally {
       setSubmitting(false);
       setSyncing(false);

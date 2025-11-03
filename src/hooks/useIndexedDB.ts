@@ -157,6 +157,66 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
+  const saveSale = useCallback(async (sale: any) => {
+    if (!db) return;
+
+    try {
+      const tx = db.transaction('receipts', 'readwrite');
+      const store = tx.objectStore('receipts');
+      
+      // Use receipts store for sales with a unique ID
+      const saleRecord = {
+        ...sale,
+        orderId: Date.now(),
+        type: 'sale',
+        synced: false,
+      };
+      
+      await store.put(saleRecord);
+      console.log('Sale saved to IndexedDB');
+    } catch (error) {
+      console.error('Failed to save sale to IndexedDB:', error);
+      throw error;
+    }
+  }, [db]);
+
+  const getUnsyncedSales = useCallback(async (): Promise<any[]> => {
+    if (!db) return [];
+
+    try {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('receipts', 'readonly');
+        const store = tx.objectStore('receipts');
+        const request = store.getAll();
+        
+        request.onsuccess = () => {
+          // Filter for unsynced sales
+          const sales = request.result.filter((record: any) => record.type === 'sale' && !record.synced);
+          resolve(sales);
+        };
+        
+        request.onerror = () => reject(request.error);
+      });
+    } catch (error) {
+      console.error('Failed to get unsynced sales:', error);
+      return [];
+    }
+  }, [db]);
+
+  const deleteSale = useCallback(async (orderId: number) => {
+    if (!db) return;
+
+    try {
+      const tx = db.transaction('receipts', 'readwrite');
+      const store = tx.objectStore('receipts');
+      await store.delete(orderId);
+      console.log('Sale deleted from IndexedDB');
+    } catch (error) {
+      console.error('Failed to delete sale:', error);
+      throw error;
+    }
+  }, [db]);
+
   return {
     db,
     isReady,
@@ -169,5 +229,8 @@ export const useIndexedDB = () => {
     deleteReceipt,
     saveDeviceApproval,
     getDeviceApproval,
+    saveSale,
+    getUnsyncedSales,
+    deleteSale,
   };
 };
