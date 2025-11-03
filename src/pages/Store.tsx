@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { mysqlApi, type Item, type Sale } from '@/services/mysqlApi';
+import { mysqlApi, type Item, type Sale, type Farmer } from '@/services/mysqlApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,7 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { ArrowLeft, ShoppingCart, Package, DollarSign } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Package, Loader2, Receipt as ReceiptIcon } from 'lucide-react';
+import { useIndexedDB } from '@/hooks/useIndexedDB';
 
 const Store = () => {
   const navigate = useNavigate();
@@ -16,6 +17,7 @@ const Store = () => {
   const [loading, setLoading] = useState(true);
   const [sellDialogOpen, setSellDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
+  const [syncing, setSyncing] = useState(false);
   
   // Sale form
   const [quantity, setQuantity] = useState('');
@@ -23,10 +25,56 @@ const Store = () => {
   const [farmerName, setFarmerName] = useState('');
   const [soldBy, setSoldBy] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  
+  // Farmer autocomplete
+  const [farmers, setFarmers] = useState<Farmer[]>([]);
+  const [filteredFarmers, setFilteredFarmers] = useState<Farmer[]>([]);
+  const [showFarmerDropdown, setShowFarmerDropdown] = useState(false);
+  const farmerInputRef = useRef<HTMLInputElement>(null);
+  
+  const { getFarmers } = useIndexedDB();
 
   useEffect(() => {
     loadItems();
+    loadFarmers();
+    loadLoggedInUser();
   }, []);
+
+  const loadLoggedInUser = () => {
+    // Get logged-in user from localStorage
+    const userStr = localStorage.getItem('currentUser');
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        setSoldBy(user.user_id || '');
+      } catch (e) {
+        console.error('Failed to parse user:', e);
+      }
+    }
+  };
+
+  const loadFarmers = async () => {
+    try {
+      // Try to load from API first
+      if (navigator.onLine) {
+        const data = await mysqlApi.farmers.getAll();
+        setFarmers(data);
+      } else {
+        // Load from IndexedDB if offline
+        const localFarmers = await getFarmers();
+        setFarmers(localFarmers);
+      }
+    } catch (error) {
+      console.error('Failed to load farmers:', error);
+      // Try local fallback
+      try {
+        const localFarmers = await getFarmers();
+        setFarmers(localFarmers);
+      } catch (e) {
+        console.error('Failed to load local farmers:', e);
+      }
+    }
+  };
 
   const loadItems = async () => {
     try {
@@ -46,8 +94,37 @@ const Store = () => {
     setQuantity('');
     setFarmerId('');
     setFarmerName('');
-    setSoldBy('');
+    setFilteredFarmers([]);
+    setShowFarmerDropdown(false);
+    loadLoggedInUser(); // Refresh sold by
     setSellDialogOpen(true);
+  };
+
+  const handleFarmerIdChange = (value: string) => {
+    setFarmerId(value);
+    
+    if (value.trim() === '') {
+      setFilteredFarmers([]);
+      setShowFarmerDropdown(false);
+      setFarmerName('');
+      return;
+    }
+
+    // Filter farmers based on input
+    const filtered = farmers.filter(f => 
+      f.farmer_id.toLowerCase().includes(value.toLowerCase()) ||
+      f.name.toLowerCase().includes(value.toLowerCase())
+    ).slice(0, 10); // Limit to 10 results
+
+    setFilteredFarmers(filtered);
+    setShowFarmerDropdown(filtered.length > 0);
+  };
+
+  const handleFarmerSelect = (farmer: Farmer) => {
+    setFarmerId(farmer.farmer_id);
+    setFarmerName(farmer.name);
+    setShowFarmerDropdown(false);
+    setFilteredFarmers([]);
   };
 
   const handleSellSubmit = async () => {
@@ -79,12 +156,20 @@ const Store = () => {
 
     try {
       setSubmitting(true);
+      setSyncing(true);
+      
       const success = await mysqlApi.sales.create(sale);
       
       if (success) {
         toast.success(`Sale recorded: ${qty} x ${selectedItem.descript}`);
+        
+        // Print receipt
+        printReceipt(sale, qty);
+        
         setSellDialogOpen(false);
-        loadItems(); // Refresh to update stock
+        
+        // Refresh to update stock
+        await loadItems();
       } else {
         toast.error('Failed to record sale');
       }
@@ -93,11 +178,116 @@ const Store = () => {
       console.error(error);
     } finally {
       setSubmitting(false);
+      setSyncing(false);
     }
   };
 
+  const printReceipt = (sale: Sale, qty: number) => {
+    const printWindow = window.open('', '', 'width=300,height=600');
+    if (!printWindow) return;
+
+    const total = qty * sale.price;
+    const content = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Sale Receipt</title>
+        <style>
+          @media print {
+            @page {
+              size: 58mm auto;
+              margin: 0;
+            }
+          }
+          body {
+            width: 58mm;
+            margin: 0;
+            padding: 4mm;
+            font-family: 'Courier New', monospace;
+            font-size: 10pt;
+            line-height: 1.3;
+          }
+          .center { text-align: center; }
+          .line { border-top: 1px dashed #000; margin: 2mm 0; }
+          .bold { font-weight: bold; }
+          .title { font-size: 11pt; font-weight: bold; }
+          .section { margin: 2mm 0; }
+          .row { display: flex; justify-content: space-between; }
+        </style>
+      </head>
+      <body>
+        <div class="center title">SALE RECEIPT</div>
+        <div class="line"></div>
+        <div class="section">
+          <div>Date: ${new Date().toLocaleDateString()}</div>
+          <div>Time: ${new Date().toLocaleTimeString()}</div>
+          <div>Ref: ${sale.sale_ref || 'N/A'}</div>
+        </div>
+        <div class="line"></div>
+        <div class="section">
+          <div class="bold">Customer Details</div>
+          <div>ID: ${sale.farmer_id}</div>
+          <div>Name: ${sale.farmer_name}</div>
+        </div>
+        <div class="line"></div>
+        <div class="section">
+          <div class="bold">Item Details</div>
+          <div>Code: ${sale.item_code}</div>
+          <div>Name: ${sale.item_name}</div>
+          <div class="row">
+            <span>Quantity:</span>
+            <span>${qty}</span>
+          </div>
+          <div class="row">
+            <span>Price:</span>
+            <span>Ksh ${sale.price.toFixed(2)}</span>
+          </div>
+        </div>
+        <div class="line"></div>
+        <div class="section center">
+          <div class="bold" style="font-size: 12pt;">TOTAL: Ksh ${total.toFixed(2)}</div>
+        </div>
+        <div class="line"></div>
+        <div class="section">
+          <div>Sold By: ${sale.sold_by}</div>
+        </div>
+        <div class="line"></div>
+        <div class="center" style="font-size: 8pt; margin-top: 4mm;">
+          Thank you for your business!
+        </div>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(content);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5 p-4">
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5 p-4 relative">
+      {/* Syncing Overlay */}
+      {syncing && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="w-80">
+            <CardContent className="py-8">
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="h-12 w-12 animate-spin text-primary" />
+                <div className="text-center">
+                  <p className="font-semibold text-lg">Syncing...</p>
+                  <p className="text-sm text-muted-foreground mt-1">Please wait, do not navigate away</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+      
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6 flex items-center justify-between">
@@ -142,9 +332,8 @@ const Store = () => {
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Price:</span>
-                      <span className="font-semibold flex items-center gap-1">
-                        <DollarSign className="h-4 w-4" />
-                        {item.sprice.toFixed(2)}
+                      <span className="font-semibold">
+                        Ksh {item.sprice.toFixed(2)}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
@@ -192,18 +381,40 @@ const Store = () => {
                 />
                 {selectedItem && (
                   <p className="text-sm text-muted-foreground">
-                    Available: {selectedItem.stockbal} units @ ${selectedItem.sprice.toFixed(2)}
+                    Available: {selectedItem.stockbal} units @ Ksh {selectedItem.sprice.toFixed(2)}
                   </p>
                 )}
               </div>
-              <div className="grid gap-2">
+              <div className="grid gap-2 relative">
                 <Label htmlFor="farmerId">Farmer ID *</Label>
                 <Input
+                  ref={farmerInputRef}
                   id="farmerId"
                   value={farmerId}
-                  onChange={(e) => setFarmerId(e.target.value)}
-                  placeholder="Enter farmer ID"
+                  onChange={(e) => handleFarmerIdChange(e.target.value)}
+                  onFocus={() => {
+                    if (filteredFarmers.length > 0) {
+                      setShowFarmerDropdown(true);
+                    }
+                  }}
+                  placeholder="Type farmer ID or name"
+                  autoComplete="off"
                 />
+                {showFarmerDropdown && filteredFarmers.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto z-50">
+                    {filteredFarmers.map((farmer) => (
+                      <button
+                        key={farmer.farmer_id}
+                        type="button"
+                        onClick={() => handleFarmerSelect(farmer)}
+                        className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b last:border-b-0"
+                      >
+                        <div className="font-semibold text-sm">{farmer.farmer_id}</div>
+                        <div className="text-xs text-muted-foreground">{farmer.name}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="farmerName">Farmer Name *</Label>
@@ -220,13 +431,15 @@ const Store = () => {
                   id="soldBy"
                   value={soldBy}
                   onChange={(e) => setSoldBy(e.target.value)}
-                  placeholder="Enter clerk name"
+                  placeholder="Clerk name"
+                  readOnly
+                  className="bg-muted"
                 />
               </div>
               {quantity && selectedItem && (
                 <div className="p-3 bg-primary/10 rounded-lg">
                   <p className="font-semibold text-primary">
-                    Total: ${(parseFloat(quantity) * selectedItem.sprice).toFixed(2)}
+                    Total: Ksh {(parseFloat(quantity) * selectedItem.sprice).toFixed(2)}
                   </p>
                 </div>
               )}
