@@ -8,7 +8,7 @@ import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag } from 'lucide-react';
 
 const Index = () => {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -293,6 +293,16 @@ const Index = () => {
           >
             <BarChart3 className="h-5 w-5 text-[#667eea]" />
             Z Report
+          </button>
+          <button
+            onClick={() => {
+              setSidebarOpen(false);
+              window.location.href = '/store';
+            }}
+            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+          >
+            <ShoppingBag className="h-5 w-5 text-[#667eea]" />
+            Store
           </button>
         </div>
       </nav>

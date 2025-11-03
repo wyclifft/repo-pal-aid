@@ -351,10 +351,79 @@ export const zReportApi = {
   },
 };
 
+// ==================== ITEMS API ====================
+
+export interface Item {
+  ID: number;
+  icode: string;
+  descript: string;
+  sprice: number;
+  mprice: number;
+  stockbal: number;
+  ccode?: string;
+  sellable: number;
+}
+
+export const itemsApi = {
+  /**
+   * Get all sellable items
+   */
+  getAll: async (): Promise<Item[]> => {
+    const response = await apiRequest<Item[]>('/items');
+    return response.data || [];
+  }
+};
+
+// ==================== SALES API ====================
+
+export interface Sale {
+  id?: number;
+  sale_ref?: string;
+  farmer_id: string;
+  farmer_name: string;
+  item_code: string;
+  item_name: string;
+  quantity: number;
+  price: number;
+  total_amount?: number;
+  sold_by: string;
+  sale_date?: string;
+  remarks?: string;
+}
+
+export const salesApi = {
+  /**
+   * Create a new sale
+   */
+  create: async (sale: Sale): Promise<boolean> => {
+    const response = await apiRequest<{ sale_ref: string }>('/sales', {
+      method: 'POST',
+      body: JSON.stringify(sale),
+    });
+    return response.success;
+  },
+
+  /**
+   * Get all sales with optional filters
+   */
+  getAll: async (filters?: { farmer_id?: string; date_from?: string; date_to?: string }): Promise<Sale[]> => {
+    const params = new URLSearchParams();
+    if (filters?.farmer_id) params.append('farmer_id', filters.farmer_id);
+    if (filters?.date_from) params.append('date_from', filters.date_from);
+    if (filters?.date_to) params.append('date_to', filters.date_to);
+    
+    const url = params.toString() ? `/sales?${params.toString()}` : '/sales';
+    const response = await apiRequest<Sale[]>(url);
+    return response.data || [];
+  }
+};
+
 // Export all APIs
 export const mysqlApi = {
   farmers: farmersApi,
   milkCollection: milkCollectionApi,
   devices: devicesApi,
   zReport: zReportApi,
+  items: itemsApi,
+  sales: salesApi,
 };

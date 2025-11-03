@@ -249,6 +249,60 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // Items endpoints
+    if (path === '/api/items' && method === 'GET') {
+      const [rows] = await pool.query('SELECT * FROM fm_items WHERE sellable = 1 ORDER BY descript');
+      return sendJSON(res, { success: true, data: rows });
+    }
+
+    // Sales endpoints
+    if (path === '/api/sales' && method === 'POST') {
+      const body = await parseBody(req);
+      const conn = await pool.getConnection();
+      
+      try {
+        await conn.beginTransaction();
+        
+        // Generate sale reference
+        const sale_ref = body.sale_ref || `SALE-${Date.now()}`;
+        
+        // Insert sale record
+        await conn.query(
+          `INSERT INTO store_sales 
+            (sale_ref, farmer_id, farmer_name, item_code, item_name, quantity, price, sold_by, sale_date, remarks)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+          [sale_ref, body.farmer_id, body.farmer_name, body.item_code, body.item_name, body.quantity, body.price, body.sold_by, body.remarks || null]
+        );
+        
+        // Update stock balance
+        await conn.query(
+          'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
+          [body.quantity, body.item_code]
+        );
+        
+        await conn.commit();
+        conn.release();
+        
+        return sendJSON(res, { success: true, message: 'Sale recorded', sale_ref }, 201);
+      } catch (error) {
+        await conn.rollback();
+        conn.release();
+        throw error;
+      }
+    }
+
+    if (path === '/api/sales' && method === 'GET') {
+      const { farmer_id, date_from, date_to } = parsedUrl.query;
+      let query = 'SELECT * FROM store_sales WHERE 1=1';
+      let params = [];
+      if (farmer_id) { query += ' AND farmer_id = ?'; params.push(farmer_id); }
+      if (date_from) { query += ' AND sale_date >= ?'; params.push(date_from); }
+      if (date_to) { query += ' AND sale_date <= ?'; params.push(date_to); }
+      query += ' ORDER BY sale_date DESC';
+      const [rows] = await pool.query(query, params);
+      return sendJSON(res, { success: true, data: rows });
+    }
+
     // Devices endpoints
     if (path.startsWith('/api/devices/fingerprint/') && method === 'GET') {
       const fingerprint = decodeURIComponent(path.split('/')[4]);
