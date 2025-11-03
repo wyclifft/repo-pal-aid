@@ -149,15 +149,26 @@ const Store = () => {
       
       console.log(`Syncing ${pendingSales.length} pending sales...`);
       
-      for (const sale of pendingSales) {
+      for (const saleRecord of pendingSales) {
         try {
-          const success = await mysqlApi.sales.create(sale);
-          if (success && sale.id) {
-            await deleteSale(sale.id);
-            console.log(`Synced sale ${sale.id}`);
+          // Clean the sale object - remove IndexedDB fields
+          const cleanSale: Sale = {
+            farmer_id: saleRecord.farmer_id,
+            farmer_name: saleRecord.farmer_name,
+            item_code: saleRecord.item_code,
+            item_name: saleRecord.item_name,
+            quantity: saleRecord.quantity,
+            price: saleRecord.price,
+            sold_by: saleRecord.sold_by,
+          };
+          
+          const success = await mysqlApi.sales.create(cleanSale);
+          if (success && saleRecord.orderId) {
+            await deleteSale(saleRecord.orderId);
+            console.log(`Synced sale ${saleRecord.orderId}`);
           }
         } catch (error) {
-          console.error('Failed to sync sale:', error);
+          console.error('Sync error:', error);
         }
       }
       
