@@ -32,6 +32,14 @@ const Store = () => {
   const [showFarmerDropdown, setShowFarmerDropdown] = useState(false);
   const farmerInputRef = useRef<HTMLInputElement>(null);
   
+  // Receipt data
+  const [lastReceipt, setLastReceipt] = useState<{
+    sale: Sale;
+    qty: number;
+    total: number;
+    timestamp: Date;
+  } | null>(null);
+  
   const { getFarmers, saveSale, getUnsyncedSales, deleteSale } = useIndexedDB();
 
   useEffect(() => {
@@ -196,9 +204,15 @@ const Store = () => {
         
         if (success) {
           toast.success(`Sale recorded: ${qty} x ${selectedItem.descript}`);
-          printReceipt(sale, qty);
+          setLastReceipt({
+            sale,
+            qty,
+            total: qty * sale.price,
+            timestamp: new Date()
+          });
           setSellDialogOpen(false);
           await loadItems();
+          setTimeout(() => window.print(), 300);
         } else {
           toast.error('Failed to record sale');
         }
@@ -206,8 +220,14 @@ const Store = () => {
         // Offline: save to IndexedDB
         await saveSale(sale);
         toast.success(`Sale saved offline: ${qty} x ${selectedItem.descript}. Will sync when online.`);
-        printReceipt(sale, qty);
+        setLastReceipt({
+          sale,
+          qty,
+          total: qty * sale.price,
+          timestamp: new Date()
+        });
         setSellDialogOpen(false);
+        setTimeout(() => window.print(), 300);
       }
     } catch (error) {
       // If online request fails, save offline
@@ -216,8 +236,14 @@ const Store = () => {
         try {
           await saveSale(sale);
           toast.warning('Saved offline. Will sync when connection is restored.');
-          printReceipt(sale, qty);
+          setLastReceipt({
+            sale,
+            qty,
+            total: qty * sale.price,
+            timestamp: new Date()
+          });
           setSellDialogOpen(false);
+          setTimeout(() => window.print(), 300);
         } catch (offlineError) {
           toast.error('Error saving sale');
           console.error(offlineError);
@@ -232,95 +258,46 @@ const Store = () => {
     }
   };
 
-  const printReceipt = (sale: Sale, qty: number) => {
-    const printWindow = window.open('', '', 'width=300,height=600');
-    if (!printWindow) return;
-
-    const total = qty * sale.price;
-    const content = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>Sale Receipt</title>
-        <style>
-          @media print {
-            @page {
-              size: 58mm auto;
-              margin: 0;
-            }
-          }
-          body {
-            width: 58mm;
-            margin: 0;
-            padding: 4mm;
-            font-family: 'Courier New', monospace;
-            font-size: 10pt;
-            line-height: 1.3;
-          }
-          .center { text-align: center; }
-          .line { border-top: 1px dashed #000; margin: 2mm 0; }
-          .bold { font-weight: bold; }
-          .title { font-size: 11pt; font-weight: bold; }
-          .section { margin: 2mm 0; }
-          .row { display: flex; justify-content: space-between; }
-        </style>
-      </head>
-      <body>
-        <div class="center title">SALE RECEIPT</div>
-        <div class="line"></div>
-        <div class="section">
-          <div>Date: ${new Date().toLocaleDateString()}</div>
-          <div>Time: ${new Date().toLocaleTimeString()}</div>
-          <div>Ref: ${sale.sale_ref || 'N/A'}</div>
-        </div>
-        <div class="line"></div>
-        <div class="section">
-          <div class="bold">Customer Details</div>
-          <div>ID: ${sale.farmer_id}</div>
-          <div>Name: ${sale.farmer_name}</div>
-        </div>
-        <div class="line"></div>
-        <div class="section">
-          <div class="bold">Item Details</div>
-          <div>Code: ${sale.item_code}</div>
-          <div>Name: ${sale.item_name}</div>
-          <div class="row">
-            <span>Quantity:</span>
-            <span>${qty}</span>
-          </div>
-          <div class="row">
-            <span>Price:</span>
-            <span>Ksh ${sale.price.toFixed(2)}</span>
-          </div>
-        </div>
-        <div class="line"></div>
-        <div class="section center">
-          <div class="bold" style="font-size: 12pt;">TOTAL: Ksh ${total.toFixed(2)}</div>
-        </div>
-        <div class="line"></div>
-        <div class="section">
-          <div>Sold By: ${sale.sold_by}</div>
-        </div>
-        <div class="line"></div>
-        <div class="center" style="font-size: 8pt; margin-top: 4mm;">
-          Thank you for your business!
-        </div>
-      </body>
-      </html>
-    `;
-
-    printWindow.document.write(content);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
-    }, 250);
-  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5 p-4 relative">
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 to-secondary/5 p-4 relative print:bg-white">
+      {/* Thermal Print Layout - Only visible on print */}
+      {lastReceipt && (
+        <div className="thermal-print">
+          <div className="thermal-header">SALE RECEIPT</div>
+          <div className="thermal-divider">--------------------------------</div>
+          <div className="thermal-line">DATE: {lastReceipt.timestamp.toLocaleDateString()}</div>
+          <div className="thermal-line">TIME: {lastReceipt.timestamp.toLocaleTimeString()}</div>
+          <div className="thermal-line">REF: {lastReceipt.sale.sale_ref || 'N/A'}</div>
+          <div className="thermal-divider">--------------------------------</div>
+          <div className="thermal-section">
+            <div className="thermal-line thermal-bold">CUSTOMER DETAILS</div>
+            <div className="thermal-line">ID: {lastReceipt.sale.farmer_id}</div>
+            <div className="thermal-line">Name: {lastReceipt.sale.farmer_name}</div>
+          </div>
+          <div className="thermal-divider">--------------------------------</div>
+          <div className="thermal-section">
+            <div className="thermal-line thermal-bold">ITEM DETAILS</div>
+            <div className="thermal-line">Code: {lastReceipt.sale.item_code}</div>
+            <div className="thermal-line">Name: {lastReceipt.sale.item_name}</div>
+            <div className="thermal-line">Quantity: {lastReceipt.qty}</div>
+            <div className="thermal-line">Price: Ksh {lastReceipt.sale.price.toFixed(2)}</div>
+          </div>
+          <div className="thermal-divider">--------------------------------</div>
+          <div className="thermal-section">
+            <div className="thermal-line thermal-bold" style={{ fontSize: '12pt', textAlign: 'center' }}>
+              TOTAL: Ksh {lastReceipt.total.toFixed(2)}
+            </div>
+          </div>
+          <div className="thermal-divider">--------------------------------</div>
+          <div className="thermal-line">Sold By: {lastReceipt.sale.sold_by}</div>
+          <div className="thermal-divider">--------------------------------</div>
+          <div className="thermal-line" style={{ textAlign: 'center', fontSize: '8pt', marginTop: '4mm' }}>
+            Thank you for your business!
+          </div>
+        </div>
+      )}
+      
       {/* Syncing Overlay */}
       {syncing && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -338,7 +315,7 @@ const Store = () => {
         </div>
       )}
       
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-7xl mx-auto screen-only">
         {/* Header */}
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
