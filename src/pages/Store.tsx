@@ -40,7 +40,7 @@ const Store = () => {
     timestamp: Date;
   } | null>(null);
   
-  const { getFarmers, saveSale, getUnsyncedSales, deleteSale } = useIndexedDB();
+  const { getFarmers, saveSale, getUnsyncedSales, deleteSale, saveItems, getItems, saveFarmers } = useIndexedDB();
 
   useEffect(() => {
     loadItems();
@@ -72,6 +72,8 @@ const Store = () => {
       if (navigator.onLine) {
         const data = await mysqlApi.farmers.getAll();
         setFarmers(data);
+        // Cache farmers for offline use
+        saveFarmers(data);
       } else {
         // Load from IndexedDB if offline
         const localFarmers = await getFarmers();
@@ -92,11 +94,36 @@ const Store = () => {
   const loadItems = async () => {
     try {
       setLoading(true);
-      const data = await mysqlApi.items.getAll();
-      setItems(data);
+      
+      if (navigator.onLine) {
+        // Online: fetch from API and cache
+        const data = await mysqlApi.items.getAll();
+        setItems(data);
+        saveItems(data);
+      } else {
+        // Offline: load from cache
+        const cachedItems = await getItems();
+        if (cachedItems.length > 0) {
+          setItems(cachedItems);
+          toast.info('Offline mode - showing cached items');
+        } else {
+          toast.warning('No cached items available offline');
+        }
+      }
     } catch (error) {
-      toast.error('Failed to load items');
-      console.error(error);
+      console.error('Failed to load items:', error);
+      // Try loading from cache as fallback
+      try {
+        const cachedItems = await getItems();
+        if (cachedItems.length > 0) {
+          setItems(cachedItems);
+          toast.info('Loaded from cache');
+        } else {
+          toast.error('Failed to load items');
+        }
+      } catch (e) {
+        toast.error('Failed to load items');
+      }
     } finally {
       setLoading(false);
     }
@@ -117,16 +144,18 @@ const Store = () => {
     setFarmerId(value);
     
     if (value.trim() === '') {
-      setFilteredFarmers([]);
-      setShowFarmerDropdown(false);
+      // Show all farmers when input is empty
+      setFilteredFarmers(farmers.slice(0, 10));
+      setShowFarmerDropdown(farmers.length > 0);
       setFarmerName('');
       return;
     }
 
-    // Filter farmers based on input
+    // Filter farmers based on input - smart search
     const filtered = farmers.filter(f => 
-      f.farmer_id.toLowerCase().includes(value.toLowerCase()) ||
-      f.name.toLowerCase().includes(value.toLowerCase())
+      f.farmer_id.toLowerCase().startsWith(value.toLowerCase()) ||
+      f.name.toLowerCase().includes(value.toLowerCase()) ||
+      f.farmer_id.toLowerCase().includes(value.toLowerCase())
     ).slice(0, 10); // Limit to 10 results
 
     setFilteredFarmers(filtered);
@@ -151,24 +180,25 @@ const Store = () => {
       
       for (const saleRecord of pendingSales) {
         try {
-          // Clean the sale object - remove IndexedDB fields
+          // Clean the sale object - ONLY include API fields, NO IndexedDB fields
           const cleanSale: Sale = {
-            farmer_id: saleRecord.farmer_id,
-            farmer_name: saleRecord.farmer_name,
-            item_code: saleRecord.item_code,
-            item_name: saleRecord.item_name,
-            quantity: saleRecord.quantity,
-            price: saleRecord.price,
-            sold_by: saleRecord.sold_by,
+            farmer_id: String(saleRecord.farmer_id || ''),
+            farmer_name: String(saleRecord.farmer_name || ''),
+            item_code: String(saleRecord.item_code || ''),
+            item_name: String(saleRecord.item_name || ''),
+            quantity: Number(saleRecord.quantity) || 0,
+            price: Number(saleRecord.price) || 0,
+            sold_by: String(saleRecord.sold_by || ''),
           };
           
+          console.log('Syncing sale:', cleanSale);
           const success = await mysqlApi.sales.create(cleanSale);
           if (success && saleRecord.orderId) {
             await deleteSale(saleRecord.orderId);
-            console.log(`Synced sale ${saleRecord.orderId}`);
+            console.log(`✅ Synced and deleted sale ${saleRecord.orderId}`);
           }
         } catch (error) {
-          console.error('Sync error:', error);
+          console.error('❌ Sync error for sale:', saleRecord.orderId, error);
         }
       }
       
@@ -431,21 +461,27 @@ const Store = () => {
                   value={farmerId}
                   onChange={(e) => handleFarmerIdChange(e.target.value)}
                   onFocus={() => {
-                    if (filteredFarmers.length > 0) {
-                      setShowFarmerDropdown(true);
+                    // Show suggestions immediately on focus
+                    if (farmerId.trim() === '') {
+                      setFilteredFarmers(farmers.slice(0, 10));
                     }
+                    setShowFarmerDropdown(true);
+                  }}
+                  onBlur={() => {
+                    // Delay to allow click on dropdown
+                    setTimeout(() => setShowFarmerDropdown(false), 200);
                   }}
                   placeholder="Type farmer ID or name"
                   autoComplete="off"
                 />
                 {showFarmerDropdown && filteredFarmers.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto z-50">
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto z-50">
                     {filteredFarmers.map((farmer) => (
                       <button
                         key={farmer.farmer_id}
                         type="button"
                         onClick={() => handleFarmerSelect(farmer)}
-                        className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b last:border-b-0"
+                        className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b last:border-b-0 transition-colors"
                       >
                         <div className="font-semibold text-sm">{farmer.farmer_id}</div>
                         <div className="text-xs text-muted-foreground">{farmer.name}</div>

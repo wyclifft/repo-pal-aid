@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -40,6 +40,11 @@ export const useIndexedDB = () => {
         database.deleteObjectStore('device_approvals');
       }
       database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
+
+      // Add items store for offline caching
+      if (!database.objectStoreNames.contains('items')) {
+        database.createObjectStore('items', { keyPath: 'ID' });
+      }
     };
 
     request.onsuccess = (event) => {
@@ -217,6 +222,25 @@ export const useIndexedDB = () => {
     }
   }, [db]);
 
+  const saveItems = useCallback((items: any[]) => {
+    if (!db) return;
+    const tx = db.transaction('items', 'readwrite');
+    const store = tx.objectStore('items');
+    items.forEach((item) => store.put(item));
+    console.log('Items cached in IndexedDB');
+  }, [db]);
+
+  const getItems = useCallback((): Promise<any[]> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject('DB not ready');
+      const tx = db.transaction('items', 'readonly');
+      const store = tx.objectStore('items');
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }, [db]);
+
   return {
     db,
     isReady,
@@ -232,5 +256,7 @@ export const useIndexedDB = () => {
     saveSale,
     getUnsyncedSales,
     deleteSale,
+    saveItems,
+    getItems,
   };
 };
