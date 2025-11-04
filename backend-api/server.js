@@ -112,43 +112,78 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, message: 'Farmer deleted' });
     }
 
-    // Milk collection endpoints
+    // Milk collection endpoints - now using transactions table
     if (path === '/api/milk-collection' && method === 'GET') {
       const { farmer_id, session, date_from, date_to } = parsedUrl.query;
-      let query = 'SELECT * FROM milk_collection WHERE 1=1';
+      let query = 'SELECT * FROM transactions WHERE 1=1';
       let params = [];
-      if (farmer_id) { query += ' AND farmer_id = ?'; params.push(farmer_id); }
+      if (farmer_id) { query += ' AND memberno = ?'; params.push(farmer_id); }
       if (session) { query += ' AND session = ?'; params.push(session); }
-      if (date_from) { query += ' AND collection_date >= ?'; params.push(date_from); }
-      if (date_to) { query += ' AND collection_date <= ?'; params.push(date_to); }
-      query += ' ORDER BY collection_date DESC';
+      if (date_from) { query += ' AND transdate >= ?'; params.push(date_from); }
+      if (date_to) { query += ' AND transdate <= ?'; params.push(date_to); }
+      query += ' ORDER BY transdate DESC';
       const [rows] = await pool.query(query, params);
-      return sendJSON(res, { success: true, data: rows });
+      
+      // Map transactions fields back to expected format
+      const mappedRows = rows.map(row => ({
+        reference_no: row.transrefno,
+        farmer_id: row.memberno,
+        farmer_name: row.memberno,
+        route: row.route,
+        session: row.session,
+        weight: row.weight,
+        clerk_name: row.clerk,
+        collection_date: row.transdate
+      }));
+      
+      return sendJSON(res, { success: true, data: mappedRows });
     }
 
     if (path.startsWith('/api/milk-collection/') && method === 'GET') {
       const ref = path.split('/')[3];
-      const [rows] = await pool.query('SELECT * FROM milk_collection WHERE reference_no = ?', [ref]);
+      const [rows] = await pool.query('SELECT * FROM transactions WHERE transrefno = ?', [ref]);
       if (rows.length === 0) return sendJSON(res, { success: false, error: 'Collection not found' }, 404);
-      return sendJSON(res, { success: true, data: rows[0] });
+      
+      // Map transaction fields back to expected format
+      const mapped = {
+        reference_no: rows[0].transrefno,
+        farmer_id: rows[0].memberno,
+        farmer_name: rows[0].memberno,
+        route: rows[0].route,
+        session: rows[0].session,
+        weight: rows[0].weight,
+        clerk_name: rows[0].clerk,
+        collection_date: rows[0].transdate
+      };
+      
+      return sendJSON(res, { success: true, data: mapped });
     }
 
     if (path === '/api/milk-collection' && method === 'POST') {
       const body = await parseBody(req);
     
-      // Auto-generate reference_no if missing
-      const reference_no = body.reference_no || `REF-${Date.now()}`;
-      const farmer_name = body.farmer_name || null;
-      const clerk_name = body.clerk_name || null;
+      // Auto-generate transrefno if missing
+      const transrefno = body.reference_no || `REF-${Date.now()}`;
+      const clerk = body.clerk_name || 'unknown';
+      const deviceserial = body.device_fingerprint || 'web';
+      
+      // Parse date and time
+      const collectionDate = new Date(body.collection_date);
+      const transdate = collectionDate.toISOString().split('T')[0]; // YYYY-MM-DD
+      const transtime = collectionDate.toTimeString().split(' ')[0]; // HH:MM:SS
+      const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
     
       await pool.query(
-        `INSERT INTO milk_collection 
-          (reference_no, farmer_id, farmer_name, route, session, weight, clerk_name, collection_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [reference_no, body.farmer_id, farmer_name, body.route, body.session, body.weight, clerk_name, body.collection_date]
+        `INSERT INTO transactions 
+          (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+           transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
+           amount, icode, time, capType)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, '', 0, 0, 0, '', ?, 0)`,
+        [transrefno, clerk, clerk, deviceserial, body.farmer_id, body.route, body.weight, 
+         body.session, transdate, transtime, timestamp]
       );
     
-      return sendJSON(res, { success: true, message: 'Collection created', reference_no }, 201);
+      return sendJSON(res, { success: true, message: 'Collection created', reference_no: transrefno }, 201);
     }
 
     if (path.startsWith('/api/milk-collection/') && method === 'PUT') {
@@ -160,28 +195,36 @@ const server = http.createServer(async (req, res) => {
         updates.push('weight = ?');
         values.push(body.weight);
       }
-      if (body.collection_date) { updates.push('collection_date = ?'); values.push(body.collection_date); }
+      if (body.collection_date) {
+        const collectionDate = new Date(body.collection_date);
+        const transdate = collectionDate.toISOString().split('T')[0];
+        const transtime = collectionDate.toTimeString().split(' ')[0];
+        updates.push('transdate = ?', 'transtime = ?');
+        values.push(transdate, transtime);
+      }
       if (updates.length === 0) return sendJSON(res, { success: false, error: 'No fields to update' }, 400);
       values.push(ref);
-      await pool.query(`UPDATE milk_collection SET ${updates.join(', ')}, updated_at = NOW() WHERE reference_no = ?`, values);
+      await pool.query(`UPDATE transactions SET ${updates.join(', ')} WHERE transrefno = ?`, values);
       return sendJSON(res, { success: true, message: 'Collection updated' });
     }
 
     if (path.startsWith('/api/milk-collection/') && method === 'DELETE') {
       const ref = path.split('/')[3];
-      await pool.query('DELETE FROM milk_collection WHERE reference_no = ?', [ref]);
+      await pool.query('DELETE FROM transactions WHERE transrefno = ?', [ref]);
       return sendJSON(res, { success: true, message: 'Collection deleted' });
     }
 
-    // Z-Report endpoint
+    // Z-Report endpoint - now using transactions table
     if (path === '/api/z-report' && method === 'GET') {
       const date = parsedUrl.query.date || new Date().toISOString().split('T')[0];
       
       // Fetch all collections for the specified date
       const [collections] = await pool.query(
-        `SELECT * FROM milk_collection 
-         WHERE DATE(collection_date) = ? 
-         ORDER BY session, route, farmer_name`,
+        `SELECT transrefno, memberno as farmer_id, route, weight, session, 
+                transdate as collection_date, clerk as clerk_name
+         FROM transactions 
+         WHERE transdate = ? AND Transtype = 'MILK'
+         ORDER BY session, route, memberno`,
         [date]
       );
 

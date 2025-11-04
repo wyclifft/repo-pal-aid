@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateTextReport, generateCSVReport } from '@/utils/fileExport';
 import { toast } from 'sonner';
 import { ClipboardList } from 'lucide-react';
@@ -33,6 +34,9 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
 
     setIsSyncing(true);
 
+    // Get device fingerprint
+    const deviceFingerprint = await generateDeviceFingerprint();
+
     // Group receipts by farmer_id, session, and month
     const groupedReceipts = new Map<string, MilkCollection[]>();
     
@@ -58,7 +62,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
       const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
       
-      const milkData = {
+      const milkData: any = {
         reference_no: firstReceipt.reference_no || `MC-${monthKey}-${firstReceipt.farmer_id}-${firstReceipt.session}`,
         farmer_id: firstReceipt.farmer_id,
         farmer_name: firstReceipt.farmer_name || firstReceipt.farmer_id || 'Unknown',
@@ -67,6 +71,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
         weight: parseFloat(totalWeight.toFixed(2)),
         clerk_name: firstReceipt.clerk_name,
         collection_date: firstReceipt.collection_date,
+        device_fingerprint: deviceFingerprint,
       };
 
       try {

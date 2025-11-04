@@ -7,6 +7,7 @@ import { ReceiptModal } from '@/components/ReceiptModal';
 import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
 import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag } from 'lucide-react';
 
@@ -68,6 +69,9 @@ const Index = () => {
     const monthKey = `${year}-${month}`; // YYYY-MM format
     const referenceNo = `MC-${monthKey}-${farmerId}-${session}`;
 
+    // Get device fingerprint
+    const deviceFingerprint = await generateDeviceFingerprint();
+
     // Get start and end of current month
     const monthStart = new Date(year, now.getMonth(), 1);
     const monthEnd = new Date(year, now.getMonth() + 1, 0, 23, 59, 59);
@@ -104,7 +108,7 @@ const Index = () => {
           }
         } else {
           // Create new record
-          const milkData: MilkCollection = {
+          const milkData: any = {
             reference_no: referenceNo,
             farmer_id: farmerId,
             farmer_name: farmerName,
@@ -113,14 +117,12 @@ const Index = () => {
             weight: parseFloat(Number(weight).toFixed(2)),
             clerk_name: currentUser ? currentUser.user_id : 'unknown',
             collection_date: new Date(),
+            device_fingerprint: deviceFingerprint,
             orderId: Date.now(),
             synced: false,
           };
 
-          const created = await mysqlApi.milkCollection.create({
-            ...milkData,
-            session: session as 'AM' | 'PM'
-          });
+          const created = await mysqlApi.milkCollection.create(milkData);
           if (created) {
             toast.success('Collection saved and synced to MySQL');
             setCurrentReceipt({ ...milkData, synced: true });
