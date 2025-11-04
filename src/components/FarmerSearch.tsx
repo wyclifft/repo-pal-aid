@@ -1,4 +1,4 @@
- import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { type Farmer } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -14,44 +14,46 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
   const [searchQuery, setSearchQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<Farmer[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState(0);
   const [farmerCount, setFarmerCount] = useState(0);
   const { getFarmers, saveFarmers } = useIndexedDB();
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const searchFarmers = useCallback(async (query: string) => {
-    if (query.length < 2) {
-      setSuggestions([]);
+  // Load cached farmers immediately on mount
+  useEffect(() => {
+    const loadCached = async () => {
+      try {
+        const farmers = await getFarmers();
+        setCachedFarmers(farmers);
+      } catch (err) {
+        console.error('Failed to load cached farmers:', err);
+      }
+    };
+    loadCached();
+  }, [getFarmers]);
+
+  const searchFarmers = useCallback((query: string, farmers: Farmer[]) => {
+    // Show suggestions immediately on focus, even with empty query
+    if (!query) {
+      setSuggestions(farmers.slice(0, 10));
       return;
     }
 
     const lowerQuery = query.toLowerCase();
-
-    if (navigator.onLine) {
-      try {
-        const data = await mysqlApi.farmers.search(query);
-        setSuggestions(data || []);
-      } catch (err) {
-        console.error('Farmer search error:', err);
-      }
-    } else {
-      try {
-        const farmers = await getFarmers();
-        const filtered = farmers.filter(
-          (f) =>
-            f.farmer_id.toLowerCase().includes(lowerQuery) ||
-            f.name.toLowerCase().includes(lowerQuery)
-        );
-        setSuggestions(filtered.slice(0, 10));
-      } catch (err) {
-        console.error('Offline farmer search error:', err);
-      }
-    }
-  }, [getFarmers]);
+    const filtered = farmers.filter((f) => {
+      const idMatch = f.farmer_id.toLowerCase().startsWith(lowerQuery);
+      const nameMatch = f.name.toLowerCase().includes(lowerQuery);
+      return idMatch || nameMatch;
+    });
+    
+    setSuggestions(filtered.slice(0, 10));
+  }, []);
 
   useEffect(() => {
-    searchFarmers(searchQuery);
-  }, [searchQuery, searchFarmers]);
+    searchFarmers(searchQuery, cachedFarmers);
+  }, [searchQuery, cachedFarmers, searchFarmers]);
 
   // Sync farmers from MySQL API to local on mount and when online
   useEffect(() => {
@@ -146,6 +148,7 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
       )}
       
       <input
+        ref={inputRef}
         type="text"
         placeholder="Search Farmer (ID or Name)"
         value={searchQuery}
@@ -153,7 +156,10 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
           setSearchQuery(e.target.value);
           setShowSuggestions(true);
         }}
-        onFocus={() => setShowSuggestions(true)}
+        onFocus={() => {
+          setShowSuggestions(true);
+          searchFarmers(searchQuery, cachedFarmers);
+        }}
         onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea] mb-3"
         autoComplete="off"

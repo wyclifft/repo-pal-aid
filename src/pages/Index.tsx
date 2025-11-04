@@ -361,9 +361,15 @@ const Index = () => {
               const selectedSession = e.target.value;
               const currentHour = new Date().getHours();
               
-              // Block AM selection after 12 PM (noon)
+              // Block PM selection during AM hours (before 12 PM)
+              if (selectedSession === 'PM' && currentHour < 12) {
+                toast.error('Cannot select PM session during AM hours');
+                return;
+              }
+              
+              // Block AM selection during PM hours (after 12 PM)
               if (selectedSession === 'AM' && currentHour >= 12) {
-                toast.error('Cannot select AM session after 12:00 PM');
+                toast.error('Cannot select AM session during PM hours');
                 return;
               }
               
