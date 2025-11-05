@@ -173,8 +173,8 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
               className="px-4 py-3 cursor-pointer hover:bg-[#667eea] hover:text-white transition-colors"
               onClick={() => handleSelect(farmer)}
             >
-              <div className="font-semibold">{farmer.farmer_id}</div>
-              <div className="text-sm">{farmer.name}</div>
+              <div className="font-semibold">{farmer.name}</div>
+              <div className="text-sm">ID: {farmer.farmer_id}</div>
               <div className="text-xs opacity-75">
                 Route: {farmer.route || 'N/A'}
               </div>

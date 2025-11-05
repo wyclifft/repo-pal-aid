@@ -496,8 +496,9 @@ const Store = () => {
                         onClick={() => handleFarmerSelect(farmer)}
                         className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b last:border-b-0 transition-colors"
                       >
-                        <div className="font-semibold text-sm">{farmer.farmer_id}</div>
-                        <div className="text-xs text-muted-foreground">{farmer.name}</div>
+                        <div className="font-semibold text-sm">{farmer.name}</div>
+                        <div className="text-xs text-muted-foreground">ID: {farmer.farmer_id}</div>
+                        <div className="text-xs text-muted-foreground">Route: {farmer.route || 'N/A'}</div>
                       </button>
                     ))}
                   </div>
