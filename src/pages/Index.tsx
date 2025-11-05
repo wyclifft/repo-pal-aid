@@ -9,7 +9,7 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart } from 'lucide-react';
 
 const Index = () => {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -309,6 +309,16 @@ const Index = () => {
           >
             <ShoppingBag className="h-5 w-5 text-[#667eea]" />
             Store
+          </button>
+          <button
+            onClick={() => {
+              setSidebarOpen(false);
+              window.location.href = '/periodic-report';
+            }}
+            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+          >
+            <FileBarChart className="h-5 w-5 text-[#667eea]" />
+            Periodic Report
           </button>
         </div>
       </nav>
