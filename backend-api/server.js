@@ -64,10 +64,10 @@ const server = http.createServer(async (req, res) => {
     // Farmers endpoints - Fetch from cm_members table
     if (path === '/api/farmers' && method === 'GET') {
       const search = parsedUrl.query.search;
-      let query = 'SELECT ID as farmer_id, descript as name, route FROM cm_members';
+      let query = 'SELECT mcode as farmer_id, descript as name, route FROM cm_members';
       let params = [];
       if (search) {
-        query += ' WHERE ID LIKE ? OR descript LIKE ?';
+        query += ' WHERE mcode LIKE ? OR descript LIKE ?';
         params = [`%${search}%`, `%${search}%`];
       }
       query += ' ORDER BY descript';
@@ -77,7 +77,7 @@ const server = http.createServer(async (req, res) => {
 
     if (path.startsWith('/api/farmers/') && method === 'GET') {
       const id = path.split('/')[3];
-      const [rows] = await pool.query('SELECT ID as farmer_id, descript as name, route FROM cm_members WHERE ID = ?', [id]);
+      const [rows] = await pool.query('SELECT mcode as farmer_id, descript as name, route FROM cm_members WHERE mcode = ?', [id]);
       if (rows.length === 0) return sendJSON(res, { success: false, error: 'Farmer not found' }, 404);
       return sendJSON(res, { success: true, data: rows[0] });
     }
@@ -85,7 +85,7 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/farmers' && method === 'POST') {
       const body = await parseBody(req);
       await pool.query(
-        'INSERT INTO cm_members (ID, descript, route) VALUES (?, ?, ?)',
+        'INSERT INTO cm_members (mcode, descript, route) VALUES (?, ?, ?)',
         [body.farmer_id, body.name, body.route]
       );
       return sendJSON(res, { success: true, message: 'Farmer created' }, 201);
@@ -100,13 +100,13 @@ const server = http.createServer(async (req, res) => {
       if (body.route) { updates.push('route = ?'); values.push(body.route); }
       if (updates.length === 0) return sendJSON(res, { success: false, error: 'No fields to update' }, 400);
       values.push(id);
-      await pool.query(`UPDATE cm_members SET ${updates.join(', ')} WHERE ID = ?`, values);
+      await pool.query(`UPDATE cm_members SET ${updates.join(', ')} WHERE mcode = ?`, values);
       return sendJSON(res, { success: true, message: 'Farmer updated' });
     }
 
     if (path.startsWith('/api/farmers/') && method === 'DELETE') {
       const id = path.split('/')[3];
-      await pool.query('DELETE FROM cm_members WHERE ID = ?', [id]);
+      await pool.query('DELETE FROM cm_members WHERE mcode = ?', [id]);
       return sendJSON(res, { success: true, message: 'Farmer deleted' });
     }
 

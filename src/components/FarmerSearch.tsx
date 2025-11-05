@@ -43,8 +43,8 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
 
     const lowerQuery = query.toLowerCase();
     const filtered = farmers.filter((f) => {
-      const idMatch = f.farmer_id.toLowerCase().startsWith(lowerQuery);
-      const nameMatch = f.name.toLowerCase().includes(lowerQuery);
+      const idMatch = String(f.farmer_id || '').toLowerCase().startsWith(lowerQuery);
+      const nameMatch = String(f.name || '').toLowerCase().includes(lowerQuery);
       return idMatch || nameMatch;
     });
     
