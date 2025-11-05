@@ -430,7 +430,7 @@ export interface PeriodicReportData {
 
 const periodicReportApi = {
   async get(startDate: string, endDate: string, farmerSearch?: string): Promise<PeriodicReportData[]> {
-    let endpoint = `${API_BASE_URL}/periodic-report?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+    let endpoint = `/periodic-report?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
     if (farmerSearch) {
       endpoint += `&farmer_search=${encodeURIComponent(farmerSearch)}`;
     }
