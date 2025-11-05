@@ -419,6 +419,26 @@ export const salesApi = {
   }
 };
 
+// ============= Periodic Report API =============
+export interface PeriodicReportData {
+  farmer_id: string;
+  farmer_name: string;
+  route: string;
+  total_weight: number;
+  collection_count: number;
+}
+
+const periodicReportApi = {
+  async get(startDate: string, endDate: string, farmerSearch?: string): Promise<PeriodicReportData[]> {
+    let endpoint = `${API_BASE_URL}/periodic-report?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+    if (farmerSearch) {
+      endpoint += `&farmer_search=${encodeURIComponent(farmerSearch)}`;
+    }
+    const response = await apiRequest<PeriodicReportData[]>(endpoint);
+    return response.data || [];
+  },
+};
+
 // Export all APIs
 export const mysqlApi = {
   farmers: farmersApi,
@@ -427,4 +447,5 @@ export const mysqlApi = {
   zReport: zReportApi,
   items: itemsApi,
   sales: salesApi,
+  periodicReport: periodicReportApi,
 };

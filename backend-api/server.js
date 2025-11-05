@@ -212,6 +212,41 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, message: 'Collection deleted' });
     }
 
+    // Periodic Report endpoint - aggregated by farmer with date range
+    if (path === '/api/periodic-report' && method === 'GET') {
+      const startDate = parsedUrl.query.start_date;
+      const endDate = parsedUrl.query.end_date;
+      const farmerSearch = parsedUrl.query.farmer_search;
+
+      if (!startDate || !endDate) {
+        return sendJSON(res, { success: false, error: 'start_date and end_date are required' }, 400);
+      }
+
+      let query = `
+        SELECT 
+          t.memberno as farmer_id,
+          cm.descript as farmer_name,
+          cm.route,
+          SUM(t.weight) as total_weight,
+          COUNT(*) as collection_count
+        FROM transactions t
+        LEFT JOIN cm_members cm ON t.memberno = cm.mcode
+        WHERE t.Transtype = 'MILK' 
+          AND t.transdate BETWEEN ? AND ?
+      `;
+      let params = [startDate, endDate];
+
+      if (farmerSearch) {
+        query += ` AND (t.memberno LIKE ? OR cm.descript LIKE ?)`;
+        params.push(`%${farmerSearch}%`, `%${farmerSearch}%`);
+      }
+
+      query += ` GROUP BY t.memberno, cm.descript, cm.route ORDER BY cm.descript`;
+
+      const [rows] = await pool.query(query, params);
+      return sendJSON(res, { success: true, data: rows });
+    }
+
     // Z-Report endpoint - now using transactions table
     if (path === '/api/z-report' && method === 'GET') {
       const date = parsedUrl.query.date || new Date().toISOString().split('T')[0];
