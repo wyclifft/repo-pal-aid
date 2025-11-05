@@ -389,6 +389,7 @@ export interface Sale {
   sold_by: string;
   sale_date?: string;
   remarks?: string;
+  device_fingerprint?: string;
 }
 
 export const salesApi = {

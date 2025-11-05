@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from 'sonner';
 import { ArrowLeft, ShoppingCart, Package, Loader2, Receipt as ReceiptIcon } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 
 const Store = () => {
   const navigate = useNavigate();
@@ -180,6 +181,9 @@ const Store = () => {
       
       for (const saleRecord of pendingSales) {
         try {
+          // Generate device fingerprint for sync
+          const deviceFingerprint = await generateDeviceFingerprint();
+          
           // Clean the sale object - ONLY include API fields, NO IndexedDB fields
           const cleanSale: Sale = {
             farmer_id: String(saleRecord.farmer_id || ''),
@@ -189,6 +193,7 @@ const Store = () => {
             quantity: Number(saleRecord.quantity) || 0,
             price: Number(saleRecord.price) || 0,
             sold_by: String(saleRecord.sold_by || ''),
+            device_fingerprint: deviceFingerprint,
           };
           
           console.log('Syncing sale:', cleanSale);
@@ -225,6 +230,9 @@ const Store = () => {
       return;
     }
 
+    // Generate device fingerprint
+    const deviceFingerprint = await generateDeviceFingerprint();
+    
     const sale: Sale = {
       farmer_id: farmerId,
       farmer_name: farmerName,
@@ -233,6 +241,7 @@ const Store = () => {
       quantity: qty,
       price: selectedItem.sprice,
       sold_by: soldBy,
+      device_fingerprint: deviceFingerprint,
     };
 
     try {

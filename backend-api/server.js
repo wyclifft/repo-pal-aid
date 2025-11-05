@@ -309,12 +309,45 @@ const server = http.createServer(async (req, res) => {
         // Generate sale reference
         const sale_ref = body.sale_ref || `SALE-${Date.now()}`;
         
-        // Insert sale record
+        // Get current date and time
+        const now = new Date();
+        const transdate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+        const transtime = now.toTimeString().split(' ')[0]; // HH:MM:SS
+        const timestamp = Math.floor(now.getTime() / 1000); // Unix timestamp
+        
+        // Calculate amount (quantity * price)
+        const amount = (body.quantity || 0) * (body.price || 0);
+        
+        // Insert into transactions table
         await conn.query(
-          `INSERT INTO store_sales 
-            (sale_ref, farmer_id, farmer_name, item_code, item_name, quantity, price, sold_by, sale_date, remarks)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
-          [sale_ref, body.farmer_id, body.farmer_name, body.item_code, body.item_name, body.quantity, body.price, body.sold_by, body.remarks || null]
+          `INSERT INTO transactions 
+            (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+             transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
+             amount, icode, time, capType, milk_session_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            sale_ref,                           // transrefno
+            body.sold_by || '',                 // userId
+            body.sold_by || '',                 // clerk
+            body.device_fingerprint || '',      // deviceserial
+            body.farmer_id || '',               // memberno
+            '',                                 // route (empty for store sales)
+            body.quantity || 0,                 // weight (using quantity)
+            '',                                 // session (empty for store sales)
+            transdate,                          // transdate
+            transtime,                          // transtime
+            'STORE',                            // Transtype
+            0,                                  // processed
+            0,                                  // uploaded
+            '',                                 // ccode
+            0,                                  // ivat
+            body.price || 0,                    // iprice
+            amount,                             // amount
+            body.item_code || '',               // icode
+            timestamp,                          // time
+            0,                                  // capType
+            ''                                  // milk_session_id
+          ]
         );
         
         // Update stock balance
@@ -336,14 +369,28 @@ const server = http.createServer(async (req, res) => {
 
     if (path === '/api/sales' && method === 'GET') {
       const { farmer_id, date_from, date_to } = parsedUrl.query;
-      let query = 'SELECT * FROM store_sales WHERE 1=1';
+      let query = 'SELECT * FROM transactions WHERE Transtype = "STORE"';
       let params = [];
-      if (farmer_id) { query += ' AND farmer_id = ?'; params.push(farmer_id); }
-      if (date_from) { query += ' AND sale_date >= ?'; params.push(date_from); }
-      if (date_to) { query += ' AND sale_date <= ?'; params.push(date_to); }
-      query += ' ORDER BY sale_date DESC';
+      if (farmer_id) { query += ' AND memberno = ?'; params.push(farmer_id); }
+      if (date_from) { query += ' AND transdate >= ?'; params.push(date_from); }
+      if (date_to) { query += ' AND transdate <= ?'; params.push(date_to); }
+      query += ' ORDER BY transdate DESC, transtime DESC';
       const [rows] = await pool.query(query, params);
-      return sendJSON(res, { success: true, data: rows });
+      
+      // Map transactions fields back to frontend expected format
+      const mappedRows = rows.map(row => ({
+        sale_ref: row.transrefno,
+        farmer_id: row.memberno,
+        item_code: row.icode,
+        quantity: row.weight,
+        price: row.iprice,
+        amount: row.amount,
+        sold_by: row.clerk,
+        sale_date: `${row.transdate} ${row.transtime}`,
+        device_fingerprint: row.deviceserial
+      }));
+      
+      return sendJSON(res, { success: true, data: mappedRows });
     }
 
     // Devices endpoints
