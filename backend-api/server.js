@@ -61,23 +61,23 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, message: 'API running', timestamp: new Date() });
     }
 
-    // Farmers endpoints
+    // Farmers endpoints - Fetch from cm_members table
     if (path === '/api/farmers' && method === 'GET') {
       const search = parsedUrl.query.search;
-      let query = 'SELECT * FROM farmers';
+      let query = 'SELECT ID as farmer_id, descript as name, route FROM cm_members';
       let params = [];
       if (search) {
-        query += ' WHERE farmer_id LIKE ? OR name LIKE ?';
+        query += ' WHERE ID LIKE ? OR descript LIKE ?';
         params = [`%${search}%`, `%${search}%`];
       }
-      query += ' ORDER BY name';
+      query += ' ORDER BY descript';
       const [rows] = await pool.query(query, params);
       return sendJSON(res, { success: true, data: rows });
     }
 
     if (path.startsWith('/api/farmers/') && method === 'GET') {
       const id = path.split('/')[3];
-      const [rows] = await pool.query('SELECT * FROM farmers WHERE farmer_id = ?', [id]);
+      const [rows] = await pool.query('SELECT ID as farmer_id, descript as name, route FROM cm_members WHERE ID = ?', [id]);
       if (rows.length === 0) return sendJSON(res, { success: false, error: 'Farmer not found' }, 404);
       return sendJSON(res, { success: true, data: rows[0] });
     }
@@ -85,8 +85,8 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/farmers' && method === 'POST') {
       const body = await parseBody(req);
       await pool.query(
-        'INSERT INTO farmers (farmer_id, name, route, route_name, member_route) VALUES (?, ?, ?, ?, ?)',
-        [body.farmer_id, body.name, body.route, body.route_name || null, body.member_route || null]
+        'INSERT INTO cm_members (ID, descript, route) VALUES (?, ?, ?)',
+        [body.farmer_id, body.name, body.route]
       );
       return sendJSON(res, { success: true, message: 'Farmer created' }, 201);
     }
@@ -96,19 +96,17 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const updates = [];
       const values = [];
-      if (body.name) { updates.push('name = ?'); values.push(body.name); }
+      if (body.name) { updates.push('descript = ?'); values.push(body.name); }
       if (body.route) { updates.push('route = ?'); values.push(body.route); }
-      if (body.route_name !== undefined) { updates.push('route_name = ?'); values.push(body.route_name); }
-      if (body.member_route !== undefined) { updates.push('member_route = ?'); values.push(body.member_route); }
       if (updates.length === 0) return sendJSON(res, { success: false, error: 'No fields to update' }, 400);
       values.push(id);
-      await pool.query(`UPDATE farmers SET ${updates.join(', ')} WHERE farmer_id = ?`, values);
+      await pool.query(`UPDATE cm_members SET ${updates.join(', ')} WHERE ID = ?`, values);
       return sendJSON(res, { success: true, message: 'Farmer updated' });
     }
 
     if (path.startsWith('/api/farmers/') && method === 'DELETE') {
       const id = path.split('/')[3];
-      await pool.query('DELETE FROM farmers WHERE farmer_id = ?', [id]);
+      await pool.query('DELETE FROM cm_members WHERE ID = ?', [id]);
       return sendJSON(res, { success: true, message: 'Farmer deleted' });
     }
 
