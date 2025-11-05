@@ -45,14 +45,22 @@ export default function PeriodicReport() {
       const formattedStartDate = format(startDate, "yyyy-MM-dd");
       const formattedEndDate = format(endDate, "yyyy-MM-dd");
       
+      console.log("Requesting report with dates:", formattedStartDate, formattedEndDate);
+      
       const data = await mysqlApi.periodicReport.get(
         formattedStartDate,
         formattedEndDate,
         farmerSearch.trim() || undefined
       );
 
+      console.log("Report data received:", data);
       setReportData(data);
-      toast.success(`Found ${data.length} farmer(s) with milk collections`);
+      
+      if (data.length === 0) {
+        toast.warning("No milk collections found for the selected date range");
+      } else {
+        toast.success(`Found ${data.length} farmer(s) with milk collections`);
+      }
     } catch (error) {
       console.error("Error generating report:", error);
       toast.error("Error generating report");
@@ -132,7 +140,7 @@ export default function PeriodicReport() {
 
             {/* Farmer Search */}
             <div className="space-y-2">
-              <Label>Farmer Name or ID (Optional)</Label>
+              <Label>Farmer Name or ID</Label>
               <Input
                 placeholder="Search by name or ID..."
                 value={farmerSearch}
