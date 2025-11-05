@@ -152,12 +152,16 @@ const Store = () => {
       return;
     }
 
-    // Filter farmers based on input - smart search
-    const filtered = farmers.filter(f => 
-      f.farmer_id.toLowerCase().startsWith(value.toLowerCase()) ||
-      f.name.toLowerCase().includes(value.toLowerCase()) ||
-      f.farmer_id.toLowerCase().includes(value.toLowerCase())
-    ).slice(0, 10); // Limit to 10 results
+    // Filter farmers based on input - smart search with null safety
+    const filtered = farmers.filter(f => {
+      const farmerId = String(f.farmer_id || '').toLowerCase();
+      const farmerName = String(f.name || '').toLowerCase();
+      const searchValue = value.toLowerCase();
+      
+      return farmerId.startsWith(searchValue) ||
+             farmerName.includes(searchValue) ||
+             farmerId.includes(searchValue);
+    }).slice(0, 10); // Limit to 10 results
 
     setFilteredFarmers(filtered);
     setShowFarmerDropdown(filtered.length > 0);
