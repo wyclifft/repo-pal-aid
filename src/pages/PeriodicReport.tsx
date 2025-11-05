@@ -164,7 +164,7 @@ export default function PeriodicReport() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold">Report Results</h2>
               <div className="text-sm text-muted-foreground">
-                Total Farmers: {reportData.length} | Total Collections: {totalCollections} | Total Weight: {totalWeight.toFixed(2)} kg
+                {reportData.length} Farmer{reportData.length !== 1 ? 's' : ''} | {totalCollections} Collection{totalCollections !== 1 ? 's' : ''} | {totalWeight.toFixed(2)} kg Total
               </div>
             </div>
             <div className="overflow-x-auto">
