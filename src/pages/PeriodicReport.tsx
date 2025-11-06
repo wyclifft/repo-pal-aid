@@ -23,6 +23,7 @@ import { mysqlApi, type PeriodicReportData } from "@/services/mysqlApi";
 import { toast } from "sonner";
 import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 import { useIndexedDB } from "@/hooks/useIndexedDB";
+import { DeviceAuthStatus } from "@/components/DeviceAuthStatus";
 
 export default function PeriodicReport() {
   const [startDate, setStartDate] = useState<Date>();
@@ -107,9 +108,12 @@ export default function PeriodicReport() {
     <div className="min-h-screen bg-gradient-to-br from-[#1e3a8a] via-[#3b82f6] to-[#60a5fa] p-4">
       <div className="max-w-7xl mx-auto">
         <div className="bg-white/95 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-6">
-          <div className="flex items-center gap-3 mb-6">
-            <FileText className="h-8 w-8 text-primary" />
-            <h1 className="text-3xl font-bold text-gray-900">Periodic Report</h1>
+          <div className="flex items-center justify-between gap-3 mb-6">
+            <div className="flex items-center gap-3">
+              <FileText className="h-8 w-8 text-primary" />
+              <h1 className="text-3xl font-bold text-gray-900">Periodic Report</h1>
+            </div>
+            <DeviceAuthStatus />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">

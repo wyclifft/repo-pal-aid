@@ -4,6 +4,7 @@ import { FarmerSearch } from '@/components/FarmerSearch';
 import { WeightInput } from '@/components/WeightInput';
 import { ReceiptList } from '@/components/ReceiptList';
 import { ReceiptModal } from '@/components/ReceiptModal';
+import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -239,7 +240,10 @@ const Index = () => {
           >
             <Menu className="h-6 w-6 text-gray-700" />
           </button>
-          <h1 className="text-xl font-bold text-[#667eea]">Milk Collection</h1>
+          <div className="flex flex-col items-center gap-1">
+            <h1 className="text-xl font-bold text-[#667eea]">Milk Collection</h1>
+            <DeviceAuthStatus />
+          </div>
           <button
             onClick={handleLogout}
             className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-semibold hover:bg-red-600 transition-colors"

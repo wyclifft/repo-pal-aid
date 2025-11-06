@@ -1,0 +1,79 @@
+import { useState, useEffect } from 'react';
+import { Shield, ShieldAlert, Loader2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+
+export const DeviceAuthStatus = () => {
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const checkAuthorization = async () => {
+    try {
+      const fingerprint = await generateDeviceFingerprint();
+      const apiUrl = import.meta.env.VITE_MYSQL_API_URL || '';
+      
+      const response = await fetch(
+        `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data) {
+          setIsAuthorized(data.data.authorized === 1);
+        } else {
+          setIsAuthorized(false);
+        }
+      } else {
+        setIsAuthorized(false);
+      }
+    } catch (error) {
+      console.error('Authorization check failed:', error);
+      setIsAuthorized(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    checkAuthorization();
+    
+    // Recheck every 30 seconds
+    const interval = setInterval(checkAuthorization, 30000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) {
+    return (
+      <Badge variant="outline" className="gap-1">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        <span className="text-xs">Checking...</span>
+      </Badge>
+    );
+  }
+
+  if (isAuthorized === null) {
+    return (
+      <Badge variant="outline" className="gap-1">
+        <ShieldAlert className="h-3 w-3" />
+        <span className="text-xs">Unknown</span>
+      </Badge>
+    );
+  }
+
+  if (isAuthorized) {
+    return (
+      <Badge variant="outline" className="gap-1 bg-green-50 border-green-200 text-green-700">
+        <Shield className="h-3 w-3" />
+        <span className="text-xs">Authorized</span>
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge variant="outline" className="gap-1 bg-red-50 border-red-200 text-red-700">
+      <ShieldAlert className="h-3 w-3" />
+      <span className="text-xs">Unauthorized</span>
+    </Badge>
+  );
+};

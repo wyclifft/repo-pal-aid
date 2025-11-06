@@ -8,6 +8,7 @@ import { ArrowLeft, Download, Printer, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 
 const ZReport = () => {
   const navigate = useNavigate();
@@ -108,7 +109,10 @@ const ZReport = () => {
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back
           </Button>
-          <h1 className="text-xl font-bold text-[#667eea]">Z Report</h1>
+          <div className="flex flex-col items-center gap-1">
+            <h1 className="text-xl font-bold text-[#667eea]">Z Report</h1>
+            <DeviceAuthStatus />
+          </div>
           <div className="flex gap-2">
             <Button onClick={handlePrint} variant="outline" size="sm">
               <Printer className="mr-2 h-4 w-4" />

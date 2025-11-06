@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { ArrowLeft, ShoppingCart, Package, Loader2, Receipt as ReceiptIcon } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 
 const Store = () => {
   const navigate = useNavigate();
@@ -401,10 +402,13 @@ const Store = () => {
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-3xl font-bold text-primary flex items-center gap-2">
-                <Package className="h-8 w-8" />
-                Store
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-3xl font-bold text-primary flex items-center gap-2">
+                  <Package className="h-8 w-8" />
+                  Store
+                </h1>
+                <DeviceAuthStatus />
+              </div>
               <p className="text-muted-foreground">Manage product sales</p>
             </div>
           </div>
