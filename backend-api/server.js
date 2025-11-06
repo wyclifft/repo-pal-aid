@@ -68,16 +68,16 @@ const server = http.createServer(async (req, res) => {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
       const search = parsedUrl.query.search;
       
-      // Get device's company code
+      // Get device and check authorization
       const [deviceRows] = await pool.query(
-        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
         [uniquedevcode]
       );
       
-      if (deviceRows.length === 0) {
+      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
         return sendJSON(res, { 
           success: false, 
-          error: 'Device not authorized or not found' 
+          message: 'Device not authorized' 
         }, 401);
       }
       

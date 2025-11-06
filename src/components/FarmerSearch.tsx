@@ -87,8 +87,12 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
               setSyncProgress(0);
             }, 1500);
           } else if (!response.success) {
-            // Handle authorization errors
-            console.error('❌ Device authorization error:', response.error);
+            // Handle authorization errors - clear cached farmers
+            console.error('❌ Device authorization error:', response.message || response.error);
+            await saveFarmers([]); // Clear cached farmers
+            setCachedFarmers([]); // Clear state
+            const { toast } = await import('sonner');
+            toast.error(response.message || 'Device not authorized');
             setIsSyncing(false);
             setSyncProgress(0);
           } else {

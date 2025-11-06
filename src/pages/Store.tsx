@@ -79,9 +79,11 @@ const Store = () => {
           // Cache farmers for offline use
           saveFarmers(response.data);
           console.log(`✅ Loaded ${response.data.length} farmers for this device`);
-        } else if (!response.success && response.error?.includes('not authorized')) {
-          // Device not authorized
-          toast.error('Device not authorized. Please contact administrator.');
+        } else if (!response.success) {
+          // Device not authorized - clear cached farmers
+          await saveFarmers([]); // Clear cached farmers
+          setFarmers([]); // Clear state
+          toast.error(response.message || 'Device not authorized. Please contact administrator.');
           console.error('❌ Device authorization error');
         }
       } else {
