@@ -201,6 +201,21 @@ const server = http.createServer(async (req, res) => {
       const clerk = body.clerk_name || 'unknown';
       const deviceserial = body.device_fingerprint || 'web';
       
+      // Fetch ccode from devsettings using uniquedevcode
+      const [deviceRows] = await pool.query(
+        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        [deviceserial]
+      );
+      
+      if (deviceRows.length === 0 || !deviceRows[0].authorized) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized' 
+        }, 403);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
       // Parse date and time
       const collectionDate = new Date(body.collection_date);
       const transdate = collectionDate.toISOString().split('T')[0]; // YYYY-MM-DD
@@ -212,9 +227,9 @@ const server = http.createServer(async (req, res) => {
           (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
            transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
            amount, icode, time, capType)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, '', 0, 0, 0, '', ?, 0)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0)`,
         [transrefno, clerk, clerk, deviceserial, body.farmer_id, body.route, body.weight, 
-         body.session, transdate, transtime, timestamp]
+         body.session, transdate, transtime, ccode, timestamp]
       );
     
       return sendJSON(res, { success: true, message: 'Collection created', reference_no: transrefno }, 201);
