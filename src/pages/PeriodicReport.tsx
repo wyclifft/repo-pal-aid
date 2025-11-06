@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import { CalendarIcon, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { mysqlApi, type PeriodicReportData } from "@/services/mysqlApi";
 import { toast } from "sonner";
+import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 
 export default function PeriodicReport() {
   const [startDate, setStartDate] = useState<Date>();
@@ -28,6 +29,15 @@ export default function PeriodicReport() {
   const [farmerSearch, setFarmerSearch] = useState("");
   const [reportData, setReportData] = useState<PeriodicReportData[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
+
+  useEffect(() => {
+    const initDevice = async () => {
+      const fingerprint = await generateDeviceFingerprint();
+      setDeviceFingerprint(fingerprint);
+    };
+    initDevice();
+  }, []);
 
   const handleGenerateReport = async () => {
     if (!startDate || !endDate) {
@@ -37,6 +47,11 @@ export default function PeriodicReport() {
 
     if (startDate > endDate) {
       toast.error("Start date must be before end date");
+      return;
+    }
+
+    if (!deviceFingerprint) {
+      toast.error("Device not initialized");
       return;
     }
 
@@ -50,6 +65,7 @@ export default function PeriodicReport() {
       const data = await mysqlApi.periodicReport.get(
         formattedStartDate,
         formattedEndDate,
+        deviceFingerprint,
         farmerSearch.trim() || undefined
       );
 

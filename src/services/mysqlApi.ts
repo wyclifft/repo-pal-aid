@@ -352,8 +352,8 @@ export const zReportApi = {
   /**
    * Get Z Report for a specific date
    */
-  get: async (date: string): Promise<ZReportData | null> => {
-    const response = await apiRequest<ZReportData>(`/z-report?date=${date}`);
+  get: async (date: string, uniquedevcode: string): Promise<ZReportData | null> => {
+    const response = await apiRequest<ZReportData>(`/z-report?date=${date}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`);
     return response.data || null;
   },
 };
@@ -436,8 +436,8 @@ export interface PeriodicReportData {
 }
 
 const periodicReportApi = {
-  async get(startDate: string, endDate: string, farmerSearch?: string): Promise<PeriodicReportData[]> {
-    let endpoint = `/periodic-report?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+  async get(startDate: string, endDate: string, uniquedevcode: string, farmerSearch?: string): Promise<PeriodicReportData[]> {
+    let endpoint = `/periodic-report?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
     if (farmerSearch) {
       endpoint += `&farmer_search=${encodeURIComponent(farmerSearch)}`;
     }

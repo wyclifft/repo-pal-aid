@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ArrowLeft, Download, Printer, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 
 const ZReport = () => {
   const navigate = useNavigate();
@@ -14,8 +15,15 @@ const ZReport = () => {
   const [reportData, setReportData] = useState<ZReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
 
   useEffect(() => {
+    const initDevice = async () => {
+      const fingerprint = await generateDeviceFingerprint();
+      setDeviceFingerprint(fingerprint);
+    };
+    initDevice();
+
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
     
@@ -30,14 +38,18 @@ const ZReport = () => {
 
   useEffect(() => {
     fetchReport();
-  }, [selectedDate]);
+  }, [selectedDate, deviceFingerprint]);
 
   const fetchReport = async () => {
+    if (!deviceFingerprint) {
+      return;
+    }
+
     setLoading(true);
     try {
       // Try to fetch from server
       if (navigator.onLine) {
-        const data = await mysqlApi.zReport.get(selectedDate);
+        const data = await mysqlApi.zReport.get(selectedDate, deviceFingerprint);
         if (data) {
           setReportData(data);
           // Cache in localStorage

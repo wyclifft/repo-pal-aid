@@ -268,10 +268,30 @@ const server = http.createServer(async (req, res) => {
       const startDate = parsedUrl.query.start_date;
       const endDate = parsedUrl.query.end_date;
       const farmerSearch = parsedUrl.query.farmer_search;
+      const uniquedevcode = parsedUrl.query.uniquedevcode;
 
       if (!startDate || !endDate) {
         return sendJSON(res, { success: false, error: 'start_date and end_date are required' }, 400);
       }
+
+      if (!uniquedevcode) {
+        return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400);
+      }
+
+      // Get device's company code
+      const [deviceRows] = await pool.query(
+        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized or not found' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
 
       let query = `
         SELECT 
@@ -284,8 +304,9 @@ const server = http.createServer(async (req, res) => {
         LEFT JOIN cm_members cm ON t.memberno = cm.mcode
         WHERE t.Transtype = 'MILK' 
           AND t.transdate BETWEEN ? AND ?
+          AND t.ccode = ?
       `;
-      let params = [startDate, endDate];
+      let params = [startDate, endDate, ccode];
 
       if (farmerSearch) {
         query += ` AND (t.memberno LIKE ? OR cm.descript LIKE ?)`;
@@ -301,15 +322,35 @@ const server = http.createServer(async (req, res) => {
     // Z-Report endpoint - now using transactions table
     if (path === '/api/z-report' && method === 'GET') {
       const date = parsedUrl.query.date || new Date().toISOString().split('T')[0];
+      const uniquedevcode = parsedUrl.query.uniquedevcode;
+
+      if (!uniquedevcode) {
+        return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400);
+      }
+
+      // Get device's company code
+      const [deviceRows] = await pool.query(
+        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        [uniquedevcode]
+      );
       
-      // Fetch all collections for the specified date
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized or not found' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      // Fetch all collections for the specified date and company
       const [collections] = await pool.query(
         `SELECT transrefno, memberno as farmer_id, route, weight, session, 
                 transdate as collection_date, clerk as clerk_name
          FROM transactions 
-         WHERE transdate = ? AND Transtype = 'MILK'
+         WHERE transdate = ? AND Transtype = 'MILK' AND ccode = ?
          ORDER BY session, route, memberno`,
-        [date]
+        [date, ccode]
       );
 
       // Calculate totals
