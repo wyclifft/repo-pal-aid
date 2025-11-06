@@ -62,6 +62,42 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Farmers endpoints - Fetch from cm_members table
+    
+    // NEW: Device-based farmer filtering endpoint
+    if (path.startsWith('/api/farmers/by-device/') && method === 'GET') {
+      const uniquedevcode = decodeURIComponent(path.split('/')[4]);
+      const search = parsedUrl.query.search;
+      
+      // Get device's company code
+      const [deviceRows] = await pool.query(
+        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized or not found' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      // Get farmers for this company
+      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode FROM cm_members WHERE ccode = ?';
+      let params = [ccode];
+      
+      if (search) {
+        query += ' AND (mcode LIKE ? OR descript LIKE ?)';
+        params.push(`%${search}%`, `%${search}%`);
+      }
+      
+      query += ' ORDER BY descript';
+      const [rows] = await pool.query(query, params);
+      return sendJSON(res, { success: true, data: rows, ccode });
+    }
+    
+    // Original farmers endpoint (kept for backward compatibility)
     if (path === '/api/farmers' && method === 'GET') {
       const search = parsedUrl.query.search;
       let query = 'SELECT mcode as farmer_id, descript as name, route FROM cm_members';

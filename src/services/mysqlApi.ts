@@ -82,7 +82,14 @@ export interface Farmer {
 
 export const farmersApi = {
   /**
-   * Get all farmers
+   * Get farmers filtered by device company (secure device-based filtering)
+   */
+  getByDevice: async (uniquedevcode: string): Promise<ApiResponse<Farmer[]>> => {
+    return apiRequest<Farmer[]>(`/farmers/by-device/${encodeURIComponent(uniquedevcode)}`);
+  },
+
+  /**
+   * Get all farmers (kept for backward compatibility)
    */
   getAll: async (): Promise<Farmer[]> => {
     const response = await apiRequest<Farmer[]>('/farmers');

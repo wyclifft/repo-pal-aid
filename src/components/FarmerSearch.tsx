@@ -55,7 +55,7 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
     searchFarmers(searchQuery, cachedFarmers);
   }, [searchQuery, cachedFarmers, searchFarmers]);
 
-  // Sync farmers from MySQL API to local on mount and when online
+  // Sync farmers from MySQL API (device-filtered) on mount and when online
   useEffect(() => {
     const syncFarmers = async () => {
       if (navigator.onLine) {
@@ -64,22 +64,33 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
         setFarmerCount(0);
         
         try {
-          setSyncProgress(30);
-          const data = await mysqlApi.farmers.getAll();
-          setSyncProgress(60);
+          setSyncProgress(20);
           
-          if (data && data.length > 0) {
-            setFarmerCount(data.length);
-            setSyncProgress(80);
-            await saveFarmers(data);
+          // Generate device fingerprint for secure filtering
+          const { generateDeviceFingerprint } = await import('@/utils/deviceFingerprint');
+          const deviceFingerprint = await generateDeviceFingerprint();
+          
+          setSyncProgress(40);
+          const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+          setSyncProgress(70);
+          
+          if (response.success && response.data && response.data.length > 0) {
+            setFarmerCount(response.data.length);
+            setSyncProgress(90);
+            await saveFarmers(response.data);
             setSyncProgress(100);
-            console.log(`✅ Synced ${data.length} farmers locally from MySQL`);
+            console.log(`✅ Synced ${response.data.length} farmers for this device from MySQL`);
             
             // Keep success state visible for a moment
             setTimeout(() => {
               setIsSyncing(false);
               setSyncProgress(0);
             }, 1500);
+          } else if (!response.success) {
+            // Handle authorization errors
+            console.error('❌ Device authorization error:', response.error);
+            setIsSyncing(false);
+            setSyncProgress(0);
           } else {
             setIsSyncing(false);
           }
@@ -96,16 +107,19 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
     return () => window.removeEventListener('online', syncFarmers);
   }, [saveFarmers]);
 
-  // Poll for farmers updates every 5 minutes when online
+  // Poll for farmers updates every 5 minutes when online (device-filtered)
   useEffect(() => {
     if (!navigator.onLine) return;
 
     const interval = setInterval(async () => {
       try {
-        const data = await mysqlApi.farmers.getAll();
-        if (data) {
-          saveFarmers(data);
-          console.log(`✅ Refreshed ${data.length} farmers from MySQL`);
+        const { generateDeviceFingerprint } = await import('@/utils/deviceFingerprint');
+        const deviceFingerprint = await generateDeviceFingerprint();
+        
+        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+        if (response.success && response.data) {
+          saveFarmers(response.data);
+          console.log(`✅ Refreshed ${response.data.length} farmers for this device from MySQL`);
         }
       } catch (err) {
         console.error('Farmer refresh error:', err);

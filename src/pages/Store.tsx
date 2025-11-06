@@ -69,16 +69,26 @@ const Store = () => {
 
   const loadFarmers = async () => {
     try {
-      // Try to load from API first
+      // Try to load from API first (device-filtered)
       if (navigator.onLine) {
-        const data = await mysqlApi.farmers.getAll();
-        setFarmers(data);
-        // Cache farmers for offline use
-        saveFarmers(data);
+        const deviceFingerprint = await generateDeviceFingerprint();
+        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+        
+        if (response.success && response.data) {
+          setFarmers(response.data);
+          // Cache farmers for offline use
+          saveFarmers(response.data);
+          console.log(`✅ Loaded ${response.data.length} farmers for this device`);
+        } else if (!response.success && response.error?.includes('not authorized')) {
+          // Device not authorized
+          toast.error('Device not authorized. Please contact administrator.');
+          console.error('❌ Device authorization error');
+        }
       } else {
         // Load from IndexedDB if offline
         const localFarmers = await getFarmers();
         setFarmers(localFarmers);
+        console.log('📦 Loaded farmers from cache (offline)');
       }
     } catch (error) {
       console.error('Failed to load farmers:', error);
@@ -86,6 +96,7 @@ const Store = () => {
       try {
         const localFarmers = await getFarmers();
         setFarmers(localFarmers);
+        console.log('📦 Loaded farmers from cache after API failure');
       } catch (e) {
         console.error('Failed to load local farmers:', e);
       }
