@@ -472,6 +472,18 @@ const server = http.createServer(async (req, res) => {
         // Calculate amount (quantity * price)
         const amount = (body.quantity || 0) * (body.price || 0);
         
+        // Get device's ccode from devsettings using device_fingerprint
+        let ccode = '';
+        if (body.device_fingerprint) {
+          const [deviceRows] = await conn.query(
+            'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+            [body.device_fingerprint]
+          );
+          if (deviceRows.length > 0) {
+            ccode = deviceRows[0].ccode || '';
+          }
+        }
+        
         // Insert into transactions table
         await conn.query(
           `INSERT INTO transactions 
@@ -493,7 +505,7 @@ const server = http.createServer(async (req, res) => {
             'STORE',                            // Transtype
             0,                                  // processed
             0,                                  // uploaded
-            '',                                 // ccode
+            ccode,                              // ccode (from device's devsettings)
             0,                                  // ivat
             body.price || 0,                    // iprice
             amount,                             // amount
