@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { mysqlApi, type PeriodicReportData } from "@/services/mysqlApi";
 import { toast } from "sonner";
 import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
+import { useIndexedDB } from "@/hooks/useIndexedDB";
 
 export default function PeriodicReport() {
   const [startDate, setStartDate] = useState<Date>();
@@ -30,6 +31,8 @@ export default function PeriodicReport() {
   const [reportData, setReportData] = useState<PeriodicReportData[]>([]);
   const [loading, setLoading] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
+  
+  const { saveFarmers } = useIndexedDB();
 
   useEffect(() => {
     const initDevice = async () => {
@@ -62,14 +65,26 @@ export default function PeriodicReport() {
       
       console.log("Requesting report with dates:", formattedStartDate, formattedEndDate);
       
-      const data = await mysqlApi.periodicReport.get(
+      const response = await mysqlApi.periodicReport.get(
         formattedStartDate,
         formattedEndDate,
         deviceFingerprint,
         farmerSearch.trim() || undefined
       );
 
-      console.log("Report data received:", data);
+      console.log("Report response received:", response);
+      
+      // Check for authorization errors
+      if (!response.success) {
+        // Device not authorized - clear any cached farmers
+        await saveFarmers([]);
+        setReportData([]);
+        toast.error(response.error || 'Device not authorized. Please contact administrator.');
+        console.error('❌ Device authorization error for periodic report');
+        return;
+      }
+      
+      const data = response.data || [];
       setReportData(data);
       
       if (data.length === 0) {

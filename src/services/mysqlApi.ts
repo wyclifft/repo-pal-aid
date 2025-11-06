@@ -435,13 +435,12 @@ export interface PeriodicReportData {
 }
 
 const periodicReportApi = {
-  async get(startDate: string, endDate: string, uniquedevcode: string, farmerSearch?: string): Promise<PeriodicReportData[]> {
+  async get(startDate: string, endDate: string, uniquedevcode: string, farmerSearch?: string): Promise<ApiResponse<PeriodicReportData[]>> {
     let endpoint = `/periodic-report?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
     if (farmerSearch) {
       endpoint += `&farmer_search=${encodeURIComponent(farmerSearch)}`;
     }
-    const response = await apiRequest<PeriodicReportData[]>(endpoint);
-    return response.data || [];
+    return apiRequest<PeriodicReportData[]>(endpoint);
   },
 };
 
