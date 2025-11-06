@@ -110,10 +110,21 @@ const Store = () => {
       setLoading(true);
       
       if (navigator.onLine) {
-        // Online: fetch from API and cache
-        const data = await mysqlApi.items.getAll();
-        setItems(data);
-        saveItems(data);
+        // Online: fetch from API with device authorization
+        const deviceFingerprint = await generateDeviceFingerprint();
+        const response = await mysqlApi.items.getAll(deviceFingerprint);
+        
+        if (response.success && response.data) {
+          setItems(response.data);
+          saveItems(response.data);
+          console.log(`✅ Loaded ${response.data.length} items for this device`);
+        } else if (!response.success) {
+          // Device not authorized - clear cached items
+          await saveItems([]);
+          setItems([]);
+          toast.error(response.message || 'Device not authorized. Please contact administrator.');
+          console.error('❌ Device authorization error');
+        }
       } else {
         // Offline: load from cache
         const cachedItems = await getItems();

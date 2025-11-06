@@ -373,11 +373,10 @@ export interface Item {
 
 export const itemsApi = {
   /**
-   * Get all sellable items
+   * Get all sellable items filtered by device
    */
-  getAll: async (): Promise<Item[]> => {
-    const response = await apiRequest<Item[]>('/items');
-    return response.data || [];
+  getAll: async (uniquedevcode: string): Promise<ApiResponse<Item[]>> => {
+    return apiRequest<Item[]>(`/items?uniquedevcode=${encodeURIComponent(uniquedevcode)}`);
   }
 };
 

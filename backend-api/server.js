@@ -419,7 +419,36 @@ const server = http.createServer(async (req, res) => {
 
     // Items endpoints
     if (path === '/api/items' && method === 'GET') {
-      const [rows] = await pool.query('SELECT * FROM fm_items WHERE sellable = 1 ORDER BY descript');
+      const uniquedevcode = parsedUrl.query.uniquedevcode;
+      
+      if (!uniquedevcode) {
+        return sendJSON(res, { 
+          success: false, 
+          message: 'Device code required' 
+        }, 400);
+      }
+      
+      // Get device and check authorization
+      const [deviceRows] = await pool.query(
+        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+        return sendJSON(res, { 
+          success: false, 
+          message: 'Device not authorized' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      // Filter items by device's company code
+      const [rows] = await pool.query(
+        'SELECT * FROM fm_items WHERE sellable = 1 AND ccode = ? ORDER BY descript',
+        [ccode]
+      );
+      
       return sendJSON(res, { success: true, data: rows });
     }
 
