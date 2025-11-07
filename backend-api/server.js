@@ -148,9 +148,23 @@ const server = http.createServer(async (req, res) => {
 
     // Milk collection endpoints - now using transactions table
     if (path === '/api/milk-collection' && method === 'GET') {
-      const { farmer_id, session, date_from, date_to } = parsedUrl.query;
-      let query = 'SELECT * FROM transactions WHERE 1=1';
+      const { farmer_id, session, date_from, date_to, uniquedevcode } = parsedUrl.query;
+      
+      // Get device's ccode if uniquedevcode provided
+      let ccode = null;
+      if (uniquedevcode) {
+        const [deviceRows] = await pool.query(
+          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          [uniquedevcode]
+        );
+        if (deviceRows.length > 0) {
+          ccode = deviceRows[0].ccode;
+        }
+      }
+      
+      let query = 'SELECT * FROM transactions WHERE Transtype = "MILK"';
       let params = [];
+      if (ccode !== null) { query += ' AND ccode = ?'; params.push(ccode); }
       if (farmer_id) { query += ' AND memberno = ?'; params.push(farmer_id); }
       if (session) { query += ' AND session = ?'; params.push(session); }
       if (date_from) { query += ' AND transdate >= ?'; params.push(date_from); }
@@ -301,7 +315,7 @@ const server = http.createServer(async (req, res) => {
           SUM(t.weight) as total_weight,
           COUNT(*) as collection_count
         FROM transactions t
-        LEFT JOIN cm_members cm ON t.memberno = cm.mcode
+        LEFT JOIN cm_members cm ON t.memberno = cm.mcode AND t.ccode = cm.ccode
         WHERE t.Transtype = 'MILK' 
           AND t.transdate BETWEEN ? AND ?
           AND t.ccode = ?
@@ -534,9 +548,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (path === '/api/sales' && method === 'GET') {
-      const { farmer_id, date_from, date_to } = parsedUrl.query;
+      const { farmer_id, date_from, date_to, uniquedevcode } = parsedUrl.query;
+      
+      // Get device's ccode if uniquedevcode provided
+      let ccode = null;
+      if (uniquedevcode) {
+        const [deviceRows] = await pool.query(
+          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          [uniquedevcode]
+        );
+        if (deviceRows.length > 0) {
+          ccode = deviceRows[0].ccode;
+        }
+      }
+      
       let query = 'SELECT * FROM transactions WHERE Transtype = "STORE"';
       let params = [];
+      if (ccode !== null) { query += ' AND ccode = ?'; params.push(ccode); }
       if (farmer_id) { query += ' AND memberno = ?'; params.push(farmer_id); }
       if (date_from) { query += ' AND transdate >= ?'; params.push(date_from); }
       if (date_to) { query += ' AND transdate <= ?'; params.push(date_to); }
