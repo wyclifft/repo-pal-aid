@@ -80,12 +80,13 @@ const Index = () => {
     // Try to sync online with monthly accumulation using MySQL API
     if (navigator.onLine) {
       try {
-        // Check if record already exists for this farmer, session, and current month
+        // Check if record already exists for this farmer, session, current month, AND device's ccode
         const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
           farmerId,
           session,
           monthStart.toISOString(),
-          monthEnd.toISOString()
+          monthEnd.toISOString(),
+          deviceFingerprint // Pass device fingerprint to filter by ccode
         ).catch(() => null);
 
         if (existing && existing.reference_no) {

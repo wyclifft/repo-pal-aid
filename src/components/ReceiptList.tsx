@@ -75,12 +75,13 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       };
 
       try {
-        // Check if record already exists in MySQL for this month
+        // Check if record already exists in MySQL for this month AND device's ccode
         const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
           firstReceipt.farmer_id,
           firstReceipt.session,
           monthStart.toISOString(),
-          monthEnd.toISOString()
+          monthEnd.toISOString(),
+          deviceFingerprint // Pass device fingerprint to filter by ccode
         );
 
         if (existing && existing.reference_no) {

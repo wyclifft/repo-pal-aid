@@ -197,16 +197,20 @@ export const milkCollectionApi = {
 
   /**
    * Get milk collections by farmer ID, session, and date range
+   * Now includes uniquedevcode to filter by ccode for proper accumulation
    */
   getByFarmerSessionDate: async (
     farmerId: string,
     session: string,
     dateFrom: string,
-    dateTo: string
+    dateTo: string,
+    uniquedevcode?: string
   ): Promise<MilkCollection | null> => {
-    const response = await apiRequest<MilkCollection>(
-      `/milk-collection?farmer_id=${farmerId}&session=${session}&date_from=${dateFrom}&date_to=${dateTo}`
-    );
+    let url = `/milk-collection?farmer_id=${farmerId}&session=${session}&date_from=${dateFrom}&date_to=${dateTo}`;
+    if (uniquedevcode) {
+      url += `&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+    }
+    const response = await apiRequest<MilkCollection>(url);
     const data = response.data;
     // API returns array, we need single record
     return Array.isArray(data) && data.length > 0 ? data[0] : null;
