@@ -150,6 +150,7 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/milk-collection' && method === 'GET') {
       const { farmer_id, session, date_from, date_to, uniquedevcode } = parsedUrl.query;
       
+      // CRITICAL: When querying for accumulation, ccode MUST be enforced
       // Get device's ccode if uniquedevcode provided
       let ccode = null;
       if (uniquedevcode) {
@@ -162,13 +163,29 @@ const server = http.createServer(async (req, res) => {
         }
       }
       
+      // Build query with STRICT ccode filtering
       let query = 'SELECT * FROM transactions WHERE Transtype = "MILK"';
       let params = [];
-      if (ccode !== null) { query += ' AND ccode = ?'; params.push(ccode); }
-      if (farmer_id) { query += ' AND memberno = ?'; params.push(farmer_id); }
-      if (session) { query += ' AND session = ?'; params.push(session); }
-      if (date_from) { query += ' AND transdate >= ?'; params.push(date_from); }
-      if (date_to) { query += ' AND transdate <= ?'; params.push(date_to); }
+      
+      // When checking for accumulation (farmer_id + session + date range provided),
+      // ccode filter is REQUIRED to prevent cross-ccode accumulation
+      if (farmer_id && session && date_from && date_to) {
+        if (ccode === null) {
+          // If uniquedevcode was provided but ccode not found, return empty result
+          return sendJSON(res, { success: true, data: [] });
+        }
+        // STRICT: Filter by BOTH memberno AND ccode for accumulation checks
+        query += ' AND memberno = ? AND ccode = ? AND session = ? AND transdate >= ? AND transdate <= ?';
+        params.push(farmer_id, ccode, session, date_from, date_to);
+      } else {
+        // For general listing, apply filters as provided
+        if (ccode !== null) { query += ' AND ccode = ?'; params.push(ccode); }
+        if (farmer_id) { query += ' AND memberno = ?'; params.push(farmer_id); }
+        if (session) { query += ' AND session = ?'; params.push(session); }
+        if (date_from) { query += ' AND transdate >= ?'; params.push(date_from); }
+        if (date_to) { query += ' AND transdate <= ?'; params.push(date_to); }
+      }
+      
       query += ' ORDER BY transdate DESC';
       const [rows] = await pool.query(query, params);
       
