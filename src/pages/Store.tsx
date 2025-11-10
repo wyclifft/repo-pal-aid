@@ -70,7 +70,7 @@ const Store = () => {
 
   const loadFarmers = async () => {
     try {
-      // Try to load from API first (device-filtered)
+      // Try to load from API first (device-filtered by ccode)
       if (navigator.onLine) {
         const deviceFingerprint = await generateDeviceFingerprint();
         const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
@@ -79,23 +79,29 @@ const Store = () => {
           setFarmers(response.data);
           // Cache farmers for offline use
           saveFarmers(response.data);
-          console.log(`✅ Loaded ${response.data.length} farmers for this device`);
+          console.log(`✅ Loaded ${response.data.length} farmers for this device (ccode)`);
         } else if (!response.success) {
-          // Device not authorized - clear cached farmers
-          await saveFarmers([]); // Clear cached farmers
-          setFarmers([]); // Clear state
-          toast.error(response.message || 'Device not authorized. Please contact administrator.');
+          // Device not authorized - show error but keep cached data for offline use
           console.error('❌ Device authorization error');
+          
+          // Try to load cached farmers as fallback
+          const localFarmers = await getFarmers();
+          if (localFarmers.length > 0) {
+            setFarmers(localFarmers);
+            console.log('📦 Using cached farmers from previous authorization');
+          } else {
+            setFarmers([]);
+          }
         }
       } else {
-        // Load from IndexedDB if offline
+        // Offline: always load from cache (farmers were authorized when cached)
         const localFarmers = await getFarmers();
         setFarmers(localFarmers);
-        console.log('📦 Loaded farmers from cache (offline)');
+        console.log('📦 Offline mode - using cached farmers for this ccode');
       }
     } catch (error) {
       console.error('Failed to load farmers:', error);
-      // Try local fallback
+      // Always try local fallback
       try {
         const localFarmers = await getFarmers();
         setFarmers(localFarmers);
@@ -118,27 +124,34 @@ const Store = () => {
         if (response.success && response.data) {
           setItems(response.data);
           saveItems(response.data);
-          console.log(`✅ Loaded ${response.data.length} items for this device`);
+          console.log(`✅ Loaded ${response.data.length} items for this device (ccode)`);
         } else if (!response.success) {
-          // Device not authorized - clear cached items
-          await saveItems([]);
-          setItems([]);
-          toast.error(response.message || 'Device not authorized. Please contact administrator.');
+          // Device not authorized - show error but keep cached items for offline use
           console.error('❌ Device authorization error');
+          toast.error(response.message || 'Device not authorized. Please contact administrator.');
+          
+          // Try to load cached items as fallback
+          const cachedItems = await getItems();
+          if (cachedItems.length > 0) {
+            setItems(cachedItems);
+            console.log('📦 Using cached items from previous authorization');
+          } else {
+            setItems([]);
+          }
         }
       } else {
-        // Offline: load from cache
+        // Offline: always load from cache (items were authorized when cached)
         const cachedItems = await getItems();
         if (cachedItems.length > 0) {
           setItems(cachedItems);
-          toast.info('Offline mode - showing cached items');
+          console.log('📦 Offline mode - using cached items for this ccode');
         } else {
-          toast.warning('No cached items available offline');
+          toast.warning('No cached items available. Please connect online first.');
         }
       }
     } catch (error) {
       console.error('Failed to load items:', error);
-      // Try loading from cache as fallback
+      // Always try loading from cache as fallback
       try {
         const cachedItems = await getItems();
         if (cachedItems.length > 0) {
