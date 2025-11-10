@@ -70,42 +70,30 @@ const Store = () => {
 
   const loadFarmers = async () => {
     try {
-      // Try to load from API first (device-filtered by ccode)
+      // Always load cached farmers first
+      const localFarmers = await getFarmers();
+      if (localFarmers.length > 0) {
+        setFarmers(localFarmers);
+        console.log('📦 Loaded cached farmers for authorized device');
+      }
+      
+      // Then sync in background if online
       if (navigator.onLine) {
         const deviceFingerprint = await generateDeviceFingerprint();
         const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
         
         if (response.success && response.data) {
           setFarmers(response.data);
-          // Cache farmers for offline use
           saveFarmers(response.data);
-          console.log(`✅ Loaded ${response.data.length} farmers for this device (ccode)`);
-        } else if (!response.success) {
-          // Device not authorized - show error but keep cached data for offline use
-          console.error('❌ Device authorization error');
-          
-          // Try to load cached farmers as fallback
-          const localFarmers = await getFarmers();
-          if (localFarmers.length > 0) {
-            setFarmers(localFarmers);
-            console.log('📦 Using cached farmers from previous authorization');
-          } else {
-            setFarmers([]);
-          }
+          console.log(`✅ Synced ${response.data.length} farmers for this device (ccode)`);
         }
-      } else {
-        // Offline: always load from cache (farmers were authorized when cached)
-        const localFarmers = await getFarmers();
-        setFarmers(localFarmers);
-        console.log('📦 Offline mode - using cached farmers for this ccode');
       }
     } catch (error) {
       console.error('Failed to load farmers:', error);
-      // Always try local fallback
+      // Try local fallback
       try {
         const localFarmers = await getFarmers();
         setFarmers(localFarmers);
-        console.log('📦 Loaded farmers from cache after API failure');
       } catch (e) {
         console.error('Failed to load local farmers:', e);
       }
@@ -116,54 +104,34 @@ const Store = () => {
     try {
       setLoading(true);
       
+      // Always load cached items first (fast, no blocking)
+      const cachedItems = await getItems();
+      if (cachedItems.length > 0) {
+        setItems(cachedItems);
+        console.log('📦 Loaded cached items for authorized device');
+      }
+      
+      setLoading(false);
+      
+      // Then sync in background if online
       if (navigator.onLine) {
-        // Online: fetch from API with device authorization
         const deviceFingerprint = await generateDeviceFingerprint();
         const response = await mysqlApi.items.getAll(deviceFingerprint);
         
         if (response.success && response.data) {
           setItems(response.data);
           saveItems(response.data);
-          console.log(`✅ Loaded ${response.data.length} items for this device (ccode)`);
-        } else if (!response.success) {
-          // Device not authorized - show error but keep cached items for offline use
-          console.error('❌ Device authorization error');
+          console.log(`✅ Synced ${response.data.length} items for this device (ccode)`);
+        } else if (!response.success && cachedItems.length === 0) {
+          // Only show error if we have no cached data
           toast.error(response.message || 'Device not authorized. Please contact administrator.');
-          
-          // Try to load cached items as fallback
-          const cachedItems = await getItems();
-          if (cachedItems.length > 0) {
-            setItems(cachedItems);
-            console.log('📦 Using cached items from previous authorization');
-          } else {
-            setItems([]);
-          }
+          console.error('❌ Device authorization error');
         }
-      } else {
-        // Offline: always load from cache (items were authorized when cached)
-        const cachedItems = await getItems();
-        if (cachedItems.length > 0) {
-          setItems(cachedItems);
-          console.log('📦 Offline mode - using cached items for this ccode');
-        } else {
-          toast.warning('No cached items available. Please connect online first.');
-        }
+      } else if (cachedItems.length === 0) {
+        toast.warning('No cached items available. Please connect online first.');
       }
     } catch (error) {
       console.error('Failed to load items:', error);
-      // Always try loading from cache as fallback
-      try {
-        const cachedItems = await getItems();
-        if (cachedItems.length > 0) {
-          setItems(cachedItems);
-          toast.info('Loaded from cache');
-        } else {
-          toast.error('Failed to load items');
-        }
-      } catch (e) {
-        toast.error('Failed to load items');
-      }
-    } finally {
       setLoading(false);
     }
   };
