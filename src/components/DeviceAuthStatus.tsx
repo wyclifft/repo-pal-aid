@@ -16,6 +16,14 @@ export const DeviceAuthStatus = () => {
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`
       );
       
+      // Check if response is JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        console.warn('Authorization check returned non-JSON response');
+        setIsAuthorized(null);
+        return;
+      }
+      
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.data) {
