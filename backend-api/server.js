@@ -633,9 +633,32 @@ const server = http.createServer(async (req, res) => {
     // Devices endpoints
     if (path.startsWith('/api/devices/fingerprint/') && method === 'GET') {
       const fingerprint = decodeURIComponent(path.split('/')[4]);
-      const [rows] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [fingerprint]);
-      if (rows.length === 0) return sendJSON(res, { success: false, error: 'Device not found' }, 404);
-      return sendJSON(res, { success: true, data: rows[0] });
+      
+      // Get device from devsettings
+      const [deviceRows] = await pool.query(
+        'SELECT uniquedevcode, ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        [fingerprint]
+      );
+      
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { success: false, error: 'Device not found' }, 404);
+      }
+      
+      const deviceData = deviceRows[0];
+      
+      // Get company name from psettings if ccode exists
+      if (deviceData.ccode) {
+        const [companyRows] = await pool.query(
+          'SELECT cname FROM psettings WHERE cno = ?',
+          [deviceData.ccode]
+        );
+        
+        if (companyRows.length > 0) {
+          deviceData.company_name = companyRows[0].cname;
+        }
+      }
+      
+      return sendJSON(res, { success: true, data: deviceData });
     }
 
     if (path.startsWith('/api/devices/') && method === 'GET' && path.split('/').length === 4) {
