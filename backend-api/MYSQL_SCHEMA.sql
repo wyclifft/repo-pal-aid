@@ -12,9 +12,12 @@ CREATE TABLE IF NOT EXISTS approved_devices (
   device_info VARCHAR(255) DEFAULT NULL,
   last_sync TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  ccode VARCHAR(50) DEFAULT NULL,
   INDEX idx_device_fingerprint (device_fingerprint),
   INDEX idx_user_id (user_id),
-  INDEX idx_approved (approved)
+  INDEX idx_approved (approved),
+  INDEX idx_ccode (ccode)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2. Create farmers table

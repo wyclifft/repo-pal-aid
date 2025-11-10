@@ -634,17 +634,28 @@ const server = http.createServer(async (req, res) => {
     if (path.startsWith('/api/devices/fingerprint/') && method === 'GET') {
       const fingerprint = decodeURIComponent(path.split('/')[4]);
       
-      // Get device from devsettings
-      const [deviceRows] = await pool.query(
+      // First check approved_devices for registration data
+      const [approvedRows] = await pool.query(
+        'SELECT * FROM approved_devices WHERE device_fingerprint = ?',
+        [fingerprint]
+      );
+      
+      // Then check devsettings for authorization and company info
+      const [devRows] = await pool.query(
         'SELECT uniquedevcode, ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
         [fingerprint]
       );
       
-      if (deviceRows.length === 0) {
+      if (approvedRows.length === 0 && devRows.length === 0) {
         return sendJSON(res, { success: false, error: 'Device not found' }, 404);
       }
       
-      const deviceData = deviceRows[0];
+      // Combine data from both tables
+      const deviceData = {
+        ...(approvedRows.length > 0 ? approvedRows[0] : {}),
+        authorized: devRows.length > 0 ? devRows[0].authorized : 0,
+        ccode: devRows.length > 0 && devRows[0].ccode ? devRows[0].ccode : (approvedRows[0]?.ccode || null)
+      };
       
       // Get company name from psettings if ccode exists
       if (deviceData.ccode) {
@@ -673,13 +684,25 @@ const server = http.createServer(async (req, res) => {
       const [existing] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
       
       if (existing.length > 0) {
-        // Device exists - return existing device WITHOUT changing approved status
-        return sendJSON(res, { success: true, data: existing[0], message: 'Device already registered' });
+        // Device exists - update last_sync and return
+        await pool.query(
+          'UPDATE approved_devices SET last_sync = NOW(), updated_at = NOW() WHERE device_fingerprint = ?',
+          [body.device_fingerprint]
+        );
+        const [updated] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
+        return sendJSON(res, { success: true, data: updated[0], message: 'Device already registered' });
       } else {
+        // Check if device exists in devsettings to get ccode
+        const [devRows] = await pool.query(
+          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          [body.device_fingerprint]
+        );
+        const ccode = devRows.length > 0 ? devRows[0].ccode : null;
+        
         // Insert new device - ALWAYS set approved to FALSE for new devices
         const [result] = await pool.query(
-          'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, FALSE, ?, NOW())',
-          [body.device_fingerprint, body.user_id, body.device_info || null]
+          'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
+          [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
         );
         const [newDevice] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [result.insertId]);
         return sendJSON(res, { success: true, data: newDevice[0], message: 'Device registered' }, 201);
@@ -689,7 +712,7 @@ const server = http.createServer(async (req, res) => {
     if (path.startsWith('/api/devices/') && method === 'PUT') {
       const deviceId = path.split('/')[3];
       const body = await parseBody(req);
-      const updates = ['last_sync = NOW()'];
+      const updates = ['last_sync = NOW()', 'updated_at = NOW()'];
       const values = [];
       // ONLY allow updating user_id and device_info - NEVER approved status
       if (body.user_id) { updates.push('user_id = ?'); values.push(body.user_id); }
