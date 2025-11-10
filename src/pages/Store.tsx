@@ -42,14 +42,16 @@ const Store = () => {
     timestamp: Date;
   } | null>(null);
   
-  const { getFarmers, saveSale, getUnsyncedSales, deleteSale, saveItems, getItems, saveFarmers } = useIndexedDB();
+  const { getFarmers, saveSale, getUnsyncedSales, deleteSale, saveItems, getItems, saveFarmers, isReady } = useIndexedDB();
 
   useEffect(() => {
+    if (!isReady) return;
+    
     loadItems();
     loadFarmers();
     loadLoggedInUser();
     syncPendingSales();
-  }, []);
+  }, [isReady]);
 
   const loadLoggedInUser = () => {
     // Get logged-in user from localStorage
@@ -69,6 +71,11 @@ const Store = () => {
   };
 
   const loadFarmers = async () => {
+    if (!isReady) {
+      console.warn('IndexedDB not ready, skipping loadFarmers');
+      return;
+    }
+    
     try {
       // Always load cached farmers first
       const localFarmers = await getFarmers();
@@ -101,6 +108,11 @@ const Store = () => {
   };
 
   const loadItems = async () => {
+    if (!isReady) {
+      console.warn('IndexedDB not ready, skipping loadItems');
+      return;
+    }
+    
     try {
       setLoading(true);
       
@@ -181,7 +193,7 @@ const Store = () => {
   };
 
   const syncPendingSales = async () => {
-    if (!navigator.onLine) return;
+    if (!navigator.onLine || !isReady) return;
     
     try {
       const pendingSales = await getUnsyncedSales();
