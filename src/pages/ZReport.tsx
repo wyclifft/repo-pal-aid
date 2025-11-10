@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
+import { useIndexedDB } from '@/hooks/useIndexedDB';
 
 const ZReport = () => {
   const navigate = useNavigate();
@@ -17,6 +18,8 @@ const ZReport = () => {
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
+  
+  const { saveZReport, getZReport } = useIndexedDB();
 
   useEffect(() => {
     const initDevice = async () => {
@@ -53,26 +56,27 @@ const ZReport = () => {
         const data = await mysqlApi.zReport.get(selectedDate, deviceFingerprint);
         if (data) {
           setReportData(data);
-          // Cache in localStorage
-          localStorage.setItem(`z-report-${selectedDate}`, JSON.stringify(data));
+          // Cache in IndexedDB for offline access
+          await saveZReport(selectedDate, data);
+          console.log('✅ Z Report cached for offline use');
         }
       } else {
-        // Load from localStorage if offline
-        const cached = localStorage.getItem(`z-report-${selectedDate}`);
+        // Load from IndexedDB if offline
+        const cached = await getZReport(selectedDate);
         if (cached) {
-          setReportData(JSON.parse(cached));
-          toast.info('Showing cached report (offline mode)');
+          setReportData(cached);
+          toast.info('📦 Showing cached report (offline mode)');
         } else {
           toast.error('No cached data available for this date');
         }
       }
     } catch (error) {
       console.error('Error fetching report:', error);
-      // Try to load from cache on error
-      const cached = localStorage.getItem(`z-report-${selectedDate}`);
+      // Try to load from IndexedDB cache on error
+      const cached = await getZReport(selectedDate);
       if (cached) {
-        setReportData(JSON.parse(cached));
-        toast.warning('Using cached data (server unavailable)');
+        setReportData(cached);
+        toast.warning('📦 Using cached data (server unavailable)');
       } else {
         toast.error('Failed to load report');
       }

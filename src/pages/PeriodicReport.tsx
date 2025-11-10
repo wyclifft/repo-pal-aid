@@ -32,8 +32,9 @@ export default function PeriodicReport() {
   const [reportData, setReportData] = useState<PeriodicReportData[]>([]);
   const [loading, setLoading] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
   
-  const { saveFarmers } = useIndexedDB();
+  const { saveFarmers, savePeriodicReport, getPeriodicReport } = useIndexedDB();
 
   useEffect(() => {
     const initDevice = async () => {
@@ -41,6 +42,17 @@ export default function PeriodicReport() {
       setDeviceFingerprint(fingerprint);
     };
     initDevice();
+
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   const handleGenerateReport = async () => {
@@ -63,39 +75,75 @@ export default function PeriodicReport() {
     try {
       const formattedStartDate = format(startDate, "yyyy-MM-dd");
       const formattedEndDate = format(endDate, "yyyy-MM-dd");
+      const cacheKey = `${formattedStartDate}_${formattedEndDate}_${farmerSearch.trim()}`;
       
       console.log("Requesting report with dates:", formattedStartDate, formattedEndDate);
       
-      const response = await mysqlApi.periodicReport.get(
-        formattedStartDate,
-        formattedEndDate,
-        deviceFingerprint,
-        farmerSearch.trim() || undefined
-      );
+      if (navigator.onLine) {
+        // Online: Fetch from API
+        const response = await mysqlApi.periodicReport.get(
+          formattedStartDate,
+          formattedEndDate,
+          deviceFingerprint,
+          farmerSearch.trim() || undefined
+        );
 
-      console.log("Report response received:", response);
-      
-      // Check for authorization errors
-      if (!response.success) {
-        // Device not authorized - clear any cached farmers
-        await saveFarmers([]);
-        setReportData([]);
-        toast.error(response.error || 'Device not authorized. Please contact administrator.');
-        console.error('❌ Device authorization error for periodic report');
-        return;
-      }
-      
-      const data = response.data || [];
-      setReportData(data);
-      
-      if (data.length === 0) {
-        toast.warning("No milk collections found for the selected date range");
+        console.log("Report response received:", response);
+        
+        // Check for authorization errors
+        if (!response.success) {
+          // Device not authorized - clear any cached farmers
+          await saveFarmers([]);
+          setReportData([]);
+          toast.error(response.error || 'Device not authorized. Please contact administrator.');
+          console.error('❌ Device authorization error for periodic report');
+          return;
+        }
+        
+        const data = response.data || [];
+        setReportData(data);
+        
+        // Cache the report for offline access
+        await savePeriodicReport(cacheKey, data);
+        console.log('✅ Periodic report cached for offline use');
+        
+        if (data.length === 0) {
+          toast.warning("No milk collections found for the selected date range");
+        } else {
+          toast.success(`Found ${data.length} farmer(s) with milk collections`);
+        }
       } else {
-        toast.success(`Found ${data.length} farmer(s) with milk collections`);
+        // Offline: Load from cache
+        const cachedData = await getPeriodicReport(cacheKey);
+        if (cachedData) {
+          setReportData(cachedData);
+          toast.info(`📦 Showing cached report (offline mode) - ${cachedData.length} farmer(s)`);
+        } else {
+          toast.error("No cached data available for this date range");
+          setReportData([]);
+        }
       }
     } catch (error) {
       console.error("Error generating report:", error);
-      toast.error("Error generating report");
+      
+      // Try to load from cache on error
+      try {
+        const formattedStartDate = format(startDate, "yyyy-MM-dd");
+        const formattedEndDate = format(endDate, "yyyy-MM-dd");
+        const cacheKey = `${formattedStartDate}_${formattedEndDate}_${farmerSearch.trim()}`;
+        
+        const cachedData = await getPeriodicReport(cacheKey);
+        if (cachedData) {
+          setReportData(cachedData);
+          toast.warning(`📦 Using cached data (server unavailable) - ${cachedData.length} farmer(s)`);
+        } else {
+          toast.error("Error generating report");
+          setReportData([]);
+        }
+      } catch (cacheError) {
+        toast.error("Error generating report");
+        setReportData([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -143,6 +191,11 @@ export default function PeriodicReport() {
                   />
                 </PopoverContent>
               </Popover>
+              {isOffline && (
+                <span className="text-xs text-orange-600 font-semibold">
+                  📡 Offline - Cached data only
+                </span>
+              )}
             </div>
 
             {/* End Date */}

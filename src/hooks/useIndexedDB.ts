@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -44,6 +44,16 @@ export const useIndexedDB = () => {
       // Add items store for offline caching
       if (!database.objectStoreNames.contains('items')) {
         database.createObjectStore('items', { keyPath: 'ID' });
+      }
+
+      // Add z_reports store for offline Z Reports
+      if (!database.objectStoreNames.contains('z_reports')) {
+        database.createObjectStore('z_reports', { keyPath: 'date' });
+      }
+
+      // Add periodic_reports store for offline Periodic Reports
+      if (!database.objectStoreNames.contains('periodic_reports')) {
+        database.createObjectStore('periodic_reports', { keyPath: 'cacheKey' });
       }
     };
 
@@ -241,6 +251,74 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
+  /**
+   * Save Z Report data to IndexedDB
+   */
+  const saveZReport = useCallback(async (date: string, data: any) => {
+    if (!db) return;
+    try {
+      const tx = db.transaction('z_reports', 'readwrite');
+      const store = tx.objectStore('z_reports');
+      await store.put({ date, data, timestamp: Date.now() });
+      console.log('Z Report cached successfully');
+    } catch (error) {
+      console.error('Failed to cache Z Report:', error);
+    }
+  }, [db]);
+
+  /**
+   * Get Z Report data from IndexedDB
+   */
+  const getZReport = useCallback(async (date: string): Promise<any | null> => {
+    if (!db) return null;
+    try {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('z_reports', 'readonly');
+        const store = tx.objectStore('z_reports');
+        const request = store.get(date);
+        request.onsuccess = () => resolve(request.result?.data || null);
+        request.onerror = () => reject(request.error);
+      });
+    } catch (error) {
+      console.error('Failed to get Z Report from cache:', error);
+      return null;
+    }
+  }, [db]);
+
+  /**
+   * Save Periodic Report data to IndexedDB
+   */
+  const savePeriodicReport = useCallback(async (cacheKey: string, data: any) => {
+    if (!db) return;
+    try {
+      const tx = db.transaction('periodic_reports', 'readwrite');
+      const store = tx.objectStore('periodic_reports');
+      await store.put({ cacheKey, data, timestamp: Date.now() });
+      console.log('Periodic Report cached successfully');
+    } catch (error) {
+      console.error('Failed to cache Periodic Report:', error);
+    }
+  }, [db]);
+
+  /**
+   * Get Periodic Report data from IndexedDB
+   */
+  const getPeriodicReport = useCallback(async (cacheKey: string): Promise<any | null> => {
+    if (!db) return null;
+    try {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('periodic_reports', 'readonly');
+        const store = tx.objectStore('periodic_reports');
+        const request = store.get(cacheKey);
+        request.onsuccess = () => resolve(request.result?.data || null);
+        request.onerror = () => reject(request.error);
+      });
+    } catch (error) {
+      console.error('Failed to get Periodic Report from cache:', error);
+      return null;
+    }
+  }, [db]);
+
   return {
     db,
     isReady,
@@ -258,5 +336,9 @@ export const useIndexedDB = () => {
     deleteSale,
     saveItems,
     getItems,
+    saveZReport,
+    getZReport,
+    savePeriodicReport,
+    getPeriodicReport,
   };
 };
