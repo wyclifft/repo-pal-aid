@@ -658,6 +658,7 @@ const server = http.createServer(async (req, res) => {
       };
       
       // Get company name from psettings if ccode exists
+      let companyName = null;
       if (deviceData.ccode) {
         const [companyRows] = await pool.query(
           'SELECT cname FROM psettings WHERE cno = ?',
@@ -665,9 +666,12 @@ const server = http.createServer(async (req, res) => {
         );
         
         if (companyRows.length > 0) {
-          deviceData.company_name = companyRows[0].cname;
+          companyName = companyRows[0].cname;
         }
       }
+      
+      // Always include company_name in response (null if not found)
+      deviceData.company_name = companyName;
       
       return sendJSON(res, { success: true, data: deviceData });
     }

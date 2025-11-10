@@ -34,11 +34,10 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
         if (data.success && data.data) {
           setIsAuthorized(data.data.authorized === 1);
           
-          // Set company name if available
-          if (data.data.company_name) {
-            setCompanyName(data.data.company_name);
-            onCompanyNameChange?.(data.data.company_name);
-          }
+          // Always update company name from response (default to 'Unknown' if null)
+          const fetchedCompanyName = data.data.company_name || 'Unknown';
+          setCompanyName(fetchedCompanyName);
+          onCompanyNameChange?.(fetchedCompanyName);
         } else {
           setIsAuthorized(false);
         }
