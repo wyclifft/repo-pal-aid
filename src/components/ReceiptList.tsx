@@ -10,7 +10,16 @@ import { ClipboardList } from 'lucide-react';
 export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => {
   const [unsyncedReceipts, setUnsyncedReceipts] = useState<MilkCollection[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
-  const { getUnsyncedReceipts, deleteReceipt, isReady } = useIndexedDB();
+  const { 
+    getUnsyncedReceipts, 
+    deleteReceipt, 
+    isReady, 
+    saveFarmers, 
+    getFarmers,
+    saveItems,
+    saveZReport,
+    savePeriodicReport
+  } = useIndexedDB();
 
   const loadPendingReceipts = async () => {
     if (!isReady) return;
@@ -25,6 +34,80 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
   useEffect(() => {
     loadPendingReceipts();
   }, [isReady, refreshTrigger]);
+
+  const syncAllData = async () => {
+    if (!navigator.onLine) {
+      toast.error('You are offline');
+      return;
+    }
+
+    setIsSyncing(true);
+
+    // Get device fingerprint
+    const deviceFingerprint = await generateDeviceFingerprint();
+
+    try {
+      // 1. Sync farmers
+      try {
+        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+        if (response.success && response.data) {
+          await saveFarmers(response.data);
+          console.log(`✅ Cached ${response.data.length} farmers`);
+        }
+      } catch (err) {
+        console.error('Failed to sync farmers:', err);
+      }
+
+      // 2. Sync store items
+      try {
+        const itemsResponse = await mysqlApi.items.getAll(deviceFingerprint);
+        if (itemsResponse.success && itemsResponse.data) {
+          await saveItems(itemsResponse.data);
+          console.log(`✅ Cached ${itemsResponse.data.length} store items`);
+        }
+      } catch (err) {
+        console.error('Failed to sync store items:', err);
+      }
+
+      // 3. Sync today's Z report
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const zReportData = await mysqlApi.zReport.get(today, deviceFingerprint);
+        if (zReportData) {
+          await saveZReport(today, zReportData);
+          console.log(`✅ Cached Z Report for ${today}`);
+        }
+      } catch (err) {
+        console.error('Failed to sync Z Report:', err);
+      }
+
+      // 4. Sync periodic report for current month
+      try {
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        const startDate = monthStart.toISOString().split('T')[0];
+        const endDate = monthEnd.toISOString().split('T')[0];
+        
+        const periodicResponse = await mysqlApi.periodicReport.get(
+          startDate,
+          endDate,
+          deviceFingerprint
+        );
+        if (periodicResponse.success && periodicResponse.data) {
+          const cacheKey = `${startDate}_${endDate}_`;
+          await savePeriodicReport(cacheKey, periodicResponse.data);
+          console.log(`✅ Cached Periodic Report for ${startDate} to ${endDate}`);
+        }
+      } catch (err) {
+        console.error('Failed to sync Periodic Report:', err);
+      }
+    } catch (err) {
+      console.error('Error during data sync:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const syncPendingReceipts = async () => {
     if (!navigator.onLine || unsyncedReceipts.length === 0) {
@@ -120,21 +203,34 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       }
     }
 
-    toast.success('Receipts synced successfully');
+    // After syncing receipts, sync all other data (farmers, items, reports)
     await loadPendingReceipts();
-    setIsSyncing(false);
+    await syncAllData();
+    toast.success('All data synced successfully');
   };
 
   // Auto-sync when coming back online
   useEffect(() => {
-    const handleOnline = () => {
-      console.log('Back online. Syncing pending milk collections...');
-      syncPendingReceipts();
+    const handleOnline = async () => {
+      console.log('Back online. Syncing all data...');
+      if (unsyncedReceipts.length > 0) {
+        await syncPendingReceipts();
+      } else {
+        await syncAllData();
+        toast.success('Data synced');
+      }
     };
 
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
   }, [unsyncedReceipts]);
+
+  // Initial data sync on mount when online
+  useEffect(() => {
+    if (navigator.onLine && isReady) {
+      syncAllData();
+    }
+  }, [isReady]);
 
   const handleExportText = () => {
     if (unsyncedReceipts.length === 0) {
