@@ -94,7 +94,8 @@ const Index = () => {
           const newWeight = parseFloat((Number(existing.weight) + Number(weight)).toFixed(2));
           const updated = await mysqlApi.milkCollection.update(existing.reference_no, {
             weight: newWeight,
-            collection_date: new Date()
+            collection_date: new Date(),
+            device_fingerprint: deviceFingerprint // Pass device fingerprint for ccode filtering
           });
 
           if (updated) {

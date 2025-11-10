@@ -269,6 +269,30 @@ const server = http.createServer(async (req, res) => {
     if (path.startsWith('/api/milk-collection/') && method === 'PUT') {
       const ref = path.split('/')[3];
       const body = await parseBody(req);
+      
+      // CRITICAL: Get device's ccode to ensure update only affects records for this device
+      const deviceserial = body.device_fingerprint;
+      if (!deviceserial) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'device_fingerprint is required for updates' 
+        }, 400);
+      }
+      
+      const [deviceRows] = await pool.query(
+        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        [deviceserial]
+      );
+      
+      if (deviceRows.length === 0 || !deviceRows[0].authorized) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized' 
+        }, 403);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
       const updates = [];
       const values = [];
       if (body.weight !== undefined) {
@@ -283,8 +307,10 @@ const server = http.createServer(async (req, res) => {
         values.push(transdate, transtime);
       }
       if (updates.length === 0) return sendJSON(res, { success: false, error: 'No fields to update' }, 400);
-      values.push(ref);
-      await pool.query(`UPDATE transactions SET ${updates.join(', ')} WHERE transrefno = ?`, values);
+      
+      // STRICT: Update only records matching BOTH transrefno AND ccode
+      values.push(ref, ccode);
+      await pool.query(`UPDATE transactions SET ${updates.join(', ')} WHERE transrefno = ? AND ccode = ?`, values);
       return sendJSON(res, { success: true, message: 'Collection updated' });
     }
 

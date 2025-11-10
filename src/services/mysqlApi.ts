@@ -229,8 +229,12 @@ export const milkCollectionApi = {
 
   /**
    * Update milk collection (for weight accumulation)
+   * CRITICAL: device_fingerprint is required to ensure updates only affect records for the correct ccode
    */
-  update: async (referenceNo: string, updates: { weight: number; collection_date?: Date | string }): Promise<boolean> => {
+  update: async (
+    referenceNo: string, 
+    updates: { weight: number; collection_date?: Date | string; device_fingerprint: string }
+  ): Promise<boolean> => {
     const response = await apiRequest<any>(`/milk-collection/${referenceNo}`, {
       method: 'PUT',
       body: JSON.stringify(updates),

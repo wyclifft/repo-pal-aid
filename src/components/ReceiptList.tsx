@@ -89,7 +89,8 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
           const newWeight = parseFloat((Number(existing.weight || 0) + totalWeight).toFixed(2));
           const updateSuccess = await mysqlApi.milkCollection.update(existing.reference_no, {
             weight: newWeight,
-            collection_date: new Date()
+            collection_date: new Date(),
+            device_fingerprint: deviceFingerprint // Pass device fingerprint for ccode filtering
           });
 
           if (updateSuccess) {
