@@ -131,20 +131,23 @@ const Store = () => {
         const response = await mysqlApi.items.getAll(deviceFingerprint);
         
         if (response.success && response.data) {
+          // Device is authorized and has valid ccode - update items
           setItems(response.data);
           saveItems(response.data);
-          console.log(`✅ Synced ${response.data.length} items for this device (ccode)`);
+          console.log(`✅ Device authorized. Synced ${response.data.length} items for this ccode`);
           
-          // Show info message if no items available but device is authorized
-          if (response.data.length === 0 && cachedItems.length === 0) {
-            toast.info('No items available for your company. Contact administrator to add items.');
+          // If no items available, inform user but keep device authorized
+          if (response.data.length === 0) {
+            console.log('ℹ️ Device is authorized but no items assigned to this ccode');
+            if (cachedItems.length === 0) {
+              toast.info('Device authorized. No items available for your company yet.');
+            }
           }
         } else if (!response.success) {
-          // Only show authorization error if API explicitly returns unauthorized
-          // Don't treat empty results as authorization failure
-          console.error('❌ Failed to fetch items:', response.message);
+          // Only show error if API explicitly returns failure (e.g., device not found, not authorized)
+          console.error('❌ API error:', response.message);
           if (cachedItems.length === 0) {
-            toast.error(response.message || 'Failed to load items. Please try again.');
+            toast.error(response.message || 'Failed to load items. Please check device authorization.');
           }
         }
       } else if (cachedItems.length === 0) {
