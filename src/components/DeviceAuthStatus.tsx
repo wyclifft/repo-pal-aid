@@ -17,6 +17,13 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
       const fingerprint = await generateDeviceFingerprint();
       const apiUrl = 'https://backend.maddasystems.co.ke';
       
+      // Load cached company name from localStorage
+      const cachedCompanyName = localStorage.getItem('device_company_name');
+      if (cachedCompanyName) {
+        setCompanyName(cachedCompanyName);
+        onCompanyNameChange?.(cachedCompanyName);
+      }
+      
       const response = await fetch(
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`
       );
@@ -41,6 +48,9 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
           console.log('Fetched company name:', fetchedCompanyName);
           setCompanyName(fetchedCompanyName);
           onCompanyNameChange?.(fetchedCompanyName);
+          
+          // Cache company name in localStorage
+          localStorage.setItem('device_company_name', fetchedCompanyName);
         } else {
           setIsAuthorized(false);
         }
@@ -51,6 +61,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
     } catch (error) {
       console.error('Authorization check failed:', error);
       setIsAuthorized(null);
+      // Keep using cached company name if offline
     } finally {
       setLoading(false);
     }
