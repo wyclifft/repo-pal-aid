@@ -661,7 +661,7 @@ const server = http.createServer(async (req, res) => {
       let companyName = null;
       if (deviceData.ccode) {
         const [companyRows] = await pool.query(
-          'SELECT cname FROM psettings WHERE cno = ?',
+          'SELECT cname FROM psettings WHERE ccode = ?',
           [deviceData.ccode]
         );
         
