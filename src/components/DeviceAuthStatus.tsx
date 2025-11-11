@@ -15,18 +15,11 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
   const checkAuthorization = async () => {
     try {
       const fingerprint = await generateDeviceFingerprint();
-      const apiUrl = import.meta.env.VITE_MYSQL_API_URL || '';
-      
-      console.log('Device fingerprint:', fingerprint);
-      console.log('API URL:', apiUrl);
-      console.log('Full fetch URL:', `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`);
+      const apiUrl = 'https://backend.maddasystems.co.ke';
       
       const response = await fetch(
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`
       );
-      
-      console.log('Response status:', response.status);
-      console.log('Response headers:', response.headers);
       
       // Check if response is JSON
       const contentType = response.headers.get('content-type');
@@ -38,17 +31,21 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
       
       if (response.ok) {
         const data = await response.json();
+        console.log('API Response:', data);
+        
         if (data.success && data.data) {
           setIsAuthorized(data.data.authorized === 1);
           
           // Always update company name from response (default to 'Unknown' if null)
           const fetchedCompanyName = data.data.company_name || 'Unknown';
+          console.log('Fetched company name:', fetchedCompanyName);
           setCompanyName(fetchedCompanyName);
           onCompanyNameChange?.(fetchedCompanyName);
         } else {
           setIsAuthorized(false);
         }
       } else {
+        console.error('API request failed with status:', response.status);
         setIsAuthorized(false);
       }
     } catch (error) {
