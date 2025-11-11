@@ -144,10 +144,27 @@ const Store = () => {
             }
           }
         } else if (!response.success) {
-          // Only show error if API explicitly returns failure (e.g., device not found, not authorized)
-          console.error('❌ API error:', response.message);
-          if (cachedItems.length === 0) {
-            toast.error(response.message || 'Failed to load items. Please check device authorization.');
+          // Check if this is a 401 authorization error
+          const isAuthError = response.error?.includes('401') || 
+                              response.error?.includes('Unauthorized') || 
+                              response.error?.includes('not authorized');
+          
+          if (isAuthError) {
+            console.error('❌ Device authorization error:', response.error);
+            // Use cached items if available, but inform user about auth issue
+            if (cachedItems.length > 0) {
+              toast.warning('Device authorization issue. Using cached data. Contact administrator.');
+            } else {
+              toast.error('Device not authorized. Please contact administrator to approve this device.');
+            }
+          } else {
+            // Other API errors (network, server error, etc.)
+            console.error('❌ API error:', response.error);
+            if (cachedItems.length === 0) {
+              toast.error('Failed to load items. Please try again later.');
+            } else {
+              console.log('Using cached items due to API error');
+            }
           }
         }
       } else if (cachedItems.length === 0) {
