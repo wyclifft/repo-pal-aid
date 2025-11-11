@@ -56,11 +56,15 @@ export const Login = ({ onLogin }: LoginProps) => {
         if (data) {
           // Try to check device approval status from MySQL (best effort)
           let deviceData = null;
+          let needsRegistration = false;
+          
           try {
             deviceData = await mysqlApi.devices.getByFingerprint(deviceFingerprint);
             
-            // Update cache with latest status from backend
-            if (deviceData) {
+            // Check if device exists in approved_devices (has an id)
+            // If it only exists in devsettings, it won't have an id
+            if (deviceData && deviceData.id) {
+              // Device is registered in approved_devices
               await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, deviceData.approved);
               
               if (!deviceData.approved) {
@@ -79,6 +83,11 @@ export const Login = ({ onLogin }: LoginProps) => {
               } catch (updateError) {
                 console.warn('Failed to update device sync time:', updateError);
               }
+            } else if (deviceData && !deviceData.id) {
+              // Device exists in devsettings but not in approved_devices
+              console.log('Device found in devsettings but not in approved_devices - needs registration');
+              needsRegistration = true;
+              deviceData = null;
             }
           } catch (apiError) {
             console.warn('MySQL API unavailable, using cached approval:', apiError);
@@ -86,7 +95,7 @@ export const Login = ({ onLogin }: LoginProps) => {
             deviceData = null;
           }
 
-          // If API failed or device not found in backend, use cached approval
+          // If API failed, device not found in backend, or needs registration, handle it
           if (!deviceData) {
             if (cachedApproval) {
               // Use cached approval status
