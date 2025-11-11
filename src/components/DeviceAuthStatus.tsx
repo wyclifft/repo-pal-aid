@@ -17,9 +17,16 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
       const fingerprint = await generateDeviceFingerprint();
       const apiUrl = import.meta.env.VITE_MYSQL_API_URL || '';
       
+      console.log('Device fingerprint:', fingerprint);
+      console.log('API URL:', apiUrl);
+      console.log('Full fetch URL:', `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`);
+      
       const response = await fetch(
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`
       );
+      
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
       
       // Check if response is JSON
       const contentType = response.headers.get('content-type');
