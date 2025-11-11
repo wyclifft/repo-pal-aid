@@ -134,10 +134,18 @@ const Store = () => {
           setItems(response.data);
           saveItems(response.data);
           console.log(`✅ Synced ${response.data.length} items for this device (ccode)`);
-        } else if (!response.success && cachedItems.length === 0) {
-          // Only show error if we have no cached data
-          toast.error(response.message || 'Device not authorized. Please contact administrator.');
-          console.error('❌ Device authorization error');
+          
+          // Show info message if no items available but device is authorized
+          if (response.data.length === 0 && cachedItems.length === 0) {
+            toast.info('No items available for your company. Contact administrator to add items.');
+          }
+        } else if (!response.success) {
+          // Only show authorization error if API explicitly returns unauthorized
+          // Don't treat empty results as authorization failure
+          console.error('❌ Failed to fetch items:', response.message);
+          if (cachedItems.length === 0) {
+            toast.error(response.message || 'Failed to load items. Please try again.');
+          }
         }
       } else if (cachedItems.length === 0) {
         toast.warning('No cached items available. Please connect online first.');
