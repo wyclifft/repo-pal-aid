@@ -165,6 +165,17 @@ export interface MilkCollection {
 
 export const milkCollectionApi = {
   /**
+   * Generate next reference number for milk collection
+   */
+  getNextReference: async (deviceFingerprint: string) => {
+    return apiRequest<{ reference_no: string }>('/milk-collection/next-reference', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_fingerprint: deviceFingerprint }),
+    });
+  },
+
+  /**
    * Get all milk collections with optional filters
    */
   getAll: async (filters?: {
