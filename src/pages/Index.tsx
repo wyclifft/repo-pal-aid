@@ -92,61 +92,29 @@ const Index = () => {
     const monthStart = new Date(year, now.getMonth(), 1);
     const monthEnd = new Date(year, now.getMonth() + 1, 0, 23, 59, 59);
 
-    // Try to sync online with monthly accumulation using MySQL API
+    // Save online - always create new record
     if (navigator.onLine) {
       try {
-        // Check if record already exists for this farmer, session, current month, AND device's ccode
-        const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-          farmerId,
-          session,
-          monthStart.toISOString(),
-          monthEnd.toISOString(),
-          deviceFingerprint // Pass device fingerprint to filter by ccode
-        ).catch(() => null);
+        const milkData: any = {
+          reference_no: referenceNo,
+          farmer_id: farmerId,
+          farmer_name: farmerName,
+          route: route,
+          session: session as 'AM' | 'PM',
+          weight: parseFloat(Number(weight).toFixed(2)),
+          clerk_name: currentUser ? currentUser.user_id : 'unknown',
+          collection_date: new Date(),
+          device_fingerprint: deviceFingerprint,
+          orderId: Date.now(),
+          synced: false,
+        };
 
-        if (existing && existing.reference_no) {
-          // Accumulate weight for the month
-          const newWeight = parseFloat((Number(existing.weight) + Number(weight)).toFixed(2));
-          const updated = await mysqlApi.milkCollection.update(existing.reference_no, {
-            weight: newWeight,
-            collection_date: new Date(),
-            device_fingerprint: deviceFingerprint // Pass device fingerprint for ccode filtering
-          });
-
-          if (updated) {
-            toast.success(`Monthly total: ${newWeight.toFixed(1)} Kg`);
-            setCurrentReceipt({
-              ...existing,
-              weight: newWeight,
-              collection_date: new Date(),
-              synced: true,
-            });
-          } else {
-            throw new Error('Failed to update MySQL record');
-          }
+        const created = await mysqlApi.milkCollection.create(milkData);
+        if (created) {
+          toast.success('Collection saved and synced');
+          setCurrentReceipt({ ...milkData, synced: true });
         } else {
-          // Create new record
-          const milkData: any = {
-            reference_no: referenceNo,
-            farmer_id: farmerId,
-            farmer_name: farmerName,
-            route: route,
-            session: session as 'AM' | 'PM',
-            weight: parseFloat(Number(weight).toFixed(2)),
-            clerk_name: currentUser ? currentUser.user_id : 'unknown',
-            collection_date: new Date(),
-            device_fingerprint: deviceFingerprint,
-            orderId: Date.now(),
-            synced: false,
-          };
-
-          const created = await mysqlApi.milkCollection.create(milkData);
-          if (created) {
-            toast.success('Collection saved and synced to MySQL');
-            setCurrentReceipt({ ...milkData, synced: true });
-          } else {
-            throw new Error('Failed to create MySQL record');
-          }
+          throw new Error('Failed to create record');
         }
       } catch (err) {
         console.error('Save error:', err);
