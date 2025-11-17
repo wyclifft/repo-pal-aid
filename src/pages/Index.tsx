@@ -68,10 +68,20 @@ const Index = () => {
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const monthKey = `${year}-${month}`; // YYYY-MM format
-    const referenceNo = `MC-${monthKey}-${farmerId}-${session}`;
 
     // Get device fingerprint
     const deviceFingerprint = await generateDeviceFingerprint();
+
+    // Generate reference number using backend API
+    let referenceNo = `MC-${monthKey}-${farmerId}-${session}`; // Fallback
+    try {
+      const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
+      if (refResult.data?.reference_no) {
+        referenceNo = refResult.data.reference_no;
+      }
+    } catch (error) {
+      console.error('Failed to generate reference number, using fallback:', error);
+    }
 
     // Get start and end of current month
     const monthStart = new Date(year, now.getMonth(), 1);

@@ -224,11 +224,83 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, data: mapped });
     }
 
+    // NEW: Generate next reference number endpoint
+    if (path === '/api/milk-collection/next-reference' && method === 'POST') {
+      const body = await parseBody(req);
+      const deviceserial = body.device_fingerprint;
+      
+      if (!deviceserial) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'device_fingerprint is required' 
+        }, 400);
+      }
+      
+      // Get ccode from device
+      const [deviceRows] = await pool.query(
+        'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+        [deviceserial]
+      );
+      
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not found' 
+        }, 404);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      // Get company name from psettings
+      const [companyRows] = await pool.query(
+        'SELECT cname FROM psettings WHERE ccode = ?',
+        [ccode]
+      );
+      
+      if (companyRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Company not found' 
+        }, 404);
+      }
+      
+      const cname = companyRows[0].cname;
+      const prefix = cname.substring(0, 2).toUpperCase();
+      
+      // Get the last transaction number for this company
+      const [lastTransRows] = await pool.query(
+        'SELECT transrefno FROM transactions WHERE ccode = ? AND transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1',
+        [ccode, `${prefix}%`]
+      );
+      
+      let nextNumber = 10000001; // Starting number
+      
+      if (lastTransRows.length > 0) {
+        const lastRef = lastTransRows[0].transrefno;
+        const lastNumber = parseInt(lastRef.substring(2)); // Remove prefix
+        nextNumber = lastNumber + 1;
+      }
+      
+      const transrefno = `${prefix}${String(nextNumber).padStart(9, '0')}`;
+      
+      return sendJSON(res, { 
+        success: true, 
+        reference_no: transrefno 
+      });
+    }
+
     if (path === '/api/milk-collection' && method === 'POST') {
       const body = await parseBody(req);
     
-      // Auto-generate transrefno if missing
-      const transrefno = body.reference_no || `REF-${Date.now()}`;
+      // Use provided transrefno from frontend
+      const transrefno = body.reference_no;
+      if (!transrefno) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'reference_no is required' 
+        }, 400);
+      }
+      
       const clerk = body.clerk_name || 'unknown';
       const deviceserial = body.device_fingerprint || 'web';
       
