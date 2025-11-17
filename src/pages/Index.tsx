@@ -75,9 +75,14 @@ const Index = () => {
     // Generate reference number using backend API
     let referenceNo = `MC-${monthKey}-${farmerId}-${session}`; // Fallback
     try {
+      console.log('Generating reference number for device:', deviceFingerprint);
       const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
+      console.log('Reference generation result:', refResult);
       if (refResult.data?.reference_no) {
         referenceNo = refResult.data.reference_no;
+        console.log('Using generated reference:', referenceNo);
+      } else {
+        console.warn('No reference_no in response, using fallback');
       }
     } catch (error) {
       console.error('Failed to generate reference number, using fallback:', error);
