@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     target: 'es2015', // Android 7.0 / Chrome 55 compatibility
-    minify: 'terser',
+    minify: 'esbuild',
     cssCodeSplit: true,
     rollupOptions: {
       output: {
