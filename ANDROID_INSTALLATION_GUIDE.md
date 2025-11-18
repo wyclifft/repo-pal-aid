@@ -108,20 +108,47 @@ If you see a security warning:
 
 ## Troubleshooting
 
+### App shows blank screen on Android 7.0
+**This is the most common issue!** Android 7.0 uses an older WebView (Chrome 55) that requires specific build settings.
+
+**Solution:**
+1. Make sure `vite.config.ts` has the correct build target:
+   ```typescript
+   build: {
+     target: 'es2015', // Critical for Android 7.0 compatibility
+     minify: 'terser',
+   }
+   ```
+
+2. Rebuild the app completely:
+   ```bash
+   npm run build
+   npx cap sync android
+   ```
+
+3. In Android Studio, clean and rebuild:
+   - **Build** → **Clean Project**
+   - **Build** → **Rebuild Project**
+   - **Build** → **Build Bundle(s) / APK(s)** → **Build APK(s)**
+
+4. If still blank, check Android Studio Logcat for JavaScript errors
+
 ### App crashes on Android 7.0
 - Ensure you're using the debug APK first
 - Check Android Studio Logcat for errors
 - Verify minSdkVersion is 24 in build.gradle
+- Make sure you rebuilt after changing vite.config.ts
 
 ### Unable to install APK
 - Make sure USB debugging is enabled
 - Check if "Install from Unknown Sources" is enabled
 - Try different USB cable/port
 
-### App shows blank screen
-- Check if device has sufficient storage
-- Clear app cache and data
-- Reinstall the APK
+### App works on Android 9+ but not Android 7.0
+- This is a JavaScript compatibility issue
+- Verify `build.target: 'es2015'` is set in vite.config.ts
+- Run complete rebuild process (clean, build, sync)
+- Older Android versions need ES2015 JavaScript, not modern ES2020+
 
 ## Building Production APK (For Distribution)
 
