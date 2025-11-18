@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'Milk Collection',
   webDir: 'dist',
   server: {
-    url: 'https://a468e475-ee6a-4fda-9a7e-5e39ba8c375e.lovableproject.com?forceHideBadge=true',
+    url: 'https://maddasys.netlify.app/',
     cleartext: true
   },
   android: {
