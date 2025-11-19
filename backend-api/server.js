@@ -726,9 +726,9 @@ const server = http.createServer(async (req, res) => {
         [fingerprint]
       );
       
-      // Then check devsettings for authorization and company info
+      // Then check devsettings for authorization, company info, and device code
       const [devRows] = await pool.query(
-        'SELECT uniquedevcode, ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT uniquedevcode, ccode, devcode, authorized FROM devsettings WHERE uniquedevcode = ?',
         [fingerprint]
       );
       
@@ -740,7 +740,8 @@ const server = http.createServer(async (req, res) => {
       const deviceData = {
         ...(approvedRows.length > 0 ? approvedRows[0] : {}),
         authorized: devRows.length > 0 ? devRows[0].authorized : 0,
-        ccode: devRows.length > 0 && devRows[0].ccode ? devRows[0].ccode : (approvedRows[0]?.ccode || null)
+        ccode: devRows.length > 0 && devRows[0].ccode ? devRows[0].ccode : (approvedRows[0]?.ccode || null),
+        devcode: devRows.length > 0 ? devRows[0].devcode : null
       };
       
       // Get company name from psettings if ccode exists
