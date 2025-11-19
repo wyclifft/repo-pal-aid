@@ -14,6 +14,14 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 const ZReport = () => {
   const navigate = useNavigate();
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
+  // Check authentication
+  useEffect(() => {
+    const storedUser = localStorage.getItem('currentUser');
+    if (!storedUser) {
+      navigate('/', { replace: true });
+    }
+  }, [navigate]);
   const [reportData, setReportData] = useState<ZReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
