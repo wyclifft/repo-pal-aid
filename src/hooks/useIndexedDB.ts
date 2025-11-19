@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -35,11 +35,15 @@ export const useIndexedDB = () => {
         database.createObjectStore('app_users', { keyPath: 'user_id' });
       }
 
-      // Recreate device_approvals with new keyPath (fingerprint instead of device_id)
+      // Always recreate device_approvals to ensure correct keyPath
       if (database.objectStoreNames.contains('device_approvals')) {
         database.deleteObjectStore('device_approvals');
       }
-      database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
+      // Create with explicit keyPath - this is critical for offline login
+      const deviceApprovalsStore = database.createObjectStore('device_approvals', { 
+        keyPath: 'device_fingerprint' 
+      });
+      console.log('Created device_approvals store with keyPath: device_fingerprint');
 
       // Add items store for offline caching
       if (!database.objectStoreNames.contains('items')) {
