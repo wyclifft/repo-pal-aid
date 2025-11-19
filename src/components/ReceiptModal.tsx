@@ -15,6 +15,7 @@ export const ReceiptModal = ({ receipt, open, onClose }: ReceiptModalProps) => {
     if (!receipt) return;
 
     const result = await printReceipt({
+      referenceNo: receipt.reference_no,
       farmerName: receipt.farmer_name,
       farmerId: receipt.farmer_id,
       route: receipt.route,
@@ -52,6 +53,10 @@ export const ReceiptModal = ({ receipt, open, onClose }: ReceiptModalProps) => {
         <div className="space-y-2">
           <table className="w-full">
             <tbody>
+              <tr className="border-b bg-primary/5">
+                <th className="text-left py-2 font-semibold">Receipt No.</th>
+                <td className="py-2 font-mono font-bold text-primary">{receipt.reference_no}</td>
+              </tr>
               <tr className="border-b">
                 <th className="text-left py-2 font-semibold">Farmer Name</th>
                 <td className="py-2">{receipt.farmer_name}</td>

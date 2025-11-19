@@ -495,6 +495,7 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
 };
 
 export const printReceipt = async (receipt: {
+  referenceNo: string;
   farmerName: string;
   farmerId: string;
   route: string;
@@ -507,6 +508,8 @@ export const printReceipt = async (receipt: {
 ================================
      MILK COLLECTION RECEIPT
 ================================
+
+Receipt No: ${receipt.referenceNo}
 
 Farmer: ${receipt.farmerName}
 Farmer ID: ${receipt.farmerId}
