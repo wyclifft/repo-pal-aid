@@ -8,6 +8,11 @@ const config: CapacitorConfig = {
     minWebViewVersion: 55, // Chrome 55 (Android 7.0 compatible)
     allowMixedContent: true,
     captureInput: true
+  },
+  plugins: {
+    SplashScreen: {
+      launchShowDuration: 0
+    }
   }
 };
 
