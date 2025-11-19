@@ -16,6 +16,14 @@ import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 const Store = () => {
   const navigate = useNavigate();
   const [items, setItems] = useState<Item[]>([]);
+
+  // Check authentication
+  useEffect(() => {
+    const storedUser = localStorage.getItem('currentUser');
+    if (!storedUser) {
+      navigate('/', { replace: true });
+    }
+  }, [navigate]);
   const [loading, setLoading] = useState(true);
   const [sellDialogOpen, setSellDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);

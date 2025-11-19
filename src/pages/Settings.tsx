@@ -23,6 +23,14 @@ import {
 const Settings = () => {
   const navigate = useNavigate();
   const [scaleConnected, setScaleConnected] = useState(false);
+
+  // Check authentication
+  useEffect(() => {
+    const storedUser = localStorage.getItem('currentUser');
+    if (!storedUser) {
+      navigate('/', { replace: true });
+    }
+  }, [navigate]);
   const [scaleType, setScaleType] = useState<ScaleType>("Unknown");
   const [isConnectingScale, setIsConnectingScale] = useState(false);
   const [lastWeight, setLastWeight] = useState<number | null>(null);

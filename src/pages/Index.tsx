@@ -36,7 +36,20 @@ const Index = () => {
 
   const { saveReceipt } = useIndexedDB();
 
-  // No auto-login on page refresh - user must log in manually
+  // Restore auth state from localStorage on mount
+  useEffect(() => {
+    const storedUser = localStorage.getItem('currentUser');
+    if (storedUser) {
+      try {
+        const user = JSON.parse(storedUser);
+        setCurrentUser(user);
+        setIsOffline(!navigator.onLine);
+      } catch (error) {
+        console.error('Failed to restore user session:', error);
+        localStorage.removeItem('currentUser');
+      }
+    }
+  }, []);
 
   const handleLogin = (user: AppUser, offline: boolean) => {
     setCurrentUser(user);
