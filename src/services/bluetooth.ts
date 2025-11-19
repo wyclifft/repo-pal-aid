@@ -15,6 +15,16 @@ let scale: BluetoothScale = {
   type: 'Unknown',
 };
 
+interface BluetoothPrinter {
+  device: BleDevice | any | null;
+  characteristic: string | any | null;
+}
+
+let printer: BluetoothPrinter = {
+  device: null,
+  characteristic: null,
+};
+
 // Store device info for quick reconnect
 interface StoredDeviceInfo {
   deviceId: string;
@@ -24,6 +34,13 @@ interface StoredDeviceInfo {
 }
 
 const STORAGE_KEY = 'lastConnectedScale';
+const PRINTER_STORAGE_KEY = 'lastConnectedPrinter';
+
+interface StoredPrinterInfo {
+  deviceId: string;
+  deviceName: string;
+  timestamp: number;
+}
 
 const saveDeviceInfo = (deviceId: string, deviceName: string, scaleType: ScaleType) => {
   const info: StoredDeviceInfo = {
@@ -47,6 +64,29 @@ export const getStoredDeviceInfo = (): StoredDeviceInfo | null => {
 
 export const clearStoredDevice = () => {
   localStorage.removeItem(STORAGE_KEY);
+};
+
+const savePrinterInfo = (deviceId: string, deviceName: string) => {
+  const info: StoredPrinterInfo = {
+    deviceId,
+    deviceName,
+    timestamp: Date.now(),
+  };
+  localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(info));
+};
+
+export const getStoredPrinterInfo = (): StoredPrinterInfo | null => {
+  const stored = localStorage.getItem(PRINTER_STORAGE_KEY);
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as StoredPrinterInfo;
+  } catch {
+    return null;
+  }
+};
+
+export const clearStoredPrinter = () => {
+  localStorage.removeItem(PRINTER_STORAGE_KEY);
 };
 
 const SERVICE_UUID_HC05 = numberToUUID(0xffe0);
@@ -176,19 +216,24 @@ export const connectBluetoothScale = async (
 
 export const disconnectBluetoothScale = async (clearSaved: boolean = false): Promise<void> => {
   try {
-    if (Capacitor.isNativePlatform() && scale.device) {
-      await BleClient.disconnect(scale.device.deviceId);
-    } else if (scale.device && scale.device.gatt?.connected) {
-      await scale.device.gatt.disconnect();
+    if (scale.device) {
+      if (Capacitor.isNativePlatform()) {
+        await BleClient.disconnect(scale.device.deviceId);
+      } else if ('bluetooth' in navigator) {
+        if (scale.device.gatt?.connected) {
+          scale.device.gatt.disconnect();
+        }
+      }
+      scale = { device: null, characteristic: null, type: 'Unknown' };
+      
+      if (clearSaved) {
+        clearStoredDevice();
+      }
     }
-    
-    if (clearSaved) {
-      clearStoredDevice();
-    }
-  } catch (err) {
-    console.error('Bluetooth disconnect error:', err);
+  } catch (error) {
+    console.error('Failed to disconnect from scale:', error);
+    throw error;
   }
-  scale = { device: null, characteristic: null, type: 'Unknown' };
 };
 
 export const quickReconnect = async (
@@ -196,63 +241,141 @@ export const quickReconnect = async (
   onWeightUpdate: (weight: number, scaleType: ScaleType) => void
 ): Promise<{ success: boolean; type: ScaleType; error?: string }> => {
   try {
-    if (!Capacitor.isNativePlatform()) {
-      throw new Error('Quick reconnect only available on native platforms');
-    }
+    if (Capacitor.isNativePlatform()) {
+      await BleClient.initialize();
+      await BleClient.connect(deviceId);
+      
+      const storedInfo = getStoredDeviceInfo();
+      if (!storedInfo) {
+        return { success: false, type: 'Unknown', error: 'No stored device info' };
+      }
 
-    await BleClient.initialize();
-    await BleClient.connect(deviceId);
+      let serviceUuid = '';
+      let characteristicUuid = '';
+      const scaleType = storedInfo.scaleType;
 
-    let scaleType: ScaleType = 'Unknown';
-    let serviceUuid = '';
-    let characteristicUuid = '';
+      const services = await BleClient.getServices(deviceId);
+      const targetServiceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
+      const service = services.find(s => s.uuid.toLowerCase().includes(targetServiceUuid));
+      
+      if (!service || service.characteristics.length === 0) {
+        return { success: false, type: 'Unknown', error: 'Service not found' };
+      }
 
-    // Try to get services
-    const services = await BleClient.getServices(deviceId);
-    const hc05Service = services.find(s => s.uuid.toLowerCase().includes(SERVICE_UUID_HC05));
-    const hm10Service = services.find(s => s.uuid.toLowerCase().includes(SERVICE_UUID_HM10));
+      serviceUuid = service.uuid;
+      characteristicUuid = service.characteristics[0].uuid;
 
-    if (hc05Service && hc05Service.characteristics.length > 0) {
-      serviceUuid = hc05Service.uuid;
-      characteristicUuid = hc05Service.characteristics[0].uuid;
-      scaleType = 'HC-05';
-    } else if (hm10Service && hm10Service.characteristics.length > 0) {
-      serviceUuid = hm10Service.uuid;
-      characteristicUuid = hm10Service.characteristics[0].uuid;
-      scaleType = 'HM-10';
-    } else {
-      throw new Error('Could not find compatible service');
-    }
-
-    await BleClient.startNotifications(
-      deviceId,
-      serviceUuid,
-      characteristicUuid,
-      (value) => {
-        const text = new TextDecoder().decode(value);
-        const match = text.match(/(\d+\.\d+)/);
-        if (match) {
-          const parsed = parseFloat(match[1]);
-          if (!isNaN(parsed)) {
-            onWeightUpdate(parsed, scaleType);
+      await BleClient.startNotifications(
+        deviceId,
+        serviceUuid,
+        characteristicUuid,
+        (value) => {
+          const text = new TextDecoder().decode(value);
+          const match = text.match(/(\d+\.\d+)/);
+          if (match) {
+            const parsed = parseFloat(match[1]);
+            if (!isNaN(parsed)) {
+              onWeightUpdate(parsed, scaleType);
+            }
           }
         }
+      );
+
+      const device = { deviceId } as BleDevice;
+      scale = { device, characteristic: characteristicUuid, type: scaleType };
+      
+      return { success: true, type: scaleType };
+    } else {
+      return { success: false, type: 'Unknown', error: 'Quick reconnect only available on mobile' };
+    }
+  } catch (error: any) {
+    console.error('Failed to reconnect to scale:', error);
+    return { success: false, type: 'Unknown', error: error.message || 'Failed to reconnect' };
+  }
+};
+
+// Printer-specific UUID - common thermal printer service
+const PRINTER_SERVICE_UUID = numberToUUID(0x18f0);
+
+export const connectBluetoothPrinter = async (): Promise<{ 
+  success: boolean; 
+  deviceName?: string;
+  error?: string 
+}> => {
+  try {
+    if (Capacitor.isNativePlatform()) {
+      await BleClient.initialize();
+
+      const device = await BleClient.requestDevice({
+        optionalServices: [PRINTER_SERVICE_UUID],
+      });
+
+      await BleClient.connect(device.deviceId);
+
+      printer = { device, characteristic: null };
+      savePrinterInfo(device.deviceId, device.name || 'Bluetooth Printer');
+
+      return { success: true, deviceName: device.name || 'Bluetooth Printer' };
+    } else if ('bluetooth' in navigator) {
+      const device = await (navigator as any).bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [PRINTER_SERVICE_UUID],
+      });
+
+      const server = await device.gatt.connect();
+      printer = { device, characteristic: null };
+      savePrinterInfo(device.id, device.name || 'Bluetooth Printer');
+
+      return { success: true, deviceName: device.name || 'Bluetooth Printer' };
+    } else {
+      return { success: false, error: 'Bluetooth not available' };
+    }
+  } catch (error: any) {
+    console.error('Failed to connect to printer:', error);
+    return { success: false, error: error.message || 'Failed to connect' };
+  }
+};
+
+export const quickReconnectPrinter = async (deviceId: string): Promise<{ 
+  success: boolean; 
+  error?: string 
+}> => {
+  try {
+    if (Capacitor.isNativePlatform()) {
+      await BleClient.initialize();
+      await BleClient.connect(deviceId);
+      
+      const device = { deviceId } as BleDevice;
+      printer = { device, characteristic: null };
+      
+      return { success: true };
+    } else {
+      return { success: false, error: 'Quick reconnect only available on mobile' };
+    }
+  } catch (error: any) {
+    console.error('Failed to reconnect to printer:', error);
+    return { success: false, error: error.message || 'Failed to reconnect' };
+  }
+};
+
+export const disconnectBluetoothPrinter = async (clearSaved: boolean = false): Promise<void> => {
+  try {
+    if (printer.device) {
+      if (Capacitor.isNativePlatform()) {
+        await BleClient.disconnect(printer.device.deviceId);
+      } else if ('bluetooth' in navigator) {
+        if (printer.device.gatt?.connected) {
+          printer.device.gatt.disconnect();
+        }
       }
-    );
-
-    scale = { 
-      device: { deviceId, name: getStoredDeviceInfo()?.deviceName || 'Unknown' }, 
-      characteristic: characteristicUuid, 
-      type: scaleType 
-    };
-
-    return { success: true, type: scaleType };
+      printer = { device: null, characteristic: null };
+      
+      if (clearSaved) {
+        clearStoredPrinter();
+      }
+    }
   } catch (error) {
-    console.error('Quick reconnect failed:', error);
-    return { 
-      success: false, 
-      type: 'Unknown', 
-      error: error instanceof Error ? error.message : 'Failed to reconnect' 
-    };
+    console.error('Failed to disconnect from printer:', error);
+    throw error;
   }
 };
