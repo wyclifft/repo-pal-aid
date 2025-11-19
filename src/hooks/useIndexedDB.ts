@@ -148,16 +148,29 @@ export const useIndexedDB = () => {
     store.delete(orderId);
   }, [db]);
 
-  const saveDeviceApproval = useCallback((deviceFingerprint: string, backendId: number | null, userId: string, approved: boolean) => {
-    if (!db) return;
-    const tx = db.transaction('device_approvals', 'readwrite');
-    const store = tx.objectStore('device_approvals');
-    store.put({ 
-      device_fingerprint: deviceFingerprint, 
-      backend_id: backendId,
-      user_id: userId, 
-      approved, 
-      last_synced: new Date().toISOString() 
+  const saveDeviceApproval = useCallback((deviceFingerprint: string, backendId: number | null, userId: string, approved: boolean): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject('DB not ready');
+      if (!deviceFingerprint || !userId) {
+        return reject('Device fingerprint and user ID are required');
+      }
+      
+      try {
+        const tx = db.transaction('device_approvals', 'readwrite');
+        const store = tx.objectStore('device_approvals');
+        const request = store.put({ 
+          device_fingerprint: deviceFingerprint, 
+          backend_id: backendId,
+          user_id: userId, 
+          approved, 
+          last_synced: new Date().toISOString() 
+        });
+        
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      } catch (error) {
+        reject(error);
+      }
     });
   }, [db]);
 

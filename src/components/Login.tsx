@@ -65,7 +65,12 @@ export const Login = ({ onLogin }: LoginProps) => {
             // If it only exists in devsettings, it won't have an id
             if (deviceData && deviceData.id) {
               // Device is registered in approved_devices
-              await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, deviceData.approved);
+              try {
+                await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, deviceData.approved);
+              } catch (saveError) {
+                console.error('Failed to cache device approval:', saveError);
+                // Continue anyway - this is just caching
+              }
               
               if (!deviceData.approved) {
                 setDeviceStatus('pending');
@@ -123,7 +128,11 @@ export const Login = ({ onLogin }: LoginProps) => {
 
                 if (newDevice && newDevice.id) {
                   console.log('Device registered with ID:', newDevice.id);
-                  await saveDeviceApproval(deviceFingerprint, newDevice.id, userId, false);
+                  try {
+                    await saveDeviceApproval(deviceFingerprint, newDevice.id, userId, false);
+                  } catch (saveError) {
+                    console.error('Failed to cache device approval:', saveError);
+                  }
                   setDeviceStatus('pending');
                   setCurrentDeviceId(deviceFingerprint);
                   toast.error('New device detected. Awaiting admin approval.');
@@ -175,6 +184,14 @@ export const Login = ({ onLogin }: LoginProps) => {
           // Allow login since user was previously authenticated on this device
           console.log('⚠️ No cached device approval found, but user exists - allowing offline login');
           console.log('User should reconnect online to refresh device approval status');
+          
+          // Save a temporary device approval for future offline logins
+          try {
+            await saveDeviceApproval(deviceFingerprint, null, userId, true);
+          } catch (saveError) {
+            console.error('Failed to cache device approval:', saveError);
+          }
+          
           setDeviceStatus('approved');
           onLogin(user, true);
           toast.success('Offline login successful (limited mode)');
