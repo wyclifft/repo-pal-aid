@@ -151,17 +151,22 @@ export const useIndexedDB = () => {
   const saveDeviceApproval = useCallback((deviceFingerprint: string, backendId: number | null, userId: string, approved: boolean): Promise<void> => {
     return new Promise((resolve, reject) => {
       if (!db) return reject('DB not ready');
-      if (!deviceFingerprint || !userId) {
-        return reject('Device fingerprint and user ID are required');
+      
+      // Strict validation for keyPath field
+      if (!deviceFingerprint || typeof deviceFingerprint !== 'string' || deviceFingerprint.trim().length === 0) {
+        return reject('Device fingerprint must be a non-empty string');
+      }
+      if (!userId || typeof userId !== 'string' || userId.trim().length === 0) {
+        return reject('User ID must be a non-empty string');
       }
       
       try {
         const tx = db.transaction('device_approvals', 'readwrite');
         const store = tx.objectStore('device_approvals');
         const request = store.put({ 
-          device_fingerprint: deviceFingerprint, 
+          device_fingerprint: deviceFingerprint.trim(), 
           backend_id: backendId,
-          user_id: userId, 
+          user_id: userId.trim(), 
           approved, 
           last_synced: new Date().toISOString() 
         });
