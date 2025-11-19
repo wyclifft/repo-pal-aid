@@ -10,6 +10,7 @@ import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { generateOfflineReference, syncReferenceCounter } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
 import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings } from 'lucide-react';
 
@@ -105,29 +106,53 @@ const Index = () => {
 
     const now = new Date();
     const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
 
     // Get device fingerprint
     const deviceFingerprint = await generateDeviceFingerprint();
 
-    // Generate continuous reference number from backend (e.g., AC0800021433)
+    // Generate reference number - OFFLINE FIRST approach
     let referenceNo = '';
-    try {
-      console.log('Generating reference number for device:', deviceFingerprint);
-      const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
-      console.log('Reference generation result:', refResult);
-      if (refResult.data?.reference_no) {
-        referenceNo = refResult.data.reference_no;
-        console.log('Using generated reference:', referenceNo);
-      } else {
-        console.error('No reference_no in response from backend');
-        toast.error('Failed to generate reference number');
+    
+    // Try offline generation first
+    const offlineRef = generateOfflineReference();
+    if (offlineRef) {
+      referenceNo = offlineRef;
+      console.log('✅ Using offline-generated reference:', referenceNo);
+      
+      // If online, sync with backend to ensure we're in sync
+      if (navigator.onLine) {
+        try {
+          const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
+          if (refResult.data?.reference_no) {
+            syncReferenceCounter(refResult.data.reference_no);
+            console.log('📡 Synced reference counter with backend');
+          }
+        } catch (error) {
+          console.warn('Failed to sync with backend (continuing with offline reference):', error);
+        }
+      }
+    } else {
+      // No offline config available - must be online to get reference from backend
+      if (!navigator.onLine) {
+        toast.error('Cannot generate reference offline. Please connect to internet first or log in again.');
         return;
       }
-    } catch (error) {
-      console.error('Failed to generate reference number:', error);
-      toast.error('Failed to generate reference number');
-      return;
+      
+      try {
+        console.log('Fetching reference from backend...');
+        const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
+        if (refResult.data?.reference_no) {
+          referenceNo = refResult.data.reference_no;
+          syncReferenceCounter(referenceNo);
+          console.log('✅ Using backend reference:', referenceNo);
+        } else {
+          throw new Error('No reference_no in response');
+        }
+      } catch (error) {
+        console.error('Failed to generate reference number:', error);
+        toast.error('Failed to generate reference number. Please check your connection.');
+        return;
+      }
     }
 
     // Get start and end of current month

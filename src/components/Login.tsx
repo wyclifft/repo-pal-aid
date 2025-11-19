@@ -4,6 +4,7 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
 import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName } from '@/utils/deviceFingerprint';
+import { storeDeviceConfig } from '@/utils/referenceGenerator';
 
 interface LoginProps {
   onLogin: (user: AppUser, isOffline: boolean) => void;
@@ -83,6 +84,11 @@ export const Login = ({ onLogin }: LoginProps) => {
               }
 
               setDeviceStatus('approved');
+              
+              // Store device config for offline reference generation
+              if (deviceData.company_name && deviceData.devcode) {
+                storeDeviceConfig(deviceData.company_name, deviceData.devcode);
+              }
               
               // Update last sync timestamp (best effort)
               try {
