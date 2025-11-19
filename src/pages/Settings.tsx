@@ -1,13 +1,19 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
-import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { connectBluetoothScale, disconnectBluetoothScale, ScaleType } from "@/services/bluetooth";
+import { 
+  connectBluetoothScale, 
+  disconnectBluetoothScale, 
+  quickReconnect,
+  getStoredDeviceInfo,
+  ScaleType 
+} from "@/services/bluetooth";
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -15,9 +21,35 @@ const Settings = () => {
   const [scaleType, setScaleType] = useState<ScaleType>("Unknown");
   const [isConnectingScale, setIsConnectingScale] = useState(false);
   const [lastWeight, setLastWeight] = useState<number | null>(null);
+  const [storedDevice, setStoredDevice] = useState<ReturnType<typeof getStoredDeviceInfo>>(null);
   
   const [printerConnected, setPrinterConnected] = useState(false);
   const [isConnectingPrinter, setIsConnectingPrinter] = useState(false);
+
+  useEffect(() => {
+    const deviceInfo = getStoredDeviceInfo();
+    setStoredDevice(deviceInfo);
+  }, []);
+
+  const handleQuickReconnect = async () => {
+    if (!storedDevice) return;
+    
+    setIsConnectingScale(true);
+    const result = await quickReconnect(storedDevice.deviceId, (weight, type) => {
+      setLastWeight(weight);
+      toast.success(`Weight received: ${weight} kg`);
+    });
+
+    setIsConnectingScale(false);
+    if (result.success) {
+      setScaleConnected(true);
+      setScaleType(result.type);
+      toast.success(`Reconnected to ${storedDevice.deviceName}`);
+    } else {
+      toast.error(result.error || "Failed to reconnect. Try searching for device again.");
+      setStoredDevice(null);
+    }
+  };
 
   const handleConnectScale = async () => {
     setIsConnectingScale(true);
@@ -37,11 +69,20 @@ const Settings = () => {
   };
 
   const handleDisconnectScale = async () => {
-    await disconnectBluetoothScale();
+    await disconnectBluetoothScale(false);
     setScaleConnected(false);
     setScaleType("Unknown");
     setLastWeight(null);
     toast.info("Scale disconnected");
+  };
+
+  const handleForgetDevice = async () => {
+    await disconnectBluetoothScale(true);
+    setScaleConnected(false);
+    setScaleType("Unknown");
+    setLastWeight(null);
+    setStoredDevice(null);
+    toast.info("Device forgotten");
   };
 
   const handleConnectPrinter = async () => {
@@ -110,6 +151,27 @@ const Settings = () => {
               </div>
             )}
 
+            {storedDevice && !scaleConnected && (
+              <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Last Connected Device</p>
+                    <p className="text-xs text-muted-foreground mt-1">{storedDevice.deviceName}</p>
+                    <p className="text-xs text-muted-foreground">Type: {storedDevice.scaleType}</p>
+                  </div>
+                  <Button
+                    onClick={handleQuickReconnect}
+                    disabled={isConnectingScale}
+                    size="sm"
+                    className="gap-1"
+                  >
+                    <Zap className="h-3 w-3" />
+                    {isConnectingScale ? "Connecting..." : "Quick Reconnect"}
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {scaleConnected && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
@@ -134,7 +196,7 @@ const Settings = () => {
                   disabled={!isBluetoothAvailable || isConnectingScale}
                   className="flex-1"
                 >
-                  {isConnectingScale ? "Connecting..." : "Connect Scale"}
+                  {isConnectingScale ? "Connecting..." : "Search for Scale"}
                 </Button>
               ) : (
                 <>
@@ -146,11 +208,18 @@ const Settings = () => {
                     Disconnect
                   </Button>
                   <Button
+                    onClick={handleForgetDevice}
+                    variant="outline"
+                    disabled={isConnectingScale}
+                  >
+                    Forget Device
+                  </Button>
+                  <Button
                     onClick={handleConnectScale}
                     variant="outline"
                     disabled={isConnectingScale}
                   >
-                    {isConnectingScale ? "Testing..." : "Test Connection"}
+                    {isConnectingScale ? "Testing..." : "Test"}
                   </Button>
                 </>
               )}

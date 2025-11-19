@@ -15,6 +15,40 @@ let scale: BluetoothScale = {
   type: 'Unknown',
 };
 
+// Store device info for quick reconnect
+interface StoredDeviceInfo {
+  deviceId: string;
+  deviceName: string;
+  scaleType: ScaleType;
+  timestamp: number;
+}
+
+const STORAGE_KEY = 'lastConnectedScale';
+
+const saveDeviceInfo = (deviceId: string, deviceName: string, scaleType: ScaleType) => {
+  const info: StoredDeviceInfo = {
+    deviceId,
+    deviceName,
+    scaleType,
+    timestamp: Date.now(),
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(info));
+};
+
+export const getStoredDeviceInfo = (): StoredDeviceInfo | null => {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as StoredDeviceInfo;
+  } catch {
+    return null;
+  }
+};
+
+export const clearStoredDevice = () => {
+  localStorage.removeItem(STORAGE_KEY);
+};
+
 const SERVICE_UUID_HC05 = numberToUUID(0xffe0);
 const SERVICE_UUID_HM10 = numberToUUID(0xfee7);
 
@@ -85,6 +119,10 @@ export const connectBluetoothScale = async (
       );
 
       scale = { device, characteristic: characteristicUuid, type: scaleType };
+      
+      // Save device info for quick reconnect
+      saveDeviceInfo(device.deviceId, device.name || 'Unknown Scale', scaleType);
+      
       return { success: true, type: scaleType };
     } else {
       // Web Bluetooth fallback for browser
@@ -136,15 +174,85 @@ export const connectBluetoothScale = async (
   }
 };
 
-export const disconnectBluetoothScale = async () => {
+export const disconnectBluetoothScale = async (clearSaved: boolean = false): Promise<void> => {
   try {
     if (Capacitor.isNativePlatform() && scale.device) {
       await BleClient.disconnect(scale.device.deviceId);
     } else if (scale.device && scale.device.gatt?.connected) {
       await scale.device.gatt.disconnect();
     }
+    
+    if (clearSaved) {
+      clearStoredDevice();
+    }
   } catch (err) {
     console.error('Bluetooth disconnect error:', err);
   }
   scale = { device: null, characteristic: null, type: 'Unknown' };
+};
+
+export const quickReconnect = async (
+  deviceId: string,
+  onWeightUpdate: (weight: number, scaleType: ScaleType) => void
+): Promise<{ success: boolean; type: ScaleType; error?: string }> => {
+  try {
+    if (!Capacitor.isNativePlatform()) {
+      throw new Error('Quick reconnect only available on native platforms');
+    }
+
+    await BleClient.initialize();
+    await BleClient.connect(deviceId);
+
+    let scaleType: ScaleType = 'Unknown';
+    let serviceUuid = '';
+    let characteristicUuid = '';
+
+    // Try to get services
+    const services = await BleClient.getServices(deviceId);
+    const hc05Service = services.find(s => s.uuid.toLowerCase().includes(SERVICE_UUID_HC05));
+    const hm10Service = services.find(s => s.uuid.toLowerCase().includes(SERVICE_UUID_HM10));
+
+    if (hc05Service && hc05Service.characteristics.length > 0) {
+      serviceUuid = hc05Service.uuid;
+      characteristicUuid = hc05Service.characteristics[0].uuid;
+      scaleType = 'HC-05';
+    } else if (hm10Service && hm10Service.characteristics.length > 0) {
+      serviceUuid = hm10Service.uuid;
+      characteristicUuid = hm10Service.characteristics[0].uuid;
+      scaleType = 'HM-10';
+    } else {
+      throw new Error('Could not find compatible service');
+    }
+
+    await BleClient.startNotifications(
+      deviceId,
+      serviceUuid,
+      characteristicUuid,
+      (value) => {
+        const text = new TextDecoder().decode(value);
+        const match = text.match(/(\d+\.\d+)/);
+        if (match) {
+          const parsed = parseFloat(match[1]);
+          if (!isNaN(parsed)) {
+            onWeightUpdate(parsed, scaleType);
+          }
+        }
+      }
+    );
+
+    scale = { 
+      device: { deviceId, name: getStoredDeviceInfo()?.deviceName || 'Unknown' }, 
+      characteristic: characteristicUuid, 
+      type: scaleType 
+    };
+
+    return { success: true, type: scaleType };
+  } catch (error) {
+    console.error('Quick reconnect failed:', error);
+    return { 
+      success: false, 
+      type: 'Unknown', 
+      error: error instanceof Error ? error.message : 'Failed to reconnect' 
+    };
+  }
 };
