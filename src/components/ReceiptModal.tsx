@@ -1,6 +1,8 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { MilkCollection } from '@/lib/supabase';
 import { FileText, Printer, X } from 'lucide-react';
+import { printReceipt } from '@/services/bluetooth';
+import { toast } from 'sonner';
 
 interface ReceiptModalProps {
   receipt: MilkCollection | null;
@@ -9,8 +11,30 @@ interface ReceiptModalProps {
 }
 
 export const ReceiptModal = ({ receipt, open, onClose }: ReceiptModalProps) => {
-  const handlePrint = () => {
-    window.print();
+  const handlePrint = async () => {
+    if (!receipt) return;
+
+    const result = await printReceipt({
+      farmerName: receipt.farmer_name,
+      farmerId: receipt.farmer_id,
+      route: receipt.route,
+      session: receipt.session,
+      weight: receipt.weight,
+      collector: receipt.clerk_name || 'N/A',
+      date: new Date(receipt.collection_date).toLocaleString(),
+    });
+
+    if (result.success) {
+      toast.success('Receipt printed successfully');
+    } else {
+      // If Bluetooth printing fails, fall back to browser print
+      if (result.error?.includes('No printer connected')) {
+        toast.info('No Bluetooth printer connected. Opening browser print...');
+        window.print();
+      } else {
+        toast.error(result.error || 'Failed to print receipt');
+      }
+    }
   };
 
   if (!receipt) return null;
