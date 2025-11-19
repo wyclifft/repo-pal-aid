@@ -251,37 +251,51 @@ const server = http.createServer(async (req, res) => {
       
       const ccode = deviceRows[0].ccode;
       
-      // Get company name from psettings
-      const [companyRows] = await pool.query(
-        'SELECT cname FROM psettings WHERE ccode = ?',
-        [ccode]
+      // Get company name and device code
+      const [companyAndDeviceRows] = await pool.query(
+        `SELECT p.cname, d.devcode 
+         FROM psettings p 
+         JOIN devsettings d ON p.ccode = d.ccode 
+         WHERE d.ccode = ? AND d.uniquedevcode = ?`,
+        [ccode, deviceserial]
       );
       
-      if (companyRows.length === 0) {
+      if (companyAndDeviceRows.length === 0) {
         return sendJSON(res, { 
           success: false, 
-          error: 'Company not found' 
+          error: 'Company or device not found' 
         }, 404);
       }
       
-      const cname = companyRows[0].cname;
-      const prefix = cname.substring(0, 2).toUpperCase();
+      const cname = companyAndDeviceRows[0].cname;
+      const devcode = companyAndDeviceRows[0].devcode || '00000';
       
-      // Get the last transaction number for this company
+      // Generate company prefix (first 2 chars of company name)
+      const companyPrefix = cname.substring(0, 2).toUpperCase();
+      
+      // Pad device code to 5 characters
+      const deviceCode = String(devcode).padStart(5, '0');
+      
+      // Create the prefix for this specific device
+      const devicePrefix = `${companyPrefix}${deviceCode}`;
+      
+      // Get the last transaction number for THIS SPECIFIC DEVICE
       const [lastTransRows] = await pool.query(
-        'SELECT transrefno FROM transactions WHERE ccode = ? AND transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1',
-        [ccode, `${prefix}%`]
+        'SELECT transrefno FROM transactions WHERE deviceserial = ? AND transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1',
+        [deviceserial, `${devicePrefix}%`]
       );
       
-      let nextNumber = 10000001; // Starting number
+      let nextNumber = 1; // Starting number for this device
       
       if (lastTransRows.length > 0) {
         const lastRef = lastTransRows[0].transrefno;
-        const lastNumber = parseInt(lastRef.substring(2)); // Remove prefix
+        // Extract the sequential number (everything after the 7-char prefix)
+        const lastNumber = parseInt(lastRef.substring(7));
         nextNumber = lastNumber + 1;
       }
       
-      const transrefno = `${prefix}${String(nextNumber).padStart(9, '0')}`;
+      // Generate continuous reference number: CompanyCode + DeviceCode + SequentialNumber
+      const transrefno = `${devicePrefix}${nextNumber}`;
       
       return sendJSON(res, { 
         success: true, 
