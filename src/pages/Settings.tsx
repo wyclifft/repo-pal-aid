@@ -183,7 +183,7 @@ const Settings = () => {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {printerConnected && (
+            {printerConnected ? (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Printer Type:</span>
@@ -193,6 +193,10 @@ const Settings = () => {
                   <span className="text-muted-foreground">Status:</span>
                   <span className="font-medium text-green-600">Ready</span>
                 </div>
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground text-center py-2">
+                No printer connected
               </div>
             )}
 
