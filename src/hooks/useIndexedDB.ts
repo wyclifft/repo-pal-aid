@@ -6,18 +6,43 @@ const DB_VERSION = 6;
 
 let dbInstance: IDBDatabase | null = null;
 
+// Helper function to clear corrupted database
+const clearDatabase = async (): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    console.log('🗑️ Clearing corrupted database...');
+    const deleteRequest = indexedDB.deleteDatabase(DB_NAME);
+    
+    deleteRequest.onsuccess = () => {
+      console.log('✅ Database cleared successfully');
+      dbInstance = null;
+      resolve();
+    };
+    
+    deleteRequest.onerror = () => {
+      console.error('❌ Failed to clear database:', deleteRequest.error);
+      reject(deleteRequest.error);
+    };
+    
+    deleteRequest.onblocked = () => {
+      console.warn('⚠️ Database deletion blocked - close all tabs');
+    };
+  });
+};
+
 export const useIndexedDB = () => {
   const [db, setDb] = useState<IDBDatabase | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [schemaError, setSchemaError] = useState(false);
 
   useEffect(() => {
-    if (dbInstance) {
+    if (dbInstance && !schemaError) {
       setDb(dbInstance);
       setIsReady(true);
       return;
     }
 
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const openDatabase = () => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = (event) => {
       const database = (event.target as IDBOpenDBRequest).result;
@@ -63,10 +88,34 @@ export const useIndexedDB = () => {
 
     request.onsuccess = (event) => {
       const database = (event.target as IDBOpenDBRequest).result;
+      
+      // Verify device_approvals store configuration
+      if (database.objectStoreNames.contains('device_approvals')) {
+        const tx = database.transaction('device_approvals', 'readonly');
+        const store = tx.objectStore('device_approvals');
+        console.log('✅ device_approvals keyPath confirmed:', store.keyPath);
+        
+        // Check if keyPath is correct
+        if (store.keyPath !== 'device_fingerprint') {
+          console.error('❌ SCHEMA MISMATCH: keyPath is', store.keyPath, 'but should be device_fingerprint');
+          setSchemaError(true);
+          database.close();
+          // Clear and recreate database
+          clearDatabase().then(() => {
+            console.log('🔄 Retrying database initialization...');
+            setTimeout(() => openDatabase(), 100);
+          }).catch(err => {
+            console.error('Failed to clear database:', err);
+          });
+          return;
+        }
+      }
+      
       dbInstance = database;
       setDb(database);
       setIsReady(true);
-      console.log('IndexedDB ready ✅');
+      setSchemaError(false);
+      console.log('IndexedDB ready ✅ Version:', database.version);
     };
 
     request.onerror = (event) => {
@@ -79,7 +128,10 @@ export const useIndexedDB = () => {
         dbInstance = null;
       }
     };
-  }, []);
+  };
+  
+  openDatabase();
+  }, [schemaError]);
 
   const saveFarmers = useCallback((farmers: Farmer[]) => {
     if (!db) return;
@@ -167,17 +219,38 @@ export const useIndexedDB = () => {
       try {
         const tx = db.transaction('device_approvals', 'readwrite');
         const store = tx.objectStore('device_approvals');
-        const request = store.put({ 
+        
+        // Verify the keyPath
+        console.log('🔍 Device approvals store keyPath:', store.keyPath);
+        
+        // Create the object to store
+        const dataToStore = { 
           device_fingerprint: deviceFingerprint.trim(), 
           backend_id: backendId,
           user_id: userId.trim(), 
           approved, 
           last_synced: new Date().toISOString() 
-        });
+        };
         
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
+        console.log('💾 Attempting to save device approval:', dataToStore);
+        
+        const request = store.put(dataToStore);
+        
+        request.onsuccess = () => {
+          console.log('✅ Device approval saved successfully');
+          resolve();
+        };
+        request.onerror = () => {
+          console.error('❌ Failed to save device approval:', request.error);
+          reject(request.error);
+        };
+        
+        tx.onerror = () => {
+          console.error('❌ Transaction error:', tx.error);
+          reject(tx.error);
+        };
       } catch (error) {
+        console.error('❌ Exception in saveDeviceApproval:', error);
         reject(error);
       }
     });
