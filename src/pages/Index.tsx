@@ -106,13 +106,12 @@ const Index = () => {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
-    const monthKey = `${year}-${month}`; // YYYY-MM format
 
     // Get device fingerprint
     const deviceFingerprint = await generateDeviceFingerprint();
 
-    // Generate reference number using backend API
-    let referenceNo = `MC-${monthKey}-${farmerId}-${session}`; // Fallback
+    // Generate continuous reference number from backend (e.g., AC0800021433)
+    let referenceNo = '';
     try {
       console.log('Generating reference number for device:', deviceFingerprint);
       const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
@@ -121,10 +120,14 @@ const Index = () => {
         referenceNo = refResult.data.reference_no;
         console.log('Using generated reference:', referenceNo);
       } else {
-        console.warn('No reference_no in response, using fallback');
+        console.error('No reference_no in response from backend');
+        toast.error('Failed to generate reference number');
+        return;
       }
     } catch (error) {
-      console.error('Failed to generate reference number, using fallback:', error);
+      console.error('Failed to generate reference number:', error);
+      toast.error('Failed to generate reference number');
+      return;
     }
 
     // Get start and end of current month

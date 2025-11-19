@@ -146,7 +146,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
       
       const milkData: any = {
-        reference_no: firstReceipt.reference_no || `MC-${monthKey}-${firstReceipt.farmer_id}-${firstReceipt.session}`,
+        reference_no: firstReceipt.reference_no,
         farmer_id: firstReceipt.farmer_id,
         farmer_name: firstReceipt.farmer_name || firstReceipt.farmer_id || 'Unknown',
         route: firstReceipt.route || 'Unknown',
