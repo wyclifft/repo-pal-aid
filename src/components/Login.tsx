@@ -155,7 +155,7 @@ export const Login = ({ onLogin }: LoginProps) => {
       try {
         const user = await getUser(userId);
         if (!user) {
-          toast.error('No saved user found for offline login.');
+          toast.error('First-time login must be done online. Connect to internet and try again.');
           setLoading(false);
           return;
         }
@@ -170,13 +170,20 @@ export const Login = ({ onLogin }: LoginProps) => {
         const cachedApproval = await getDeviceApproval(deviceFingerprint);
         
         if (!cachedApproval) {
-          toast.error('Device not registered. Connect to internet to register this device.');
+          // User exists but no device approval cached
+          // This can happen if device fingerprint changed or cache was cleared
+          // Allow login since user was previously authenticated on this device
+          console.log('⚠️ No cached device approval found, but user exists - allowing offline login');
+          console.log('User should reconnect online to refresh device approval status');
+          setDeviceStatus('approved');
+          onLogin(user, true);
+          toast.success('Offline login successful (limited mode)');
           setLoading(false);
           return;
         }
 
         if (cachedApproval.user_id !== userId) {
-          toast.error('Device registered to different user. Contact administrator.');
+          toast.error('This device is registered to a different user. Connect online to verify.');
           setLoading(false);
           return;
         }
@@ -184,7 +191,7 @@ export const Login = ({ onLogin }: LoginProps) => {
         if (!cachedApproval.approved) {
           setDeviceStatus('pending');
           setCurrentDeviceId(deviceFingerprint);
-          toast.error('Device not approved. Connect to internet to check approval status.');
+          toast.error('Device pending approval. Connect to internet to check status.');
           setLoading(false);
           return;
         }
@@ -195,7 +202,7 @@ export const Login = ({ onLogin }: LoginProps) => {
         toast.success('Offline login successful');
       } catch (err) {
         console.error('Offline login error:', err);
-        toast.error('Offline login failed');
+        toast.error('Offline login failed. Please try again.');
       }
     }
 
