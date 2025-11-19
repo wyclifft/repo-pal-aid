@@ -57,31 +57,7 @@ const Index = () => {
     setIsOffline(offline);
     // Store user in localStorage for other pages to access
     localStorage.setItem('currentUser', JSON.stringify(user));
-    
-    // Replace history entry to prevent back button from returning to login
-    navigate('/', { replace: true });
   };
-  
-  // Prevent back button from returning to login screen when authenticated
-  useEffect(() => {
-    if (!currentUser) return;
-    
-    const handlePopState = (e: PopStateEvent) => {
-      // If user is authenticated and tries to go back, stay on current page
-      if (currentUser) {
-        e.preventDefault();
-        window.history.pushState(null, '', window.location.href);
-      }
-    };
-    
-    // Push a state to prevent going back to login
-    window.history.pushState(null, '', window.location.href);
-    window.addEventListener('popstate', handlePopState);
-    
-    return () => {
-      window.removeEventListener('popstate', handlePopState);
-    };
-  }, [currentUser]);
 
   const handleLogout = () => {
     setCurrentUser(null);
