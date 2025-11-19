@@ -12,6 +12,10 @@ import {
   disconnectBluetoothScale, 
   quickReconnect,
   getStoredDeviceInfo,
+  connectBluetoothPrinter,
+  disconnectBluetoothPrinter,
+  quickReconnectPrinter,
+  getStoredPrinterInfo,
   ScaleType 
 } from "@/services/bluetooth";
 
@@ -24,11 +28,16 @@ const Settings = () => {
   const [storedDevice, setStoredDevice] = useState<ReturnType<typeof getStoredDeviceInfo>>(null);
   
   const [printerConnected, setPrinterConnected] = useState(false);
+  const [printerName, setPrinterName] = useState<string>("");
   const [isConnectingPrinter, setIsConnectingPrinter] = useState(false);
+  const [storedPrinter, setStoredPrinter] = useState<ReturnType<typeof getStoredPrinterInfo>>(null);
 
   useEffect(() => {
     const deviceInfo = getStoredDeviceInfo();
     setStoredDevice(deviceInfo);
+    
+    const printerInfo = getStoredPrinterInfo();
+    setStoredPrinter(printerInfo);
   }, []);
 
   const handleQuickReconnect = async () => {
@@ -85,19 +94,50 @@ const Settings = () => {
     toast.info("Device forgotten");
   };
 
+  const handleQuickReconnectPrinter = async () => {
+    if (!storedPrinter) return;
+    
+    setIsConnectingPrinter(true);
+    const result = await quickReconnectPrinter(storedPrinter.deviceId);
+
+    setIsConnectingPrinter(false);
+    if (result.success) {
+      setPrinterConnected(true);
+      setPrinterName(storedPrinter.deviceName);
+      toast.success(`Reconnected to ${storedPrinter.deviceName}`);
+    } else {
+      toast.error(result.error || "Failed to reconnect. Try searching for device again.");
+      setStoredPrinter(null);
+    }
+  };
+
   const handleConnectPrinter = async () => {
     setIsConnectingPrinter(true);
-    // Placeholder for printer connection logic
-    setTimeout(() => {
+    const result = await connectBluetoothPrinter();
+
+    setIsConnectingPrinter(false);
+    if (result.success) {
       setPrinterConnected(true);
-      setIsConnectingPrinter(false);
-      toast.success("Printer connected");
-    }, 1500);
+      setPrinterName(result.deviceName || "Bluetooth Printer");
+      toast.success(`Connected to ${result.deviceName || "printer"}`);
+    } else {
+      toast.error(result.error || "Failed to connect to printer");
+    }
   };
 
   const handleDisconnectPrinter = async () => {
+    await disconnectBluetoothPrinter(false);
     setPrinterConnected(false);
+    setPrinterName("");
     toast.info("Printer disconnected");
+  };
+
+  const handleForgetPrinter = async () => {
+    await disconnectBluetoothPrinter(true);
+    setPrinterConnected(false);
+    setPrinterName("");
+    setStoredPrinter(null);
+    toast.info("Printer forgotten");
   };
 
   const isBluetoothAvailable = Capacitor.isNativePlatform() || ('bluetooth' in navigator);
@@ -252,18 +292,46 @@ const Settings = () => {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {printerConnected ? (
+            {!isBluetoothAvailable && (
+              <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+                Bluetooth is not available on this device
+              </div>
+            )}
+
+            {storedPrinter && !printerConnected && (
+              <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Last Connected Printer</p>
+                    <p className="text-xs text-muted-foreground mt-1">{storedPrinter.deviceName}</p>
+                  </div>
+                  <Button
+                    onClick={handleQuickReconnectPrinter}
+                    disabled={isConnectingPrinter}
+                    size="sm"
+                    className="gap-1"
+                  >
+                    <Zap className="h-3 w-3" />
+                    {isConnectingPrinter ? "Connecting..." : "Quick Reconnect"}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {printerConnected && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Printer Type:</span>
-                  <span className="font-medium">Bluetooth Thermal</span>
+                  <span className="text-muted-foreground">Printer Name:</span>
+                  <span className="font-medium">{printerName}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Status:</span>
                   <span className="font-medium text-green-600">Ready</span>
                 </div>
               </div>
-            ) : (
+            )}
+
+            {!printerConnected && !storedPrinter && (
               <div className="text-sm text-muted-foreground text-center py-2">
                 No printer connected
               </div>
@@ -275,10 +343,10 @@ const Settings = () => {
               {!printerConnected ? (
                 <Button
                   onClick={handleConnectPrinter}
-                  disabled={isConnectingPrinter}
+                  disabled={!isBluetoothAvailable || isConnectingPrinter}
                   className="flex-1"
                 >
-                  {isConnectingPrinter ? "Connecting..." : "Connect Printer"}
+                  {isConnectingPrinter ? "Scanning..." : "Search for Printer"}
                 </Button>
               ) : (
                 <>
@@ -288,6 +356,13 @@ const Settings = () => {
                     className="flex-1"
                   >
                     Disconnect
+                  </Button>
+                  <Button
+                    onClick={handleForgetPrinter}
+                    variant="outline"
+                    disabled={isConnectingPrinter}
+                  >
+                    Forget Device
                   </Button>
                   <Button
                     variant="outline"
