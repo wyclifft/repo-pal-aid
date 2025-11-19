@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { connectBluetoothScale, type ScaleType } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { Scale } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 
 interface WeightInputProps {
   weight: number;
@@ -42,8 +43,8 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole }: WeightI
     }
   };
 
-  // Check if Web Bluetooth is available
-  const isBluetoothAvailable = 'bluetooth' in navigator;
+  // Check if Bluetooth is available (Web Bluetooth or Capacitor native)
+  const isBluetoothAvailable = Capacitor.isNativePlatform() || ('bluetooth' in navigator);
 
   return (
     <div className="bg-white rounded-xl p-6 shadow-lg">
