@@ -10,7 +10,7 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings } from 'lucide-react';
 
 const Index = () => {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -229,12 +229,21 @@ const Index = () => {
             <h1 className="text-xl font-bold text-[#667eea]">Milk Collection</h1>
             <DeviceAuthStatus />
           </div>
-          <button
-            onClick={handleLogout}
-            className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-semibold hover:bg-red-600 transition-colors"
-          >
-            Logout
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => window.location.href = '/settings'}
+              className="p-2 hover:bg-gray-100 rounded"
+              aria-label="Settings"
+            >
+              <Settings className="h-5 w-5 text-gray-700" />
+            </button>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-semibold hover:bg-red-600 transition-colors"
+            >
+              Logout
+            </button>
+          </div>
         </div>
       </header>
 
@@ -308,6 +317,16 @@ const Index = () => {
           >
             <FileBarChart className="h-5 w-5 text-[#667eea]" />
             Periodic Report
+          </button>
+          <button
+            onClick={() => {
+              setSidebarOpen(false);
+              window.location.href = '/settings';
+            }}
+            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+          >
+            <Settings className="h-5 w-5 text-[#667eea]" />
+            Settings
           </button>
         </div>
       </nav>
