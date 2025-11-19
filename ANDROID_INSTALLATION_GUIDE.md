@@ -108,6 +108,63 @@ If you see a security warning:
 
 ## Troubleshooting
 
+### Bluetooth Not Working
+
+**Issue**: Bluetooth scale cannot connect in the Android app.
+
+**Solution**:
+1. Verify Bluetooth permissions are in `android/app/src/main/AndroidManifest.xml`:
+   ```xml
+   <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+   <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+   ```
+
+2. On Android 12+ (API 31+), you need runtime permissions:
+   - Open the app
+   - When prompted, grant Bluetooth and Location permissions
+   - If not prompted, go to: Settings > Apps > Milk Collection > Permissions
+   - Enable: **Nearby devices (Bluetooth)**, **Location**
+
+3. Ensure Location services are enabled on the device (required for Bluetooth scanning)
+
+4. After any changes, rebuild:
+   ```bash
+   npm run build
+   npx cap sync android
+   ```
+   Then rebuild APK in Android Studio
+
+### Offline Mode Not Working
+
+**Issue**: App doesn't work offline or data isn't saved.
+
+**Solution**:
+1. Service worker must be properly registered:
+   - Check that `public/sw.js` exists
+   - Verify service worker registration in browser console
+
+2. IndexedDB storage:
+   - Ensure device has sufficient storage space (at least 100MB free)
+   - Check if IndexedDB is enabled (some devices disable it)
+
+3. Clear app cache and data to reset:
+   - Settings > Apps > Milk Collection > Storage > Clear Cache
+   - Then test offline functionality
+
+4. After code changes, always:
+   ```bash
+   npm run build
+   npx cap sync android
+   ```
+   Then rebuild the APK
+
+5. Test offline mode:
+   - Open the app while online
+   - Let it fully load
+   - Turn off WiFi and mobile data
+   - Try using the app - it should work without internet
+
 ### App shows blank screen on Android 7.0
 **This is the most common issue!** Android 7.0 uses an older WebView (Chrome 55) that requires specific build settings.
 
