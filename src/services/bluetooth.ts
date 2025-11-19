@@ -15,8 +15,8 @@ let scale: BluetoothScale = {
   type: 'Unknown',
 };
 
-const SERVICE_UUID_HC05 = 'ffe0';
-const SERVICE_UUID_HM10 = 'fee7';
+const SERVICE_UUID_HC05 = numberToUUID(0xffe0);
+const SERVICE_UUID_HM10 = numberToUUID(0xfee7);
 
 export const connectBluetoothScale = async (
   onWeightUpdate: (weight: number, scaleType: ScaleType) => void
