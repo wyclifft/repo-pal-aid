@@ -38,6 +38,8 @@ export const Login = ({ onLogin }: LoginProps) => {
       deviceFingerprint = await generateDeviceFingerprint();
       setStoredDeviceId(deviceFingerprint);
     }
+    
+    console.log('Device fingerprint:', deviceFingerprint);
 
     // Check cached device approval first (works offline and online)
     const cachedApproval = await getDeviceApproval(deviceFingerprint);
@@ -186,10 +188,19 @@ export const Login = ({ onLogin }: LoginProps) => {
           console.log('User should reconnect online to refresh device approval status');
           
           // Save a temporary device approval for future offline logins
-          try {
-            await saveDeviceApproval(deviceFingerprint, null, userId, true);
-          } catch (saveError) {
-            console.error('Failed to cache device approval:', saveError);
+          if (deviceFingerprint && deviceFingerprint.trim() && userId && userId.trim()) {
+            try {
+              console.log('Saving device approval with fingerprint:', deviceFingerprint, 'userId:', userId);
+              await saveDeviceApproval(deviceFingerprint, null, userId, true);
+            } catch (saveError) {
+              console.error('Failed to cache device approval:', saveError);
+              // Continue with login anyway
+            }
+          } else {
+            console.warn('Cannot cache device approval - invalid fingerprint or userId', {
+              fingerprint: deviceFingerprint,
+              userId: userId
+            });
           }
           
           setDeviceStatus('approved');
