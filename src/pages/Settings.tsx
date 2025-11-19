@@ -16,6 +16,7 @@ import {
   disconnectBluetoothPrinter,
   quickReconnectPrinter,
   getStoredPrinterInfo,
+  printToBluetoothPrinter,
   ScaleType 
 } from "@/services/bluetooth";
 
@@ -366,7 +367,29 @@ const Settings = () => {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => toast.success("Test print sent")}
+                    onClick={async () => {
+                      const testText = `
+================================
+       TEST PRINT
+================================
+
+This is a test print from your
+Bluetooth thermal printer.
+
+If you can read this, your
+printer is working correctly!
+
+Date: ${new Date().toLocaleString()}
+
+================================
+`;
+                      const result = await printToBluetoothPrinter(testText);
+                      if (result.success) {
+                        toast.success("Test print sent successfully");
+                      } else {
+                        toast.error(result.error || "Failed to print");
+                      }
+                    }}
                   >
                     Test Print
                   </Button>

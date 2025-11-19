@@ -294,8 +294,9 @@ export const quickReconnect = async (
   }
 };
 
-// Printer-specific UUID - common thermal printer service
+// Printer-specific UUIDs - common thermal printer service
 const PRINTER_SERVICE_UUID = numberToUUID(0x18f0);
+const PRINTER_WRITE_CHARACTERISTIC_UUID = numberToUUID(0x2af1); // Common write characteristic
 
 export const connectBluetoothPrinter = async (): Promise<{ 
   success: boolean; 
@@ -378,4 +379,147 @@ export const disconnectBluetoothPrinter = async (clearSaved: boolean = false): P
     console.error('Failed to disconnect from printer:', error);
     throw error;
   }
+};
+
+// ESC/POS Commands for thermal printers
+const ESC = 0x1B;
+const GS = 0x1D;
+
+const COMMANDS = {
+  INIT: [ESC, 0x40], // Initialize printer
+  LINE_FEED: [0x0A], // Line feed
+  CUT_PAPER: [GS, 0x56, 0x00], // Cut paper
+  BOLD_ON: [ESC, 0x45, 0x01], // Bold on
+  BOLD_OFF: [ESC, 0x45, 0x00], // Bold off
+  ALIGN_LEFT: [ESC, 0x61, 0x00], // Align left
+  ALIGN_CENTER: [ESC, 0x61, 0x01], // Align center
+  ALIGN_RIGHT: [ESC, 0x61, 0x02], // Align right
+};
+
+// Convert string to byte array
+const stringToBytes = (str: string): number[] => {
+  const bytes: number[] = [];
+  for (let i = 0; i < str.length; i++) {
+    bytes.push(str.charCodeAt(i));
+  }
+  return bytes;
+};
+
+export const printToBluetoothPrinter = async (content: string): Promise<{ success: boolean; error?: string }> => {
+  try {
+    if (!printer.device) {
+      return { success: false, error: 'No printer connected' };
+    }
+
+    // Build the print data
+    const printData: number[] = [
+      ...COMMANDS.INIT,
+      ...COMMANDS.ALIGN_CENTER,
+      ...stringToBytes(content),
+      ...COMMANDS.LINE_FEED,
+      ...COMMANDS.LINE_FEED,
+      ...COMMANDS.LINE_FEED,
+      ...COMMANDS.CUT_PAPER,
+    ];
+
+    const dataView = new Uint8Array(printData);
+
+    if (Capacitor.isNativePlatform()) {
+      // For native platforms, we need to find the write characteristic first
+      const services = await BleClient.getServices(printer.device.deviceId);
+      
+      // Try to find a writable characteristic
+      let writeChar: string | null = null;
+      for (const service of services) {
+        for (const char of service.characteristics) {
+          // Look for write or write without response properties
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            writeChar = char.uuid;
+            break;
+          }
+        }
+        if (writeChar) break;
+      }
+
+      if (!writeChar) {
+        return { success: false, error: 'No writable characteristic found' };
+      }
+
+      // Write data in chunks (some printers have MTU limitations)
+      const chunkSize = 20;
+      for (let i = 0; i < dataView.length; i += chunkSize) {
+        const chunk = dataView.slice(i, Math.min(i + chunkSize, dataView.length));
+        const dataViewChunk = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+        await BleClient.write(
+          printer.device.deviceId,
+          services[0].uuid,
+          writeChar,
+          dataViewChunk
+        );
+      }
+
+      return { success: true };
+    } else if ('bluetooth' in navigator && printer.device.gatt?.connected) {
+      // For web Bluetooth
+      const service = await printer.device.gatt.getPrimaryService(PRINTER_SERVICE_UUID);
+      const characteristics = await service.getCharacteristics();
+      
+      // Find writable characteristic
+      let writeChar: BluetoothRemoteGATTCharacteristic | null = null;
+      for (const char of characteristics) {
+        if (char.properties.write || char.properties.writeWithoutResponse) {
+          writeChar = char;
+          break;
+        }
+      }
+
+      if (!writeChar) {
+        return { success: false, error: 'No writable characteristic found' };
+      }
+
+      // Write data in chunks
+      const chunkSize = 20;
+      for (let i = 0; i < dataView.length; i += chunkSize) {
+        const chunk = dataView.slice(i, Math.min(i + chunkSize, dataView.length));
+        await writeChar.writeValue(chunk);
+      }
+
+      return { success: true };
+    } else {
+      return { success: false, error: 'Bluetooth not available' };
+    }
+  } catch (error: any) {
+    console.error('Failed to print:', error);
+    return { success: false, error: error.message || 'Failed to print' };
+  }
+};
+
+export const printReceipt = async (receipt: {
+  farmerName: string;
+  farmerId: string;
+  route: string;
+  session: string;
+  weight: number;
+  collector: string;
+  date: string;
+}): Promise<{ success: boolean; error?: string }> => {
+  const receiptText = `
+================================
+     MILK COLLECTION RECEIPT
+================================
+
+Farmer: ${receipt.farmerName}
+Farmer ID: ${receipt.farmerId}
+Route: ${receipt.route}
+Session: ${receipt.session}
+Weight: ${receipt.weight} Kg
+Collector: ${receipt.collector}
+Date: ${receipt.date}
+
+================================
+      Thank you!
+================================
+`;
+
+  return printToBluetoothPrinter(receiptText);
 };
