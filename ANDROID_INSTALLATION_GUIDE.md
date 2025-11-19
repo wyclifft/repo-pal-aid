@@ -47,22 +47,24 @@ targetSdkVersion 33
 npx cap sync android
 ```
 
-## Step 7: Build APK in Android Studio
+## Step 7: Build APK Using Command Line
 
-### Option A: Using Android Studio (Recommended)
-1. Open Android Studio
-2. Open the `android` folder from your project
-3. Wait for Gradle sync to complete
-4. Go to **Build** → **Build Bundle(s) / APK(s)** → **Build APK(s)**
-5. Once complete, click "locate" to find the APK file
-6. The APK will be in: `android/app/build/outputs/apk/debug/app-debug.apk`
+### Windows:
+```bash
+cd android
+gradlew.bat assembleDebug
+```
 
-### Option B: Using Command Line
+### Mac/Linux:
 ```bash
 cd android
 ./gradlew assembleDebug
 ```
-APK location: `android/app/build/outputs/apk/debug/app-debug.apk`
+
+**APK Location:** `android/app/build/outputs/apk/debug/app-debug.apk`
+
+### Alternative: Using Android Studio
+If you prefer a GUI, open the `android` folder in Android Studio and go to **Build** → **Build Bundle(s) / APK(s)** → **Build APK(s)**
 
 ## Step 8: Install APK on POS CS10
 
@@ -227,15 +229,37 @@ keytool -genkey -v -keystore my-release-key.keystore -alias my-key-alias -keyalg
 adb install android/app/build/outputs/apk/release/app-release.apk
 ```
 
-## Updating the App
+## Updating the App (Command Line Only)
 
 When you make changes:
-1. Pull latest code: `git pull`
-2. Install dependencies: `npm install`
-3. Build: `npm run build`
-4. Sync: `npx cap sync android`
-5. Rebuild APK in Android Studio
-6. Reinstall on device
+
+```bash
+# Step 1: Pull latest code
+git pull
+
+# Step 2: Install dependencies
+npm install
+
+# Step 3: Build the web app
+npm run build
+
+# Step 4: Sync to Android
+npx cap sync android
+
+# Step 5: Build APK
+cd android
+./gradlew assembleDebug    # Mac/Linux
+# OR
+gradlew.bat assembleDebug  # Windows
+
+# Step 6: Install on device
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+**Quick Update Command (All-in-One):**
+```bash
+git pull && npm install && npm run build && npx cap sync android && cd android && ./gradlew assembleDebug && cd .. && adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
 
 ## Offline Functionality
 
