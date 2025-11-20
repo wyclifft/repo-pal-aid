@@ -29,6 +29,8 @@ const Index = () => {
 
   // Weight
   const [weight, setWeight] = useState(0);
+  const [entryType, setEntryType] = useState<'scale' | 'manual'>('manual');
+  const [lastSavedWeight, setLastSavedWeight] = useState(0);
 
   // Receipt modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
@@ -51,6 +53,13 @@ const Index = () => {
       }
     }
   }, []);
+
+  // Reset lastSavedWeight when scale reads 0 (ready for next collection)
+  useEffect(() => {
+    if (entryType === 'scale' && weight === 0 && lastSavedWeight > 0) {
+      setLastSavedWeight(0);
+    }
+  }, [weight, entryType, lastSavedWeight]);
 
   const handleLogin = (user: AppUser, offline: boolean) => {
     setCurrentUser(user);
@@ -77,6 +86,12 @@ const Index = () => {
   const handleSaveCollection = async () => {
     if (!farmerId || !route || !weight || !session) {
       toast.error('Enter farmer, route, session, and weight');
+      return;
+    }
+
+    // Check if scale reads 0 for consecutive collections (except manual entry)
+    if (entryType === 'scale' && lastSavedWeight > 0 && weight > 0) {
+      toast.error('Scale must read 0 before next collection');
       return;
     }
 
@@ -148,6 +163,7 @@ const Index = () => {
           clerk_name: currentUser ? currentUser.user_id : 'unknown',
           collection_date: new Date(),
           device_fingerprint: deviceFingerprint,
+          entry_type: entryType,
           orderId: Date.now(),
           synced: false,
         };
@@ -202,6 +218,9 @@ const Index = () => {
     
     // Trigger refresh of receipt list
     setRefreshTrigger(prev => prev + 1);
+
+    // Store the saved weight for next collection check
+    setLastSavedWeight(weight);
 
     // Reset form
     setFarmerId('');
@@ -451,6 +470,7 @@ const Index = () => {
           <WeightInput
             weight={weight}
             onWeightChange={setWeight}
+            onEntryTypeChange={setEntryType}
             currentUserRole={currentUser.role}
           />
           <button
