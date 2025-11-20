@@ -494,34 +494,40 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
   }
 };
 
-export const printReceipt = async (receipt: {
-  referenceNo: string;
+export const printReceipt = async (data: {
+  companyName?: string;
   farmerName: string;
   farmerId: string;
-  route: string;
-  session: string;
-  weight: number;
-  collector: string;
-  date: string;
+  collections: Array<{
+    time: string;
+    weight: number;
+  }>;
 }): Promise<{ success: boolean; error?: string }> => {
+  const companyName = data.companyName || 'DAIRY COLLECTION';
+  const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
+  const currentDate = new Date().toLocaleDateString('en-GB');
+
+  let collectionsText = '';
+  data.collections.forEach((col, index) => {
+    const lineNum = String(index + 1).padEnd(4);
+    const time = col.time.padEnd(12);
+    const weight = col.weight.toFixed(1).padStart(6);
+    collectionsText += ` ${lineNum}${time}${weight}\n`;
+  });
+
   const receiptText = `
-================================
-     MILK COLLECTION RECEIPT
-================================
-
-Receipt No: ${receipt.referenceNo}
-
-Farmer: ${receipt.farmerName}
-Farmer ID: ${receipt.farmerId}
-Route: ${receipt.route}
-Session: ${receipt.session}
-Weight: ${receipt.weight} Kg
-Collector: ${receipt.collector}
-Date: ${receipt.date}
-
-================================
-      Thank you!
-================================
+      ${companyName}
+----------------------------------------
+ Farmer: ${data.farmerId} - ${data.farmerName}
+ Date: ${currentDate}
+----------------------------------------
+ #   TIME        LITERS
+----------------------------------------
+${collectionsText}----------------------------------------
+ TOTAL LITERS: ${totalWeight.toFixed(1).padStart(6)}
+----------------------------------------
+ Thank you for your delivery!
+----------------------------------------
 `;
 
   return printToBluetoothPrinter(receiptText);

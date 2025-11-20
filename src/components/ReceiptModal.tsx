@@ -14,24 +14,26 @@ export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => 
   const handlePrint = async () => {
     if (receipts.length === 0) return;
 
-    // Print consolidated receipt for the farmer
     const firstReceipt = receipts[0];
-    const totalWeight = receipts.reduce((sum, r) => sum + r.weight, 0);
-    const referenceNos = receipts.map(r => r.reference_no).join(', ');
     
+    // Format collections for printing
+    const collections = receipts.map(r => ({
+      time: new Date(r.collection_date).toLocaleTimeString('en-GB', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      }),
+      weight: r.weight
+    }));
+
     const result = await printReceipt({
-      referenceNo: referenceNos,
+      companyName: 'DAIRY COLLECTION',
       farmerName: firstReceipt.farmer_name,
       farmerId: firstReceipt.farmer_id,
-      route: firstReceipt.route,
-      session: firstReceipt.session,
-      weight: totalWeight,
-      collector: firstReceipt.clerk_name || 'N/A',
-      date: new Date(firstReceipt.collection_date).toLocaleString(),
+      collections
     });
 
     if (result.success) {
-      toast.success('Consolidated receipt printed successfully');
+      toast.success('Receipt printed successfully');
     } else {
       if (result.error?.includes('No printer connected')) {
         toast.info('No Bluetooth printer connected. Opening browser print...');
