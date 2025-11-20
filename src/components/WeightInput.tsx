@@ -8,9 +8,10 @@ interface WeightInputProps {
   weight: number;
   onWeightChange: (weight: number) => void;
   currentUserRole: string;
+  onEntryTypeChange: (entryType: 'scale' | 'manual') => void;
 }
 
-export const WeightInput = ({ weight, onWeightChange, currentUserRole }: WeightInputProps) => {
+export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTypeChange }: WeightInputProps) => {
   const [manualWeight, setManualWeight] = useState('');
   const [scaleConnected, setScaleConnected] = useState(false);
   const [scaleType, setScaleType] = useState<ScaleType>('Unknown');
@@ -21,6 +22,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole }: WeightI
     const result = await connectBluetoothScale((newWeight, type) => {
       onWeightChange(newWeight);
       setManualWeight(newWeight.toFixed(1));
+      onEntryTypeChange('scale');
     });
 
     if (result.success) {
@@ -37,6 +39,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole }: WeightI
     const manual = parseFloat(manualWeight);
     if (!isNaN(manual) && manual > 0) {
       onWeightChange(manual);
+      onEntryTypeChange('manual');
       toast.success('Manual weight applied');
     } else {
       toast.error('Enter valid weight');

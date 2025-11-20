@@ -343,10 +343,10 @@ const server = http.createServer(async (req, res) => {
         `INSERT INTO transactions 
           (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
            transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-           amount, icode, time, capType)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0)`,
+           amount, icode, time, capType, entry_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
         [transrefno, clerk, clerk, deviceserial, body.farmer_id, body.route, body.weight, 
-         body.session, transdate, transtime, ccode, timestamp]
+         body.session, transdate, transtime, ccode, timestamp, body.entry_type || 'manual']
       );
     
       return sendJSON(res, { success: true, message: 'Collection created', reference_no: transrefno }, 201);
