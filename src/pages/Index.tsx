@@ -34,7 +34,6 @@ const Index = () => {
 
   // Receipt modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
-  const [currentReceipt, setCurrentReceipt] = useState<MilkCollection | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   
   // Captured collections for batch printing
@@ -172,7 +171,6 @@ const Index = () => {
         const created = await mysqlApi.milkCollection.create(onlineMilkData);
         if (created) {
           milkData = { ...onlineMilkData, synced: true };
-          setCurrentReceipt(milkData);
         } else {
           throw new Error('Failed to create record');
         }
@@ -192,7 +190,6 @@ const Index = () => {
           synced: false,
         };
         saveReceipt(milkData);
-        setCurrentReceipt(milkData);
         toast.warning('Saved locally, will sync when online');
       }
     } else {
@@ -210,7 +207,6 @@ const Index = () => {
         synced: false,
       };
       saveReceipt(milkData);
-      setCurrentReceipt(milkData);
       toast.warning('Saved locally, will sync when online');
     }
 
@@ -234,15 +230,13 @@ const Index = () => {
     setWeight(0);
   };
 
-  const handlePrintLastCapture = () => {
+  const handlePrintAllCaptures = () => {
     if (capturedCollections.length === 0) {
       toast.error('No collections captured yet');
       return;
     }
     
-    // Open modal with the last captured collection
-    const lastCollection = capturedCollections[capturedCollections.length - 1];
-    setCurrentReceipt(lastCollection);
+    // Open modal with all captured collections
     setReceiptModalOpen(true);
   };
 
@@ -506,12 +500,12 @@ const Index = () => {
               Capture
             </button>
             <button
-              onClick={handlePrintLastCapture}
+              onClick={handlePrintAllCaptures}
               disabled={capturedCollections.length === 0}
               className="flex-1 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Printer className="h-5 w-5" />
-              Print
+              Print All
             </button>
           </div>
         </div>
@@ -523,11 +517,14 @@ const Index = () => {
       </div>
 
       {/* Receipt Modal */}
-      <ReceiptModal
-        receipt={currentReceipt}
-        open={receiptModalOpen}
-        onClose={() => setReceiptModalOpen(false)}
-      />
+        <ReceiptModal
+          receipts={capturedCollections}
+          open={receiptModalOpen}
+          onClose={() => {
+            setReceiptModalOpen(false);
+            setCapturedCollections([]);
+          }}
+        />
     </div>
   );
 };
