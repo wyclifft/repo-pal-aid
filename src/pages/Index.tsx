@@ -210,6 +210,15 @@ const Index = () => {
       toast.warning('Saved locally, will sync when online');
     }
 
+    // Validate single farmer for consecutive captures
+    if (capturedCollections.length > 0) {
+      const firstCapture = capturedCollections[0];
+      if (firstCapture.farmer_id !== farmerId) {
+        toast.error(`Please print receipts for ${firstCapture.farmer_name} before capturing for a different farmer`);
+        return;
+      }
+    }
+
     // Add to captured collections
     setCapturedCollections(prev => [...prev, milkData]);
     
@@ -485,9 +494,12 @@ const Index = () => {
           
           {/* Captured Collections Count */}
           {capturedCollections.length > 0 && (
-            <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-center">
+            <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
               <p className="text-sm font-semibold text-green-700">
-                {capturedCollections.length} collection{capturedCollections.length !== 1 ? 's' : ''} captured
+                {capturedCollections.length} collection{capturedCollections.length !== 1 ? 's' : ''} captured for:
+              </p>
+              <p className="text-base font-bold text-green-800 mt-1">
+                {capturedCollections[0].farmer_name} ({capturedCollections[0].farmer_id})
               </p>
             </div>
           )}
