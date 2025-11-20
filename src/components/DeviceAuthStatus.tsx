@@ -8,8 +8,14 @@ interface DeviceAuthStatusProps {
 }
 
 export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps) => {
-  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
-  const [companyName, setCompanyName] = useState<string>('Unknown');
+  // Initialize from localStorage to persist across navigation
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(() => {
+    const cached = localStorage.getItem('device_authorized');
+    return cached ? JSON.parse(cached) : null;
+  });
+  const [companyName, setCompanyName] = useState<string>(() => {
+    return localStorage.getItem('device_company_name') || 'Unknown';
+  });
   const [loading, setLoading] = useState(true);
 
   const checkAuthorization = async () => {
@@ -41,7 +47,11 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
         console.log('API Response:', data);
         
         if (data.success && data.data) {
-          setIsAuthorized(data.data.authorized === 1);
+          const authorized = data.data.authorized === 1;
+          setIsAuthorized(authorized);
+          
+          // Cache authorization status
+          localStorage.setItem('device_authorized', JSON.stringify(authorized));
           
           // Always update company name from response (default to 'Unknown' if null)
           const fetchedCompanyName = data.data.company_name || 'Unknown';
@@ -53,10 +63,12 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
           localStorage.setItem('device_company_name', fetchedCompanyName);
         } else {
           setIsAuthorized(false);
+          localStorage.setItem('device_authorized', JSON.stringify(false));
         }
       } else {
         console.error('API request failed with status:', response.status);
         setIsAuthorized(false);
+        localStorage.setItem('device_authorized', JSON.stringify(false));
       }
     } catch (error) {
       console.error('Authorization check failed:', error);
