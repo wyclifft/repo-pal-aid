@@ -56,6 +56,7 @@ export const updateLastSequentialNumber = (sequentialNumber: number): void => {
 /**
  * Generate next reference number offline
  * Returns null if device config is not available
+ * Uses atomic increment to prevent duplicates
  */
 export const generateOfflineReference = (): string | null => {
   const config = getDeviceConfig();
@@ -64,22 +65,24 @@ export const generateOfflineReference = (): string | null => {
     return null;
   }
 
-  // Increment sequential number
+  // Atomically increment and save the sequential number
   const nextSequential = config.lastSequentialNumber + 1;
+  config.lastSequentialNumber = nextSequential;
+  
+  // Immediately persist to localStorage (synchronous)
+  localStorage.setItem(DEVICE_CONFIG_KEY, JSON.stringify(config));
   
   // Generate reference: CompanyCode + DeviceCode + SequentialNumber
   const reference = `${config.companyCode}${config.deviceCode}${nextSequential}`;
   
-  // Update stored counter
-  updateLastSequentialNumber(nextSequential);
-  
-  console.log('✅ Generated offline reference:', reference);
+  console.log('✅ Generated offline reference:', reference, '(counter:', nextSequential, ')');
   return reference;
 };
 
 /**
  * Sync reference counter with backend
  * Call this when online to get the correct starting number from backend
+ * Always updates to backend value to ensure consistency
  */
 export const syncReferenceCounter = (backendReferenceNo: string): void => {
   const config = getDeviceConfig();
@@ -93,8 +96,10 @@ export const syncReferenceCounter = (backendReferenceNo: string): void => {
     const sequentialPart = backendReferenceNo.substring(7);
     const sequentialNumber = parseInt(sequentialPart);
     
-    if (!isNaN(sequentialNumber) && sequentialNumber > config.lastSequentialNumber) {
-      updateLastSequentialNumber(sequentialNumber);
+    if (!isNaN(sequentialNumber)) {
+      // Always update to backend value (even if lower) to ensure consistency
+      config.lastSequentialNumber = sequentialNumber;
+      localStorage.setItem(DEVICE_CONFIG_KEY, JSON.stringify(config));
       console.log('✅ Synced reference counter with backend:', sequentialNumber);
     }
   }
