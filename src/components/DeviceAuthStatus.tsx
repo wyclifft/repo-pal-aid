@@ -23,13 +23,6 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
       const fingerprint = await generateDeviceFingerprint();
       const apiUrl = 'https://backend.maddasystems.co.ke';
       
-      // Load cached company name from localStorage
-      const cachedCompanyName = localStorage.getItem('device_company_name');
-      if (cachedCompanyName) {
-        setCompanyName(cachedCompanyName);
-        onCompanyNameChange?.(cachedCompanyName);
-      }
-      
       const response = await fetch(
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`
       );
@@ -37,8 +30,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
       // Check if response is JSON
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
-        console.warn('Authorization check returned non-JSON response');
-        setIsAuthorized(null);
+        console.warn('Authorization check returned non-JSON response - keeping cached status');
         return;
       }
       
@@ -61,19 +53,13 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
           
           // Cache company name in localStorage
           localStorage.setItem('device_company_name', fetchedCompanyName);
-        } else {
-          setIsAuthorized(false);
-          localStorage.setItem('device_authorized', JSON.stringify(false));
         }
-      } else {
-        console.error('API request failed with status:', response.status);
-        setIsAuthorized(false);
-        localStorage.setItem('device_authorized', JSON.stringify(false));
+        // If data structure is invalid, keep cached values
       }
+      // If response not ok, keep cached values
     } catch (error) {
       console.error('Authorization check failed:', error);
-      setIsAuthorized(null);
-      // Keep using cached company name if offline
+      // Keep using cached values when offline or on error
     } finally {
       setLoading(false);
     }
