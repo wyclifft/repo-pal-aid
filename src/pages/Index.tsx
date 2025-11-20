@@ -36,6 +36,9 @@ const Index = () => {
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [currentReceipt, setCurrentReceipt] = useState<MilkCollection | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  
+  // Captured collections for batch printing
+  const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
 
   const { saveReceipt } = useIndexedDB();
 
@@ -145,10 +148,13 @@ const Index = () => {
     const monthStart = new Date(year, now.getMonth(), 1);
     const monthEnd = new Date(year, now.getMonth() + 1, 0, 23, 59, 59);
 
+    // Prepare milk data for capture
+    let milkData: MilkCollection;
+
     // Save online - always create new record
     if (navigator.onLine) {
       try {
-        const milkData: any = {
+        const onlineMilkData: any = {
           reference_no: referenceNo,
           farmer_id: farmerId,
           farmer_name: farmerName,
@@ -163,17 +169,17 @@ const Index = () => {
           synced: false,
         };
 
-        const created = await mysqlApi.milkCollection.create(milkData);
+        const created = await mysqlApi.milkCollection.create(onlineMilkData);
         if (created) {
-          toast.success('Collection saved and synced');
-          setCurrentReceipt({ ...milkData, synced: true });
+          milkData = { ...onlineMilkData, synced: true };
+          setCurrentReceipt(milkData);
         } else {
           throw new Error('Failed to create record');
         }
       } catch (err) {
         console.error('Save error:', err);
         // Save locally on error
-        const milkData: MilkCollection = {
+        milkData = {
           reference_no: referenceNo,
           farmer_id: farmerId,
           farmer_name: farmerName,
@@ -190,8 +196,8 @@ const Index = () => {
         toast.warning('Saved locally, will sync when online');
       }
     } else {
-      // Offline mode - save locally
-      const milkData: MilkCollection = {
+      // Save locally when offline
+      milkData = {
         reference_no: referenceNo,
         farmer_id: farmerId,
         farmer_name: farmerName,
@@ -208,8 +214,8 @@ const Index = () => {
       toast.warning('Saved locally, will sync when online');
     }
 
-    // Show receipt
-    setReceiptModalOpen(true);
+    // Add to captured collections
+    setCapturedCollections(prev => [...prev, milkData]);
     
     // Trigger refresh of receipt list
     setRefreshTrigger(prev => prev + 1);
@@ -217,13 +223,27 @@ const Index = () => {
     // Store the saved weight for next collection check
     setLastSavedWeight(weight);
 
-    // Reset form
+    // Success message
+    toast.success('Collection captured! Ready for next entry.');
+
+    // Reset form (keep session for consecutive entries)
     setFarmerId('');
     setFarmerName('');
     setRoute('');
-    setSession('');
     setSearchValue('');
     setWeight(0);
+  };
+
+  const handlePrintLastCapture = () => {
+    if (capturedCollections.length === 0) {
+      toast.error('No collections captured yet');
+      return;
+    }
+    
+    // Open modal with the last captured collection
+    const lastCollection = capturedCollections[capturedCollections.length - 1];
+    setCurrentReceipt(lastCollection);
+    setReceiptModalOpen(true);
   };
 
   const scrollToSection = (sectionId: string) => {
@@ -468,12 +488,32 @@ const Index = () => {
             onEntryTypeChange={setEntryType}
             currentUserRole={currentUser.role}
           />
-          <button
-            onClick={handleSaveCollection}
-            className="w-full mt-4 py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] transition-colors"
-          >
-            Save Collection
-          </button>
+          
+          {/* Captured Collections Count */}
+          {capturedCollections.length > 0 && (
+            <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-center">
+              <p className="text-sm font-semibold text-green-700">
+                {capturedCollections.length} collection{capturedCollections.length !== 1 ? 's' : ''} captured
+              </p>
+            </div>
+          )}
+
+          <div className="flex gap-3 mt-4">
+            <button
+              onClick={handleSaveCollection}
+              className="flex-1 py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] transition-colors"
+            >
+              Capture
+            </button>
+            <button
+              onClick={handlePrintLastCapture}
+              disabled={capturedCollections.length === 0}
+              className="flex-1 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              <Printer className="h-5 w-5" />
+              Print
+            </button>
+          </div>
         </div>
 
         {/* Receipts Card */}
