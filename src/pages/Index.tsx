@@ -101,47 +101,42 @@ const Index = () => {
     // Get device fingerprint
     const deviceFingerprint = await generateDeviceFingerprint();
 
-    // Generate reference number - OFFLINE FIRST approach
+    // Generate reference number - BACKEND FIRST approach for consistency
     let referenceNo = '';
     
-    // Try offline generation first
-    const offlineRef = generateOfflineReference();
-    if (offlineRef) {
-      referenceNo = offlineRef;
-      console.log('✅ Using offline-generated reference:', referenceNo);
-      
-      // If online, sync with backend to ensure we're in sync
-      if (navigator.onLine) {
-        try {
-          const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
-          if (refResult.data?.reference_no) {
-            syncReferenceCounter(refResult.data.reference_no);
-            console.log('📡 Synced reference counter with backend');
-          }
-        } catch (error) {
-          console.warn('Failed to sync with backend (continuing with offline reference):', error);
-        }
-      }
-    } else {
-      // No offline config available - must be online to get reference from backend
-      if (!navigator.onLine) {
-        toast.error('Cannot generate reference offline. Please connect to internet first or log in again.');
-        return;
-      }
-      
+    if (navigator.onLine) {
+      // ONLINE: Always get reference from backend first
       try {
         console.log('Fetching reference from backend...');
         const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
         if (refResult.data?.reference_no) {
           referenceNo = refResult.data.reference_no;
+          // Sync local counter with backend to keep them aligned
           syncReferenceCounter(referenceNo);
           console.log('✅ Using backend reference:', referenceNo);
         } else {
           throw new Error('No reference_no in response');
         }
       } catch (error) {
-        console.error('Failed to generate reference number:', error);
-        toast.error('Failed to generate reference number. Please check your connection.');
+        console.error('Failed to get backend reference, falling back to offline:', error);
+        // Fallback to offline if backend fails
+        const offlineRef = generateOfflineReference();
+        if (offlineRef) {
+          referenceNo = offlineRef;
+          console.log('⚠️ Using offline reference as fallback:', referenceNo);
+        } else {
+          toast.error('Failed to generate reference number.');
+          return;
+        }
+      }
+    } else {
+      // OFFLINE: Use local counter
+      const offlineRef = generateOfflineReference();
+      if (offlineRef) {
+        referenceNo = offlineRef;
+        console.log('✅ Using offline-generated reference:', referenceNo);
+      } else {
+        toast.error('Cannot generate reference offline. Please connect to internet first or log in again.');
         return;
       }
     }
