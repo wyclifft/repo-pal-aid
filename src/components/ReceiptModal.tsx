@@ -14,36 +14,37 @@ export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => 
   const handlePrint = async () => {
     if (receipts.length === 0) return;
 
-    // Print all receipts sequentially
-    for (const receipt of receipts) {
-      const result = await printReceipt({
-        referenceNo: receipt.reference_no,
-        farmerName: receipt.farmer_name,
-        farmerId: receipt.farmer_id,
-        route: receipt.route,
-        session: receipt.session,
-        weight: receipt.weight,
-        collector: receipt.clerk_name || 'N/A',
-        date: new Date(receipt.collection_date).toLocaleString(),
-      });
+    // Print consolidated receipt for the farmer
+    const firstReceipt = receipts[0];
+    const totalWeight = receipts.reduce((sum, r) => sum + r.weight, 0);
+    const referenceNos = receipts.map(r => r.reference_no).join(', ');
+    
+    const result = await printReceipt({
+      referenceNo: referenceNos,
+      farmerName: firstReceipt.farmer_name,
+      farmerId: firstReceipt.farmer_id,
+      route: firstReceipt.route,
+      session: firstReceipt.session,
+      weight: totalWeight,
+      collector: firstReceipt.clerk_name || 'N/A',
+      date: new Date(firstReceipt.collection_date).toLocaleString(),
+    });
 
-      if (!result.success) {
-        if (result.error?.includes('No printer connected')) {
-          toast.info('No Bluetooth printer connected. Opening browser print...');
-          window.print();
-          return;
-        } else {
-          toast.error(result.error || 'Failed to print receipt');
-          return;
-        }
+    if (result.success) {
+      toast.success('Consolidated receipt printed successfully');
+    } else {
+      if (result.error?.includes('No printer connected')) {
+        toast.info('No Bluetooth printer connected. Opening browser print...');
+        window.print();
+      } else {
+        toast.error(result.error || 'Failed to print receipt');
       }
     }
-    
-    toast.success(`${receipts.length} receipt${receipts.length !== 1 ? 's' : ''} printed successfully`);
   };
 
   if (receipts.length === 0) return null;
   
+  const firstReceipt = receipts[0];
   const totalWeight = receipts.reduce((sum, r) => sum + r.weight, 0);
 
   return (
@@ -52,60 +53,64 @@ export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-2xl text-[#667eea]">
             <FileText className="h-6 w-6" />
-            Batch Receipt ({receipts.length} collection{receipts.length !== 1 ? 's' : ''})
+            Consolidated Receipt
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-          {receipts.map((receipt, index) => (
-            <div key={receipt.reference_no} className="space-y-2 pb-4 border-b last:border-b-0">
-              <div className="bg-primary/10 px-3 py-1 rounded-md">
-                <p className="text-sm font-bold text-primary">Collection #{index + 1}</p>
-              </div>
-              <table className="w-full">
-                <tbody>
-                  <tr className="border-b bg-primary/5">
-                    <th className="text-left py-2 font-semibold">Receipt No.</th>
-                    <td className="py-2 font-mono font-bold text-primary">{receipt.reference_no}</td>
-                  </tr>
-                  <tr className="border-b">
-                    <th className="text-left py-2 font-semibold">Farmer Name</th>
-                    <td className="py-2">{receipt.farmer_name}</td>
-                  </tr>
-                  <tr className="border-b">
-                    <th className="text-left py-2 font-semibold">Route</th>
-                    <td className="py-2">{receipt.route}</td>
-                  </tr>
-                  <tr className="border-b">
-                    <th className="text-left py-2 font-semibold">Farmer ID</th>
-                    <td className="py-2">{receipt.farmer_id}</td>
-                  </tr>
-                  <tr className="border-b">
-                    <th className="text-left py-2 font-semibold">Session</th>
-                    <td className="py-2">{receipt.session}</td>
-                  </tr>
-                  <tr className="border-b">
-                    <th className="text-left py-2 font-semibold">Weight</th>
-                    <td className="py-2">{receipt.weight} Kg</td>
-                  </tr>
-                  <tr className="border-b">
-                    <th className="text-left py-2 font-semibold">Collector</th>
-                    <td className="py-2">{receipt.clerk_name}</td>
-                  </tr>
-                  <tr>
-                    <th className="text-left py-2 font-semibold">Date</th>
-                    <td className="py-2">{new Date(receipt.collection_date).toLocaleString()}</td>
-                  </tr>
-                </tbody>
-              </table>
+        <div className="space-y-4">
+          {/* Farmer Details */}
+          <div className="bg-primary/5 p-4 rounded-lg border border-primary/20">
+            <table className="w-full">
+              <tbody>
+                <tr className="border-b">
+                  <th className="text-left py-2 font-semibold">Farmer Name</th>
+                  <td className="py-2 font-bold">{firstReceipt.farmer_name}</td>
+                </tr>
+                <tr className="border-b">
+                  <th className="text-left py-2 font-semibold">Farmer ID</th>
+                  <td className="py-2">{firstReceipt.farmer_id}</td>
+                </tr>
+                <tr className="border-b">
+                  <th className="text-left py-2 font-semibold">Route</th>
+                  <td className="py-2">{firstReceipt.route}</td>
+                </tr>
+                <tr className="border-b">
+                  <th className="text-left py-2 font-semibold">Session</th>
+                  <td className="py-2">{firstReceipt.session}</td>
+                </tr>
+                <tr>
+                  <th className="text-left py-2 font-semibold">Collector</th>
+                  <td className="py-2">{firstReceipt.clerk_name}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Collections List */}
+          <div>
+            <h3 className="font-semibold text-lg mb-2">Collections ({receipts.length})</h3>
+            <div className="max-h-[40vh] overflow-y-auto space-y-2">
+              {receipts.map((receipt, index) => (
+                <div key={receipt.reference_no} className="bg-secondary/10 p-3 rounded-md border">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Receipt #{receipt.reference_no}</p>
+                      <p className="font-mono font-bold text-lg">{receipt.weight} Kg</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">{new Date(receipt.collection_date).toLocaleTimeString()}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
           
           {/* Total Summary */}
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+          <div className="bg-green-50 border-2 border-green-500 rounded-lg p-4">
             <div className="flex justify-between items-center">
               <span className="font-bold text-lg">Total Weight:</span>
-              <span className="font-bold text-2xl text-green-700">{totalWeight.toFixed(2)} Kg</span>
+              <span className="font-bold text-3xl text-green-700">{totalWeight.toFixed(2)} Kg</span>
             </div>
           </div>
         </div>
