@@ -296,16 +296,13 @@ const Settings = () => {
             
             {!scaleConnected && (
               <div className="mt-4 p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
-                <p className="font-semibold mb-2">🔧 Having trouble connecting?</p>
+                <p className="font-semibold mb-2">Having trouble connecting?</p>
                 <ul className="space-y-1 list-disc list-inside">
                   <li>Ensure scale is powered on and in pairing mode</li>
                   <li>Keep phone within 5 meters of the scale</li>
                   <li>Enable Location permission (Android)</li>
                   <li>Click the <Bug className="inline h-3 w-3" /> button to run diagnostics</li>
                 </ul>
-                <p className="mt-2 text-xs">
-                  For detailed help, see SCALE_CONNECTION_GUIDE.md
-                </p>
               </div>
             )}
           </CardContent>
