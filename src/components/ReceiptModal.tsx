@@ -51,86 +51,68 @@ export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => 
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-2xl text-[#667eea]">
-            <FileText className="h-6 w-6" />
-            Consolidated Receipt
-          </DialogTitle>
+      <DialogContent className="max-w-sm">
+        <DialogHeader className="pb-2">
+          <DialogTitle className="text-lg font-semibold">Receipt</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
-          {/* Farmer Details */}
-          <div className="bg-primary/5 p-4 rounded-lg border border-primary/20">
-            <table className="w-full">
-              <tbody>
-                <tr className="border-b">
-                  <th className="text-left py-2 font-semibold">Farmer Name</th>
-                  <td className="py-2 font-bold">{firstReceipt.farmer_name}</td>
-                </tr>
-                <tr className="border-b">
-                  <th className="text-left py-2 font-semibold">Farmer ID</th>
-                  <td className="py-2">{firstReceipt.farmer_id}</td>
-                </tr>
-                <tr className="border-b">
-                  <th className="text-left py-2 font-semibold">Route</th>
-                  <td className="py-2">{firstReceipt.route}</td>
-                </tr>
-                <tr className="border-b">
-                  <th className="text-left py-2 font-semibold">Session</th>
-                  <td className="py-2">{firstReceipt.session}</td>
-                </tr>
-                <tr>
-                  <th className="text-left py-2 font-semibold">Collector</th>
-                  <td className="py-2">{firstReceipt.clerk_name}</td>
-                </tr>
-              </tbody>
-            </table>
+        <div className="space-y-3">
+          {/* Compact Farmer Info */}
+          <div className="text-sm space-y-1">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Farmer:</span>
+              <span className="font-semibold">{firstReceipt.farmer_id}</span>
+            </div>
+            <div className="font-medium">{firstReceipt.farmer_name}</div>
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>{firstReceipt.route}</span>
+              <span>{firstReceipt.session}</span>
+            </div>
           </div>
 
-          {/* Collections List */}
-          <div>
-            <h3 className="font-semibold text-lg mb-2">Collections ({receipts.length})</h3>
-            <div className="max-h-[40vh] overflow-y-auto space-y-2">
+          {/* Compact Collections Table */}
+          <div className="border rounded-md overflow-hidden">
+            <div className="bg-muted px-2 py-1 grid grid-cols-3 text-xs font-medium">
+              <span>#</span>
+              <span>Time</span>
+              <span className="text-right">Liters</span>
+            </div>
+            <div className="max-h-[30vh] overflow-y-auto divide-y">
               {receipts.map((receipt, index) => (
-                <div key={receipt.reference_no} className="bg-secondary/10 p-3 rounded-md border">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Receipt #{receipt.reference_no}</p>
-                      <p className="font-mono font-bold text-lg">{receipt.weight} Kg</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground">{new Date(receipt.collection_date).toLocaleTimeString()}</p>
-                    </div>
-                  </div>
+                <div key={receipt.reference_no} className="px-2 py-1.5 grid grid-cols-3 text-sm">
+                  <span className="text-muted-foreground">{index + 1}</span>
+                  <span className="text-xs">
+                    {new Date(receipt.collection_date).toLocaleTimeString('en-GB', { 
+                      hour: '2-digit', 
+                      minute: '2-digit' 
+                    })}
+                  </span>
+                  <span className="text-right font-medium">{receipt.weight}</span>
                 </div>
               ))}
             </div>
           </div>
           
-          {/* Total Summary */}
-          <div className="bg-green-50 border-2 border-green-500 rounded-lg p-4">
-            <div className="flex justify-between items-center">
-              <span className="font-bold text-lg">Total Weight:</span>
-              <span className="font-bold text-3xl text-green-700">{totalWeight.toFixed(2)} Kg</span>
-            </div>
+          {/* Compact Total */}
+          <div className="bg-primary/10 rounded-md px-3 py-2 flex justify-between items-center">
+            <span className="font-semibold">Total:</span>
+            <span className="text-xl font-bold">{totalWeight.toFixed(1)} Kg</span>
           </div>
         </div>
 
-        <div className="flex gap-2 mt-4">
+        <div className="flex gap-2 pt-2">
           <button
             onClick={handlePrint}
-            className="flex-1 py-2 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] transition-colors flex items-center justify-center gap-2"
+            className="flex-1 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
           >
             <Printer className="h-4 w-4" />
             Print
           </button>
           <button
             onClick={onClose}
-            className="flex-1 py-2 bg-gray-200 text-gray-800 rounded-lg font-semibold hover:bg-gray-300 transition-colors flex items-center justify-center gap-2"
+            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:bg-secondary/80 transition-colors"
           >
             <X className="h-4 w-4" />
-            Close
           </button>
         </div>
       </DialogContent>
