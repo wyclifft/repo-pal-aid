@@ -87,39 +87,49 @@ export const useIndexedDB = () => {
     };
 
     request.onsuccess = (event) => {
-      const database = (event.target as IDBOpenDBRequest).result;
-      
-      // Verify device_approvals store configuration
-      if (database.objectStoreNames.contains('device_approvals')) {
-        const tx = database.transaction('device_approvals', 'readonly');
-        const store = tx.objectStore('device_approvals');
-        console.log('✅ device_approvals keyPath confirmed:', store.keyPath);
+      try {
+        const database = (event.target as IDBOpenDBRequest).result;
         
-        // Check if keyPath is correct
-        if (store.keyPath !== 'device_fingerprint') {
-          console.error('❌ SCHEMA MISMATCH: keyPath is', store.keyPath, 'but should be device_fingerprint');
-          setSchemaError(true);
-          database.close();
-          // Clear and recreate database
-          clearDatabase().then(() => {
-            console.log('🔄 Retrying database initialization...');
-            setTimeout(() => openDatabase(), 100);
-          }).catch(err => {
-            console.error('Failed to clear database:', err);
-          });
-          return;
+        // Verify device_approvals store configuration
+        if (database.objectStoreNames.contains('device_approvals')) {
+          const tx = database.transaction('device_approvals', 'readonly');
+          const store = tx.objectStore('device_approvals');
+          console.log('✅ device_approvals keyPath confirmed:', store.keyPath);
+          
+          // Check if keyPath is correct
+          if (store.keyPath !== 'device_fingerprint') {
+            console.error('❌ SCHEMA MISMATCH: keyPath is', store.keyPath, 'but should be device_fingerprint');
+            setSchemaError(true);
+            database.close();
+            // Clear and recreate database
+            clearDatabase().then(() => {
+              console.log('🔄 Retrying database initialization...');
+              setTimeout(() => openDatabase(), 100);
+            }).catch(err => {
+              console.error('Failed to clear database:', err);
+            });
+            return;
+          }
         }
+        
+        dbInstance = database;
+        setDb(database);
+        setIsReady(true);
+        setSchemaError(false);
+        console.log('IndexedDB ready ✅ Version:', database.version);
+      } catch (error) {
+        console.error('Error during database initialization:', error);
+        setSchemaError(true);
       }
-      
-      dbInstance = database;
-      setDb(database);
-      setIsReady(true);
-      setSchemaError(false);
-      console.log('IndexedDB ready ✅ Version:', database.version);
     };
 
     request.onerror = (event) => {
       console.error('IndexedDB error:', (event.target as IDBOpenDBRequest).error);
+      setSchemaError(true);
+    };
+
+    request.onblocked = () => {
+      console.warn('⚠️ IndexedDB upgrade blocked - close other tabs');
     };
 
     return () => {
@@ -135,9 +145,14 @@ export const useIndexedDB = () => {
 
   const saveFarmers = useCallback((farmers: Farmer[]) => {
     if (!db) return;
-    const tx = db.transaction('farmers', 'readwrite');
-    const store = tx.objectStore('farmers');
-    farmers.forEach((farmer) => store.put(farmer));
+    try {
+      const tx = db.transaction('farmers', 'readwrite');
+      const store = tx.objectStore('farmers');
+      farmers.forEach((farmer) => store.put(farmer));
+      tx.onerror = () => console.error('Error saving farmers:', tx.error);
+    } catch (error) {
+      console.error('Failed to save farmers:', error);
+    }
   }, [db]);
 
   const getFarmers = useCallback((): Promise<Farmer[]> => {
