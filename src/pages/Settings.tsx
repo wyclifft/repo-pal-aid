@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
-import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap } from "lucide-react";
+import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
   printToBluetoothPrinter,
   ScaleType 
 } from "@/services/bluetooth";
+import { runBluetoothDiagnostics, logConnectionTips } from "@/utils/bluetoothDiagnostics";
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -102,6 +103,14 @@ const Settings = () => {
     setLastWeight(null);
     setStoredDevice(null);
     toast.info("Device forgotten");
+  };
+
+  const handleRunDiagnostics = async () => {
+    toast.info("Running Bluetooth diagnostics...");
+    logConnectionTips();
+    const result = await runBluetoothDiagnostics();
+    console.log('📋 Diagnostic Results:', result);
+    toast.success("Diagnostics complete! Check the browser console (F12) for details.");
   };
 
   const handleQuickReconnectPrinter = async () => {
@@ -241,13 +250,23 @@ const Settings = () => {
 
             <div className="flex gap-2">
               {!scaleConnected ? (
-                <Button
-                  onClick={handleConnectScale}
-                  disabled={!isBluetoothAvailable || isConnectingScale}
-                  className="flex-1"
-                >
-                  {isConnectingScale ? "Connecting..." : "Search for Scale"}
-                </Button>
+                <>
+                  <Button
+                    onClick={handleConnectScale}
+                    disabled={!isBluetoothAvailable || isConnectingScale}
+                    className="flex-1"
+                  >
+                    {isConnectingScale ? "Connecting..." : "Search for Scale"}
+                  </Button>
+                  <Button
+                    onClick={handleRunDiagnostics}
+                    variant="outline"
+                    size="icon"
+                    title="Run Diagnostics"
+                  >
+                    <Bug className="h-4 w-4" />
+                  </Button>
+                </>
               ) : (
                 <>
                   <Button
@@ -274,6 +293,21 @@ const Settings = () => {
                 </>
               )}
             </div>
+            
+            {!scaleConnected && (
+              <div className="mt-4 p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
+                <p className="font-semibold mb-2">🔧 Having trouble connecting?</p>
+                <ul className="space-y-1 list-disc list-inside">
+                  <li>Ensure scale is powered on and in pairing mode</li>
+                  <li>Keep phone within 5 meters of the scale</li>
+                  <li>Enable Location permission (Android)</li>
+                  <li>Click the <Bug className="inline h-3 w-3" /> button to run diagnostics</li>
+                </ul>
+                <p className="mt-2 text-xs">
+                  For detailed help, see SCALE_CONNECTION_GUIDE.md
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
 
