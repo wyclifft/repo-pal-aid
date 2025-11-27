@@ -1,6 +1,7 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -14,7 +15,44 @@ const PeriodicReport = lazy(() => import("./pages/PeriodicReport"));
 const Settings = lazy(() => import("./pages/Settings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
-const queryClient = new QueryClient();
+// Configure QueryClient with persistent cache settings
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      gcTime: 1000 * 60 * 60 * 24, // 24 hours
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+// Create custom persister using localStorage
+const persister = {
+  persistClient: async (client: any) => {
+    try {
+      localStorage.setItem('REACT_QUERY_OFFLINE_CACHE', JSON.stringify(client));
+    } catch (error) {
+      console.error('Failed to persist query cache:', error);
+    }
+  },
+  restoreClient: async () => {
+    try {
+      const cached = localStorage.getItem('REACT_QUERY_OFFLINE_CACHE');
+      return cached ? JSON.parse(cached) : undefined;
+    } catch (error) {
+      console.error('Failed to restore query cache:', error);
+      return undefined;
+    }
+  },
+  removeClient: async () => {
+    try {
+      localStorage.removeItem('REACT_QUERY_OFFLINE_CACHE');
+    } catch (error) {
+      console.error('Failed to remove query cache:', error);
+    }
+  },
+};
 
 const App = () => {
   const [showSplash, setShowSplash] = useState(true);
@@ -37,7 +75,10 @@ const App = () => {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider 
+      client={queryClient}
+      persistOptions={{ persister, maxAge: 1000 * 60 * 60 * 24 }}
+    >
       <AuthProvider>
         <Toaster />
         <Sonner />
@@ -59,7 +100,7 @@ const App = () => {
           </Suspense>
         </BrowserRouter>
       </AuthProvider>
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   );
 };
 
