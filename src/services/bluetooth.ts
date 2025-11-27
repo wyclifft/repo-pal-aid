@@ -507,27 +507,32 @@ export const printReceipt = async (data: {
   const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
   const currentDate = new Date().toLocaleDateString('en-GB');
 
+  // 58mm thermal paper = 32 characters per line
+  const LINE_WIDTH = 32;
+  const separator = '-'.repeat(LINE_WIDTH);
+
   let collectionsText = '';
   data.collections.forEach((col, index) => {
-    const lineNum = String(index + 1).padEnd(4);
-    const time = col.time.padEnd(12);
+    const lineNum = String(index + 1).padEnd(3);
+    const time = col.time.substring(0, 8).padEnd(9);
     const weight = col.weight.toFixed(1).padStart(6);
-    collectionsText += ` ${lineNum}${time}${weight}\n`;
+    collectionsText += `${lineNum}${time}${weight}\n`;
   });
 
   const receiptText = `
       ${companyName}
-----------------------------------------
- Farmer: ${data.farmerId} - ${data.farmerName}
- Date: ${currentDate}
-----------------------------------------
- #   TIME        LITERS
-----------------------------------------
-${collectionsText}----------------------------------------
- TOTAL LITERS: ${totalWeight.toFixed(1).padStart(6)}
-----------------------------------------
- Thank you for your delivery!
-----------------------------------------
+${separator}
+Farmer: ${data.farmerId}
+${data.farmerName}
+Date: ${currentDate}
+${separator}
+#  TIME     LITERS
+${separator}
+${collectionsText}${separator}
+TOTAL: ${totalWeight.toFixed(1)} L
+${separator}
+Thank you!
+${separator}
 `;
 
   return printToBluetoothPrinter(receiptText);
