@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { supabase, type AppUser } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -10,7 +10,7 @@ interface LoginProps {
   onLogin: (user: AppUser, isOffline: boolean, password?: string) => void;
 }
 
-export const Login = ({ onLogin }: LoginProps) => {
+export const Login = memo(({ onLogin }: LoginProps) => {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -306,4 +306,4 @@ export const Login = ({ onLogin }: LoginProps) => {
       </div>
     </div>
   );
-};
+});
