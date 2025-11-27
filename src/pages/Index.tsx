@@ -6,6 +6,7 @@ import { WeightInput } from '@/components/WeightInput';
 import { ReceiptList } from '@/components/ReceiptList';
 import { ReceiptModal } from '@/components/ReceiptModal';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
+import { useAuth } from '@/contexts/AuthContext';
 import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -16,8 +17,7 @@ import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBa
 
 const Index = () => {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
-  const [isOffline, setIsOffline] = useState(false);
+  const { currentUser, isOffline, login, logout, isAuthenticated } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Farmer details
@@ -41,21 +41,6 @@ const Index = () => {
 
   const { saveReceipt } = useIndexedDB();
 
-  // Restore auth state from localStorage on mount
-  useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (storedUser) {
-      try {
-        const user = JSON.parse(storedUser);
-        setCurrentUser(user);
-        setIsOffline(!navigator.onLine);
-      } catch (error) {
-        console.error('Failed to restore user session:', error);
-        localStorage.removeItem('currentUser');
-      }
-    }
-  }, []);
-
   // Reset lastSavedWeight when scale reads 0 (ready for next collection)
   useEffect(() => {
     if (entryType === 'scale' && weight === 0 && lastSavedWeight > 0) {
@@ -64,17 +49,11 @@ const Index = () => {
   }, [weight, entryType, lastSavedWeight]);
 
   const handleLogin = (user: AppUser, offline: boolean) => {
-    setCurrentUser(user);
-    setIsOffline(offline);
-    // Store user in localStorage for other pages to access
-    localStorage.setItem('currentUser', JSON.stringify(user));
+    login(user, offline);
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
-    setIsOffline(false);
-    // Clear user from localStorage
-    localStorage.removeItem('currentUser');
+    logout();
     toast.success('Logged out successfully');
   };
 
@@ -290,7 +269,7 @@ const Index = () => {
     setSidebarOpen(false);
   };
 
-  if (!currentUser) {
+  if (!isAuthenticated) {
     return <Login onLogin={handleLogin} />;
   }
 
@@ -423,7 +402,7 @@ const Index = () => {
       <div className="max-w-2xl mx-auto p-4 space-y-4">
         {/* User Info */}
         <div className="bg-white rounded-lg p-3 text-center text-sm shadow">
-          Logged in as {currentUser.user_id} ({currentUser.role})
+          Logged in as {currentUser?.user_id} ({currentUser?.role})
           {isOffline && ' [Offline]'}
         </div>
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type Item, type Sale, type Farmer } from '@/services/mysqlApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,15 +16,15 @@ import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 
 const Store = () => {
   const navigate = useNavigate();
+  const { isAuthenticated, currentUser } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
 
   // Check authentication
   useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (!storedUser) {
+    if (!isAuthenticated) {
       navigate('/', { replace: true });
     }
-  }, [navigate]);
+  }, [isAuthenticated, navigate]);
   const [loading, setLoading] = useState(true);
   const [sellDialogOpen, setSellDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
@@ -62,19 +63,11 @@ const Store = () => {
   }, [isReady]);
 
   const loadLoggedInUser = () => {
-    // Get logged-in user from localStorage
-    const userStr = localStorage.getItem('currentUser');
-    if (userStr) {
-      try {
-        const user = JSON.parse(userStr);
-        // Use user_id as the clerk name since there's no separate name field
-        setSoldBy(user.user_id || '');
-        console.log('Loaded user for sold_by:', user.user_id);
-      } catch (e) {
-        console.error('Failed to parse user:', e);
-      }
+    if (currentUser) {
+      setSoldBy(currentUser.user_id || '');
+      console.log('Loaded user for sold_by:', currentUser.user_id);
     } else {
-      console.warn('No currentUser found in localStorage');
+      console.warn('No currentUser in auth context');
     }
   };
 

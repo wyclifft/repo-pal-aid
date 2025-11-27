@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
 import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,15 +23,15 @@ import {
 
 const Settings = () => {
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [scaleConnected, setScaleConnected] = useState(false);
 
   // Check authentication
   useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (!storedUser) {
+    if (!isAuthenticated) {
       navigate('/', { replace: true });
     }
-  }, [navigate]);
+  }, [isAuthenticated, navigate]);
   const [scaleType, setScaleType] = useState<ScaleType>("Unknown");
   const [isConnectingScale, setIsConnectingScale] = useState(false);
   const [lastWeight, setLastWeight] = useState<number | null>(null);
