@@ -27,7 +27,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsInitialized(true);
   }, []);
 
-  // Listen for storage events (cross-tab sync)
+  // Listen for storage events (cross-tab sync) - sessionStorage doesn't sync across tabs
+  // but we keep the listener structure for consistency
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === SESSION_KEY) {
@@ -86,8 +87,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const restoreSession = () => {
     try {
-      const storedUser = localStorage.getItem(SESSION_KEY);
-      const timestamp = localStorage.getItem(SESSION_TIMESTAMP_KEY);
+      const storedUser = sessionStorage.getItem(SESSION_KEY);
+      const timestamp = sessionStorage.getItem(SESSION_TIMESTAMP_KEY);
 
       if (storedUser && timestamp) {
         const sessionAge = Date.now() - parseInt(timestamp, 10);
@@ -103,7 +104,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         console.log('✅ Session restored:', user.user_id);
         
         // Update timestamp to extend session
-        localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
+        sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
       } else {
         console.log('No valid session found');
       }
@@ -115,8 +116,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const validateSession = () => {
     try {
-      const storedUser = localStorage.getItem(SESSION_KEY);
-      const timestamp = localStorage.getItem(SESSION_TIMESTAMP_KEY);
+      const storedUser = sessionStorage.getItem(SESSION_KEY);
+      const timestamp = sessionStorage.getItem(SESSION_TIMESTAMP_KEY);
 
       if (!storedUser || !timestamp) {
         console.warn('Session data missing, logging out');
@@ -134,7 +135,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
 
       // Session is still valid, update timestamp
-      localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
+      sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
     } catch (error) {
       console.error('Session validation failed:', error);
       logout();
@@ -145,8 +146,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       setCurrentUser(user);
       setIsOffline(offline);
-      localStorage.setItem(SESSION_KEY, JSON.stringify(user));
-      localStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
+      sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
       console.log('✅ User logged in:', user.user_id);
     } catch (error) {
       console.error('Failed to save session:', error);
@@ -161,8 +162,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const clearSession = () => {
-    localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(SESSION_TIMESTAMP_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(SESSION_TIMESTAMP_KEY);
   };
 
   if (!isInitialized) {
