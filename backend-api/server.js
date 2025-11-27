@@ -819,6 +819,148 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, message: 'Device deleted' });
     }
 
+    // SMS Configuration endpoints
+    if (path === '/api/sms/config' && method === 'GET') {
+      const ccode = parsedUrl.query.ccode;
+      
+      if (!ccode) {
+        return sendJSON(res, { success: false, error: 'ccode is required' }, 400);
+      }
+      
+      const [rows] = await pool.query(
+        'SELECT * FROM sms_config WHERE ccode = ?',
+        [ccode]
+      );
+      
+      // Return sms_enabled status (default to false if not found)
+      const smsEnabled = rows.length > 0 ? rows[0].sms_enabled : false;
+      
+      return sendJSON(res, { 
+        success: true, 
+        data: { ccode, sms_enabled: smsEnabled } 
+      });
+    }
+
+    if (path === '/api/sms/config' && method === 'POST') {
+      const body = await parseBody(req);
+      const { ccode, sms_enabled } = body;
+      
+      if (!ccode) {
+        return sendJSON(res, { success: false, error: 'ccode is required' }, 400);
+      }
+      
+      // Insert or update SMS config
+      await pool.query(
+        `INSERT INTO sms_config (ccode, sms_enabled) 
+         VALUES (?, ?) 
+         ON DUPLICATE KEY UPDATE sms_enabled = ?, updated_at = NOW()`,
+        [ccode, sms_enabled !== false, sms_enabled !== false]
+      );
+      
+      return sendJSON(res, { 
+        success: true, 
+        message: 'SMS configuration updated' 
+      });
+    }
+
+    // SMS Send endpoint
+    if (path === '/api/sms/send' && method === 'POST') {
+      const body = await parseBody(req);
+      const { phone, message, ccode } = body;
+      
+      if (!phone || !message) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'phone and message are required' 
+        }, 400);
+      }
+      
+      // Check if SMS is enabled for this ccode
+      if (ccode) {
+        const [configRows] = await pool.query(
+          'SELECT sms_enabled FROM sms_config WHERE ccode = ?',
+          [ccode]
+        );
+        
+        if (configRows.length === 0 || !configRows[0].sms_enabled) {
+          return sendJSON(res, { 
+            success: false, 
+            message: 'SMS not enabled for this company' 
+          }, 403);
+        }
+      }
+      
+      // Get API key from environment
+      const apiKey = process.env.SAVVY_BULK_SMS_API_KEY;
+      
+      if (!apiKey) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'SMS API key not configured' 
+        }, 500);
+      }
+      
+      // Send SMS via Savvy Bulk SMS API
+      try {
+        const https = require('https');
+        const postData = JSON.stringify({
+          partnerID: '7878',
+          apikey: apiKey,
+          pass_type: 'plain',
+          clientsmsid: Date.now().toString(),
+          mobile: phone,
+          message: message,
+          shortcode: 'POLYTANO'
+        });
+        
+        const options = {
+          hostname: 'sms.textsms.co.ke',
+          port: 443,
+          path: '/api/services/sendsms/',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData)
+          }
+        };
+        
+        const smsResponse = await new Promise((resolve, reject) => {
+          const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch (e) {
+                resolve({ success: false, error: 'Invalid response from SMS provider' });
+              }
+            });
+          });
+          
+          req.on('error', (e) => {
+            reject(e);
+          });
+          
+          req.write(postData);
+          req.end();
+        });
+        
+        return sendJSON(res, { 
+          success: true, 
+          message: 'SMS sent successfully',
+          response: smsResponse 
+        });
+        
+      } catch (error) {
+        console.error('SMS Error:', error);
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Failed to send SMS',
+          details: error.message 
+        }, 500);
+      }
+    }
+
     // 404
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
 
