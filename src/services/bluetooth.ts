@@ -1,7 +1,13 @@
 import { BleClient, BleDevice, numbersToDataView, numberToUUID } from '@capacitor-community/bluetooth-le';
 import { Capacitor } from '@capacitor/core';
+import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
 
 export type ScaleType = 'HC-05' | 'HM-10' | 'Unknown';
+
+// Log helpful tips when this module loads
+if (typeof window !== 'undefined') {
+  logConnectionTips();
+}
 
 interface BluetoothScale {
   device: BleDevice | any | null;
@@ -91,6 +97,15 @@ export const clearStoredPrinter = () => {
 
 const SERVICE_UUID_HC05 = numberToUUID(0xffe0);
 const SERVICE_UUID_HM10 = numberToUUID(0xfee7);
+// Additional common scale service UUIDs
+const GENERIC_SCALE_SERVICES = [
+  numberToUUID(0xffe0), // HC-05
+  numberToUUID(0xfee7), // HM-10
+  numberToUUID(0x1800), // Generic Access
+  numberToUUID(0x180a), // Device Information
+  '0000fff0-0000-1000-8000-00805f9b34fb', // Common custom service
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455', // Microchip Transparent UART
+];
 
 export const connectBluetoothScale = async (
   onWeightUpdate: (weight: number, scaleType: ScaleType) => void
@@ -99,48 +114,96 @@ export const connectBluetoothScale = async (
     // Use native Capacitor Bluetooth on mobile, Web Bluetooth on web
     if (Capacitor.isNativePlatform()) {
       await BleClient.initialize();
+      
+      console.log('🔍 Requesting Bluetooth scale device...');
 
       const device = await BleClient.requestDevice({
-        optionalServices: [SERVICE_UUID_HC05, SERVICE_UUID_HM10],
+        optionalServices: GENERIC_SCALE_SERVICES,
       });
 
+      console.log(`📱 Device selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
+      
       await BleClient.connect(device.deviceId);
+      console.log('✅ Connected to device');
 
       let scaleType: ScaleType = 'Unknown';
       let serviceUuid = '';
       let characteristicUuid = '';
 
+      // Get all services and log them for diagnostics
+      const services = await BleClient.getServices(device.deviceId);
+      console.log(`📋 Found ${services.length} services:`);
+      services.forEach((service, index) => {
+        console.log(`  Service ${index + 1}: ${service.uuid}`);
+        console.log(`    Characteristics: ${service.characteristics.length}`);
+        service.characteristics.forEach((char, charIndex) => {
+          console.log(`      Char ${charIndex + 1}: ${char.uuid}`);
+          console.log(`        Properties: read=${char.properties.read}, write=${char.properties.write}, notify=${char.properties.notify}`);
+        });
+      });
+
       // Try HC-05 first
-      try {
-        const services = await BleClient.getServices(device.deviceId);
-        const hc05Service = services.find(s => s.uuid.toLowerCase().includes(SERVICE_UUID_HC05));
-        if (hc05Service && hc05Service.characteristics.length > 0) {
+      const hc05Service = services.find(s => 
+        s.uuid.toLowerCase().includes(SERVICE_UUID_HC05.toLowerCase()) ||
+        s.uuid.toLowerCase().includes('ffe0')
+      );
+      if (hc05Service && hc05Service.characteristics.length > 0) {
+        const notifyChar = hc05Service.characteristics.find(c => c.properties.notify);
+        if (notifyChar) {
           serviceUuid = hc05Service.uuid;
-          characteristicUuid = hc05Service.characteristics[0].uuid;
+          characteristicUuid = notifyChar.uuid;
           scaleType = 'HC-05';
+          console.log('✅ Detected HC-05 scale');
         }
-      } catch (e) {
-        console.log('Not HC-05, trying HM-10');
       }
 
-      // Try HM-10 if HC-05 failed
+      // Try HM-10 if HC-05 not found
       if (!serviceUuid) {
-        try {
-          const services = await BleClient.getServices(device.deviceId);
-          const hm10Service = services.find(s => s.uuid.toLowerCase().includes(SERVICE_UUID_HM10));
-          if (hm10Service && hm10Service.characteristics.length > 0) {
+        const hm10Service = services.find(s => 
+          s.uuid.toLowerCase().includes(SERVICE_UUID_HM10.toLowerCase()) ||
+          s.uuid.toLowerCase().includes('fee7')
+        );
+        if (hm10Service && hm10Service.characteristics.length > 0) {
+          const notifyChar = hm10Service.characteristics.find(c => c.properties.notify);
+          if (notifyChar) {
             serviceUuid = hm10Service.uuid;
-            characteristicUuid = hm10Service.characteristics[0].uuid;
+            characteristicUuid = notifyChar.uuid;
             scaleType = 'HM-10';
+            console.log('✅ Detected HM-10 scale');
           }
-        } catch (e) {
-          console.error('Failed to find HM-10 service:', e);
+        }
+      }
+
+      // Try any service with notify characteristic (for generic scales like ACS-SB1)
+      if (!serviceUuid) {
+        console.log('⚠️ Standard services not found, trying generic discovery...');
+        for (const service of services) {
+          // Skip standard Bluetooth services
+          if (service.uuid.toLowerCase().includes('1800') || 
+              service.uuid.toLowerCase().includes('1801') ||
+              service.uuid.toLowerCase().includes('180a')) {
+            continue;
+          }
+          
+          const notifyChar = service.characteristics.find(c => c.properties.notify);
+          if (notifyChar) {
+            serviceUuid = service.uuid;
+            characteristicUuid = notifyChar.uuid;
+            scaleType = 'Unknown';
+            console.log(`✅ Found generic scale service: ${service.uuid}`);
+            console.log(`   Using characteristic: ${characteristicUuid}`);
+            break;
+          }
         }
       }
 
       if (!serviceUuid || !characteristicUuid) {
-        throw new Error('Could not find compatible Bluetooth scale service');
+        console.error('❌ Could not find any compatible scale service');
+        console.error('Available services:', services.map(s => s.uuid).join(', '));
+        throw new Error('Could not find compatible Bluetooth scale service. Check console for available services.');
       }
+
+      console.log(`📡 Starting notifications on ${serviceUuid}/${characteristicUuid}`);
 
       await BleClient.startNotifications(
         device.deviceId,
@@ -148,12 +211,32 @@ export const connectBluetoothScale = async (
         characteristicUuid,
         (value) => {
           const text = new TextDecoder().decode(value);
-          const match = text.match(/(\d+\.\d+)/);
-          if (match) {
-            const parsed = parseFloat(match[1]);
-            if (!isNaN(parsed)) {
-              onWeightUpdate(parsed, scaleType);
+          console.log(`📊 Raw scale data: "${text}" (${value.byteLength} bytes)`);
+          
+          // Try multiple parsing strategies
+          let parsed: number | null = null;
+          
+          // Strategy 1: Look for decimal number (e.g., "12.34")
+          const decimalMatch = text.match(/(\d+\.\d+)/);
+          if (decimalMatch) {
+            parsed = parseFloat(decimalMatch[1]);
+          }
+          
+          // Strategy 2: Look for integer number (e.g., "1234" -> 12.34)
+          if (!parsed || isNaN(parsed)) {
+            const intMatch = text.match(/(\d+)/);
+            if (intMatch) {
+              const intValue = parseInt(intMatch[1]);
+              // Many scales send weight in grams, convert to kg
+              parsed = intValue > 1000 ? intValue / 1000 : intValue;
             }
+          }
+          
+          if (parsed && !isNaN(parsed) && parsed > 0) {
+            console.log(`✅ Parsed weight: ${parsed} kg`);
+            onWeightUpdate(parsed, scaleType);
+          } else {
+            console.warn(`⚠️ Could not parse weight from: "${text}"`);
           }
         }
       );
@@ -163,6 +246,7 @@ export const connectBluetoothScale = async (
       // Save device info for quick reconnect
       saveDeviceInfo(device.deviceId, device.name || 'Unknown Scale', scaleType);
       
+      console.log('✅ Scale connection successful');
       return { success: true, type: scaleType };
     } else {
       // Web Bluetooth fallback for browser
@@ -205,7 +289,13 @@ export const connectBluetoothScale = async (
       return { success: true, type: scaleType };
     }
   } catch (err) {
-    console.error('Bluetooth connection error:', err);
+    console.error('❌ Bluetooth connection error:', err);
+    console.error('Error details:', {
+      name: err instanceof Error ? err.name : 'Unknown',
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined
+    });
+    
     return {
       success: false,
       type: 'Unknown',
