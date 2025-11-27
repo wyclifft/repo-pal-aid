@@ -6,10 +6,12 @@ import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateTextReport, generateCSVReport } from '@/utils/fileExport';
 import { toast } from 'sonner';
 import { ClipboardList } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
 
 export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => {
   const [unsyncedReceipts, setUnsyncedReceipts] = useState<MilkCollection[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState({ synced: 0, total: 0 });
   const { 
     getUnsyncedReceipts, 
     deleteReceipt, 
@@ -116,6 +118,9 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
     }
 
     setIsSyncing(true);
+    const totalReceipts = unsyncedReceipts.length;
+    let syncedCount = 0;
+    setSyncProgress({ synced: 0, total: totalReceipts });
 
     // Get device fingerprint
     const deviceFingerprint = await generateDeviceFingerprint();
@@ -180,6 +185,8 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
             // Delete all local receipts in this group after successful sync
             for (const receipt of receipts) {
               await deleteReceipt(receipt.orderId!);
+              syncedCount++;
+              setSyncProgress({ synced: syncedCount, total: totalReceipts });
             }
             console.log(`✅ Accumulated ${receipts.length} collections for ${firstReceipt.farmer_id}: ${newWeight} Kg monthly total`);
           } else {
@@ -192,6 +199,8 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
             // Delete all local receipts in this group after successful sync
             for (const receipt of receipts) {
               await deleteReceipt(receipt.orderId!);
+              syncedCount++;
+              setSyncProgress({ synced: syncedCount, total: totalReceipts });
             }
             console.log(`✅ Synced ${receipts.length} collections for ${firstReceipt.farmer_id}: ${totalWeight} Kg total`);
           } else {
@@ -206,6 +215,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
     // After syncing receipts, sync all other data (farmers, items, reports)
     await loadPendingReceipts();
     await syncAllData();
+    setSyncProgress({ synced: 0, total: 0 });
     toast.success('All data synced successfully');
   };
 
@@ -260,16 +270,35 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       {unsyncedReceipts.length === 0 ? (
         <p className="text-gray-600 text-center py-4">No pending receipts</p>
       ) : (
-        <ul className="space-y-2 mb-4">
-          {unsyncedReceipts.map((receipt) => (
-            <li
-              key={receipt.orderId}
-              className="p-3 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm"
-            >
-              Farmer: {receipt.farmer_id} ({Number(receipt.weight || 0).toFixed(2)} Kg) ⚠️ Pending Sync
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="space-y-2 mb-4">
+            {unsyncedReceipts.map((receipt) => (
+              <li
+                key={receipt.orderId}
+                className="p-3 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm"
+              >
+                Farmer: {receipt.farmer_id} ({Number(receipt.weight || 0).toFixed(2)} Kg) ⚠️ Pending Sync
+              </li>
+            ))}
+          </ul>
+          
+          {isSyncing && syncProgress.total > 0 && (
+            <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm font-semibold text-blue-900">
+                  Syncing Progress
+                </span>
+                <span className="text-sm font-bold text-blue-700">
+                  {syncProgress.synced} / {syncProgress.total}
+                </span>
+              </div>
+              <Progress 
+                value={(syncProgress.synced / syncProgress.total) * 100} 
+                className="h-2"
+              />
+            </div>
+          )}
+        </>
       )}
 
       <div className="space-y-2">
