@@ -197,11 +197,28 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
-  const deleteReceipt = useCallback((orderId: number) => {
-    if (!db) return;
-    const tx = db.transaction('receipts', 'readwrite');
-    const store = tx.objectStore('receipts');
-    store.delete(orderId);
+  const deleteReceipt = useCallback((orderId: number): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject('DB not ready');
+      try {
+        const tx = db.transaction('receipts', 'readwrite');
+        const store = tx.objectStore('receipts');
+        const request = store.delete(orderId);
+        
+        request.onsuccess = () => {
+          console.log(`✅ Deleted receipt ${orderId} from IndexedDB`);
+          resolve();
+        };
+        request.onerror = () => {
+          console.error(`❌ Failed to delete receipt ${orderId}:`, request.error);
+          reject(request.error);
+        };
+        
+        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        reject(error);
+      }
+    });
   }, [db]);
 
   const saveDeviceApproval = useCallback((deviceFingerprint: string, backendId: number | null, userId: string, approved: boolean): Promise<void> => {
@@ -313,18 +330,29 @@ export const useIndexedDB = () => {
     }
   }, [db]);
 
-  const deleteSale = useCallback(async (orderId: number) => {
-    if (!db) return;
-
-    try {
-      const tx = db.transaction('receipts', 'readwrite');
-      const store = tx.objectStore('receipts');
-      await store.delete(orderId);
-      console.log('Sale deleted from IndexedDB');
-    } catch (error) {
-      console.error('Failed to delete sale:', error);
-      throw error;
-    }
+  const deleteSale = useCallback((orderId: number): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject('DB not ready');
+      try {
+        const tx = db.transaction('receipts', 'readwrite');
+        const store = tx.objectStore('receipts');
+        const request = store.delete(orderId);
+        
+        request.onsuccess = () => {
+          console.log(`✅ Sale ${orderId} deleted from IndexedDB`);
+          resolve();
+        };
+        request.onerror = () => {
+          console.error(`❌ Failed to delete sale ${orderId}:`, request.error);
+          reject(request.error);
+        };
+        
+        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        console.error('Failed to delete sale:', error);
+        reject(error);
+      }
+    });
   }, [db]);
 
   const saveItems = useCallback((items: any[]) => {
