@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import { format } from "date-fns";
 import { CalendarIcon, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,16 +29,16 @@ import { DeviceAuthStatus } from "@/components/DeviceAuthStatus";
 
 export default function PeriodicReport() {
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
 
   // Check authentication
   useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (!storedUser) {
+    if (!isAuthenticated) {
       navigate('/', { replace: true });
     }
-  }, [navigate]);
+  }, [isAuthenticated, navigate]);
   const [farmerSearch, setFarmerSearch] = useState("");
   const [reportData, setReportData] = useState<PeriodicReportData[]>([]);
   const [loading, setLoading] = useState(false);
