@@ -48,8 +48,8 @@ const Index = () => {
     }
   }, [weight, entryType, lastSavedWeight]);
 
-  const handleLogin = (user: AppUser, offline: boolean) => {
-    login(user, offline);
+  const handleLogin = (user: AppUser, offline: boolean, password?: string) => {
+    login(user, offline, password);
   };
 
   const handleLogout = () => {

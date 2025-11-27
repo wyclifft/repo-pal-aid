@@ -7,7 +7,7 @@ import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDev
 import { storeDeviceConfig } from '@/utils/referenceGenerator';
 
 interface LoginProps {
-  onLogin: (user: AppUser, isOffline: boolean) => void;
+  onLogin: (user: AppUser, isOffline: boolean, password?: string) => void;
 }
 
 export const Login = ({ onLogin }: LoginProps) => {
@@ -158,7 +158,7 @@ export const Login = ({ onLogin }: LoginProps) => {
 
           const userWithPassword = { ...data, password };
           saveUser(userWithPassword);
-          onLogin(data, false);
+          onLogin(data, false, password); // Pass password to cache credentials
           toast.success('Login successful');
         } else {
           toast.error('Invalid credentials');
@@ -169,27 +169,35 @@ export const Login = ({ onLogin }: LoginProps) => {
       }
     } else {
       console.log('🔒 Offline login attempt...');
+      
+      // Check cached credentials from localStorage (stored on first login)
+      const cachedCredsStr = localStorage.getItem('cachedCredentials');
+      if (!cachedCredsStr) {
+        toast.error('First-time login must be done online. Connect to internet and try again.');
+        setLoading(false);
+        return;
+      }
+      
       try {
-        const user = await getUser(userId);
-        if (!user) {
-          toast.error('First-time login must be done online. Connect to internet and try again.');
-          setLoading(false);
-          return;
-        }
+        const cachedCreds = JSON.parse(cachedCredsStr);
         
-        if (user.password !== password) {
+        // Verify credentials match
+        if (cachedCreds.user_id !== userId || cachedCreds.password !== password) {
           toast.error('Invalid credentials (offline)');
           setLoading(false);
           return;
         }
+        
+        // Recreate user object from cached credentials
+        const user: AppUser = {
+          user_id: cachedCreds.user_id,
+          role: cachedCreds.role
+        };
 
         // Check cached device approval status using fingerprint
         const cachedApproval = await getDeviceApproval(deviceFingerprint);
         
         if (!cachedApproval) {
-          // User exists but no device approval cached
-          // This can happen if device fingerprint changed or cache was cleared
-          // Allow login since user was previously authenticated on this device
           console.log('⚠️ No cached device approval found, but user exists - allowing offline login');
           console.log('User should reconnect online to refresh device approval status');
           
@@ -200,13 +208,7 @@ export const Login = ({ onLogin }: LoginProps) => {
               await saveDeviceApproval(deviceFingerprint, null, userId, true);
             } catch (saveError) {
               console.error('Failed to cache device approval:', saveError);
-              // Continue with login anyway
             }
-          } else {
-            console.warn('Cannot cache device approval - invalid fingerprint or userId', {
-              fingerprint: deviceFingerprint,
-              userId: userId
-            });
           }
           
           setDeviceStatus('approved');

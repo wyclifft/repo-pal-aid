@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 interface AuthContextType {
   currentUser: AppUser | null;
   isOffline: boolean;
-  login: (user: AppUser, offline: boolean) => void;
+  login: (user: AppUser, offline: boolean, password?: string) => void;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -14,6 +14,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const SESSION_KEY = 'currentUser';
 const SESSION_TIMESTAMP_KEY = 'sessionTimestamp';
+const CACHED_CREDENTIALS_KEY = 'cachedCredentials'; // For offline use only
 const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
@@ -142,12 +143,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const login = (user: AppUser, offline: boolean) => {
+  const login = (user: AppUser, offline: boolean, password?: string) => {
     try {
       setCurrentUser(user);
       setIsOffline(offline);
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
       sessionStorage.setItem(SESSION_TIMESTAMP_KEY, Date.now().toString());
+      
+      // Cache credentials for offline login (only when password is provided)
+      if (password) {
+        const cachedCreds = {
+          user_id: user.user_id,
+          password: password,
+          role: user.role,
+          timestamp: Date.now()
+        };
+        localStorage.setItem(CACHED_CREDENTIALS_KEY, JSON.stringify(cachedCreds));
+      }
+      
       console.log('✅ User logged in:', user.user_id);
     } catch (error) {
       console.error('Failed to save session:', error);
