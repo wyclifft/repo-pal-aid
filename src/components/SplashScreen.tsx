@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 
 interface SplashScreenProps {
   onComplete: () => void;
 }
 
-export const SplashScreen = ({ onComplete }: SplashScreenProps) => {
+export const SplashScreen = memo(({ onComplete }: SplashScreenProps) => {
   const [isVisible, setIsVisible] = useState(true);
 
   useEffect(() => {
@@ -75,4 +75,4 @@ export const SplashScreen = ({ onComplete }: SplashScreenProps) => {
       </div>
     </div>
   );
-};
+});

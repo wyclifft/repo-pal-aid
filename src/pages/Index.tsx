@@ -290,7 +290,7 @@ const Index = () => {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => window.location.href = '/settings'}
+              onClick={() => navigate('/settings')}
               className="p-2 hover:bg-gray-100 rounded"
               aria-label="Settings"
             >
@@ -350,7 +350,7 @@ const Index = () => {
           <button
             onClick={() => {
               setSidebarOpen(false);
-              window.location.href = '/z-report';
+              navigate('/z-report');
             }}
             className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
           >
@@ -360,7 +360,7 @@ const Index = () => {
           <button
             onClick={() => {
               setSidebarOpen(false);
-              window.location.href = '/store';
+              navigate('/store');
             }}
             className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
           >
@@ -370,7 +370,7 @@ const Index = () => {
           <button
             onClick={() => {
               setSidebarOpen(false);
-              window.location.href = '/periodic-report';
+              navigate('/periodic-report');
             }}
             className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
           >
@@ -380,7 +380,7 @@ const Index = () => {
           <button
             onClick={() => {
               setSidebarOpen(false);
-              window.location.href = '/settings';
+              navigate('/settings');
             }}
             className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
           >
