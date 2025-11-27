@@ -247,7 +247,7 @@ export const Login = ({ onLogin }: LoginProps) => {
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-[#667eea] to-[#764ba2]">
       <div className="bg-white rounded-xl p-8 w-full max-w-md shadow-2xl">
         <h2 className="text-3xl font-bold mb-6 text-center text-[#667eea]">
-          🥛 Milk Collection
+          Milk Collection
         </h2>
         
         {deviceStatus === 'pending' && (
