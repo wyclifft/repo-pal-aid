@@ -463,8 +463,35 @@ const periodicReportApi = {
   },
 };
 
+// ==================== AUTHENTICATION API ====================
+
+export interface AuthUser {
+  user_id: string;
+  username?: string;
+  email?: string;
+  ccode?: string;
+  admin?: boolean;
+  supervisor?: boolean;
+  dcode?: string;
+  groupid?: string;
+  depart?: string;
+}
+
+export const authApi = {
+  /**
+   * Login with userid and password
+   */
+  login: async (userid: string, password: string): Promise<ApiResponse<AuthUser>> => {
+    return apiRequest<AuthUser>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ userid, password }),
+    });
+  },
+};
+
 // Export all APIs
 export const mysqlApi = {
+  auth: authApi,
   farmers: farmersApi,
   milkCollection: milkCollectionApi,
   devices: devicesApi,
