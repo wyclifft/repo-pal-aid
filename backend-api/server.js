@@ -339,6 +339,12 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
+      console.log('🟢 BACKEND: Creating NEW transaction');
+      console.log('📝 Reference:', transrefno);
+      console.log('👤 Farmer:', body.farmer_id);
+      console.log('⚖️ Weight:', body.weight, 'Kg');
+      console.log('📅 Session:', body.session);
+      
       const clerk = body.clerk_name || 'unknown';
       const deviceserial = body.device_fingerprint || 'web';
       
@@ -349,6 +355,7 @@ const server = http.createServer(async (req, res) => {
       );
       
       if (deviceRows.length === 0 || !deviceRows[0].authorized) {
+        console.log('❌ Device not authorized:', deviceserial);
         return sendJSON(res, { 
           success: false, 
           error: 'Device not authorized' 
@@ -356,6 +363,7 @@ const server = http.createServer(async (req, res) => {
       }
       
       const ccode = deviceRows[0].ccode;
+      console.log('🏢 Company Code:', ccode);
       
       // Parse date and time
       const collectionDate = new Date(body.collection_date);
@@ -363,22 +371,36 @@ const server = http.createServer(async (req, res) => {
       const transtime = collectionDate.toTimeString().split(' ')[0]; // HH:MM:SS
       const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
     
-      await pool.query(
-        `INSERT INTO transactions 
-          (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
-           transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-           amount, icode, time, capType, entry_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
-        [transrefno, clerk, clerk, deviceserial, body.farmer_id, body.route, body.weight, 
-         body.session, transdate, transtime, ccode, timestamp, body.entry_type || 'manual']
-      );
-    
-      return sendJSON(res, { success: true, message: 'Collection created', reference_no: transrefno }, 201);
+      try {
+        await pool.query(
+          `INSERT INTO transactions 
+            (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+             transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
+             amount, icode, time, capType, entry_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
+          [transrefno, clerk, clerk, deviceserial, body.farmer_id, body.route, body.weight, 
+           body.session, transdate, transtime, ccode, timestamp, body.entry_type || 'manual']
+        );
+        
+        console.log('✅ BACKEND: NEW record INSERTED successfully');
+        return sendJSON(res, { success: true, message: 'Collection created', reference_no: transrefno }, 201);
+      } catch (error) {
+        console.error('❌ BACKEND INSERT ERROR:', error.message);
+        console.error('Error code:', error.code);
+        return sendJSON(res, { 
+          success: false, 
+          error: `Insert failed: ${error.message}` 
+        }, 500);
+      }
     }
 
     if (path.startsWith('/api/milk-collection/') && method === 'PUT') {
       const ref = path.split('/')[3];
       const body = await parseBody(req);
+      
+      console.log('🟡 BACKEND: UPDATING existing transaction');
+      console.log('📝 Reference:', ref);
+      console.log('⚖️ New Weight:', body.weight, 'Kg');
       
       // CRITICAL: Get device's ccode to ensure update only affects records for this device
       const deviceserial = body.device_fingerprint;
@@ -395,6 +417,7 @@ const server = http.createServer(async (req, res) => {
       );
       
       if (deviceRows.length === 0 || !deviceRows[0].authorized) {
+        console.log('❌ Device not authorized for update:', deviceserial);
         return sendJSON(res, { 
           success: false, 
           error: 'Device not authorized' 
@@ -402,6 +425,7 @@ const server = http.createServer(async (req, res) => {
       }
       
       const ccode = deviceRows[0].ccode;
+      console.log('🏢 Company Code:', ccode);
       
       const updates = [];
       const values = [];
@@ -420,7 +444,9 @@ const server = http.createServer(async (req, res) => {
       
       // STRICT: Update only records matching BOTH transrefno AND ccode
       values.push(ref, ccode);
-      await pool.query(`UPDATE transactions SET ${updates.join(', ')} WHERE transrefno = ? AND ccode = ?`, values);
+      const [result] = await pool.query(`UPDATE transactions SET ${updates.join(', ')} WHERE transrefno = ? AND ccode = ?`, values);
+      
+      console.log('✅ BACKEND: Record UPDATED, affected rows:', result.affectedRows);
       return sendJSON(res, { success: true, message: 'Collection updated' });
     }
 

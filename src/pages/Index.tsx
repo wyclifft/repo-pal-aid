@@ -147,8 +147,16 @@ const Index = () => {
           synced: false,
         };
 
+        console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Creating NEW record online');
+        console.log('📝 Reference:', referenceNo);
+        console.log('👤 Farmer:', farmerId, farmerName);
+        console.log('⚖️ Weight:', onlineMilkData.weight, 'Kg');
+        console.log('📅 Session:', session);
+        
         const created = await mysqlApi.milkCollection.create(onlineMilkData);
+        
         if (created) {
+          console.log('✅ NEW record created successfully in database');
           milkData = { ...onlineMilkData, synced: true };
         } else {
           throw new Error('Failed to create record');
