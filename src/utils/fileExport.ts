@@ -1,6 +1,6 @@
 import type { MilkCollection } from '@/lib/supabase';
 
-export const generateTextReport = (receipts: MilkCollection[]) => {
+export const generateTextReport = (receipts: MilkCollection[], filename?: string) => {
   const text = receipts
     .map(
       (r) =>
@@ -12,12 +12,12 @@ export const generateTextReport = (receipts: MilkCollection[]) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `milk-collection-${Date.now()}.txt`;
+  a.download = filename || `milk-collection-${Date.now()}.txt`;
   a.click();
   URL.revokeObjectURL(url);
 };
 
-export const generateCSVReport = (receipts: MilkCollection[]) => {
+export const generateCSVReport = (receipts: MilkCollection[], filename?: string) => {
   const headers = ['Farmer ID', 'Farmer Name', 'Session', 'Weight (Kg)', 'Collector', 'Date'];
   const rows = receipts.map((r) => [
     r.farmer_id,
@@ -34,7 +34,7 @@ export const generateCSVReport = (receipts: MilkCollection[]) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `milk-collection-${Date.now()}.csv`;
+  a.download = filename || `milk-collection-${Date.now()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 };
