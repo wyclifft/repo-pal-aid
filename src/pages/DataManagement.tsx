@@ -3,11 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Database, RefreshCw, Trash2, HardDrive, Wifi, WifiOff, AlertCircle, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Database, RefreshCw, Trash2, HardDrive, Wifi, WifiOff, AlertCircle, CheckCircle, Download, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useDataSync } from '@/hooks/useDataSync';
+import { useAutoBackup } from '@/hooks/useAutoBackup';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 const DataManagement = () => {
   const navigate = useNavigate();
@@ -25,6 +29,7 @@ const DataManagement = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const { db, isReady } = useIndexedDB();
   const { syncAllData, isSyncing, lastSyncTime } = useDataSync();
+  const { settings: backupSettings, updateSettings: updateBackupSettings, performBackup, getTimeUntilNextBackup } = useAutoBackup();
 
   // Monitor online/offline status
   useEffect(() => {
@@ -292,6 +297,113 @@ const DataManagement = () => {
                 {isClearing ? 'Clearing...' : 'Clear Cache'}
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Automatic Backup */}
+        <Card className="bg-white/95 backdrop-blur-sm border-2 border-blue-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Download className="h-5 w-5 text-blue-600" />
+              Automatic Data Backup
+            </CardTitle>
+            <CardDescription>
+              Automatically export pending receipts to device storage
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Enable/Disable Backup */}
+            <div className="flex items-center justify-between p-4 border rounded-lg bg-gradient-to-r from-blue-50 to-indigo-50">
+              <div className="flex-1">
+                <Label htmlFor="backup-enabled" className="text-base font-semibold text-gray-900">
+                  Enable Auto Backup
+                </Label>
+                <p className="text-sm text-gray-600 mt-1">
+                  Automatically save pending receipts at regular intervals
+                </p>
+              </div>
+              <Switch
+                id="backup-enabled"
+                checked={backupSettings.enabled}
+                onCheckedChange={(enabled) => updateBackupSettings({ enabled })}
+              />
+            </div>
+
+            {backupSettings.enabled && (
+              <>
+                {/* Backup Frequency */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Backup Frequency</Label>
+                  <Select
+                    value={backupSettings.frequency}
+                    onValueChange={(frequency: 'hourly' | 'daily' | 'weekly') => 
+                      updateBackupSettings({ frequency })
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="hourly">Every Hour</SelectItem>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Backup Format */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Export Format</Label>
+                  <Select
+                    value={backupSettings.format}
+                    onValueChange={(format: 'txt' | 'csv' | 'both') => 
+                      updateBackupSettings({ format })
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="txt">Text File (.txt)</SelectItem>
+                      <SelectItem value="csv">CSV File (.csv)</SelectItem>
+                      <SelectItem value="both">Both Formats</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Backup Status */}
+                <div className="p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-xs text-gray-600 mb-1">Last Backup</div>
+                      <div className="text-sm font-semibold flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {backupSettings.lastBackup 
+                          ? new Date(backupSettings.lastBackup).toLocaleString()
+                          : 'Never'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-600 mb-1">Next Backup</div>
+                      <div className="text-sm font-semibold flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        {getTimeUntilNextBackup()}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Manual Backup Button */}
+                <Button
+                  onClick={() => performBackup(false)}
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  size="lg"
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Backup Now
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
 
