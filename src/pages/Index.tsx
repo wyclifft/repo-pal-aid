@@ -13,7 +13,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference, syncReferenceCounter } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Database } from 'lucide-react';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -384,6 +384,16 @@ const Index = () => {
           >
             <FileBarChart className="h-5 w-5 text-[#667eea]" />
             Periodic Report
+          </button>
+          <button
+            onClick={() => {
+              setSidebarOpen(false);
+              navigate('/data-management');
+            }}
+            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
+          >
+            <Database className="h-5 w-5 text-[#667eea]" />
+            Data Management
           </button>
           <button
             onClick={() => {
