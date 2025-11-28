@@ -14,7 +14,6 @@ const ZReport = lazy(() => import("./pages/ZReport"));
 const Store = lazy(() => import("./pages/Store"));
 const PeriodicReport = lazy(() => import("./pages/PeriodicReport"));
 const Settings = lazy(() => import("./pages/Settings"));
-const DataManagement = lazy(() => import("./pages/DataManagement"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 // Configure QueryClient with persistent cache settings
@@ -74,7 +73,6 @@ const AppContent = () => {
           <Route path="/store" element={<Store />} />
           <Route path="/periodic-report" element={<PeriodicReport />} />
           <Route path="/settings" element={<Settings />} />
-          <Route path="/data-management" element={<DataManagement />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
