@@ -770,6 +770,11 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, data: rows[0] });
     }
 
+    if (path === '/api/devices' && method === 'GET') {
+      const [rows] = await pool.query('SELECT * FROM approved_devices ORDER BY created_at DESC');
+      return sendJSON(res, { success: true, data: rows });
+    }
+
     if (path === '/api/devices' && method === 'POST') {
       const body = await parseBody(req);
       const [existing] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
@@ -798,6 +803,23 @@ const server = http.createServer(async (req, res) => {
         const [newDevice] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [result.insertId]);
         return sendJSON(res, { success: true, data: newDevice[0], message: 'Device registered' }, 201);
       }
+    }
+
+    if (path.startsWith('/api/devices/') && path.endsWith('/approve') && method === 'PUT') {
+      const deviceId = path.split('/')[3];
+      const body = await parseBody(req);
+      const updates = ['approved = ?', 'updated_at = NOW()'];
+      const values = [body.approved !== undefined ? body.approved : true];
+      
+      if (body.approved_at) {
+        updates.push('approved_at = ?');
+        values.push(body.approved_at);
+      }
+      
+      values.push(deviceId);
+      await pool.query(`UPDATE approved_devices SET ${updates.join(', ')} WHERE id = ?`, values);
+      const [updatedDevice] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [deviceId]);
+      return sendJSON(res, { success: true, data: updatedDevice[0], message: 'Device approval status updated' });
     }
 
     if (path.startsWith('/api/devices/') && method === 'PUT') {

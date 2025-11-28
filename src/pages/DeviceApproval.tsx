@@ -1,32 +1,18 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { mysqlApi, type ApprovedDevice } from '@/services/mysqlApi';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
-interface PendingDevice {
-  id: string;
-  user_id: string;
-  device_id: string;
-  device_name: string;
-  approved: boolean;
-  created_at: string;
-  last_used: string;
-}
-
 export const DeviceApproval = () => {
-  const [devices, setDevices] = useState<PendingDevice[]>([]);
+  const [devices, setDevices] = useState<ApprovedDevice[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchPendingDevices = async () => {
     try {
-      const { data, error } = await supabase
-        .from('approved_devices')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setDevices(data || []);
+      const response = await mysqlApi.devices.getAll();
+      if (response.error) throw new Error(response.error);
+      setDevices(response.data || []);
     } catch (err) {
       console.error('Error fetching devices:', err);
       toast.error('Failed to load devices');
@@ -39,18 +25,11 @@ export const DeviceApproval = () => {
     fetchPendingDevices();
   }, []);
 
-  const handleApprove = async (deviceId: string, userId: string, currentDeviceId: string) => {
+  const handleApprove = async (deviceId: number) => {
     try {
-      const { error } = await supabase
-        .from('approved_devices')
-        .update({ 
-          approved: true,
-          approved_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .eq('device_id', currentDeviceId);
-
-      if (error) throw error;
+      const response = await mysqlApi.devices.approve(deviceId, true, new Date().toISOString());
+      
+      if (response.error) throw new Error(response.error);
       
       toast.success('Device approved successfully');
       fetchPendingDevices();
@@ -60,15 +39,11 @@ export const DeviceApproval = () => {
     }
   };
 
-  const handleReject = async (userId: string, currentDeviceId: string) => {
+  const handleReject = async (deviceId: number) => {
     try {
-      const { error } = await supabase
-        .from('approved_devices')
-        .delete()
-        .eq('user_id', userId)
-        .eq('device_id', currentDeviceId);
-
-      if (error) throw error;
+      const success = await mysqlApi.devices.delete(deviceId);
+      
+      if (!success) throw new Error('Failed to delete device');
       
       toast.success('Device rejected and removed');
       fetchPendingDevices();
@@ -91,42 +66,42 @@ export const DeviceApproval = () => {
           {devices.map((device) => (
             <Card key={device.id} className="p-6">
               <div className="flex items-start justify-between">
-                <div className="space-y-2 flex-1">
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-lg font-semibold">{device.device_name}</h3>
-                    <span className={`px-3 py-1 rounded-full text-sm ${
-                      device.approved 
-                        ? 'bg-green-100 text-green-800' 
-                        : 'bg-yellow-100 text-yellow-800'
-                    }`}>
-                      {device.approved ? 'Approved' : 'Pending'}
-                    </span>
-                  </div>
-                  
-                  <div className="text-sm text-gray-600 space-y-1">
-                    <p><strong>User ID:</strong> {device.user_id}</p>
-                    <p><strong>Device ID:</strong> {device.device_id.substring(0, 50)}...</p>
-                    <p><strong>Requested:</strong> {new Date(device.created_at).toLocaleString()}</p>
-                    <p><strong>Last Used:</strong> {new Date(device.last_used).toLocaleString()}</p>
-                  </div>
+              <div className="space-y-2 flex-1">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold">{device.device_info || 'Unknown Device'}</h3>
+                  <span className={`px-3 py-1 rounded-full text-sm ${
+                    device.approved 
+                      ? 'bg-green-100 text-green-800' 
+                      : 'bg-yellow-100 text-yellow-800'
+                  }`}>
+                    {device.approved ? 'Approved' : 'Pending'}
+                  </span>
                 </div>
                 
-                {!device.approved && (
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() => handleApprove(device.id, device.user_id, device.device_id)}
-                      className="bg-green-600 hover:bg-green-700 text-white"
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      onClick={() => handleReject(device.user_id, device.device_id)}
-                      variant="destructive"
-                    >
-                      Reject
-                    </Button>
-                  </div>
-                )}
+                <div className="text-sm text-gray-600 space-y-1">
+                  <p><strong>User ID:</strong> {device.user_id}</p>
+                  <p><strong>Device Fingerprint:</strong> {device.device_fingerprint.substring(0, 50)}...</p>
+                  <p><strong>Requested:</strong> {new Date(device.created_at).toLocaleString()}</p>
+                  <p><strong>Last Updated:</strong> {new Date(device.updated_at).toLocaleString()}</p>
+                </div>
+              </div>
+              
+              {!device.approved && (
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => handleApprove(device.id)}
+                    className="bg-green-600 hover:bg-green-700 text-white"
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    onClick={() => handleReject(device.id)}
+                    variant="destructive"
+                  >
+                    Reject
+                  </Button>
+                </div>
+              )}
               </div>
             </Card>
           ))}
