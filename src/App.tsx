@@ -1,3 +1,4 @@
+import React, { useState, useEffect, lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { QueryClient } from "@tanstack/react-query";
@@ -5,7 +6,6 @@ import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { SplashScreen } from "@/components/SplashScreen";
-import { useState, useEffect, lazy, Suspense } from "react";
 
 // Lazy load route components for better performance
 const Index = lazy(() => import("./pages/Index"));
