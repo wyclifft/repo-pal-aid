@@ -125,90 +125,36 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
     // Get device fingerprint
     const deviceFingerprint = await generateDeviceFingerprint();
 
-    // Group receipts by farmer_id, session, and month
-    const groupedReceipts = new Map<string, MilkCollection[]>();
-    
+    // Process each receipt individually - create separate transactions
     for (const receipt of unsyncedReceipts) {
-      const date = new Date(receipt.collection_date);
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      const key = `${receipt.farmer_id}-${receipt.session}-${monthKey}`;
-      
-      if (!groupedReceipts.has(key)) {
-        groupedReceipts.set(key, []);
-      }
-      groupedReceipts.get(key)!.push(receipt);
-    }
-
-    // Process each group
-    for (const [key, receipts] of groupedReceipts.entries()) {
-      const firstReceipt = receipts[0];
-      const totalWeight = receipts.reduce((sum, r) => sum + Number(r.weight || 0), 0);
-      const date = new Date(firstReceipt.collection_date);
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      
-      // Get start and end of the month
-      const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
-      const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
-      
       const milkData: any = {
-        reference_no: firstReceipt.reference_no,
-        farmer_id: firstReceipt.farmer_id,
-        farmer_name: firstReceipt.farmer_name || firstReceipt.farmer_id || 'Unknown',
-        route: firstReceipt.route || 'Unknown',
-        session: firstReceipt.session as 'AM' | 'PM',
-        weight: parseFloat(totalWeight.toFixed(2)),
-        clerk_name: firstReceipt.clerk_name,
-        collection_date: firstReceipt.collection_date,
+        reference_no: receipt.reference_no,
+        farmer_id: receipt.farmer_id,
+        farmer_name: receipt.farmer_name || receipt.farmer_id || 'Unknown',
+        route: receipt.route || 'Unknown',
+        session: receipt.session as 'AM' | 'PM',
+        weight: parseFloat(Number(receipt.weight || 0).toFixed(2)),
+        clerk_name: receipt.clerk_name,
+        collection_date: receipt.collection_date,
         device_fingerprint: deviceFingerprint,
       };
 
       try {
-        // Check if record already exists in MySQL for this month AND device's ccode
-        const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-          firstReceipt.farmer_id,
-          firstReceipt.session,
-          monthStart.toISOString(),
-          monthEnd.toISOString(),
-          deviceFingerprint // Pass device fingerprint to filter by ccode
-        );
-
-        if (existing && existing.reference_no) {
-          // Accumulate weight to existing monthly record
-          const newWeight = parseFloat((Number(existing.weight || 0) + totalWeight).toFixed(2));
-          const updateSuccess = await mysqlApi.milkCollection.update(existing.reference_no, {
-            weight: newWeight,
-            collection_date: new Date(),
-            device_fingerprint: deviceFingerprint // Pass device fingerprint for ccode filtering
-          });
-
-          if (updateSuccess) {
-            // Delete all local receipts in this group after successful sync
-            for (const receipt of receipts) {
-              await deleteReceipt(receipt.orderId!);
-              syncedCount++;
-              setSyncProgress({ synced: syncedCount, total: totalReceipts });
-            }
-            console.log(`✅ Accumulated ${receipts.length} collections for ${firstReceipt.farmer_id}: ${newWeight} Kg monthly total`);
-          } else {
-            console.error('❌ Update failed for MySQL record');
-          }
+        console.log(`🔄 Syncing offline receipt: ${receipt.reference_no} - ${receipt.farmer_id} - ${milkData.weight}Kg`);
+        
+        // Always create new record - no grouping or accumulation
+        const createSuccess = await mysqlApi.milkCollection.create(milkData);
+        
+        if (createSuccess) {
+          await deleteReceipt(receipt.orderId!);
+          syncedCount++;
+          setSyncProgress({ synced: syncedCount, total: totalReceipts });
+          console.log(`✅ Synced offline receipt: ${receipt.reference_no}`);
         } else {
-          // Insert new record with accumulated weight
-          const createSuccess = await mysqlApi.milkCollection.create(milkData);
-          if (createSuccess) {
-            // Delete all local receipts in this group after successful sync
-            for (const receipt of receipts) {
-              await deleteReceipt(receipt.orderId!);
-              syncedCount++;
-              setSyncProgress({ synced: syncedCount, total: totalReceipts });
-            }
-            console.log(`✅ Synced ${receipts.length} collections for ${firstReceipt.farmer_id}: ${totalWeight} Kg total`);
-          } else {
-            console.error('❌ Insert failed for MySQL record');
-          }
+          console.error(`❌ Failed to sync receipt: ${receipt.reference_no}`);
         }
       } catch (err) {
-        console.error('Sync error:', err);
+        console.error('Sync error for receipt:', receipt.reference_no, err);
       }
     }
 
