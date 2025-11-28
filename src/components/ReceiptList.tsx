@@ -13,12 +13,20 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
   const [unsyncedReceipts, setUnsyncedReceipts] = useState<MilkCollection[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState({ synced: 0, total: 0 });
-  const { 
-    getUnsyncedReceipts, 
-    deleteReceipt, 
-    isReady
-  } = useIndexedDB();
-  const { syncAllData } = useDataSync();
+  
+  // Wrap hooks in try-catch to prevent HMR errors
+  let indexedDB;
+  let dataSync;
+  try {
+    indexedDB = useIndexedDB();
+    dataSync = useDataSync();
+  } catch (err) {
+    console.error('Hook initialization error (likely HMR):', err);
+    return <div className="text-center py-4">Loading...</div>;
+  }
+
+  const { getUnsyncedReceipts, deleteReceipt, isReady } = indexedDB;
+  const { syncAllData } = dataSync;
 
   const loadPendingReceipts = async () => {
     if (!isReady) return;

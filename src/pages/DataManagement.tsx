@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Database, RefreshCw, Trash2, HardDrive } from 'lucide-react';
+import { ArrowLeft, Database, RefreshCw, Trash2, HardDrive, Wifi, WifiOff, AlertCircle, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useDataSync } from '@/hooks/useDataSync';
+import { Badge } from '@/components/ui/badge';
 
 const DataManagement = () => {
   const navigate = useNavigate();
@@ -21,8 +22,23 @@ const DataManagement = () => {
     totalSize: '0 KB'
   });
   const [isClearing, setIsClearing] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const { db, isReady } = useIndexedDB();
   const { syncAllData, isSyncing, lastSyncTime } = useDataSync();
+
+  // Monitor online/offline status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Check authentication
   useEffect(() => {
@@ -137,14 +153,48 @@ const DataManagement = () => {
       </header>
 
       <div className="max-w-4xl mx-auto p-4 space-y-6">
-        {/* Last Sync Info */}
-        {lastSyncTime && (
-          <div className="bg-white/10 backdrop-blur-sm border border-white/20 text-white rounded-lg p-4">
-            <p className="text-sm">
-              Last sync: {lastSyncTime.toLocaleString()}
-            </p>
-          </div>
-        )}
+        {/* Status Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Connection Status */}
+          <Card className="bg-white/95 backdrop-blur-sm">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {isOnline ? (
+                    <Wifi className="h-8 w-8 text-green-600" />
+                  ) : (
+                    <WifiOff className="h-8 w-8 text-orange-600" />
+                  )}
+                  <div>
+                    <div className="text-sm text-gray-600">Connection</div>
+                    <div className="text-xl font-bold">
+                      {isOnline ? 'Online' : 'Offline'}
+                    </div>
+                  </div>
+                </div>
+                <Badge variant={isOnline ? "default" : "secondary"} className={isOnline ? "bg-green-600" : "bg-orange-600"}>
+                  {isOnline ? <CheckCircle className="h-4 w-4 mr-1" /> : <AlertCircle className="h-4 w-4 mr-1" />}
+                  {isOnline ? 'Connected' : 'Cached Mode'}
+                </Badge>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Last Sync Info */}
+          <Card className="bg-white/95 backdrop-blur-sm">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <RefreshCw className={`h-8 w-8 ${isSyncing ? 'animate-spin text-blue-600' : 'text-gray-600'}`} />
+                <div>
+                  <div className="text-sm text-gray-600">Last Sync</div>
+                  <div className="text-lg font-bold">
+                    {lastSyncTime ? lastSyncTime.toLocaleTimeString() : 'Never'}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Cache Statistics */}
         <Card className="bg-white/95 backdrop-blur-sm">
@@ -203,15 +253,21 @@ const DataManagement = () => {
             {/* Force Sync */}
             <div className="flex items-start justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors">
               <div className="flex-1">
-                <div className="font-semibold text-gray-900 mb-1">Force Data Refresh</div>
+                <div className="font-semibold text-gray-900 mb-1 flex items-center gap-2">
+                  Force Data Refresh
+                  {!isOnline && <Badge variant="secondary" className="text-xs">Offline</Badge>}
+                </div>
                 <div className="text-sm text-gray-600">
-                  Sync all data from server: farmers, items, reports. Requires internet connection.
+                  {isOnline 
+                    ? 'Sync all data from server: farmers, items, reports.'
+                    : 'Internet connection required to sync data from server.'
+                  }
                 </div>
               </div>
               <Button 
                 onClick={handleForceSync} 
-                disabled={isSyncing || !navigator.onLine}
-                className="ml-4 bg-blue-600 hover:bg-blue-700"
+                disabled={isSyncing || !isOnline}
+                className="ml-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400"
               >
                 <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
                 {isSyncing ? 'Syncing...' : 'Refresh'}
@@ -239,20 +295,42 @@ const DataManagement = () => {
           </CardContent>
         </Card>
 
-        {/* Info Card */}
-        <Card className="bg-blue-50/50 border-blue-200">
-          <CardContent className="pt-6">
-            <div className="space-y-2 text-sm text-gray-700">
-              <p className="font-semibold text-blue-900">ℹ️ About Data Management</p>
-              <ul className="list-disc list-inside space-y-1 ml-2">
-                <li><strong>Cache</strong>: Local storage for offline access</li>
-                <li><strong>Pending receipts/sales</strong>: Never deleted automatically</li>
-                <li><strong>Auto-sync</strong>: Runs every 5 minutes when online</li>
-                <li><strong>Clear cache</strong>: Useful if data seems outdated or corrupted</li>
-              </ul>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Info Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card className="bg-blue-50/50 border-blue-200">
+            <CardContent className="pt-6">
+              <div className="space-y-2 text-sm text-gray-700">
+                <p className="font-semibold text-blue-900 flex items-center gap-2">
+                  <Database className="h-4 w-4" />
+                  Offline Mode
+                </p>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li>All pages work offline with cached data</li>
+                  <li>Receipts sync automatically when online</li>
+                  <li>Auto-sync runs every 5 minutes</li>
+                  <li>Data preserved between app restarts</li>
+                </ul>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-green-50/50 border-green-200">
+            <CardContent className="pt-6">
+              <div className="space-y-2 text-sm text-gray-700">
+                <p className="font-semibold text-green-900 flex items-center gap-2">
+                  <HardDrive className="h-4 w-4" />
+                  Cache Management
+                </p>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li>Clear cache if data seems outdated</li>
+                  <li>Pending receipts never deleted</li>
+                  <li>Force refresh to update all data</li>
+                  <li>Safe to clear cache anytime</li>
+                </ul>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );
