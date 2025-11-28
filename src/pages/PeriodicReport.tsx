@@ -83,15 +83,27 @@ export default function PeriodicReport() {
     }
 
     setLoading(true);
+    const formattedStartDate = format(startDate, "yyyy-MM-dd");
+    const formattedEndDate = format(endDate, "yyyy-MM-dd");
+    const cacheKey = `${formattedStartDate}_${formattedEndDate}_${farmerSearch.trim()}`;
+    
+    console.log("Requesting report with dates:", formattedStartDate, formattedEndDate);
+    
+    // 1. ALWAYS load from cache first for instant display
     try {
-      const formattedStartDate = format(startDate, "yyyy-MM-dd");
-      const formattedEndDate = format(endDate, "yyyy-MM-dd");
-      const cacheKey = `${formattedStartDate}_${formattedEndDate}_${farmerSearch.trim()}`;
-      
-      console.log("Requesting report with dates:", formattedStartDate, formattedEndDate);
-      
-      if (navigator.onLine) {
-        // Online: Fetch from API
+      const cachedData = await getPeriodicReport(cacheKey);
+      if (cachedData && cachedData.length > 0) {
+        setReportData(cachedData);
+        setLoading(false);
+        console.log('📦 Loaded periodic report from cache');
+      }
+    } catch (cacheError) {
+      console.error('Cache read error:', cacheError);
+    }
+
+    // 2. Then fetch fresh data in background if online
+    if (navigator.onLine) {
+      try {
         const response = await mysqlApi.periodicReport.get(
           formattedStartDate,
           formattedEndDate,
@@ -103,11 +115,13 @@ export default function PeriodicReport() {
         
         // Check for authorization errors
         if (!response.success) {
-          // Device not authorized - clear any cached farmers
           await saveFarmers([]);
-          setReportData([]);
-          toast.error(response.error || 'Device not authorized. Please contact administrator.');
+          if (!reportData || reportData.length === 0) {
+            setReportData([]);
+            toast.error(response.error || 'Device not authorized. Please contact administrator.');
+          }
           console.error('❌ Device authorization error for periodic report');
+          setLoading(false);
           return;
         }
         
@@ -116,48 +130,30 @@ export default function PeriodicReport() {
         
         // Cache the report for offline access
         await savePeriodicReport(cacheKey, data);
-        console.log('✅ Periodic report cached for offline use');
+        console.log('✅ Periodic report synced and cached');
         
         if (data.length === 0) {
           toast.warning("No milk collections found for the selected date range");
         } else {
           toast.success(`Found ${data.length} farmer(s) with milk collections`);
         }
+      } catch (error) {
+        console.error("Error syncing report:", error);
+        // Data already loaded from cache if available
+        if (!reportData || reportData.length === 0) {
+          toast.error("No data available for this date range");
+        }
+      }
+    } else {
+      // Offline mode - data already loaded from cache
+      if (!reportData || reportData.length === 0) {
+        toast.info("📡 Offline - No cached data available for this date range");
       } else {
-        // Offline: Load from cache
-        const cachedData = await getPeriodicReport(cacheKey);
-        if (cachedData) {
-          setReportData(cachedData);
-          toast.info(`📦 Showing cached report (offline mode) - ${cachedData.length} farmer(s)`);
-        } else {
-          toast.error("No cached data available for this date range");
-          setReportData([]);
-        }
+        toast.info(`📦 Offline mode - Showing ${reportData.length} cached farmer(s)`);
       }
-    } catch (error) {
-      console.error("Error generating report:", error);
-      
-      // Try to load from cache on error
-      try {
-        const formattedStartDate = format(startDate, "yyyy-MM-dd");
-        const formattedEndDate = format(endDate, "yyyy-MM-dd");
-        const cacheKey = `${formattedStartDate}_${formattedEndDate}_${farmerSearch.trim()}`;
-        
-        const cachedData = await getPeriodicReport(cacheKey);
-        if (cachedData) {
-          setReportData(cachedData);
-          toast.warning(`📦 Using cached data (server unavailable) - ${cachedData.length} farmer(s)`);
-        } else {
-          toast.error("Error generating report");
-          setReportData([]);
-        }
-      } catch (cacheError) {
-        toast.error("Error generating report");
-        setReportData([]);
-      }
-    } finally {
-      setLoading(false);
     }
+    
+    setLoading(false);
   };
 
   const totalWeight = reportData.reduce((sum, item) => sum + (item.total_weight || 0), 0);
