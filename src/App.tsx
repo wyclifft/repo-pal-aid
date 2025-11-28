@@ -73,6 +73,8 @@ const AppContent = () => {
           <Route path="/store" element={<Store />} />
           <Route path="/periodic-report" element={<PeriodicReport />} />
           <Route path="/settings" element={<Settings />} />
+          {/* Redirect removed routes */}
+          <Route path="/data-management" element={<Index />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

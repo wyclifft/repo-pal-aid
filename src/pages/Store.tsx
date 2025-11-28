@@ -56,10 +56,14 @@ const Store = () => {
   useEffect(() => {
     if (!isReady) return;
     
-    loadItems();
-    loadFarmers();
-    loadLoggedInUser();
-    syncPendingSales();
+    const timer = setTimeout(() => {
+      loadItems();
+      loadFarmers();
+      loadLoggedInUser();
+      syncPendingSales();
+    }, 100); // Small delay to prevent race condition
+
+    return () => clearTimeout(timer);
   }, [isReady]);
 
   const loadLoggedInUser = () => {
@@ -72,13 +76,8 @@ const Store = () => {
   };
 
   const loadFarmers = async () => {
-    if (!isReady) {
-      console.warn('IndexedDB not ready, skipping loadFarmers');
-      return;
-    }
-    
     try {
-      // Load cached farmers - global sync handles updates
+      // Always load from cache - global sync handles updates
       const localFarmers = await getFarmers();
       if (localFarmers.length > 0) {
         setFarmers(localFarmers);
@@ -92,11 +91,6 @@ const Store = () => {
   };
 
   const loadItems = async () => {
-    if (!isReady) {
-      console.warn('IndexedDB not ready, skipping loadItems');
-      return;
-    }
-    
     try {
       setLoading(true);
       

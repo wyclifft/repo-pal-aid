@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 export const useDataSync = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const syncInProgress = useRef(false);
+  
   const { 
     saveFarmers, 
     saveItems, 
@@ -16,6 +18,12 @@ export const useDataSync = () => {
   } = useIndexedDB();
 
   const syncAllData = useCallback(async (silent = false) => {
+    // Prevent multiple simultaneous syncs
+    if (syncInProgress.current) {
+      console.log('⏸️ Sync already in progress, skipping...');
+      return false;
+    }
+
     if (!navigator.onLine) {
       console.log('⚠️ Cannot sync: offline');
       if (!silent) {
@@ -29,6 +37,7 @@ export const useDataSync = () => {
       return false;
     }
 
+    syncInProgress.current = true;
     setIsSyncing(true);
     let syncedCount = 0;
     let hasAuthError = false;
@@ -122,17 +131,22 @@ export const useDataSync = () => {
       }
       return false;
     } finally {
+      syncInProgress.current = false;
       setIsSyncing(false);
     }
   }, [isReady, saveFarmers, saveItems, saveZReport, savePeriodicReport]);
 
-  // Auto-sync on mount when online
+  // Auto-sync on mount when online (with small delay to ensure DB is ready)
   useEffect(() => {
-    if (navigator.onLine && isReady) {
+    if (!navigator.onLine || !isReady) return;
+
+    const timer = setTimeout(() => {
       console.log('🔄 Initial data sync on mount');
       syncAllData(true);
-    }
-  }, [isReady]);
+    }, 500); // Small delay to ensure DB is fully initialized
+
+    return () => clearTimeout(timer);
+  }, [isReady, syncAllData]);
 
   // Auto-sync when coming back online
   useEffect(() => {
@@ -147,17 +161,17 @@ export const useDataSync = () => {
 
   // Periodic background sync every 5 minutes when online
   useEffect(() => {
-    if (!navigator.onLine) return;
+    if (!navigator.onLine || !isReady) return;
 
     const interval = setInterval(() => {
-      if (navigator.onLine) {
+      if (navigator.onLine && isReady) {
         console.log('🔄 Periodic background sync');
         syncAllData(true);
       }
     }, 5 * 60 * 1000); // 5 minutes
 
     return () => clearInterval(interval);
-  }, [syncAllData]);
+  }, [isReady, syncAllData]);
 
   return {
     syncAllData,
