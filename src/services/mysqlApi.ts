@@ -274,9 +274,21 @@ export interface ApprovedDevice {
   device_info?: string;
   last_sync?: string;
   created_at?: string;
+  updated_at?: string;
+  approved_at?: string;
+  ccode?: string;
+  uniquedevcode?: string;
+  company_name?: string;
 }
 
 export const devicesApi = {
+  /**
+   * Get all devices
+   */
+  getAll: async (): Promise<ApiResponse<ApprovedDevice[]>> => {
+    return apiRequest<ApprovedDevice[]>('/devices');
+  },
+
   /**
    * Get device by fingerprint
    */
@@ -328,6 +340,16 @@ export const devicesApi = {
       method: 'DELETE',
     });
     return response.success;
+  },
+
+  /**
+   * Approve or reject device
+   */
+  approve: async (deviceId: number, approved: boolean, approvedAt?: string): Promise<ApiResponse<ApprovedDevice>> => {
+    return apiRequest<ApprovedDevice>(`/devices/${deviceId}/approve`, {
+      method: 'PUT',
+      body: JSON.stringify({ approved, approved_at: approvedAt }),
+    });
   },
 };
 
