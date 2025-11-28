@@ -156,6 +156,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           user_id: user.user_id,
           password: password,
           role: user.role,
+          username: user.username,
+          email: user.email,
+          ccode: user.ccode,
+          admin: user.admin,
+          supervisor: user.supervisor,
           timestamp: Date.now()
         };
         localStorage.setItem(CACHED_CREDENTIALS_KEY, JSON.stringify(cachedCreds));

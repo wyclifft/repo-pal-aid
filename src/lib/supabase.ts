@@ -19,8 +19,16 @@ export interface Farmer {
 
 export interface AppUser {
   user_id: string;
-  password?: string;
-  role: string;
+  username?: string;
+  email?: string;
+  ccode?: string;
+  admin?: boolean;
+  supervisor?: boolean;
+  dcode?: string;
+  groupid?: string;
+  depart?: string;
+  password?: string; // For offline caching only
+  role?: string; // Kept for backward compatibility
 }
 
 export interface MilkCollection {

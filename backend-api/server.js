@@ -961,6 +961,50 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // Authentication endpoints
+    if (path === '/api/auth/login' && method === 'POST') {
+      const body = await parseBody(req);
+      const { userid, password } = body;
+      
+      if (!userid || !password) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'userid and password are required' 
+        }, 400);
+      }
+      
+      // Query user table
+      const [rows] = await pool.query(
+        'SELECT * FROM user WHERE userid = ? AND cPassword = ?',
+        [userid, password]
+      );
+      
+      if (rows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Invalid credentials' 
+        }, 401);
+      }
+      
+      const user = rows[0];
+      
+      // Return user data (excluding sensitive password field)
+      return sendJSON(res, { 
+        success: true, 
+        data: {
+          user_id: user.userid,
+          username: user.username,
+          email: user.email,
+          ccode: user.ccode,
+          admin: user.admin === 1,
+          supervisor: user.supervisor === 1,
+          dcode: user.dcode,
+          groupid: user.groupid,
+          depart: user.depart
+        }
+      });
+    }
+
     // 404
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
 
