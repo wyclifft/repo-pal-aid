@@ -236,71 +236,95 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      // Get ccode from device
-      const [deviceRows] = await pool.query(
-        'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
-        [deviceserial]
-      );
+      // Get connection for transaction
+      const connection = await pool.getConnection();
       
-      if (deviceRows.length === 0) {
+      try {
+        // Start transaction
+        await connection.beginTransaction();
+        
+        // Get ccode from device
+        const [deviceRows] = await connection.query(
+          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          [deviceserial]
+        );
+        
+        if (deviceRows.length === 0) {
+          await connection.rollback();
+          connection.release();
+          return sendJSON(res, { 
+            success: false, 
+            error: 'Device not found' 
+          }, 404);
+        }
+        
+        const ccode = deviceRows[0].ccode;
+        
+        // Get company name and device code
+        const [companyAndDeviceRows] = await connection.query(
+          `SELECT p.cname, d.devcode 
+           FROM psettings p 
+           JOIN devsettings d ON p.ccode = d.ccode 
+           WHERE d.ccode = ? AND d.uniquedevcode = ?`,
+          [ccode, deviceserial]
+        );
+        
+        if (companyAndDeviceRows.length === 0) {
+          await connection.rollback();
+          connection.release();
+          return sendJSON(res, { 
+            success: false, 
+            error: 'Company or device not found' 
+          }, 404);
+        }
+        
+        const cname = companyAndDeviceRows[0].cname;
+        const devcode = companyAndDeviceRows[0].devcode || '00000';
+        
+        // Generate company prefix (first 2 chars of company name)
+        const companyPrefix = cname.substring(0, 2).toUpperCase();
+        
+        // Pad device code to 5 characters
+        const deviceCode = String(devcode).padStart(5, '0');
+        
+        // Create the prefix for this specific device
+        const devicePrefix = `${companyPrefix}${deviceCode}`;
+        
+        // Get the last transaction number for THIS SPECIFIC DEVICE with row lock
+        const [lastTransRows] = await connection.query(
+          'SELECT transrefno FROM transactions WHERE deviceserial = ? AND transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
+          [deviceserial, `${devicePrefix}%`]
+        );
+        
+        let nextNumber = 1; // Starting number for this device
+        
+        if (lastTransRows.length > 0) {
+          const lastRef = lastTransRows[0].transrefno;
+          // Extract the sequential number (everything after the 7-char prefix)
+          const lastNumber = parseInt(lastRef.substring(7));
+          nextNumber = lastNumber + 1;
+        }
+        
+        // Generate continuous reference number: CompanyCode + DeviceCode + SequentialNumber
+        const transrefno = `${devicePrefix}${nextNumber}`;
+        
+        // Commit transaction
+        await connection.commit();
+        connection.release();
+        
+        return sendJSON(res, { 
+          success: true, 
+          reference_no: transrefno 
+        });
+      } catch (error) {
+        await connection.rollback();
+        connection.release();
+        console.error('Reference generation error:', error);
         return sendJSON(res, { 
           success: false, 
-          error: 'Device not found' 
-        }, 404);
+          error: 'Failed to generate reference number' 
+        }, 500);
       }
-      
-      const ccode = deviceRows[0].ccode;
-      
-      // Get company name and device code
-      const [companyAndDeviceRows] = await pool.query(
-        `SELECT p.cname, d.devcode 
-         FROM psettings p 
-         JOIN devsettings d ON p.ccode = d.ccode 
-         WHERE d.ccode = ? AND d.uniquedevcode = ?`,
-        [ccode, deviceserial]
-      );
-      
-      if (companyAndDeviceRows.length === 0) {
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Company or device not found' 
-        }, 404);
-      }
-      
-      const cname = companyAndDeviceRows[0].cname;
-      const devcode = companyAndDeviceRows[0].devcode || '00000';
-      
-      // Generate company prefix (first 2 chars of company name)
-      const companyPrefix = cname.substring(0, 2).toUpperCase();
-      
-      // Pad device code to 5 characters
-      const deviceCode = String(devcode).padStart(5, '0');
-      
-      // Create the prefix for this specific device
-      const devicePrefix = `${companyPrefix}${deviceCode}`;
-      
-      // Get the last transaction number for THIS SPECIFIC DEVICE
-      const [lastTransRows] = await pool.query(
-        'SELECT transrefno FROM transactions WHERE deviceserial = ? AND transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1',
-        [deviceserial, `${devicePrefix}%`]
-      );
-      
-      let nextNumber = 1; // Starting number for this device
-      
-      if (lastTransRows.length > 0) {
-        const lastRef = lastTransRows[0].transrefno;
-        // Extract the sequential number (everything after the 7-char prefix)
-        const lastNumber = parseInt(lastRef.substring(7));
-        nextNumber = lastNumber + 1;
-      }
-      
-      // Generate continuous reference number: CompanyCode + DeviceCode + SequentialNumber
-      const transrefno = `${devicePrefix}${nextNumber}`;
-      
-      return sendJSON(res, { 
-        success: true, 
-        reference_no: transrefno 
-      });
     }
 
     if (path === '/api/milk-collection' && method === 'POST') {
