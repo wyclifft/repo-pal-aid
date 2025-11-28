@@ -78,33 +78,16 @@ const Store = () => {
     }
     
     try {
-      // Always load cached farmers first
+      // Load cached farmers - global sync handles updates
       const localFarmers = await getFarmers();
       if (localFarmers.length > 0) {
         setFarmers(localFarmers);
-        console.log('📦 Loaded cached farmers for authorized device');
-      }
-      
-      // Then sync in background if online
-      if (navigator.onLine) {
-        const deviceFingerprint = await generateDeviceFingerprint();
-        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
-        
-        if (response.success && response.data) {
-          setFarmers(response.data);
-          saveFarmers(response.data);
-          console.log(`✅ Synced ${response.data.length} farmers for this device (ccode)`);
-        }
+        console.log('📦 Loaded cached farmers');
+      } else if (!navigator.onLine) {
+        toast.warning('No cached farmers. Please connect online first.');
       }
     } catch (error) {
       console.error('Failed to load farmers:', error);
-      // Try local fallback
-      try {
-        const localFarmers = await getFarmers();
-        setFarmers(localFarmers);
-      } catch (e) {
-        console.error('Failed to load local farmers:', e);
-      }
     }
   };
 
@@ -117,60 +100,16 @@ const Store = () => {
     try {
       setLoading(true);
       
-      // Always load cached items first (fast, no blocking)
+      // Load cached items - global sync handles updates
       const cachedItems = await getItems();
       if (cachedItems.length > 0) {
         setItems(cachedItems);
-        console.log('📦 Loaded cached items for authorized device');
+        console.log('📦 Loaded cached items');
+      } else if (!navigator.onLine) {
+        toast.warning('No cached items. Please connect online first.');
       }
       
       setLoading(false);
-      
-      // Then sync in background if online
-      if (navigator.onLine) {
-        const deviceFingerprint = await generateDeviceFingerprint();
-        const response = await mysqlApi.items.getAll(deviceFingerprint);
-        
-        if (response.success && response.data) {
-          // Device is authorized and has valid ccode - update items
-          setItems(response.data);
-          saveItems(response.data);
-          console.log(`✅ Device authorized. Synced ${response.data.length} items for this ccode`);
-          
-          // If no items available, inform user but keep device authorized
-          if (response.data.length === 0) {
-            console.log('ℹ️ Device is authorized but no items assigned to this ccode');
-            if (cachedItems.length === 0) {
-              toast.info('Device authorized. No items available for your company yet.');
-            }
-          }
-        } else if (!response.success) {
-          // Check if this is a 401 authorization error
-          const isAuthError = response.error?.includes('401') || 
-                              response.error?.includes('Unauthorized') || 
-                              response.error?.includes('not authorized');
-          
-          if (isAuthError) {
-            console.error('❌ Device authorization error:', response.error);
-            // Use cached items if available, but inform user about auth issue
-            if (cachedItems.length > 0) {
-              toast.warning('Device authorization issue. Using cached data. Contact administrator.');
-            } else {
-              toast.error('Device not authorized. Please contact administrator to approve this device.');
-            }
-          } else {
-            // Other API errors (network, server error, etc.)
-            console.error('❌ API error:', response.error);
-            if (cachedItems.length === 0) {
-              toast.error('Failed to load items. Please try again later.');
-            } else {
-              console.log('Using cached items due to API error');
-            }
-          }
-        }
-      } else if (cachedItems.length === 0) {
-        toast.warning('No cached items available. Please connect online first.');
-      }
     } catch (error) {
       console.error('Failed to load items:', error);
       setLoading(false);
