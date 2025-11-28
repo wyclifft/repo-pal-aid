@@ -59,39 +59,39 @@ const ZReport = () => {
     }
 
     setLoading(true);
+    
+    // 1. ALWAYS load from cache first for instant display
     try {
-      // Try to fetch from server
-      if (navigator.onLine) {
+      const cached = await getZReport(selectedDate);
+      if (cached) {
+        setReportData(cached);
+        setLoading(false);
+        console.log('📦 Loaded Z Report from cache');
+      }
+    } catch (cacheError) {
+      console.error('Cache read error:', cacheError);
+    }
+
+    // 2. Then fetch fresh data in background if online
+    if (navigator.onLine) {
+      try {
         const data = await mysqlApi.zReport.get(selectedDate, deviceFingerprint);
         if (data) {
           setReportData(data);
           // Cache in IndexedDB for offline access
           await saveZReport(selectedDate, data);
-          console.log('✅ Z Report cached for offline use');
+          console.log('✅ Z Report synced and cached');
         }
-      } else {
-        // Load from IndexedDB if offline
-        const cached = await getZReport(selectedDate);
-        if (cached) {
-          setReportData(cached);
-          toast.info('📦 Showing cached report (offline mode)');
-        } else {
-          toast.error('No cached data available for this date');
+      } catch (error) {
+        console.error('Error syncing report:', error);
+        // Data already loaded from cache, just log the error
+        if (!reportData) {
+          toast.error('No data available for this date');
         }
       }
-    } catch (error) {
-      console.error('Error fetching report:', error);
-      // Try to load from IndexedDB cache on error
-      const cached = await getZReport(selectedDate);
-      if (cached) {
-        setReportData(cached);
-        toast.warning('📦 Using cached data (server unavailable)');
-      } else {
-        toast.error('Failed to load report');
-      }
-    } finally {
-      setLoading(false);
     }
+    
+    setLoading(false);
   };
 
   const handlePrint = () => {
