@@ -988,6 +988,8 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const { userid, password } = body;
       
+      console.log('🔐 Login attempt:', { userid, passwordLength: password?.length });
+      
       if (!userid || !password) {
         return sendJSON(res, { 
           success: false, 
@@ -995,13 +997,27 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      // Query user table
+      // Query user table with trim to handle whitespace
       const [rows] = await pool.query(
-        'SELECT * FROM user WHERE userid = ? AND cPassword = ?',
-        [userid, password]
+        'SELECT * FROM user WHERE TRIM(userid) = ? AND TRIM(cPassword) = ?',
+        [userid.trim(), password.trim()]
       );
       
+      console.log('🔍 Query result:', rows.length > 0 ? 'User found' : 'No match');
+      
       if (rows.length === 0) {
+        // Debug: Check if user exists
+        const [userCheck] = await pool.query(
+          'SELECT userid, LENGTH(cPassword) as pwd_len FROM user WHERE TRIM(userid) = ?',
+          [userid.trim()]
+        );
+        
+        if (userCheck.length > 0) {
+          console.log('⚠️ User exists but password mismatch. Password length in DB:', userCheck[0].pwd_len);
+        } else {
+          console.log('⚠️ User not found in database');
+        }
+        
         return sendJSON(res, { 
           success: false, 
           error: 'Invalid credentials' 
