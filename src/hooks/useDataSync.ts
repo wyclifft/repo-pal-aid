@@ -16,13 +16,22 @@ export const useDataSync = () => {
   } = useIndexedDB();
 
   const syncAllData = useCallback(async (silent = false) => {
-    if (!navigator.onLine || !isReady) {
-      console.log('⚠️ Cannot sync: offline or IndexedDB not ready');
+    if (!navigator.onLine) {
+      console.log('⚠️ Cannot sync: offline');
+      if (!silent) {
+        toast.info('Working offline - using cached data');
+      }
+      return false;
+    }
+
+    if (!isReady) {
+      console.log('⚠️ Cannot sync: IndexedDB not ready');
       return false;
     }
 
     setIsSyncing(true);
     let syncedCount = 0;
+    let hasAuthError = false;
 
     try {
       const deviceFingerprint = await generateDeviceFingerprint();
@@ -34,6 +43,9 @@ export const useDataSync = () => {
           await saveFarmers(response.data);
           console.log(`✅ Cached ${response.data.length} farmers`);
           syncedCount++;
+        } else if (response.message?.includes('not authorized')) {
+          hasAuthError = true;
+          console.warn('⚠️ Device not authorized - working offline');
         }
       } catch (err) {
         console.error('Failed to sync farmers:', err);
@@ -46,6 +58,8 @@ export const useDataSync = () => {
           await saveItems(itemsResponse.data);
           console.log(`✅ Cached ${itemsResponse.data.length} store items`);
           syncedCount++;
+        } else if (itemsResponse.message?.includes('not authorized')) {
+          hasAuthError = true;
         }
       } catch (err) {
         console.error('Failed to sync store items:', err);
@@ -89,16 +103,22 @@ export const useDataSync = () => {
 
       setLastSyncTime(new Date());
       
-      if (!silent && syncedCount > 0) {
-        toast.success(`Data synced: ${syncedCount} datasets cached`);
+      if (!silent) {
+        if (hasAuthError && syncedCount === 0) {
+          toast.warning('Device not authorized - working with cached data');
+        } else if (syncedCount > 0) {
+          toast.success(`Data synced: ${syncedCount} datasets cached`);
+        } else {
+          toast.info('No new data to sync');
+        }
       }
       
       console.log(`✅ Data sync completed: ${syncedCount} datasets cached`);
-      return true;
+      return syncedCount > 0 || !hasAuthError;
     } catch (err) {
       console.error('Error during data sync:', err);
       if (!silent) {
-        toast.error('Failed to sync data');
+        toast.error('Sync failed - working with cached data');
       }
       return false;
     } finally {
