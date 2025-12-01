@@ -12,7 +12,7 @@ import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-import { generateOfflineReference, syncReferenceCounter } from '@/utils/referenceGenerator';
+import { generateOfflineReference, syncReferenceCounter, getDeviceConfig } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
 import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert } from 'lucide-react';
 
@@ -180,6 +180,18 @@ const Index = () => {
     // Get device fingerprint
     const deviceFingerprint = await generateDeviceFingerprint();
 
+    // Check device config and batch status BEFORE attempting generation
+    const config = await getDeviceConfig();
+    console.log('📊 Device config:', config);
+    
+    if (!config) {
+      toast.error('Device not configured. Please contact admin to set up this device.');
+      return;
+    }
+    
+    const remaining = config.reservedEnd - config.currentSequential;
+    console.log(`📊 Batch status: ${config.currentSequential}/${config.reservedEnd} (${remaining} numbers remaining)`);
+
     // Generate reference number - BACKEND FIRST approach for consistency
     let referenceNo = '';
     
@@ -205,7 +217,13 @@ const Index = () => {
           // Clear authorization cache and update state
           localStorage.setItem('device_authorized', 'false');
           setIsDeviceAuthorized(false);
-          toast.error('Device not authorized. Please wait for admin approval.');
+          
+          // Provide detailed error based on batch status
+          if (remaining <= 0) {
+            toast.error(`Batch exhausted (${config.currentSequential}/${config.reservedEnd}). Backend authorization required to reserve new batch.`);
+          } else {
+            toast.error('Device not authorized on backend. Please contact admin.');
+          }
           return;
         }
         
@@ -215,7 +233,7 @@ const Index = () => {
           referenceNo = offlineRef;
           console.log('⚠️ Using offline reference as fallback:', referenceNo);
         } else {
-          toast.error('Failed to generate reference. Device needs authorization or offline batch setup.');
+          toast.error(`Offline batch exhausted (${config.currentSequential}/${config.reservedEnd}). Connect to internet when device is authorized.`);
           return;
         }
       }
@@ -226,7 +244,7 @@ const Index = () => {
         referenceNo = offlineRef;
         console.log('✅ Using offline-generated reference:', referenceNo);
       } else {
-        toast.error('No offline reference batch available. Please connect to internet and ensure device is authorized.');
+        toast.error(`Offline batch exhausted (${config.currentSequential}/${config.reservedEnd}). Connect to internet when device is authorized to reserve new batch.`);
         return;
       }
     }
