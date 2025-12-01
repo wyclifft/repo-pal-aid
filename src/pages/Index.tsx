@@ -14,16 +14,20 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference, syncReferenceCounter } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert } from 'lucide-react';
 
 const Index = () => {
   const navigate = useNavigate();
   const { currentUser, isOffline, login, logout, isAuthenticated } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Company name from device authorization
+  // Company name and authorization status from device
   const [companyName, setCompanyName] = useState<string>(() => {
     return localStorage.getItem('device_company_name') || 'DAIRY COLLECTION';
+  });
+  const [isDeviceAuthorized, setIsDeviceAuthorized] = useState<boolean>(() => {
+    const cached = localStorage.getItem('device_authorized');
+    return cached ? JSON.parse(cached) : false;
   });
 
   // Reprint receipts state
@@ -140,6 +144,10 @@ const Index = () => {
     setFarmerName(farmer.name);
     setRoute(farmer.route);
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
+  };
+
+  const handleAuthorizationChange = (authorized: boolean) => {
+    setIsDeviceAuthorized(authorized);
   };
 
   const handleClearFarmer = () => {
@@ -398,7 +406,10 @@ const Index = () => {
           </button>
           <div className="flex flex-col items-center gap-1">
             <h1 className="text-xl font-bold text-[#667eea]">Milk Collection</h1>
-            <DeviceAuthStatus onCompanyNameChange={setCompanyName} />
+            <DeviceAuthStatus 
+              onCompanyNameChange={setCompanyName} 
+              onAuthorizationChange={handleAuthorizationChange}
+            />
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -517,8 +528,26 @@ const Index = () => {
         />
       )}
 
-      {/* Main Content */}
+        {/* Main Content */}
       <div className="max-w-2xl mx-auto p-4 space-y-4">
+        {/* Device Authorization Warning */}
+        {!isDeviceAuthorized && (
+          <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4 shadow-lg">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="h-6 w-6 text-red-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-bold text-red-800 text-lg mb-1">Device Not Authorized</h3>
+                <p className="text-red-700 text-sm mb-2">
+                  This device needs admin approval before you can capture milk collections.
+                </p>
+                <p className="text-red-600 text-xs">
+                  Please contact your administrator to approve this device in the Device Approval page.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* User Info */}
         <div className="bg-white rounded-lg p-3 text-center text-sm shadow">
           Logged in as {currentUser?.user_id} ({currentUser?.role})
@@ -625,13 +654,14 @@ const Index = () => {
           <div className="flex gap-3 mt-4">
             <button
               onClick={handleSaveCollection}
-              className="flex-1 py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] transition-colors"
+              disabled={!isDeviceAuthorized}
+              className="flex-1 py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
             >
               Capture
             </button>
             <button
               onClick={handlePrintAllCaptures}
-              disabled={capturedCollections.length === 0}
+              disabled={capturedCollections.length === 0 || !isDeviceAuthorized}
               className="flex-1 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Printer className="h-5 w-5" />

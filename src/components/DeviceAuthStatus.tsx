@@ -5,9 +5,10 @@ import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 
 interface DeviceAuthStatusProps {
   onCompanyNameChange?: (companyName: string) => void;
+  onAuthorizationChange?: (authorized: boolean) => void;
 }
 
-export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps) => {
+export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }: DeviceAuthStatusProps) => {
   // Initialize from localStorage to persist across navigation
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(() => {
     const cached = localStorage.getItem('device_authorized');
@@ -41,6 +42,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
         if (data.success && data.data) {
           const authorized = data.data.authorized === 1;
           setIsAuthorized(authorized);
+          onAuthorizationChange?.(authorized);
           
           // Cache authorization status
           localStorage.setItem('device_authorized', JSON.stringify(authorized));
