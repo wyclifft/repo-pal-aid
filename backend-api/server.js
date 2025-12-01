@@ -372,9 +372,11 @@ const server = http.createServer(async (req, res) => {
       const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
     
       // Helper function to attempt insert with auto-regeneration on duplicate
-      // Increased retries for production stability
-      const attemptInsert = async (attemptTransrefno, maxRetries = 50) => {
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // Infinite retries for production - will keep trying until unique reference is generated
+      const attemptInsert = async (attemptTransrefno) => {
+        let attempt = 0;
+        while (true) {
+          attempt++;
           try {
             await pool.query(
               `INSERT INTO transactions 
@@ -391,11 +393,11 @@ const server = http.createServer(async (req, res) => {
           } catch (error) {
             // Check if it's a duplicate entry error
             if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
-              console.warn(`⚠️ Duplicate reference ${attemptTransrefno} detected (attempt ${attempt + 1}/${maxRetries})`);
+              console.warn(`⚠️ Duplicate reference ${attemptTransrefno} detected (attempt ${attempt})`);
               
-              // Add exponential backoff delay to reduce race conditions
-              if (attempt > 0) {
-                const delay = Math.min(100 * Math.pow(2, attempt - 1), 2000);
+              // Add exponential backoff delay to reduce race conditions (max 2 seconds)
+              if (attempt > 1) {
+                const delay = Math.min(100 * Math.pow(2, attempt - 2), 2000);
                 await new Promise(resolve => setTimeout(resolve, delay));
               }
               
@@ -443,7 +445,7 @@ const server = http.createServer(async (req, res) => {
                 await connection.commit();
                 connection.release();
                 
-                console.log(`🔄 Generated new reference: ${attemptTransrefno} (retry ${attempt + 1}/${maxRetries})`);
+                console.log(`🔄 Generated new reference: ${attemptTransrefno} (retry ${attempt})`);
               } catch (genError) {
                 await connection.rollback();
                 connection.release();
@@ -455,8 +457,6 @@ const server = http.createServer(async (req, res) => {
             }
           }
         }
-        
-        throw new Error(`Max retries (${maxRetries}) reached for generating unique reference number`);
       };
       
       try {
