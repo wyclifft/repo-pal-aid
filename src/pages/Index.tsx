@@ -187,15 +187,23 @@ const Index = () => {
         } else {
           throw new Error('No reference_no in response');
         }
-      } catch (error) {
-        console.error('Failed to get backend reference, falling back to offline:', error);
-        // Fallback to offline if backend fails
+      } catch (error: any) {
+        console.error('Failed to get backend reference:', error);
+        
+        // Check if it's a 401 authorization error
+        const errorMessage = error?.message || '';
+        if (errorMessage.includes('401') || errorMessage.includes('not authorized')) {
+          toast.error('Device not authorized. Please wait for admin approval.');
+          return;
+        }
+        
+        // Fallback to offline if backend fails for other reasons
         const offlineRef = await generateOfflineReference();
         if (offlineRef) {
           referenceNo = offlineRef;
           console.log('⚠️ Using offline reference as fallback:', referenceNo);
         } else {
-          toast.error('Failed to generate reference number.');
+          toast.error('Failed to generate reference. Device needs authorization or offline batch setup.');
           return;
         }
       }
@@ -206,7 +214,7 @@ const Index = () => {
         referenceNo = offlineRef;
         console.log('✅ Using offline-generated reference:', referenceNo);
       } else {
-        toast.error('Cannot generate reference offline. Please connect to internet first or log in again.');
+        toast.error('No offline reference batch available. Please connect to internet and ensure device is authorized.');
         return;
       }
     }
