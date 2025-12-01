@@ -51,10 +51,10 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
   // Check if Bluetooth is available (Web Bluetooth or Capacitor native)
   const isBluetoothAvailable = Capacitor.isNativePlatform() || ('bluetooth' in navigator);
 
-  // Determine scale status for visual feedback
-  const isScaleReady = weight === 0 && lastSavedWeight > 0 && lastEntryType === 'scale';
-  const isScaleNotReady = weight > 0 && lastSavedWeight > 0 && lastEntryType === 'scale';
-  const showScaleStatus = lastSavedWeight > 0 && lastEntryType === 'scale';
+  // Determine scale status for visual feedback (now applies to both scale and manual)
+  const isScaleReady = weight === 0 && lastSavedWeight > 0;
+  const isScaleNotReady = weight > 0 && lastSavedWeight > 0;
+  const showScaleStatus = lastSavedWeight > 0;
 
   return (
     <div className="bg-white rounded-xl p-6 shadow-lg">
