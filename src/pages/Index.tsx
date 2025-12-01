@@ -119,6 +119,17 @@ const Index = () => {
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
   };
 
+  const handleClearFarmer = () => {
+    setFarmerId('');
+    setFarmerName('');
+    setRoute('');
+    setSearchValue('');
+    setWeight(0);
+    setCapturedCollections([]);
+    setLastSavedWeight(0);
+    toast.info('Farmer details cleared');
+  };
+
   const handleSaveCollection = async () => {
     if (!farmerId || !route || !weight || !session) {
       toast.error('Enter farmer, route, session, and weight');
@@ -485,10 +496,21 @@ const Index = () => {
 
         {/* Farmer Card */}
         <div id="farmer-card" className="bg-white rounded-xl p-6 shadow-lg scroll-mt-20">
-          <h3 className="text-xl font-bold mb-4 text-[#667eea] flex items-center gap-2">
-            <User className="h-6 w-6" />
-            Farmer Details
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-bold text-[#667eea] flex items-center gap-2">
+              <User className="h-6 w-6" />
+              Farmer Details
+            </h3>
+            {(farmerId || farmerName) && (
+              <button
+                onClick={handleClearFarmer}
+                className="px-4 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors text-sm"
+              >
+                <X className="h-4 w-4 inline mr-1" />
+                Clear Farmer
+              </button>
+            )}
+          </div>
           <FarmerSearch onSelectFarmer={handleSelectFarmer} value={searchValue} />
           <input
             type="text"
