@@ -20,6 +20,11 @@ const Index = () => {
   const { currentUser, isOffline, login, logout, isAuthenticated } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Company name from device authorization
+  const [companyName, setCompanyName] = useState<string>(() => {
+    return localStorage.getItem('device_company_name') || 'DAIRY COLLECTION';
+  });
+
   // Farmer details
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
@@ -304,7 +309,7 @@ const Index = () => {
           </button>
           <div className="flex flex-col items-center gap-1">
             <h1 className="text-xl font-bold text-[#667eea]">Milk Collection</h1>
-            <DeviceAuthStatus />
+            <DeviceAuthStatus onCompanyNameChange={setCompanyName} />
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -528,6 +533,7 @@ const Index = () => {
       {/* Receipt Modal */}
         <ReceiptModal
           receipts={capturedCollections}
+          companyName={companyName}
           open={receiptModalOpen}
           onClose={() => {
             setReceiptModalOpen(false);
