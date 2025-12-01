@@ -53,6 +53,15 @@ export const DeviceAuthStatus = ({ onCompanyNameChange }: DeviceAuthStatusProps)
           
           // Cache company name in localStorage
           localStorage.setItem('device_company_name', fetchedCompanyName);
+          
+          // Initialize batch reservation for fast reference generation
+          if (authorized) {
+            const { storeDeviceConfig, initializeReservation } = await import('@/utils/referenceGenerator');
+            const deviceCode = String(data.data.uniquedevcode || '00000').slice(-5);
+            await storeDeviceConfig(fetchedCompanyName, deviceCode);
+            await initializeReservation(fingerprint);
+            console.log('✅ Batch reservation initialized');
+          }
         }
         // If data structure is invalid, keep cached values
       }

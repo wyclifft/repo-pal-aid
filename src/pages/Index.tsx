@@ -148,7 +148,7 @@ const Index = () => {
         if (refResult.data?.reference_no) {
           referenceNo = refResult.data.reference_no;
           // Sync local counter with backend to keep them aligned
-          syncReferenceCounter(referenceNo);
+          await syncReferenceCounter(deviceFingerprint);
           console.log('✅ Using backend reference:', referenceNo);
         } else {
           throw new Error('No reference_no in response');
@@ -156,7 +156,7 @@ const Index = () => {
       } catch (error) {
         console.error('Failed to get backend reference, falling back to offline:', error);
         // Fallback to offline if backend fails
-        const offlineRef = generateOfflineReference();
+        const offlineRef = await generateOfflineReference();
         if (offlineRef) {
           referenceNo = offlineRef;
           console.log('⚠️ Using offline reference as fallback:', referenceNo);
@@ -167,7 +167,7 @@ const Index = () => {
       }
     } else {
       // OFFLINE: Use local counter
-      const offlineRef = generateOfflineReference();
+      const offlineRef = await generateOfflineReference();
       if (offlineRef) {
         referenceNo = offlineRef;
         console.log('✅ Using offline-generated reference:', referenceNo);
