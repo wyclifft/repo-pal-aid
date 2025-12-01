@@ -9,9 +9,10 @@ interface ReceiptModalProps {
   companyName: string;
   open: boolean;
   onClose: () => void;
+  onPrint?: () => void; // Callback when receipt is successfully printed
 }
 
-export const ReceiptModal = ({ receipts, companyName, open, onClose }: ReceiptModalProps) => {
+export const ReceiptModal = ({ receipts, companyName, open, onClose, onPrint }: ReceiptModalProps) => {
   const handlePrint = async () => {
     if (receipts.length === 0) return;
 
@@ -36,6 +37,7 @@ export const ReceiptModal = ({ receipts, companyName, open, onClose }: ReceiptMo
 
     if (result.success) {
       toast.success('Receipt printed successfully');
+      onPrint?.(); // Notify parent component of successful print
     } else {
       if (result.error?.includes('No printer connected')) {
         toast.info('No Bluetooth printer connected. Opening browser print...');
