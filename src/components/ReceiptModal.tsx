@@ -86,6 +86,10 @@ export const ReceiptModal = ({ receipts, companyName, open, onClose, onPrint }: 
               <span>Collector:</span>
               <span className="font-medium">{firstReceipt.clerk_name}</span>
             </div>
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Reference:</span>
+              <span className="font-medium">{firstReceipt.reference_no}</span>
+            </div>
           </div>
 
           {/* Compact Collections Table */}
