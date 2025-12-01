@@ -168,8 +168,14 @@ const Index = () => {
       return;
     }
 
-    // Check if scale reads 0 for consecutive collections (applies to both scale and manual)
-    if (lastSavedWeight > 0 && weight > 0) {
+    // Prevent capturing zero weight entries
+    if (weight === 0) {
+      toast.error('Cannot capture zero weight entry');
+      return;
+    }
+
+    // Check if scale reads 0 before next collection (only for scale entry)
+    if (entryType === 'scale' && lastSavedWeight > 0 && weight > 0) {
       toast.error('Scale must read 0 before next collection');
       return;
     }
