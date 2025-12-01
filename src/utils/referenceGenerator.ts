@@ -1,28 +1,26 @@
 /**
- * Optimized Reference Number Generator with Batch Reservation
- * Generates unique transaction reference numbers with instant generation
+ * Simplified Reference Number Generator
+ * Generates unique transaction reference numbers
  * Format: CompanyCode (2 chars) + DeviceCode (5 chars) + SequentialNumber
  * Example: AC0800021433
  * 
- * OPTIMIZATION: Reserves batches of sequential numbers from backend for fast, collision-free generation
+ * APPROACH: 
+ * - Online: Always fetch from backend API
+ * - Offline: Generate timestamp-based reference for uniqueness
  */
 
 interface DeviceConfig {
   companyCode: string;
   deviceCode: string;
-  reservedStart: number; // Start of reserved batch
-  reservedEnd: number; // End of reserved batch (exclusive)
-  currentSequential: number; // Current position in batch
+  lastOfflineSequential: number; // Last used offline sequential
 }
 
 const DB_NAME = 'MilkCollectionDB';
 const DB_VERSION = 6;
 const STORE_NAME = 'device_config';
-const BATCH_SIZE = 100; // Reserve 100 numbers at a time
-const REFILL_THRESHOLD = 10; // Request new batch when 10 numbers left
 
 /**
- * Get IndexedDB instance for atomic operations
+ * Get IndexedDB instance
  */
 const getDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -39,15 +37,13 @@ const getDB = (): Promise<IDBDatabase> => {
 };
 
 /**
- * Store device configuration with batch reservation
+ * Store device configuration
  */
 export const storeDeviceConfig = async (companyName: string, deviceCode: string): Promise<void> => {
   const config: DeviceConfig = {
     companyCode: companyName.substring(0, 2).toUpperCase(),
     deviceCode: String(deviceCode).padStart(5, '0'),
-    reservedStart: 0,
-    reservedEnd: 0,
-    currentSequential: 0,
+    lastOfflineSequential: 0,
   };
   
   const db = await getDB();
@@ -112,41 +108,8 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
 };
 
 /**
- * Reserve a batch of sequential numbers from backend
- */
-export const reserveBatch = async (deviceFingerprint: string): Promise<boolean> => {
-  try {
-    const response = await fetch('https://backend.maddasystems.co.ke/api/milk-collection/reserve-batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        device_fingerprint: deviceFingerprint,
-        batch_size: BATCH_SIZE 
-      }),
-    });
-
-    if (!response.ok) return false;
-
-    const data = await response.json();
-    if (data.success && data.data) {
-      await updateConfig({
-        reservedStart: data.data.start,
-        reservedEnd: data.data.end,
-        currentSequential: data.data.start,
-      });
-      console.log(`✅ Reserved batch: ${data.data.start} to ${data.data.end - 1}`);
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.error('Failed to reserve batch:', error);
-    return false;
-  }
-};
-
-/**
- * Generate next reference number with instant batch-based generation
- * OPTIMIZED & DUPLICATE-SAFE: Uses pre-reserved batch with validation
+ * Generate offline reference using timestamp-based approach
+ * Format: CompanyCode + DeviceCode + Timestamp-based sequential
  */
 export const generateOfflineReference = async (): Promise<string | null> => {
   const config = await getDeviceConfig();
@@ -155,72 +118,21 @@ export const generateOfflineReference = async (): Promise<string | null> => {
     return null;
   }
 
-  // Check if we need a new batch
-  if (config.currentSequential >= config.reservedEnd) {
-    console.warn('⚠️ Reserved batch exhausted, using fallback');
-    return null;
-  }
-
-  // DUPLICATE PREVENTION: Validate current sequential is within valid range
-  if (config.currentSequential < config.reservedStart) {
-    console.error('❌ Current sequential below reserved start - data corruption detected');
-    return null;
-  }
-
-  // Use next number from reserved batch (INSTANT - no backend call)
-  const nextSequential = config.currentSequential;
+  // Use timestamp + incremental counter for uniqueness
+  const timestamp = Date.now();
+  const nextSequential = config.lastOfflineSequential + 1;
   
-  // Atomically update current position
-  await updateConfig({ currentSequential: nextSequential + 1 });
+  // Atomically update counter
+  await updateConfig({ lastOfflineSequential: nextSequential });
   
-  // Generate reference
-  const reference = `${config.companyCode}${config.deviceCode}${nextSequential}`;
+  // Generate reference: CompanyCode + DeviceCode + Timestamp(last 8 digits) + Counter(3 digits)
+  const timestampPart = String(timestamp).slice(-8);
+  const counterPart = String(nextSequential).padStart(3, '0');
+  const reference = `${config.companyCode}${config.deviceCode}${timestampPart}${counterPart}`;
   
-  const remaining = config.reservedEnd - nextSequential - 1;
-  console.log(`⚡ Instant reference: ${reference} (${remaining} remaining in batch)`);
-  
-  // Background refill if running low (non-blocking)
-  if (remaining <= REFILL_THRESHOLD && navigator.onLine) {
-    console.log('🔄 Background batch refill triggered');
-    // Don't await - let it happen in background
-    reserveBatch(await getDeviceFingerprint()).catch(err => {
-      console.error('Background refill failed:', err);
-    });
-  }
+  console.log(`⚡ Offline reference generated: ${reference}`);
   
   return reference;
-};
-
-/**
- * Get device fingerprint (helper for batch reservation)
- */
-const getDeviceFingerprint = async (): Promise<string> => {
-  const stored = localStorage.getItem('device_fingerprint');
-  if (stored) return stored;
-  
-  // Generate simple fingerprint
-  const ua = navigator.userAgent;
-  const screen = `${window.screen.width}x${window.screen.height}`;
-  const fingerprint = btoa(`${ua}-${screen}-${Date.now()}`);
-  localStorage.setItem('device_fingerprint', fingerprint);
-  return fingerprint;
-};
-
-/**
- * Sync with backend - ensures we have a valid batch reserved
- * Called when online to ensure continuous operation
- */
-export const syncReferenceCounter = async (deviceFingerprint: string): Promise<void> => {
-  const config = await getDeviceConfig();
-  if (!config) return;
-
-  // Check if we need a new batch
-  const remaining = config.reservedEnd - config.currentSequential;
-  
-  if (remaining < REFILL_THRESHOLD && navigator.onLine) {
-    console.log(`🔄 Syncing: ${remaining} numbers remaining, requesting new batch`);
-    await reserveBatch(deviceFingerprint);
-  }
 };
 
 /**
@@ -235,22 +147,5 @@ export const resetDeviceConfig = async (): Promise<void> => {
     console.log('🗑️ Device config reset');
   } catch (error) {
     console.error('Failed to reset config:', error);
-  }
-};
-
-/**
- * Initialize batch reservation on app startup
- */
-export const initializeReservation = async (deviceFingerprint: string): Promise<void> => {
-  const config = await getDeviceConfig();
-  if (!config) {
-    console.warn('⚠️ No device config found for initialization');
-    return;
-  }
-
-  // Check if we have a valid batch
-  if (config.currentSequential >= config.reservedEnd && navigator.onLine) {
-    console.log('🔄 Initializing reference batch...');
-    await reserveBatch(deviceFingerprint);
   }
 };

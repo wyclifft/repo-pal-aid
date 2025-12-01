@@ -12,7 +12,7 @@ import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-import { generateOfflineReference, syncReferenceCounter, getDeviceConfig } from '@/utils/referenceGenerator';
+import { generateOfflineReference } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
 import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert } from 'lucide-react';
 
@@ -180,71 +180,50 @@ const Index = () => {
     // Get device fingerprint
     const deviceFingerprint = await generateDeviceFingerprint();
 
-    // Check device config and batch status BEFORE attempting generation
-    const config = await getDeviceConfig();
-    console.log('📊 Device config:', config);
-    
-    if (!config) {
-      toast.error('Device not configured. Please contact admin to set up this device.');
-      return;
-    }
-    
-    const remaining = config.reservedEnd - config.currentSequential;
-    console.log(`📊 Batch status: ${config.currentSequential}/${config.reservedEnd} (${remaining} numbers remaining)`);
-
-    // Generate reference number - BACKEND FIRST approach for consistency
+    // Generate reference number - SIMPLE APPROACH
     let referenceNo = '';
     
     if (navigator.onLine) {
-      // ONLINE: Always get reference from backend first
+      // ONLINE: Get reference from backend
       try {
-        console.log('Fetching reference from backend...');
+        console.log('📡 Fetching reference from backend...');
         const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
         if (refResult.data?.reference_no) {
           referenceNo = refResult.data.reference_no;
-          // Sync local counter with backend to keep them aligned
-          await syncReferenceCounter(deviceFingerprint);
-          console.log('✅ Using backend reference:', referenceNo);
+          console.log('✅ Backend reference:', referenceNo);
         } else {
           throw new Error('No reference_no in response');
         }
       } catch (error: any) {
-        console.error('Failed to get backend reference:', error);
+        console.error('Backend reference failed:', error);
         
         // Check if it's a 401 authorization error
         const errorMessage = error?.message || '';
         if (errorMessage.includes('401') || errorMessage.includes('not authorized')) {
-          // Clear authorization cache and update state
           localStorage.setItem('device_authorized', 'false');
           setIsDeviceAuthorized(false);
-          
-          // Provide detailed error based on batch status
-          if (remaining <= 0) {
-            toast.error(`Batch exhausted (${config.currentSequential}/${config.reservedEnd}). Backend authorization required to reserve new batch.`);
-          } else {
-            toast.error('Device not authorized on backend. Please contact admin.');
-          }
+          toast.error('Device not authorized. Please contact admin.');
           return;
         }
         
-        // Fallback to offline if backend fails for other reasons
+        // Fallback to offline for other errors
         const offlineRef = await generateOfflineReference();
         if (offlineRef) {
           referenceNo = offlineRef;
-          console.log('⚠️ Using offline reference as fallback:', referenceNo);
+          console.log('⚠️ Using offline fallback reference:', referenceNo);
         } else {
-          toast.error(`Offline batch exhausted (${config.currentSequential}/${config.reservedEnd}). Connect to internet when device is authorized.`);
+          toast.error('Failed to generate reference number.');
           return;
         }
       }
     } else {
-      // OFFLINE: Use local counter
+      // OFFLINE: Generate timestamp-based reference
       const offlineRef = await generateOfflineReference();
       if (offlineRef) {
         referenceNo = offlineRef;
-        console.log('✅ Using offline-generated reference:', referenceNo);
+        console.log('✅ Offline reference:', referenceNo);
       } else {
-        toast.error(`Offline batch exhausted (${config.currentSequential}/${config.reservedEnd}). Connect to internet when device is authorized to reserve new batch.`);
+        toast.error('Failed to generate offline reference.');
         return;
       }
     }
