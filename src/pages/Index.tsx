@@ -568,6 +568,8 @@ const Index = () => {
             onWeightChange={setWeight}
             onEntryTypeChange={setEntryType}
             currentUserRole={currentUser.role}
+            lastSavedWeight={lastSavedWeight}
+            lastEntryType={entryType}
           />
           
           {/* Captured Collections Count */}

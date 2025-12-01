@@ -9,9 +9,11 @@ interface WeightInputProps {
   onWeightChange: (weight: number) => void;
   currentUserRole: string;
   onEntryTypeChange: (entryType: 'scale' | 'manual') => void;
+  lastSavedWeight: number;
+  lastEntryType: 'scale' | 'manual';
 }
 
-export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTypeChange }: WeightInputProps) => {
+export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTypeChange, lastSavedWeight, lastEntryType }: WeightInputProps) => {
   const [manualWeight, setManualWeight] = useState('');
   const [scaleConnected, setScaleConnected] = useState(false);
   const [scaleType, setScaleType] = useState<ScaleType>('Unknown');
@@ -49,12 +51,37 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
   // Check if Bluetooth is available (Web Bluetooth or Capacitor native)
   const isBluetoothAvailable = Capacitor.isNativePlatform() || ('bluetooth' in navigator);
 
+  // Determine scale status for visual feedback
+  const isScaleReady = weight === 0 && lastSavedWeight > 0 && lastEntryType === 'scale';
+  const isScaleNotReady = weight > 0 && lastSavedWeight > 0 && lastEntryType === 'scale';
+  const showScaleStatus = lastSavedWeight > 0 && lastEntryType === 'scale';
+
   return (
     <div className="bg-white rounded-xl p-6 shadow-lg">
       <h3 className="text-xl font-bold mb-4 text-[#667eea] flex items-center gap-2">
         <Scale className="h-6 w-6" />
         Milk Weight
       </h3>
+
+      {/* Scale Status Indicator */}
+      {showScaleStatus && (
+        <div className={`mb-4 p-3 rounded-lg border-2 ${
+          isScaleReady 
+            ? 'bg-green-50 border-green-500' 
+            : 'bg-amber-50 border-amber-500'
+        }`}>
+          <div className="flex items-center gap-2">
+            <div className={`w-3 h-3 rounded-full ${
+              isScaleReady ? 'bg-green-500 animate-pulse' : 'bg-amber-500'
+            }`} />
+            <p className={`font-semibold ${
+              isScaleReady ? 'text-green-700' : 'text-amber-700'
+            }`}>
+              {isScaleReady ? '✓ Scale Ready - Clear for Next Collection' : '⚠ Scale Not Ready - Remove Container'}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="mb-6">
         <p className="text-3xl font-bold text-[#667eea] mb-4">
