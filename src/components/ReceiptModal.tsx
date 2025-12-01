@@ -29,6 +29,7 @@ export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => 
       companyName: 'DAIRY COLLECTION',
       farmerName: firstReceipt.farmer_name,
       farmerId: firstReceipt.farmer_id,
+      collectorName: firstReceipt.clerk_name,
       collections
     });
 
@@ -67,6 +68,10 @@ export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => 
             <div className="flex justify-between text-xs text-muted-foreground">
               <span>{firstReceipt.route}</span>
               <span>{firstReceipt.session}</span>
+            </div>
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+              <span>Collector:</span>
+              <span className="font-medium">{firstReceipt.clerk_name}</span>
             </div>
           </div>
 
