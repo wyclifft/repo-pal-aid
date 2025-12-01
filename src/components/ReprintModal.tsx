@@ -38,6 +38,7 @@ export const ReprintModal = ({ open, onClose, receipts, companyName }: ReprintMo
       companyName: companyName,
       farmerName: firstReceipt.farmer_name,
       farmerId: firstReceipt.farmer_id,
+      route: firstReceipt.route,
       collectorName: firstReceipt.clerk_name,
       collections
     });
