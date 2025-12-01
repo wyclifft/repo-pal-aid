@@ -283,11 +283,8 @@ const Index = () => {
     // Success message
     toast.success('Collection captured! Ready for next entry.');
 
-    // Reset form (keep session for consecutive entries)
-    setFarmerId('');
-    setFarmerName('');
-    setRoute('');
-    setSearchValue('');
+    // Keep farmer details for quick consecutive captures, only reset weight
+    // Scale-based entries require scale to return to 0 before next capture (handled by validation)
     setWeight(0);
   };
 
