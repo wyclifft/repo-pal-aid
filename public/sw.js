@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v11';
+const CACHE_VERSION = 'v12';
 const CACHE_NAMES = {
   STATIC: `milk-collection-static-${CACHE_VERSION}`,
   DYNAMIC: `milk-collection-dynamic-${CACHE_VERSION}`,
@@ -13,6 +13,11 @@ const PRECACHE_URLS = [
   '/index.html',
   '/manifest.json',
   '/offline.html',
+  '/settings',
+  '/z-report',
+  '/periodic-report',
+  '/store',
+  '/device-approval',
 ];
 
 // Cache expiration times (in milliseconds)

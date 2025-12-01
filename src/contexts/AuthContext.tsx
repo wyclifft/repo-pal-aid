@@ -167,6 +167,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
       
       console.log('✅ User logged in:', user.user_id);
+      
+      // Pre-cache pages after successful login (only if not recently cached)
+      import('@/utils/precachePages').then(({ precacheApplicationPages, arePagesRecentlyCached }) => {
+        if (!arePagesRecentlyCached()) {
+          toast.promise(
+            precacheApplicationPages(),
+            {
+              loading: 'Preparing app for offline use...',
+              success: 'App ready for offline use',
+              error: 'Could not cache all pages',
+            }
+          );
+        } else {
+          console.log('ℹ️ Pages already recently cached, skipping pre-cache');
+        }
+      });
     } catch (error) {
       console.error('Failed to save session:', error);
       toast.error('Failed to save session. Please try again.');
