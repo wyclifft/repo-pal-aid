@@ -330,8 +330,8 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/milk-collection' && method === 'POST') {
       const body = await parseBody(req);
     
-      // Use provided transrefno from frontend
-      const transrefno = body.reference_no;
+      // Use provided transrefno from frontend (initial attempt)
+      let transrefno = body.reference_no;
       if (!transrefno) {
         return sendJSON(res, { 
           success: false, 
@@ -371,19 +371,92 @@ const server = http.createServer(async (req, res) => {
       const transtime = collectionDate.toTimeString().split(' ')[0]; // HH:MM:SS
       const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
     
-      try {
-        await pool.query(
-          `INSERT INTO transactions 
-            (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
-             transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-             amount, icode, time, capType, entry_type)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
-          [transrefno, clerk, clerk, deviceserial, body.farmer_id, body.route, body.weight, 
-           body.session, transdate, transtime, ccode, timestamp, body.entry_type || 'manual']
-        );
+      // Helper function to attempt insert with auto-regeneration on duplicate
+      const attemptInsert = async (attemptTransrefno, maxRetries = 5) => {
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            await pool.query(
+              `INSERT INTO transactions 
+                (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+                 transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
+                 amount, icode, time, capType, entry_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
+              [attemptTransrefno, clerk, clerk, deviceserial, body.farmer_id, body.route, body.weight, 
+               body.session, transdate, transtime, ccode, timestamp, body.entry_type || 'manual']
+            );
+            
+            console.log('✅ BACKEND: NEW record INSERTED successfully with reference:', attemptTransrefno);
+            return { success: true, reference_no: attemptTransrefno };
+          } catch (error) {
+            // Check if it's a duplicate entry error
+            if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
+              console.warn(`⚠️ Duplicate reference ${attemptTransrefno} detected (attempt ${attempt + 1}/${maxRetries})`);
+              
+              // Regenerate a new reference number
+              const connection = await pool.getConnection();
+              try {
+                await connection.beginTransaction();
+                
+                // Get company name and device code
+                const [companyAndDeviceRows] = await connection.query(
+                  `SELECT p.cname, d.devcode 
+                   FROM psettings p 
+                   JOIN devsettings d ON p.ccode = d.ccode 
+                   WHERE d.ccode = ? AND d.uniquedevcode = ?`,
+                  [ccode, deviceserial]
+                );
+                
+                if (companyAndDeviceRows.length === 0) {
+                  await connection.rollback();
+                  throw new Error('Company or device not found');
+                }
+                
+                const cname = companyAndDeviceRows[0].cname;
+                const devcode = companyAndDeviceRows[0].devcode || '00000';
+                const companyPrefix = cname.substring(0, 2).toUpperCase();
+                const deviceCode = String(devcode).padStart(5, '0');
+                const devicePrefix = `${companyPrefix}${deviceCode}`;
+                
+                // Get the last transaction number with row lock
+                const [lastTransRows] = await connection.query(
+                  'SELECT transrefno FROM transactions WHERE deviceserial = ? AND transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
+                  [deviceserial, `${devicePrefix}%`]
+                );
+                
+                let nextNumber = 1;
+                if (lastTransRows.length > 0) {
+                  const lastRef = lastTransRows[0].transrefno;
+                  const lastNumber = parseInt(lastRef.substring(7));
+                  nextNumber = lastNumber + 1;
+                }
+                
+                attemptTransrefno = `${devicePrefix}${nextNumber}`;
+                await connection.commit();
+                connection.release();
+                
+                console.log(`🔄 Generated new reference: ${attemptTransrefno}`);
+              } catch (genError) {
+                await connection.rollback();
+                connection.release();
+                throw genError;
+              }
+            } else {
+              // Not a duplicate error, or max retries reached
+              throw error;
+            }
+          }
+        }
         
-        console.log('✅ BACKEND: NEW record INSERTED successfully');
-        return sendJSON(res, { success: true, message: 'Collection created', reference_no: transrefno }, 201);
+        throw new Error('Max retries reached for generating unique reference number');
+      };
+      
+      try {
+        const result = await attemptInsert(transrefno);
+        return sendJSON(res, { 
+          success: true, 
+          message: 'Collection created', 
+          reference_no: result.reference_no 
+        }, 201);
       } catch (error) {
         console.error('❌ BACKEND INSERT ERROR:', error.message);
         console.error('Error code:', error.code);
