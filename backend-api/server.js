@@ -328,6 +328,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // NEW: Reserve batch of reference numbers for fast offline generation
+    // DUPLICATE-SAFE: Inserts placeholder records to prevent overlapping reservations
     if (path === '/api/milk-collection/reserve-batch' && method === 'POST') {
       const body = await parseBody(req);
       const deviceserial = body.device_fingerprint;
@@ -386,7 +387,7 @@ const server = http.createServer(async (req, res) => {
         const deviceCode = String(devcode).padStart(5, '0');
         const devicePrefix = `${companyPrefix}${deviceCode}`;
         
-        // Get the highest transaction number with row lock
+        // CRITICAL: Get the highest transaction number with row lock to prevent duplicates
         const [lastTransRows] = await connection.query(
           'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
           [`${devicePrefix}%`]
@@ -402,10 +403,37 @@ const server = http.createServer(async (req, res) => {
         
         const endNumber = startNumber + batchSize;
         
+        // DUPLICATE PREVENTION: Insert a placeholder record at the end of the batch
+        // This ensures the next reservation request will start AFTER this batch
+        const placeholderRefNo = `${devicePrefix}${endNumber - 1}`;
+        
+        await connection.query(
+          `INSERT INTO transactions (
+            transrefno, memberno, itemcode, weight, sprice, amount, 
+            Transdate, Transtype, ccode, deviceserial, clerk, 
+            session, route, entry_type
+          ) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            placeholderRefNo,
+            'BATCH_RESERVATION',
+            '000',
+            0,
+            0,
+            0,
+            'R', // R for Reservation placeholder
+            ccode,
+            deviceserial,
+            'SYSTEM',
+            'AM',
+            'RESERVATION',
+            'reservation'
+          ]
+        );
+        
         await connection.commit();
         connection.release();
         
-        console.log(`✅ Reserved batch for device: ${startNumber} to ${endNumber - 1} (${batchSize} numbers)`);
+        console.log(`✅ Reserved batch [${startNumber} to ${endNumber - 1}] - Placeholder: ${placeholderRefNo}`);
         
         return sendJSON(res, { 
           success: true, 
