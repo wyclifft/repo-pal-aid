@@ -148,6 +148,7 @@ const Index = () => {
 
   const handleAuthorizationChange = (authorized: boolean) => {
     setIsDeviceAuthorized(authorized);
+    localStorage.setItem('device_authorized', JSON.stringify(authorized));
   };
 
   const handleClearFarmer = () => {
@@ -201,6 +202,9 @@ const Index = () => {
         // Check if it's a 401 authorization error
         const errorMessage = error?.message || '';
         if (errorMessage.includes('401') || errorMessage.includes('not authorized')) {
+          // Clear authorization cache and update state
+          localStorage.setItem('device_authorized', 'false');
+          setIsDeviceAuthorized(false);
           toast.error('Device not authorized. Please wait for admin approval.');
           return;
         }
