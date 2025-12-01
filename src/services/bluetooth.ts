@@ -640,6 +640,7 @@ export const printReceipt = async (data: {
   companyName?: string;
   farmerName: string;
   farmerId: string;
+  route?: string;
   collectorName: string;
   collections: Array<{
     time: string;
@@ -667,6 +668,7 @@ export const printReceipt = async (data: {
 ${separator}
 Farmer: ${data.farmerId}
 ${data.farmerName}
+${data.route ? `Route: ${data.route}` : ''}
 Collector: ${data.collectorName}
 Date: ${currentDate}
 ${separator}
