@@ -146,7 +146,7 @@ export const reserveBatch = async (deviceFingerprint: string): Promise<boolean> 
 
 /**
  * Generate next reference number with instant batch-based generation
- * OPTIMIZED: No backend calls needed - uses pre-reserved batch
+ * OPTIMIZED & DUPLICATE-SAFE: Uses pre-reserved batch with validation
  */
 export const generateOfflineReference = async (): Promise<string | null> => {
   const config = await getDeviceConfig();
@@ -161,6 +161,12 @@ export const generateOfflineReference = async (): Promise<string | null> => {
     return null;
   }
 
+  // DUPLICATE PREVENTION: Validate current sequential is within valid range
+  if (config.currentSequential < config.reservedStart) {
+    console.error('❌ Current sequential below reserved start - data corruption detected');
+    return null;
+  }
+
   // Use next number from reserved batch (INSTANT - no backend call)
   const nextSequential = config.currentSequential;
   
@@ -170,13 +176,16 @@ export const generateOfflineReference = async (): Promise<string | null> => {
   // Generate reference
   const reference = `${config.companyCode}${config.deviceCode}${nextSequential}`;
   
-  console.log(`⚡ Instant reference: ${reference} (${config.reservedEnd - nextSequential - 1} remaining)`);
+  const remaining = config.reservedEnd - nextSequential - 1;
+  console.log(`⚡ Instant reference: ${reference} (${remaining} remaining in batch)`);
   
   // Background refill if running low (non-blocking)
-  if (config.reservedEnd - nextSequential <= REFILL_THRESHOLD && navigator.onLine) {
+  if (remaining <= REFILL_THRESHOLD && navigator.onLine) {
     console.log('🔄 Background batch refill triggered');
     // Don't await - let it happen in background
-    reserveBatch(await getDeviceFingerprint()).catch(() => {});
+    reserveBatch(await getDeviceFingerprint()).catch(err => {
+      console.error('Background refill failed:', err);
+    });
   }
   
   return reference;
