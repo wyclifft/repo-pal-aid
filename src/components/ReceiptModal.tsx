@@ -32,6 +32,7 @@ export const ReceiptModal = ({ receipts, companyName, open, onClose, onPrint }: 
       farmerName: firstReceipt.farmer_name,
       farmerId: firstReceipt.farmer_id,
       route: firstReceipt.route,
+      session: firstReceipt.session,
       collectorName: firstReceipt.clerk_name,
       collections
     });
