@@ -160,12 +160,13 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         const userWithPassword: AppUser = { 
           ...userData, 
           password,
-          role: userData.admin ? 'admin' : 'user' // Set role based on admin flag
+          role: userData.admin ? 'admin' : (userData.supervisor ? 'supervisor' : 'user')
         };
         
         console.log('👤 Login successful - User data:', {
           user_id: userData.user_id,
           admin: userData.admin,
+          supervisor: userData.supervisor,
           role: userWithPassword.role
         });
         
