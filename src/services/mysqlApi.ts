@@ -229,13 +229,17 @@ export const milkCollectionApi = {
 
   /**
    * Create new milk collection
+   * Returns both success status and the final reference number (may differ if backend regenerated it)
    */
-  create: async (collection: Omit<MilkCollection, 'id' | 'created_at' | 'updated_at'>): Promise<boolean> => {
-    const response = await apiRequest<any>('/milk-collection', {
+  create: async (collection: Omit<MilkCollection, 'id' | 'created_at' | 'updated_at'>): Promise<{ success: boolean; reference_no?: string }> => {
+    const response = await apiRequest<{ reference_no: string }>('/milk-collection', {
       method: 'POST',
       body: JSON.stringify(collection),
     });
-    return response.success || false;
+    return { 
+      success: response.success || false,
+      reference_no: response.data?.reference_no || collection.reference_no
+    };
   },
 
   /**

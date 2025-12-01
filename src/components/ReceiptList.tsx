@@ -76,13 +76,18 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
         console.log(`🔄 Syncing offline receipt: ${receipt.reference_no} - ${receipt.farmer_id} - ${milkData.weight}Kg`);
         
         // Always create new record - no grouping or accumulation
-        const createSuccess = await mysqlApi.milkCollection.create(milkData);
+        const result = await mysqlApi.milkCollection.create(milkData);
         
-        if (createSuccess) {
+        if (result.success) {
+          // Check if backend regenerated the reference number
+          if (result.reference_no && result.reference_no !== receipt.reference_no) {
+            console.log(`🔄 Backend regenerated reference: ${receipt.reference_no} → ${result.reference_no}`);
+          }
+          
           await deleteReceipt(receipt.orderId!);
           syncedCount++;
           setSyncProgress({ synced: syncedCount, total: totalReceipts });
-          console.log(`✅ Synced offline receipt: ${receipt.reference_no}`);
+          console.log(`✅ Synced offline receipt: ${receipt.reference_no} (final: ${result.reference_no})`);
         } else {
           console.error(`❌ Failed to sync receipt: ${receipt.reference_no}`);
         }

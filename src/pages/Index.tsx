@@ -153,11 +153,21 @@ const Index = () => {
         console.log('⚖️ Weight:', onlineMilkData.weight, 'Kg');
         console.log('📅 Session:', session);
         
-        const created = await mysqlApi.milkCollection.create(onlineMilkData);
+        const result = await mysqlApi.milkCollection.create(onlineMilkData);
         
-        if (created) {
+        if (result.success) {
+          // Check if backend regenerated the reference number
+          const finalReferenceNo = result.reference_no || referenceNo;
+          if (finalReferenceNo !== referenceNo) {
+            console.log(`🔄 Backend regenerated reference: ${referenceNo} → ${finalReferenceNo}`);
+          }
+          
           console.log('✅ NEW record created successfully in database');
-          milkData = { ...onlineMilkData, synced: true };
+          milkData = { 
+            ...onlineMilkData, 
+            reference_no: finalReferenceNo,
+            synced: true 
+          };
         } else {
           throw new Error('Failed to create record');
         }
