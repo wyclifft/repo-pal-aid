@@ -588,6 +588,7 @@ export const printReceipt = async (data: {
   companyName?: string;
   farmerName: string;
   farmerId: string;
+  collectorName: string;
   collections: Array<{
     time: string;
     weight: number;
@@ -614,6 +615,7 @@ export const printReceipt = async (data: {
 ${separator}
 Farmer: ${data.farmerId}
 ${data.farmerName}
+Collector: ${data.collectorName}
 Date: ${currentDate}
 ${separator}
 #  TIME     LITERS
