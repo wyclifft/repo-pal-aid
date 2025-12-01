@@ -6,11 +6,12 @@ import { toast } from 'sonner';
 
 interface ReceiptModalProps {
   receipts: MilkCollection[];
+  companyName: string;
   open: boolean;
   onClose: () => void;
 }
 
-export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => {
+export const ReceiptModal = ({ receipts, companyName, open, onClose }: ReceiptModalProps) => {
   const handlePrint = async () => {
     if (receipts.length === 0) return;
 
@@ -26,7 +27,7 @@ export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => 
     }));
 
     const result = await printReceipt({
-      companyName: 'DAIRY COLLECTION',
+      companyName: companyName,
       farmerName: firstReceipt.farmer_name,
       farmerId: firstReceipt.farmer_id,
       collectorName: firstReceipt.clerk_name,
@@ -60,7 +61,7 @@ export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => 
         <div className="space-y-3">
           {/* Company Name Header */}
           <div className="text-center border-b pb-2">
-            <h3 className="font-bold text-base">DAIRY COLLECTION</h3>
+            <h3 className="font-bold text-base">{companyName}</h3>
           </div>
 
           {/* Compact Farmer Info */}
