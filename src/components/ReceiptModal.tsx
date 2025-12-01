@@ -37,7 +37,6 @@ export const ReceiptModal = ({ receipts, companyName, open, onClose, onPrint }: 
 
     if (result.success) {
       toast.success('Receipt printed successfully');
-      onPrint?.(); // Notify parent component of successful print
     } else {
       if (result.error?.includes('No printer connected')) {
         toast.info('No Bluetooth printer connected. Opening browser print...');
@@ -46,6 +45,9 @@ export const ReceiptModal = ({ receipts, companyName, open, onClose, onPrint }: 
         toast.error(result.error || 'Failed to print receipt');
       }
     }
+    
+    // Always save receipt for reprinting, regardless of print method
+    onPrint?.();
   };
 
   if (receipts.length === 0) return null;
