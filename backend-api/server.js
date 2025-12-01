@@ -1150,7 +1150,7 @@ const server = http.createServer(async (req, res) => {
       const user = rows[0];
       
       // Helper to convert MySQL bit/tinyint to boolean
-      const toBool = (value: any): boolean => {
+      const toBool = (value) => {
         if (value === null || value === undefined) return false;
         if (typeof value === 'boolean') return value;
         if (typeof value === 'number') return value === 1;
