@@ -14,7 +14,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert, Trash2 } from 'lucide-react';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -349,6 +349,18 @@ const Index = () => {
     setReceiptModalOpen(true);
   };
 
+  const handleClearCaptures = () => {
+    if (capturedCollections.length === 0) {
+      toast.error('No pending captures to clear');
+      return;
+    }
+    
+    // Clear captured collections and reset state
+    setCapturedCollections([]);
+    setLastSavedWeight(0);
+    toast.success(`Cleared ${capturedCollections.length} pending receipt${capturedCollections.length !== 1 ? 's' : ''}`);
+  };
+
   const scrollToSection = (sectionId: string) => {
     const element = document.getElementById(sectionId);
     if (element) {
@@ -667,6 +679,13 @@ const Index = () => {
             >
               <Printer className="h-5 w-5" />
               Print All
+            </button>
+            <button
+              onClick={handleClearCaptures}
+              disabled={capturedCollections.length === 0}
+              className="px-4 py-3 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              <Trash2 className="h-5 w-5" />
             </button>
           </div>
         </div>
