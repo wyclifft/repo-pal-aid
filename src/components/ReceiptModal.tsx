@@ -58,6 +58,11 @@ export const ReceiptModal = ({ receipts, open, onClose }: ReceiptModalProps) => 
         </DialogHeader>
 
         <div className="space-y-3">
+          {/* Company Name Header */}
+          <div className="text-center border-b pb-2">
+            <h3 className="font-bold text-base">DAIRY COLLECTION</h3>
+          </div>
+
           {/* Compact Farmer Info */}
           <div className="text-sm space-y-1">
             <div className="flex justify-between">
