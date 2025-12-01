@@ -157,10 +157,16 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           }
         }
 
+        // Explicitly convert admin and supervisor to boolean for role assignment
+        const isAdmin = Boolean(userData.admin);
+        const isSupervisor = Boolean(userData.supervisor);
+        
+        console.log('👤 Role assignment - admin:', userData.admin, 'isAdmin:', isAdmin, 'supervisor:', userData.supervisor, 'isSupervisor:', isSupervisor);
+        
         const userWithPassword: AppUser = { 
           ...userData, 
           password,
-          role: userData.admin ? 'admin' : (userData.supervisor ? 'supervisor' : 'user')
+          role: isAdmin ? 'admin' : (isSupervisor ? 'supervisor' : 'user')
         };
         
         console.log('👤 Login successful - User data:', {

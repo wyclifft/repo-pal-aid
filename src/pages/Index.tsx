@@ -5,6 +5,7 @@ import { FarmerSearch } from '@/components/FarmerSearch';
 import { WeightInput } from '@/components/WeightInput';
 import { ReceiptList } from '@/components/ReceiptList';
 import { ReceiptModal } from '@/components/ReceiptModal';
+import { ReprintModal } from '@/components/ReprintModal';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { useAuth } from '@/contexts/AuthContext';
 import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
@@ -13,7 +14,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference, syncReferenceCounter } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt } from 'lucide-react';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -25,7 +26,28 @@ const Index = () => {
     return localStorage.getItem('device_company_name') || 'DAIRY COLLECTION';
   });
 
-  // Farmer details
+  // Reprint receipts state
+  const [reprintModalOpen, setReprintModalOpen] = useState(false);
+  const [printedReceipts, setPrintedReceipts] = useState<Array<{
+    farmerId: string;
+    farmerName: string;
+    collections: MilkCollection[];
+    printedAt: Date;
+  }>>([]);
+
+  const handleSavePrintedReceipt = () => {
+    if (capturedCollections.length === 0) return;
+    
+    const newPrintedReceipt = {
+      farmerId: capturedCollections[0].farmer_id,
+      farmerName: capturedCollections[0].farmer_name,
+      collections: capturedCollections,
+      printedAt: new Date()
+    };
+    
+    // Keep only last 20 receipts
+    setPrintedReceipts(prev => [newPrintedReceipt, ...prev].slice(0, 20));
+  };
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
   const [route, setRoute] = useState('');
@@ -313,6 +335,13 @@ const Index = () => {
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setReprintModalOpen(true)}
+              className="p-2 hover:bg-gray-100 rounded"
+              aria-label="Reprint Receipts"
+            >
+              <Receipt className="h-5 w-5 text-gray-700" />
+            </button>
+            <button
               onClick={() => navigate('/settings')}
               className="p-2 hover:bg-gray-100 rounded"
               aria-label="Settings"
@@ -539,7 +568,16 @@ const Index = () => {
             setReceiptModalOpen(false);
             setCapturedCollections([]);
           }}
+          onPrint={handleSavePrintedReceipt}
         />
+
+      {/* Reprint Modal */}
+      <ReprintModal
+        open={reprintModalOpen}
+        onClose={() => setReprintModalOpen(false)}
+        receipts={printedReceipts}
+        companyName={companyName}
+      />
     </div>
   );
 };
