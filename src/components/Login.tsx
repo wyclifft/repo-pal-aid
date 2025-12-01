@@ -162,6 +162,13 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           password,
           role: userData.admin ? 'admin' : 'user' // Set role based on admin flag
         };
+        
+        console.log('👤 Login successful - User data:', {
+          user_id: userData.user_id,
+          admin: userData.admin,
+          role: userWithPassword.role
+        });
+        
         saveUser(userWithPassword);
         onLogin(userWithPassword, false, password); // Pass password to cache credentials
         toast.success('Login successful');
@@ -200,6 +207,12 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           admin: cachedCreds.admin,
           supervisor: cachedCreds.supervisor
         };
+        
+        console.log('👤 Offline login - Cached user data:', {
+          user_id: cachedCreds.user_id,
+          admin: cachedCreds.admin,
+          role: cachedCreds.role
+        });
 
         // Check cached device approval status using fingerprint
         const cachedApproval = await getDeviceApproval(deviceFingerprint);

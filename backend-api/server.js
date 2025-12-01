@@ -1149,6 +1149,16 @@ const server = http.createServer(async (req, res) => {
       
       const user = rows[0];
       
+      // Helper to convert MySQL bit/tinyint to boolean
+      const toBool = (value: any): boolean => {
+        if (value === null || value === undefined) return false;
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') return value === 1;
+        if (Buffer.isBuffer(value)) return value[0] === 1;
+        if (typeof value === 'string') return value === '1' || value.toLowerCase() === 'true';
+        return Boolean(value);
+      };
+      
       // Return user data (excluding sensitive password field)
       return sendJSON(res, { 
         success: true, 
@@ -1157,8 +1167,8 @@ const server = http.createServer(async (req, res) => {
           username: user.username,
           email: user.email,
           ccode: user.ccode,
-          admin: user.admin === 1,
-          supervisor: user.supervisor === 1,
+          admin: toBool(user.admin),
+          supervisor: toBool(user.supervisor),
           dcode: user.dcode,
           groupid: user.groupid,
           depart: user.depart
