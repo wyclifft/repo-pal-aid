@@ -372,7 +372,8 @@ const server = http.createServer(async (req, res) => {
       const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
     
       // Helper function to attempt insert with auto-regeneration on duplicate
-      const attemptInsert = async (attemptTransrefno, maxRetries = 5) => {
+      // Increased retries for production stability
+      const attemptInsert = async (attemptTransrefno, maxRetries = 50) => {
         for (let attempt = 0; attempt < maxRetries; attempt++) {
           try {
             await pool.query(
@@ -392,6 +393,12 @@ const server = http.createServer(async (req, res) => {
             if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
               console.warn(`⚠️ Duplicate reference ${attemptTransrefno} detected (attempt ${attempt + 1}/${maxRetries})`);
               
+              // Add exponential backoff delay to reduce race conditions
+              if (attempt > 0) {
+                const delay = Math.min(100 * Math.pow(2, attempt - 1), 2000);
+                await new Promise(resolve => setTimeout(resolve, delay));
+              }
+              
               // Regenerate a new reference number
               const connection = await pool.getConnection();
               try {
@@ -408,6 +415,7 @@ const server = http.createServer(async (req, res) => {
                 
                 if (companyAndDeviceRows.length === 0) {
                   await connection.rollback();
+                  connection.release();
                   throw new Error('Company or device not found');
                 }
                 
@@ -417,10 +425,11 @@ const server = http.createServer(async (req, res) => {
                 const deviceCode = String(devcode).padStart(5, '0');
                 const devicePrefix = `${companyPrefix}${deviceCode}`;
                 
-                // Get the last transaction number with row lock
+                // Get the highest transaction number across ALL devices for this prefix with row lock
+                // This ensures we don't have race conditions between devices
                 const [lastTransRows] = await connection.query(
-                  'SELECT transrefno FROM transactions WHERE deviceserial = ? AND transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
-                  [deviceserial, `${devicePrefix}%`]
+                  'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
+                  [`${devicePrefix}%`]
                 );
                 
                 let nextNumber = 1;
@@ -434,20 +443,20 @@ const server = http.createServer(async (req, res) => {
                 await connection.commit();
                 connection.release();
                 
-                console.log(`🔄 Generated new reference: ${attemptTransrefno}`);
+                console.log(`🔄 Generated new reference: ${attemptTransrefno} (retry ${attempt + 1}/${maxRetries})`);
               } catch (genError) {
                 await connection.rollback();
                 connection.release();
                 throw genError;
               }
             } else {
-              // Not a duplicate error, or max retries reached
+              // Not a duplicate error
               throw error;
             }
           }
         }
         
-        throw new Error('Max retries reached for generating unique reference number');
+        throw new Error(`Max retries (${maxRetries}) reached for generating unique reference number`);
       };
       
       try {
