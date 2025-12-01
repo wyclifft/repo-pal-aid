@@ -21,6 +21,11 @@ export const FarmerSearch = ({ onSelectFarmer, value }: FarmerSearchProps) => {
   const { getFarmers, saveFarmers } = useIndexedDB();
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Sync searchQuery with value prop when it changes (for Clear Farmer functionality)
+  useEffect(() => {
+    setSearchQuery(value);
+  }, [value]);
+
   // Load cached farmers immediately on mount
   useEffect(() => {
     const loadCached = async () => {
