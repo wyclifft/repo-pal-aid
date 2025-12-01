@@ -499,6 +499,41 @@ export const useIndexedDB = () => {
     }
   }, [db]);
 
+  /**
+   * Clear all unsynced receipts from IndexedDB
+   */
+  const clearUnsyncedReceipts = useCallback(async (): Promise<number> => {
+    if (!db) return 0;
+    try {
+      const unsyncedReceipts = await getUnsyncedReceipts();
+      const count = unsyncedReceipts.length;
+      
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('receipts', 'readwrite');
+        const store = tx.objectStore('receipts');
+        
+        // Delete each unsynced receipt
+        unsyncedReceipts.forEach((receipt) => {
+          if (receipt.orderId && typeof receipt.orderId === 'number') {
+            store.delete(receipt.orderId);
+          }
+        });
+        
+        tx.oncomplete = () => {
+          console.log(`✅ Cleared ${count} unsynced receipts from IndexedDB`);
+          resolve(count);
+        };
+        tx.onerror = () => {
+          console.error('❌ Failed to clear unsynced receipts:', tx.error);
+          reject(tx.error);
+        };
+      });
+    } catch (error) {
+      console.error('Failed to clear unsynced receipts:', error);
+      return 0;
+    }
+  }, [db, getUnsyncedReceipts]);
+
   return {
     db,
     isReady,
@@ -522,5 +557,6 @@ export const useIndexedDB = () => {
     getPeriodicReport,
     savePrintedReceipts,
     getPrintedReceipts,
+    clearUnsyncedReceipts,
   };
 };

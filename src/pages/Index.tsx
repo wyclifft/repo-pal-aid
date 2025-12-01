@@ -83,7 +83,7 @@ const Index = () => {
   // Captured collections for batch printing
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
 
-  const { saveReceipt, savePrintedReceipts, getPrintedReceipts, isReady } = useIndexedDB();
+  const { saveReceipt, savePrintedReceipts, getPrintedReceipts, getUnsyncedReceipts, clearUnsyncedReceipts, isReady } = useIndexedDB();
 
   // Load printed receipts from IndexedDB on mount
   useEffect(() => {
@@ -355,16 +355,27 @@ const Index = () => {
     setReceiptModalOpen(true);
   };
 
-  const handleClearCaptures = () => {
-    if (capturedCollections.length === 0) {
-      toast.error('No pending captures to clear');
-      return;
+  const handleClearCaptures = async () => {
+    try {
+      // Get count of unsynced receipts
+      const unsyncedReceipts = await getUnsyncedReceipts();
+      const count = unsyncedReceipts.length;
+      
+      if (count === 0) {
+        toast.error('No pending receipts to delete');
+        return;
+      }
+      
+      // Clear all unsynced receipts from IndexedDB
+      await clearUnsyncedReceipts();
+      toast.success(`Deleted ${count} pending receipt${count !== 1 ? 's' : ''} waiting to sync`);
+      
+      // Trigger refresh to update UI if needed
+      setRefreshTrigger(prev => prev + 1);
+    } catch (error) {
+      console.error('Failed to clear pending receipts:', error);
+      toast.error('Failed to delete pending receipts');
     }
-    
-    // Clear captured collections and reset state
-    setCapturedCollections([]);
-    setLastSavedWeight(0);
-    toast.success(`Cleared ${capturedCollections.length} pending receipt${capturedCollections.length !== 1 ? 's' : ''}`);
   };
 
   const scrollToSection = (sectionId: string) => {
@@ -688,8 +699,7 @@ const Index = () => {
             </button>
             <button
               onClick={handleClearCaptures}
-              disabled={capturedCollections.length === 0}
-              className="px-4 py-3 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="px-4 py-3 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
             >
               <Trash2 className="h-5 w-5" />
             </button>
