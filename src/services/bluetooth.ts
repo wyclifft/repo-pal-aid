@@ -375,8 +375,49 @@ export const quickReconnect = async (
       scale = { device, characteristic: characteristicUuid, type: scaleType };
       
       return { success: true, type: scaleType };
+    } else if ('bluetooth' in navigator) {
+      // Web Bluetooth API support for PWA on mobile browsers
+      const storedInfo = getStoredDeviceInfo();
+      if (!storedInfo) {
+        return { success: false, type: 'Unknown', error: 'No stored device info' };
+      }
+
+      const scaleType = storedInfo.scaleType;
+      const serviceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
+
+      // Request device with saved ID
+      const device = await (navigator as any).bluetooth.requestDevice({
+        filters: [{ services: [serviceUuid] }],
+      });
+
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(serviceUuid);
+      
+      // Get the first characteristic that supports notifications
+      const characteristics = await service.getCharacteristics();
+      const notifyCharacteristic = characteristics.find((c: any) => c.properties.notify);
+      
+      if (!notifyCharacteristic) {
+        return { success: false, type: 'Unknown', error: 'No notify characteristic found' };
+      }
+
+      await notifyCharacteristic.startNotifications();
+      notifyCharacteristic.addEventListener('characteristicvaluechanged', (event: any) => {
+        const value = event.target.value;
+        const text = new TextDecoder().decode(value);
+        const match = text.match(/(\d+\.\d+)/);
+        if (match) {
+          const parsed = parseFloat(match[1]);
+          if (!isNaN(parsed)) {
+            onWeightUpdate(parsed, scaleType);
+          }
+        }
+      });
+
+      scale = { device, characteristic: notifyCharacteristic.uuid, type: scaleType };
+      return { success: true, type: scaleType };
     } else {
-      return { success: false, type: 'Unknown', error: 'Quick reconnect only available on mobile' };
+      return { success: false, type: 'Unknown', error: 'Bluetooth not available on this device' };
     }
   } catch (error: any) {
     console.error('Failed to reconnect to scale:', error);
@@ -440,8 +481,19 @@ export const quickReconnectPrinter = async (deviceId: string): Promise<{
       printer = { device, characteristic: null };
       
       return { success: true };
+    } else if ('bluetooth' in navigator) {
+      // Web Bluetooth API support for PWA on mobile browsers
+      const device = await (navigator as any).bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [PRINTER_SERVICE_UUID],
+      });
+
+      const server = await device.gatt.connect();
+      printer = { device, characteristic: null };
+      
+      return { success: true };
     } else {
-      return { success: false, error: 'Quick reconnect only available on mobile' };
+      return { success: false, error: 'Bluetooth not available on this device' };
     }
   } catch (error: any) {
     console.error('Failed to reconnect to printer:', error);
