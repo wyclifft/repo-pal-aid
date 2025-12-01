@@ -642,6 +642,7 @@ export const printReceipt = async (data: {
   farmerId: string;
   route?: string;
   session?: string;
+  referenceNo?: string;
   collectorName: string;
   collections: Array<{
     time: string;
@@ -672,6 +673,7 @@ ${data.farmerName}
 ${data.route ? `Route: ${data.route}` : ''}${data.session ? ` | ${data.session}` : ''}
 Collector: ${data.collectorName}
 Date: ${currentDate}
+${data.referenceNo ? `Ref: ${data.referenceNo}` : ''}
 ${separator}
 #  TIME     LITERS
 ${separator}
