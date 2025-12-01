@@ -35,7 +35,7 @@ const Index = () => {
     printedAt: Date;
   }>>([]);
 
-  const handleSavePrintedReceipt = () => {
+  const handleSavePrintedReceipt = async () => {
     if (capturedCollections.length === 0) return;
     
     const newPrintedReceipt = {
@@ -46,7 +46,16 @@ const Index = () => {
     };
     
     // Keep only last 20 receipts
-    setPrintedReceipts(prev => [newPrintedReceipt, ...prev].slice(0, 20));
+    const updatedReceipts = [newPrintedReceipt, ...printedReceipts].slice(0, 20);
+    setPrintedReceipts(updatedReceipts);
+    
+    // Persist to IndexedDB for offline access
+    try {
+      await savePrintedReceipts(updatedReceipts);
+      console.log('✅ Printed receipt saved to IndexedDB');
+    } catch (error) {
+      console.error('Failed to save printed receipt:', error);
+    }
   };
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
@@ -66,7 +75,26 @@ const Index = () => {
   // Captured collections for batch printing
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
 
-  const { saveReceipt } = useIndexedDB();
+  const { saveReceipt, savePrintedReceipts, getPrintedReceipts, isReady } = useIndexedDB();
+
+  // Load printed receipts from IndexedDB on mount
+  useEffect(() => {
+    if (!isReady) return;
+    
+    const loadPrintedReceipts = async () => {
+      try {
+        const cached = await getPrintedReceipts();
+        if (cached && cached.length > 0) {
+          setPrintedReceipts(cached);
+          console.log(`📦 Loaded ${cached.length} printed receipts from cache`);
+        }
+      } catch (error) {
+        console.error('Failed to load printed receipts:', error);
+      }
+    };
+    
+    loadPrintedReceipts();
+  }, [isReady, getPrintedReceipts]);
 
   // Reset lastSavedWeight when scale reads 0 (ready for next collection)
   useEffect(() => {

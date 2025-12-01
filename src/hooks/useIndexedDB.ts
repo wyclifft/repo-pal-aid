@@ -457,6 +457,48 @@ export const useIndexedDB = () => {
     }
   }, [db]);
 
+  /**
+   * Save printed receipts list for reprint functionality
+   */
+  const savePrintedReceipts = useCallback(async (receipts: any[]) => {
+    if (!db) return;
+    try {
+      return new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('receipts', 'readwrite');
+        const store = tx.objectStore('receipts');
+        // Use special orderId for printed receipts storage
+        const request = store.put({
+          orderId: 'PRINTED_RECEIPTS',
+          receipts: receipts,
+          lastUpdated: new Date()
+        });
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      });
+    } catch (error) {
+      console.error('Failed to save printed receipts:', error);
+    }
+  }, [db]);
+
+  /**
+   * Get saved printed receipts for reprint functionality
+   */
+  const getPrintedReceipts = useCallback(async (): Promise<any[]> => {
+    if (!db) return [];
+    try {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('receipts', 'readonly');
+        const store = tx.objectStore('receipts');
+        const request = store.get('PRINTED_RECEIPTS');
+        request.onsuccess = () => resolve(request.result?.receipts || []);
+        request.onerror = () => reject(request.error);
+      });
+    } catch (error) {
+      console.error('Failed to get printed receipts:', error);
+      return [];
+    }
+  }, [db]);
+
   return {
     db,
     isReady,
@@ -478,5 +520,7 @@ export const useIndexedDB = () => {
     getZReport,
     savePeriodicReport,
     getPeriodicReport,
+    savePrintedReceipts,
+    getPrintedReceipts,
   };
 };
