@@ -60,7 +60,11 @@ const Index = () => {
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
   const [route, setRoute] = useState('');
-  const [session, setSession] = useState('');
+  const [session, setSession] = useState(() => {
+    // Auto-detect session based on current time
+    const currentHour = new Date().getHours();
+    return currentHour < 12 ? 'AM' : 'PM';
+  });
   const [searchValue, setSearchValue] = useState('');
 
   // Weight
@@ -95,6 +99,25 @@ const Index = () => {
     
     loadPrintedReceipts();
   }, [isReady, getPrintedReceipts]);
+
+  // Auto-detect and update session based on time of day
+  useEffect(() => {
+    const updateSession = () => {
+      const currentHour = new Date().getHours();
+      const detectedSession = currentHour < 12 ? 'AM' : 'PM';
+      
+      if (session !== detectedSession) {
+        setSession(detectedSession);
+        console.log(`🕐 Session auto-updated to ${detectedSession} based on current time`);
+      }
+    };
+
+    // Update session on mount and every minute to handle time changes
+    updateSession();
+    const interval = setInterval(updateSession, 60000); // Check every minute
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Reset lastSavedWeight when scale reads 0 (ready for next collection)
   useEffect(() => {
@@ -533,32 +556,39 @@ const Index = () => {
             readOnly
             className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 mb-3"
           />
-          <select
-            value={session}
-            onChange={(e) => {
-              const selectedSession = e.target.value;
-              const currentHour = new Date().getHours();
-              
-              // Block PM selection during AM hours (before 12 PM)
-              if (selectedSession === 'PM' && currentHour < 12) {
-                toast.error('Cannot select PM session during AM hours');
-                return;
-              }
-              
-              // Block AM selection during PM hours (after 12 PM)
-              if (selectedSession === 'AM' && currentHour >= 12) {
-                toast.error('Cannot select AM session during PM hours');
-                return;
-              }
-              
-              setSession(selectedSession);
-            }}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
-          >
-            <option value="">Select Session</option>
-            <option value="AM">AM (Morning)</option>
-            <option value="PM">PM (Evening)</option>
-          </select>
+          <div className="mb-3">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">
+              Session (Auto-detected)
+            </label>
+            <select
+              value={session}
+              onChange={(e) => {
+                const selectedSession = e.target.value;
+                const currentHour = new Date().getHours();
+                
+                // Block PM selection during AM hours (before 12 PM)
+                if (selectedSession === 'PM' && currentHour < 12) {
+                  toast.error('Cannot select PM session during AM hours');
+                  return;
+                }
+                
+                // Block AM selection during PM hours (after 12 PM)
+                if (selectedSession === 'AM' && currentHour >= 12) {
+                  toast.error('Cannot select AM session during PM hours');
+                  return;
+                }
+                
+                setSession(selectedSession);
+              }}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea] bg-green-50"
+            >
+              <option value="AM">AM (Morning)</option>
+              <option value="PM">PM (Evening)</option>
+            </select>
+            <p className="text-xs text-gray-500 mt-1">
+              ✓ Session automatically set based on current time
+            </p>
+          </div>
         </div>
 
         {/* Weight Card */}
