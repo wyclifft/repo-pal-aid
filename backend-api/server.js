@@ -1122,7 +1122,7 @@ const server = http.createServer(async (req, res) => {
       
       // Query user table with trim to handle whitespace
       const [rows] = await pool.query(
-        'SELECT * FROM user WHERE TRIM(userid) = ? AND TRIM(cPassword) = ?',
+        'SELECT * FROM user WHERE TRIM(userid) = ? AND TRIM(password) = ?',
         [userid.trim(), password.trim()]
       );
       
@@ -1131,7 +1131,7 @@ const server = http.createServer(async (req, res) => {
       if (rows.length === 0) {
         // Debug: Check if user exists
         const [userCheck] = await pool.query(
-          'SELECT userid, LENGTH(cPassword) as pwd_len FROM user WHERE TRIM(userid) = ?',
+          'SELECT userid, LENGTH(password) as pwd_len FROM user WHERE TRIM(userid) = ?',
           [userid.trim()]
         );
         
