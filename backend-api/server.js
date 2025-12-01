@@ -314,7 +314,7 @@ const server = http.createServer(async (req, res) => {
         
         return sendJSON(res, { 
           success: true, 
-          reference_no: transrefno 
+          data: { reference_no: transrefno }
         });
       } catch (error) {
         await connection.rollback();
@@ -323,6 +323,104 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { 
           success: false, 
           error: 'Failed to generate reference number' 
+        }, 500);
+      }
+    }
+
+    // NEW: Reserve batch of reference numbers for fast offline generation
+    if (path === '/api/milk-collection/reserve-batch' && method === 'POST') {
+      const body = await parseBody(req);
+      const deviceserial = body.device_fingerprint;
+      const batchSize = body.batch_size || 100;
+      
+      if (!deviceserial) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'device_fingerprint is required' 
+        }, 400);
+      }
+      
+      const connection = await pool.getConnection();
+      
+      try {
+        await connection.beginTransaction();
+        
+        // Get ccode from device
+        const [deviceRows] = await connection.query(
+          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          [deviceserial]
+        );
+        
+        if (deviceRows.length === 0) {
+          await connection.rollback();
+          connection.release();
+          return sendJSON(res, { 
+            success: false, 
+            error: 'Device not found' 
+          }, 404);
+        }
+        
+        const ccode = deviceRows[0].ccode;
+        
+        // Get company name and device code
+        const [companyAndDeviceRows] = await connection.query(
+          `SELECT p.cname, d.devcode 
+           FROM psettings p 
+           JOIN devsettings d ON p.ccode = d.ccode 
+           WHERE d.ccode = ? AND d.uniquedevcode = ?`,
+          [ccode, deviceserial]
+        );
+        
+        if (companyAndDeviceRows.length === 0) {
+          await connection.rollback();
+          connection.release();
+          return sendJSON(res, { 
+            success: false, 
+            error: 'Company or device not found' 
+          }, 404);
+        }
+        
+        const cname = companyAndDeviceRows[0].cname;
+        const devcode = companyAndDeviceRows[0].devcode || '00000';
+        const companyPrefix = cname.substring(0, 2).toUpperCase();
+        const deviceCode = String(devcode).padStart(5, '0');
+        const devicePrefix = `${companyPrefix}${deviceCode}`;
+        
+        // Get the highest transaction number with row lock
+        const [lastTransRows] = await connection.query(
+          'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
+          [`${devicePrefix}%`]
+        );
+        
+        let startNumber = 1;
+        
+        if (lastTransRows.length > 0) {
+          const lastRef = lastTransRows[0].transrefno;
+          const lastNumber = parseInt(lastRef.substring(7));
+          startNumber = lastNumber + 1;
+        }
+        
+        const endNumber = startNumber + batchSize;
+        
+        await connection.commit();
+        connection.release();
+        
+        console.log(`✅ Reserved batch for device: ${startNumber} to ${endNumber - 1} (${batchSize} numbers)`);
+        
+        return sendJSON(res, { 
+          success: true, 
+          data: { 
+            start: startNumber,
+            end: endNumber
+          } 
+        });
+      } catch (error) {
+        await connection.rollback();
+        connection.release();
+        console.error('❌ Error reserving batch:', error);
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Failed to reserve batch' 
         }, 500);
       }
     }

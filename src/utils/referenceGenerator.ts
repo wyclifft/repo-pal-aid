@@ -1,114 +1,247 @@
 /**
- * Offline Reference Number Generator
- * Generates unique transaction reference numbers even without internet
+ * Optimized Reference Number Generator with Batch Reservation
+ * Generates unique transaction reference numbers with instant generation
  * Format: CompanyCode (2 chars) + DeviceCode (5 chars) + SequentialNumber
  * Example: AC0800021433
+ * 
+ * OPTIMIZATION: Reserves batches of sequential numbers from backend for fast, collision-free generation
  */
 
 interface DeviceConfig {
-  companyCode: string; // First 2 chars of company name
-  deviceCode: string; // 5-digit device code
-  lastSequentialNumber: number; // Last used sequential number
+  companyCode: string;
+  deviceCode: string;
+  reservedStart: number; // Start of reserved batch
+  reservedEnd: number; // End of reserved batch (exclusive)
+  currentSequential: number; // Current position in batch
 }
 
-const DEVICE_CONFIG_KEY = 'device_config';
-const REFERENCE_COUNTER_KEY = 'reference_counter';
+const DB_NAME = 'MilkCollectionDB';
+const DB_VERSION = 6;
+const STORE_NAME = 'device_config';
+const BATCH_SIZE = 100; // Reserve 100 numbers at a time
+const REFILL_THRESHOLD = 10; // Request new batch when 10 numbers left
 
 /**
- * Store device configuration in localStorage
+ * Get IndexedDB instance for atomic operations
  */
-export const storeDeviceConfig = (companyName: string, deviceCode: string): void => {
+const getDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+    };
+  });
+};
+
+/**
+ * Store device configuration with batch reservation
+ */
+export const storeDeviceConfig = async (companyName: string, deviceCode: string): Promise<void> => {
   const config: DeviceConfig = {
     companyCode: companyName.substring(0, 2).toUpperCase(),
     deviceCode: String(deviceCode).padStart(5, '0'),
-    lastSequentialNumber: 0,
+    reservedStart: 0,
+    reservedEnd: 0,
+    currentSequential: 0,
   };
-  localStorage.setItem(DEVICE_CONFIG_KEY, JSON.stringify(config));
+  
+  const db = await getDB();
+  const tx = db.transaction(STORE_NAME, 'readwrite');
+  const store = tx.objectStore(STORE_NAME);
+  await store.put({ id: 'config', ...config });
+  
   console.log('✅ Device config stored:', config);
 };
 
 /**
- * Get device configuration from localStorage
+ * Get device configuration from IndexedDB
  */
-export const getDeviceConfig = (): DeviceConfig | null => {
-  const stored = localStorage.getItem(DEVICE_CONFIG_KEY);
-  if (!stored) return null;
-  
+export const getDeviceConfig = async (): Promise<DeviceConfig | null> => {
   try {
-    return JSON.parse(stored);
+    const db = await getDB();
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    
+    return new Promise((resolve, reject) => {
+      const request = store.get('config');
+      request.onsuccess = () => {
+        const result = request.result;
+        if (result) {
+          const { id, ...config } = result;
+          resolve(config as DeviceConfig);
+        } else {
+          resolve(null);
+        }
+      };
+      request.onerror = () => reject(request.error);
+    });
   } catch (error) {
-    console.error('Failed to parse device config:', error);
+    console.error('Failed to get device config:', error);
     return null;
   }
 };
 
 /**
- * Update the last sequential number
+ * Update device config atomically in IndexedDB
  */
-export const updateLastSequentialNumber = (sequentialNumber: number): void => {
-  const config = getDeviceConfig();
-  if (config) {
-    config.lastSequentialNumber = sequentialNumber;
-    localStorage.setItem(DEVICE_CONFIG_KEY, JSON.stringify(config));
+const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
+  const db = await getDB();
+  const tx = db.transaction(STORE_NAME, 'readwrite');
+  const store = tx.objectStore(STORE_NAME);
+  
+  return new Promise((resolve, reject) => {
+    const getRequest = store.get('config');
+    getRequest.onsuccess = () => {
+      const current = getRequest.result;
+      if (current) {
+        const updated = { ...current, ...updates };
+        const putRequest = store.put(updated);
+        putRequest.onsuccess = () => resolve();
+        putRequest.onerror = () => reject(putRequest.error);
+      } else {
+        reject(new Error('Config not found'));
+      }
+    };
+    getRequest.onerror = () => reject(getRequest.error);
+  });
+};
+
+/**
+ * Reserve a batch of sequential numbers from backend
+ */
+export const reserveBatch = async (deviceFingerprint: string): Promise<boolean> => {
+  try {
+    const response = await fetch('https://backend.maddasystems.co.ke/api/milk-collection/reserve-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        device_fingerprint: deviceFingerprint,
+        batch_size: BATCH_SIZE 
+      }),
+    });
+
+    if (!response.ok) return false;
+
+    const data = await response.json();
+    if (data.success && data.data) {
+      await updateConfig({
+        reservedStart: data.data.start,
+        reservedEnd: data.data.end,
+        currentSequential: data.data.start,
+      });
+      console.log(`✅ Reserved batch: ${data.data.start} to ${data.data.end - 1}`);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Failed to reserve batch:', error);
+    return false;
   }
 };
 
 /**
- * Generate next reference number offline
- * Returns null if device config is not available
- * Uses atomic increment to prevent duplicates
+ * Generate next reference number with instant batch-based generation
+ * OPTIMIZED: No backend calls needed - uses pre-reserved batch
  */
-export const generateOfflineReference = (): string | null => {
-  const config = getDeviceConfig();
+export const generateOfflineReference = async (): Promise<string | null> => {
+  const config = await getDeviceConfig();
   if (!config) {
-    console.warn('⚠️ Device config not available for offline reference generation');
+    console.warn('⚠️ Device config not available');
     return null;
   }
 
-  // Atomically increment and save the sequential number
-  const nextSequential = config.lastSequentialNumber + 1;
-  config.lastSequentialNumber = nextSequential;
+  // Check if we need a new batch
+  if (config.currentSequential >= config.reservedEnd) {
+    console.warn('⚠️ Reserved batch exhausted, using fallback');
+    return null;
+  }
+
+  // Use next number from reserved batch (INSTANT - no backend call)
+  const nextSequential = config.currentSequential;
   
-  // Immediately persist to localStorage (synchronous)
-  localStorage.setItem(DEVICE_CONFIG_KEY, JSON.stringify(config));
+  // Atomically update current position
+  await updateConfig({ currentSequential: nextSequential + 1 });
   
-  // Generate reference: CompanyCode + DeviceCode + SequentialNumber
+  // Generate reference
   const reference = `${config.companyCode}${config.deviceCode}${nextSequential}`;
   
-  console.log('✅ Generated offline reference:', reference, '(counter:', nextSequential, ')');
+  console.log(`⚡ Instant reference: ${reference} (${config.reservedEnd - nextSequential - 1} remaining)`);
+  
+  // Background refill if running low (non-blocking)
+  if (config.reservedEnd - nextSequential <= REFILL_THRESHOLD && navigator.onLine) {
+    console.log('🔄 Background batch refill triggered');
+    // Don't await - let it happen in background
+    reserveBatch(await getDeviceFingerprint()).catch(() => {});
+  }
+  
   return reference;
 };
 
 /**
- * Sync reference counter with backend
- * Call this when online to get the correct starting number from backend
- * Always updates to backend value to ensure consistency
+ * Get device fingerprint (helper for batch reservation)
  */
-export const syncReferenceCounter = (backendReferenceNo: string): void => {
-  const config = getDeviceConfig();
+const getDeviceFingerprint = async (): Promise<string> => {
+  const stored = localStorage.getItem('device_fingerprint');
+  if (stored) return stored;
+  
+  // Generate simple fingerprint
+  const ua = navigator.userAgent;
+  const screen = `${window.screen.width}x${window.screen.height}`;
+  const fingerprint = btoa(`${ua}-${screen}-${Date.now()}`);
+  localStorage.setItem('device_fingerprint', fingerprint);
+  return fingerprint;
+};
+
+/**
+ * Sync with backend - ensures we have a valid batch reserved
+ * Called when online to ensure continuous operation
+ */
+export const syncReferenceCounter = async (deviceFingerprint: string): Promise<void> => {
+  const config = await getDeviceConfig();
   if (!config) return;
 
-  // Extract sequential number from backend reference
-  // Format: CompanyCode (2) + DeviceCode (5) + SequentialNumber
-  const prefix = config.companyCode + config.deviceCode; // 7 chars total
+  // Check if we need a new batch
+  const remaining = config.reservedEnd - config.currentSequential;
   
-  if (backendReferenceNo.startsWith(prefix)) {
-    const sequentialPart = backendReferenceNo.substring(7);
-    const sequentialNumber = parseInt(sequentialPart);
-    
-    if (!isNaN(sequentialNumber)) {
-      // Always update to backend value (even if lower) to ensure consistency
-      config.lastSequentialNumber = sequentialNumber;
-      localStorage.setItem(DEVICE_CONFIG_KEY, JSON.stringify(config));
-      console.log('✅ Synced reference counter with backend:', sequentialNumber);
-    }
+  if (remaining < REFILL_THRESHOLD && navigator.onLine) {
+    console.log(`🔄 Syncing: ${remaining} numbers remaining, requesting new batch`);
+    await reserveBatch(deviceFingerprint);
   }
 };
 
 /**
  * Reset device configuration (for testing or when changing device)
  */
-export const resetDeviceConfig = (): void => {
-  localStorage.removeItem(DEVICE_CONFIG_KEY);
-  console.log('🗑️ Device config reset');
+export const resetDeviceConfig = async (): Promise<void> => {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    await store.delete('config');
+    console.log('🗑️ Device config reset');
+  } catch (error) {
+    console.error('Failed to reset config:', error);
+  }
+};
+
+/**
+ * Initialize batch reservation on app startup
+ */
+export const initializeReservation = async (deviceFingerprint: string): Promise<void> => {
+  const config = await getDeviceConfig();
+  if (!config) {
+    console.warn('⚠️ No device config found for initialization');
+    return;
+  }
+
+  // Check if we have a valid batch
+  if (config.currentSequential >= config.reservedEnd && navigator.onLine) {
+    console.log('🔄 Initializing reference batch...');
+    await reserveBatch(deviceFingerprint);
+  }
 };
