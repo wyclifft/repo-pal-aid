@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 export const useDataSync = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
   const syncInProgress = useRef(false);
   
   const { 
@@ -14,8 +15,78 @@ export const useDataSync = () => {
     saveItems, 
     saveZReport, 
     savePeriodicReport,
+    getUnsyncedReceipts,
+    deleteReceipt,
     isReady 
   } = useIndexedDB();
+
+  // Sync offline receipts TO backend
+  const syncOfflineReceipts = useCallback(async (): Promise<{ synced: number; failed: number }> => {
+    if (!isReady || !navigator.onLine) {
+      return { synced: 0, failed: 0 };
+    }
+
+    try {
+      const unsyncedReceipts = await getUnsyncedReceipts();
+      if (unsyncedReceipts.length === 0) {
+        setPendingCount(0);
+        return { synced: 0, failed: 0 };
+      }
+
+      console.log(`📤 Syncing ${unsyncedReceipts.length} offline receipts to backend...`);
+      let synced = 0;
+      let failed = 0;
+
+      for (const receipt of unsyncedReceipts) {
+        // Skip non-milk collection records (like sales)
+        if ((receipt as any).type === 'sale') continue;
+
+        try {
+          const result = await mysqlApi.milkCollection.create({
+            reference_no: receipt.reference_no,
+            farmer_id: receipt.farmer_id,
+            farmer_name: receipt.farmer_name,
+            route: receipt.route,
+            session: receipt.session as 'AM' | 'PM',
+            weight: receipt.weight,
+            clerk_name: receipt.clerk_name,
+            collection_date: receipt.collection_date,
+          });
+
+          if (result.success && receipt.orderId) {
+            await deleteReceipt(receipt.orderId);
+            synced++;
+            console.log(`✅ Synced receipt ${receipt.reference_no}`);
+          } else {
+            failed++;
+            console.warn(`⚠️ Failed to sync receipt ${receipt.reference_no}`);
+          }
+        } catch (err) {
+          failed++;
+          console.error(`❌ Error syncing receipt:`, err);
+        }
+      }
+
+      setPendingCount(failed);
+      return { synced, failed };
+    } catch (err) {
+      console.error('Failed to sync offline receipts:', err);
+      return { synced: 0, failed: 0 };
+    }
+  }, [isReady, getUnsyncedReceipts, deleteReceipt]);
+
+  // Update pending count periodically
+  const updatePendingCount = useCallback(async () => {
+    if (!isReady) return;
+    try {
+      const unsynced = await getUnsyncedReceipts();
+      // Filter out non-receipt items like sales
+      const receiptsOnly = unsynced.filter((r: any) => r.type !== 'sale');
+      setPendingCount(receiptsOnly.length);
+    } catch (err) {
+      console.error('Failed to get pending count:', err);
+    }
+  }, [isReady, getUnsyncedReceipts]);
 
   const syncAllData = useCallback(async (silent = false) => {
     // Prevent multiple simultaneous syncs
@@ -29,6 +100,7 @@ export const useDataSync = () => {
       if (!silent) {
         toast.info('Working offline - using cached data');
       }
+      await updatePendingCount();
       return false;
     }
 
@@ -44,6 +116,15 @@ export const useDataSync = () => {
 
     try {
       const deviceFingerprint = await generateDeviceFingerprint();
+
+      // 0. First, sync any offline receipts TO the backend
+      const offlineSync = await syncOfflineReceipts();
+      if (offlineSync.synced > 0) {
+        console.log(`📤 Synced ${offlineSync.synced} offline receipts to backend`);
+        if (!silent) {
+          toast.success(`Synced ${offlineSync.synced} offline collection${offlineSync.synced !== 1 ? 's' : ''} to server`);
+        }
+      }
 
       // 1. Sync farmers
       try {
@@ -111,14 +192,13 @@ export const useDataSync = () => {
       }
 
       setLastSyncTime(new Date());
+      await updatePendingCount();
       
       if (!silent) {
         if (hasAuthError && syncedCount === 0) {
           toast.warning('Device not authorized - working with cached data');
         } else if (syncedCount > 0) {
           toast.success(`Data synced: ${syncedCount} datasets cached`);
-        } else {
-          toast.info('No new data to sync');
         }
       }
       
@@ -134,7 +214,7 @@ export const useDataSync = () => {
       syncInProgress.current = false;
       setIsSyncing(false);
     }
-  }, [isReady, saveFarmers, saveItems, saveZReport, savePeriodicReport]);
+  }, [isReady, saveFarmers, saveItems, saveZReport, savePeriodicReport, syncOfflineReceipts, updatePendingCount]);
 
   // Auto-sync on mount when online (with small delay to ensure DB is ready)
   useEffect(() => {
@@ -173,9 +253,19 @@ export const useDataSync = () => {
     return () => clearInterval(interval);
   }, [isReady, syncAllData]);
 
+  // Update pending count on mount
+  useEffect(() => {
+    if (isReady) {
+      updatePendingCount();
+    }
+  }, [isReady, updatePendingCount]);
+
   return {
     syncAllData,
+    syncOfflineReceipts,
     isSyncing,
-    lastSyncTime
+    lastSyncTime,
+    pendingCount,
+    updatePendingCount
   };
 };
