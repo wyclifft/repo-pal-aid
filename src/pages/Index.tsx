@@ -11,10 +11,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useDataSync } from '@/hooks/useDataSync';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert, Trash2 } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert, Trash2, Cloud, CloudOff, RefreshCw } from 'lucide-react';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -84,6 +85,9 @@ const Index = () => {
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
 
   const { saveReceipt, savePrintedReceipts, getPrintedReceipts, getUnsyncedReceipts, clearUnsyncedReceipts, isReady } = useIndexedDB();
+  
+  // Data sync hook for background syncing
+  const { isSyncing, pendingCount, syncAllData } = useDataSync();
 
   // Load printed receipts from IndexedDB on mount
   useEffect(() => {
@@ -440,6 +444,27 @@ const Index = () => {
               onCompanyNameChange={setCompanyName} 
               onAuthorizationChange={handleAuthorizationChange}
             />
+            {/* Sync Status Indicator */}
+            {pendingCount > 0 && (
+              <div className="flex items-center gap-1 text-xs text-amber-600">
+                <CloudOff className="h-3 w-3" />
+                <span>{pendingCount} pending</span>
+                {navigator.onLine && !isSyncing && (
+                  <button 
+                    onClick={() => syncAllData(false)}
+                    className="ml-1 p-0.5 hover:bg-amber-100 rounded"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            )}
+            {isSyncing && (
+              <div className="flex items-center gap-1 text-xs text-blue-600">
+                <RefreshCw className="h-3 w-3 animate-spin" />
+                <span>Syncing...</span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button

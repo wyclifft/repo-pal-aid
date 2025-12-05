@@ -15,7 +15,7 @@ interface DeviceConfig {
   lastOfflineSequential: number; // Last used offline sequential
 }
 
-const DB_NAME = 'MilkCollectionDB';
+const DB_NAME = 'milkCollectionDB'; // Must match useIndexedDB.ts
 const DB_VERSION = 6;
 const STORE_NAME = 'device_config';
 

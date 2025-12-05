@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v12';
+const CACHE_VERSION = 'v13';
 const CACHE_NAMES = {
   STATIC: `milk-collection-static-${CACHE_VERSION}`,
   DYNAMIC: `milk-collection-dynamic-${CACHE_VERSION}`,
@@ -8,16 +8,12 @@ const CACHE_NAMES = {
 };
 
 // Critical assets to precache during installation
+// For SPA, all routes resolve to index.html
 const PRECACHE_URLS = [
   '/',
   '/index.html',
   '/manifest.json',
   '/offline.html',
-  '/settings',
-  '/z-report',
-  '/periodic-report',
-  '/store',
-  '/device-approval',
 ];
 
 // Cache expiration times (in milliseconds)
@@ -230,16 +226,47 @@ self.addEventListener('fetch', (event) => {
       return;
     }
 
-    // Stale-while-revalidate for HTML pages and dynamic content
+    // SPA Navigation handling - return index.html for navigation requests
+    if (request.mode === 'navigate') {
+      event.respondWith(
+        (async () => {
+          try {
+            // Try network first for fresh content
+            const networkResponse = await fetch(request);
+            if (networkResponse.ok) {
+              const cache = await caches.open(CACHE_NAMES.DYNAMIC);
+              cache.put(request, addCacheTimestamp(networkResponse.clone()));
+              return networkResponse;
+            }
+          } catch (error) {
+            // Network failed, try cache
+          }
+          
+          // Try to get from cache (any navigation returns index.html for SPA)
+          const cachedIndex = await caches.match('/index.html');
+          if (cachedIndex) {
+            return cachedIndex;
+          }
+          
+          // Last resort: offline page
+          const offlinePage = await caches.match('/offline.html');
+          if (offlinePage) {
+            return offlinePage;
+          }
+          
+          return new Response('Offline - No cached content available', { 
+            status: 503, 
+            statusText: 'Service Unavailable' 
+          });
+        })()
+      );
+      return;
+    }
+
+    // Stale-while-revalidate for other dynamic content
     event.respondWith(
       staleWhileRevalidateStrategy(request, CACHE_NAMES.DYNAMIC, CACHE_EXPIRATION.DYNAMIC)
         .catch(async () => {
-          // Return offline page for navigation requests
-          if (request.mode === 'navigate') {
-            const offlinePage = await caches.match('/offline.html');
-            return offlinePage || caches.match('/index.html');
-          }
-          
           return new Response('Offline', { 
             status: 503, 
             statusText: 'Service Unavailable' 
