@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Shield, ShieldAlert, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { storeDeviceConfig, hasDeviceConfig } from '@/utils/referenceGenerator';
 
 interface DeviceAuthStatusProps {
   onCompanyNameChange?: (companyName: string) => void;
@@ -19,7 +20,17 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
   });
   const [loading, setLoading] = useState(true);
 
-  const checkAuthorization = async () => {
+  const initializeDeviceConfig = useCallback(async (companyNameValue: string, deviceCode: string) => {
+    try {
+      // Always attempt to store config on authorization
+      await storeDeviceConfig(companyNameValue, deviceCode);
+      console.log('✅ Device config initialized for offline generation');
+    } catch (error) {
+      console.error('⚠️ Failed to initialize device config:', error);
+    }
+  }, []);
+
+  const checkAuthorization = useCallback(async () => {
     try {
       const fingerprint = await generateDeviceFingerprint();
       const apiUrl = 'https://backend.maddasystems.co.ke';
@@ -56,12 +67,11 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           // Cache company name in localStorage
           localStorage.setItem('device_company_name', fetchedCompanyName);
           
-          // Store device config for offline reference generation
+          // Store device config for offline reference generation (critical for first install)
           if (authorized) {
-            const { storeDeviceConfig } = await import('@/utils/referenceGenerator');
             const deviceCode = String(data.data.uniquedevcode || '00000').slice(-5);
-            await storeDeviceConfig(fetchedCompanyName, deviceCode);
-            console.log('✅ Device config stored for offline generation');
+            // Initialize config immediately - this is critical for first install
+            await initializeDeviceConfig(fetchedCompanyName, deviceCode);
           }
         }
         // If data structure is invalid, keep cached values
@@ -73,16 +83,25 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
     } finally {
       setLoading(false);
     }
-  };
+  }, [onAuthorizationChange, onCompanyNameChange, initializeDeviceConfig]);
 
   useEffect(() => {
+    // Check if we have device config on mount (for first install detection)
+    const checkFirstInstall = async () => {
+      const hasConfig = await hasDeviceConfig();
+      if (!hasConfig) {
+        console.log('📱 First install detected - will initialize config on authorization');
+      }
+    };
+    
+    checkFirstInstall();
     checkAuthorization();
     
     // Recheck every 30 seconds
     const interval = setInterval(checkAuthorization, 30000);
     
     return () => clearInterval(interval);
-  }, []);
+  }, [checkAuthorization]);
 
   if (loading) {
     return (

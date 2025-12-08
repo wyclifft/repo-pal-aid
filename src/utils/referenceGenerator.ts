@@ -7,37 +7,90 @@
  * APPROACH: 
  * - Online: Always fetch from backend API
  * - Offline: Generate timestamp-based reference for uniqueness
+ * 
+ * FIRST-INSTALL HANDLING:
+ * - Uses localStorage as backup when IndexedDB isn't ready
+ * - Gracefully handles missing config with fallback generation
  */
 
 interface DeviceConfig {
   companyCode: string;
   deviceCode: string;
-  lastOfflineSequential: number; // Last used offline sequential
+  lastOfflineSequential: number;
 }
 
-const DB_NAME = 'milkCollectionDB'; // Must match useIndexedDB.ts
+const DB_NAME = 'milkCollectionDB';
 const DB_VERSION = 6;
 const STORE_NAME = 'device_config';
+const LOCALSTORAGE_KEY = 'device_config_backup';
 
 /**
- * Get IndexedDB instance
+ * Get IndexedDB instance with proper error handling for first install
  */
 const getDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-      }
-    };
+    try {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      
+      request.onerror = () => {
+        console.error('❌ IndexedDB open error:', request.error);
+        reject(request.error);
+      };
+      
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        
+        // Create device_config store if it doesn't exist
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+          console.log('✅ Created device_config store');
+        }
+      };
+      
+      request.onblocked = () => {
+        console.warn('⚠️ IndexedDB open blocked');
+        reject(new Error('Database blocked'));
+      };
+    } catch (error) {
+      console.error('❌ IndexedDB exception:', error);
+      reject(error);
+    }
   });
 };
 
 /**
- * Store device configuration
+ * Save config to localStorage as backup
+ */
+const saveToLocalStorage = (config: DeviceConfig): void => {
+  try {
+    localStorage.setItem(LOCALSTORAGE_KEY, JSON.stringify(config));
+    console.log('💾 Device config saved to localStorage backup');
+  } catch (error) {
+    console.error('Failed to save to localStorage:', error);
+  }
+};
+
+/**
+ * Get config from localStorage backup
+ */
+const getFromLocalStorage = (): DeviceConfig | null => {
+  try {
+    const stored = localStorage.getItem(LOCALSTORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored) as DeviceConfig;
+    }
+  } catch (error) {
+    console.error('Failed to get from localStorage:', error);
+  }
+  return null;
+};
+
+/**
+ * Store device configuration in both IndexedDB and localStorage
  */
 export const storeDeviceConfig = async (companyName: string, deviceCode: string): Promise<void> => {
   const config: DeviceConfig = {
@@ -46,89 +99,167 @@ export const storeDeviceConfig = async (companyName: string, deviceCode: string)
     lastOfflineSequential: 0,
   };
   
-  const db = await getDB();
-  const tx = db.transaction(STORE_NAME, 'readwrite');
-  const store = tx.objectStore(STORE_NAME);
-  await store.put({ id: 'config', ...config });
+  // Always save to localStorage first (reliable backup)
+  saveToLocalStorage(config);
   
-  console.log('✅ Device config stored:', config);
-};
-
-/**
- * Get device configuration from IndexedDB
- */
-export const getDeviceConfig = async (): Promise<DeviceConfig | null> => {
   try {
     const db = await getDB();
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const store = tx.objectStore(STORE_NAME);
     
     return new Promise((resolve, reject) => {
-      const request = store.get('config');
-      request.onsuccess = () => {
-        const result = request.result;
-        if (result) {
-          const { id, ...config } = result;
-          resolve(config as DeviceConfig);
-        } else {
-          resolve(null);
-        }
-      };
-      request.onerror = () => reject(request.error);
+      try {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.put({ id: 'config', ...config });
+        
+        request.onsuccess = () => {
+          console.log('✅ Device config stored in IndexedDB:', config);
+          resolve();
+        };
+        
+        request.onerror = () => {
+          console.error('❌ Failed to store in IndexedDB:', request.error);
+          // Still resolve since localStorage backup exists
+          resolve();
+        };
+        
+        tx.onerror = () => {
+          console.error('❌ Transaction error:', tx.error);
+          resolve(); // localStorage backup exists
+        };
+      } catch (error) {
+        console.error('❌ Store exception:', error);
+        resolve(); // localStorage backup exists
+      }
     });
   } catch (error) {
-    console.error('Failed to get device config:', error);
-    return null;
+    console.error('Failed to open IndexedDB:', error);
+    // Config is still saved in localStorage, so don't throw
   }
 };
 
 /**
- * Update device config atomically in IndexedDB
+ * Get device configuration from IndexedDB or localStorage
+ */
+export const getDeviceConfig = async (): Promise<DeviceConfig | null> => {
+  // Try IndexedDB first
+  try {
+    const db = await getDB();
+    
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.get('config');
+        
+        request.onsuccess = () => {
+          const result = request.result;
+          if (result) {
+            const { id, ...config } = result;
+            console.log('📦 Got config from IndexedDB');
+            resolve(config as DeviceConfig);
+          } else {
+            // Fall back to localStorage
+            const lsConfig = getFromLocalStorage();
+            if (lsConfig) {
+              console.log('📦 Got config from localStorage backup');
+            }
+            resolve(lsConfig);
+          }
+        };
+        
+        request.onerror = () => {
+          console.error('IndexedDB read error:', request.error);
+          resolve(getFromLocalStorage());
+        };
+      } catch (error) {
+        console.error('IndexedDB transaction error:', error);
+        resolve(getFromLocalStorage());
+      }
+    });
+  } catch (error) {
+    console.error('Failed to open IndexedDB:', error);
+    return getFromLocalStorage();
+  }
+};
+
+/**
+ * Update device config atomically in IndexedDB and localStorage
  */
 const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
-  const db = await getDB();
-  const tx = db.transaction(STORE_NAME, 'readwrite');
-  const store = tx.objectStore(STORE_NAME);
+  // Update localStorage first
+  const currentLs = getFromLocalStorage();
+  if (currentLs) {
+    saveToLocalStorage({ ...currentLs, ...updates });
+  }
   
-  return new Promise((resolve, reject) => {
-    const getRequest = store.get('config');
-    getRequest.onsuccess = () => {
-      const current = getRequest.result;
-      if (current) {
-        const updated = { ...current, ...updates };
-        const putRequest = store.put(updated);
-        putRequest.onsuccess = () => resolve();
-        putRequest.onerror = () => reject(putRequest.error);
-      } else {
-        reject(new Error('Config not found'));
+  try {
+    const db = await getDB();
+    
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const getRequest = store.get('config');
+        
+        getRequest.onsuccess = () => {
+          const current = getRequest.result;
+          if (current) {
+            const updated = { ...current, ...updates };
+            const putRequest = store.put(updated);
+            putRequest.onsuccess = () => resolve();
+            putRequest.onerror = () => resolve(); // localStorage has update
+          } else {
+            resolve(); // Config not in IndexedDB, localStorage has update
+          }
+        };
+        
+        getRequest.onerror = () => resolve(); // localStorage has update
+      } catch (error) {
+        resolve(); // localStorage has update
       }
-    };
-    getRequest.onerror = () => reject(getRequest.error);
-  });
+    });
+  } catch (error) {
+    // localStorage already updated, so we're okay
+  }
+};
+
+/**
+ * Get next offline sequential number atomically
+ */
+const getNextSequential = async (): Promise<number> => {
+  const config = await getDeviceConfig();
+  const nextSeq = (config?.lastOfflineSequential || 0) + 1;
+  
+  await updateConfig({ lastOfflineSequential: nextSeq });
+  
+  return nextSeq;
 };
 
 /**
  * Generate offline reference using timestamp-based approach
- * Format: CompanyCode + DeviceCode + Timestamp-based sequential
+ * Format: CompanyCode + DeviceCode + Timestamp(last 8 digits) + Counter(3 digits)
+ * 
+ * Handles missing config gracefully with fallback generation
  */
 export const generateOfflineReference = async (): Promise<string | null> => {
   const config = await getDeviceConfig();
+  
+  // Use config if available, otherwise use fallback values
+  const companyCode = config?.companyCode || 'XX';
+  const deviceCode = config?.deviceCode || '00000';
+  
   if (!config) {
-    console.warn('⚠️ Device config not available');
-    return null;
+    console.warn('⚠️ Device config not available, using fallback codes');
   }
 
   // Use timestamp + incremental counter for uniqueness
   const timestamp = Date.now();
-  const nextSequential = config.lastOfflineSequential + 1;
-  
-  // Atomically update counter
-  await updateConfig({ lastOfflineSequential: nextSequential });
+  const nextSequential = await getNextSequential();
   
   // Generate reference: CompanyCode + DeviceCode + Timestamp(last 8 digits) + Counter(3 digits)
   const timestampPart = String(timestamp).slice(-8);
   const counterPart = String(nextSequential).padStart(3, '0');
-  const reference = `${config.companyCode}${config.deviceCode}${timestampPart}${counterPart}`;
+  const reference = `${companyCode}${deviceCode}${timestampPart}${counterPart}`;
   
   console.log(`⚡ Offline reference generated: ${reference}`);
   
@@ -136,16 +267,33 @@ export const generateOfflineReference = async (): Promise<string | null> => {
 };
 
 /**
+ * Check if device config exists
+ */
+export const hasDeviceConfig = async (): Promise<boolean> => {
+  const config = await getDeviceConfig();
+  return config !== null && config.companyCode !== undefined;
+};
+
+/**
  * Reset device configuration (for testing or when changing device)
  */
 export const resetDeviceConfig = async (): Promise<void> => {
+  // Clear localStorage
+  try {
+    localStorage.removeItem(LOCALSTORAGE_KEY);
+    console.log('🗑️ Cleared localStorage config');
+  } catch (error) {
+    console.error('Failed to clear localStorage:', error);
+  }
+  
+  // Clear IndexedDB
   try {
     const db = await getDB();
     const tx = db.transaction(STORE_NAME, 'readwrite');
     const store = tx.objectStore(STORE_NAME);
     await store.delete('config');
-    console.log('🗑️ Device config reset');
+    console.log('🗑️ Device config reset in IndexedDB');
   } catch (error) {
-    console.error('Failed to reset config:', error);
+    console.error('Failed to reset IndexedDB config:', error);
   }
 };
