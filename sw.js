@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v13';
+const CACHE_VERSION = 'v14';
 const CACHE_NAMES = {
   STATIC: `milk-collection-static-${CACHE_VERSION}`,
   DYNAMIC: `milk-collection-dynamic-${CACHE_VERSION}`,
@@ -16,6 +16,14 @@ const PRECACHE_URLS = [
   '/offline.html',
 ];
 
+// Broadcast update availability to all clients
+const notifyClientsOfUpdate = async () => {
+  const clients = await self.clients.matchAll({ type: 'window' });
+  clients.forEach(client => {
+    client.postMessage({ type: 'SW_UPDATE_AVAILABLE', version: CACHE_VERSION });
+  });
+};
+
 // Cache expiration times (in milliseconds)
 const CACHE_EXPIRATION = {
   API: 5 * 60 * 1000,        // 5 minutes for API responses
@@ -26,7 +34,7 @@ const CACHE_EXPIRATION = {
 
 // Install event - precache critical resources
 self.addEventListener('install', (event) => {
-  console.log('📦 Service Worker installing with advanced caching...');
+  console.log('📦 Service Worker installing version:', CACHE_VERSION);
   event.waitUntil(
     caches.open(CACHE_NAMES.STATIC)
       .then((cache) => {
@@ -40,12 +48,12 @@ self.addEventListener('install', (event) => {
         console.error('❌ Install error:', error);
       })
   );
-  self.skipWaiting();
+  // Don't skip waiting immediately - let update banner handle it
 });
 
 // Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
-  console.log('🔄 Service Worker activating...');
+  console.log('🔄 Service Worker activating version:', CACHE_VERSION);
   const currentCaches = Object.values(CACHE_NAMES);
   
   event.waitUntil(
@@ -58,7 +66,9 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    }).catch(error => {
+    })
+    .then(() => notifyClientsOfUpdate())
+    .catch(error => {
       console.error('❌ Activation error:', error);
     })
   );
