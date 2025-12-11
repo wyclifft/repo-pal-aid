@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 8; // Incremented for sessions store
+const DB_VERSION = 9; // Incremented for device_config store
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -93,6 +93,12 @@ export const useIndexedDB = () => {
       // Add sessions store for offline session caching
       if (!database.objectStoreNames.contains('sessions')) {
         database.createObjectStore('sessions', { keyPath: 'descript' });
+      }
+
+      // Add device_config store for offline reference generation
+      if (!database.objectStoreNames.contains('device_config')) {
+        database.createObjectStore('device_config', { keyPath: 'id' });
+        console.log('✅ Created device_config store');
       }
     };
 
