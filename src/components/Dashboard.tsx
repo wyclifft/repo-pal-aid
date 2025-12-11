@@ -40,7 +40,6 @@ export const Dashboard = ({
   const [scaleConnected, setScaleConnected] = useState(false);
   const [printerConnected, setPrinterConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const [initialized, setInitialized] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
   const { syncAllData, isSyncing } = useDataSync();
 
@@ -113,7 +112,6 @@ export const Dashboard = ({
       toast.info('No previously connected printer found');
     }
 
-    setInitialized(scaleSuccess || printerSuccess);
     setIsReconnecting(false);
   };
 
@@ -312,21 +310,15 @@ export const Dashboard = ({
         {/* Status Indicators */}
         <div className="flex justify-center gap-6 mb-6 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className={`w-3 h-3 rounded-full ${initialized ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-sm text-gray-700">
-              {initialized ? 'Initialized' : 'Not Initialized'}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
             <span className={`w-3 h-3 rounded-full ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="text-sm text-gray-700">
-              {scaleConnected ? 'scale connected' : 'scale disconnected'}
+              {scaleConnected ? 'Scale Connected' : 'Scale Disconnected'}
             </span>
           </div>
           <div className="flex items-center gap-2">
             <span className={`w-3 h-3 rounded-full ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="text-sm text-gray-700">
-              {printerConnected ? 'printer connected' : 'printer disconnected'}
+              {printerConnected ? 'Printer Connected' : 'Printer Disconnected'}
             </span>
           </div>
         </div>
