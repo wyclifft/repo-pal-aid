@@ -137,7 +137,7 @@ export const Dashboard = ({
                 className="fixed inset-0 z-40" 
                 onClick={() => setMenuOpen(false)} 
               />
-              <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg z-50 py-1">
+              <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg z-50 py-1 max-h-[70vh] overflow-y-auto">
                 <button
                   onClick={() => {
                     navigate('/settings');
@@ -146,6 +146,17 @@ export const Dashboard = ({
                   className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
                 >
                   Settings
+                </button>
+                <hr className="my-1 border-gray-200" />
+                <button
+                  onClick={async () => {
+                    setMenuOpen(false);
+                    await syncAllData();
+                  }}
+                  disabled={isSyncing}
+                  className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                >
+                  {isSyncing ? 'Syncing...' : 'Sync Data'}
                 </button>
                 <button
                   onClick={() => {
@@ -158,12 +169,50 @@ export const Dashboard = ({
                 </button>
                 <button
                   onClick={() => {
+                    navigate('/z-report?generate=true');
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
+                >
+                  Generate Z Report
+                </button>
+                <button
+                  onClick={() => {
+                    navigate('/z-report?reprint=true');
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
+                >
+                  Reprint Z Report
+                </button>
+                <hr className="my-1 border-gray-200" />
+                <button
+                  onClick={() => {
                     navigate('/periodic-report');
                     setMenuOpen(false);
                   }}
                   className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
                 >
                   Periodic Report
+                </button>
+                <button
+                  onClick={() => {
+                    navigate('/periodic-report?sync=true');
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
+                >
+                  Sync Periodic Report
+                </button>
+                <hr className="my-1 border-gray-200" />
+                <button
+                  onClick={() => {
+                    toast.info('Receipt Reprint - Select from recent receipts');
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
+                >
+                  Receipt Reprint
                 </button>
                 <hr className="my-1 border-gray-200" />
                 <button
@@ -221,13 +270,10 @@ export const Dashboard = ({
 
           {/* AI (Center - larger) */}
           <button
-            onClick={sessionActive ? handleBuyProduce : handleNewSession}
-            disabled={!sessionActive && (!selectedRoute || !selectedSession)}
+            onClick={() => toast.info('AI Assistant - Coming Soon')}
             className="flex flex-col items-center"
           >
-            <div className={`w-24 h-24 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center transition-colors ${
-              sessionActive || (selectedRoute && selectedSession) ? 'hover:bg-white/80' : 'opacity-60'
-            }`}>
+            <div className="w-24 h-24 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
               <div className="w-12 h-12 bg-[#E91E63] rounded-sm" />
             </div>
             <span className="mt-2 text-sm font-medium text-gray-700">AI</span>
