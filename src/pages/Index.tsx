@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Login } from '@/components/Login';
+import { Dashboard } from '@/components/Dashboard';
 import { FarmerSearch } from '@/components/FarmerSearch';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
@@ -18,12 +19,13 @@ import { useDataSync } from '@/hooks/useDataSync';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert, Trash2, Cloud, CloudOff, RefreshCw, MapPin } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert, Trash2, Cloud, CloudOff, RefreshCw, MapPin, ArrowLeft } from 'lucide-react';
 
 const Index = () => {
   const navigate = useNavigate();
   const { currentUser, isOffline, login, logout, isAuthenticated } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showCollection, setShowCollection] = useState(false); // Controls dashboard vs collection view
 
   // Company name and authorization status from device
   const [companyName, setCompanyName] = useState<string>(() => {
@@ -190,6 +192,22 @@ const Index = () => {
     setCapturedCollections([]);
     setLastSavedWeight(0);
     toast.info('Route and farmer cleared');
+  };
+
+  // Handle starting collection from Dashboard
+  const handleStartCollection = (route: Route, session: Session) => {
+    setSelectedRouteCode(route.tcode);
+    setRouteName(route.descript);
+    setSession(session.descript);
+    setActiveSession(session);
+    setShowCollection(true);
+  };
+
+  // Handle going back to dashboard
+  const handleBackToDashboard = () => {
+    setShowCollection(false);
+    // Clear collection state
+    handleClearRoute();
   };
 
   const handleSaveCollection = async () => {
@@ -465,16 +483,32 @@ const Index = () => {
     return <Login onLogin={handleLogin} />;
   }
 
+  // Show Dashboard first
+  if (!showCollection) {
+    return (
+      <Dashboard
+        userName={currentUser?.user_id || 'User'}
+        companyName={companyName}
+        isOnline={navigator.onLine}
+        pendingCount={pendingCount}
+        onStartCollection={handleStartCollection}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  // Collection View
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2]">
       {/* Header */}
       <header className="bg-white shadow-md sticky top-0 z-50">
         <div className="flex items-center justify-between px-4 py-3">
           <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 hover:bg-gray-100 rounded"
+            onClick={handleBackToDashboard}
+            className="p-2 hover:bg-gray-100 rounded flex items-center gap-1"
           >
-            <Menu className="h-6 w-6 text-gray-700" />
+            <ArrowLeft className="h-5 w-5 text-gray-700" />
+            <span className="text-sm text-gray-700">Back</span>
           </button>
           <div className="flex flex-col items-center gap-1">
             <h1 className="text-xl font-bold text-[#667eea]">Milk Collection</h1>
