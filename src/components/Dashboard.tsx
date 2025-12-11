@@ -12,6 +12,7 @@ interface DashboardProps {
   isOnline: boolean;
   pendingCount: number;
   onStartCollection: (route: Route, session: Session) => void;
+  onStartSelling: (route: Route, session: Session) => void;
   onLogout: () => void;
 }
 
@@ -21,6 +22,7 @@ export const Dashboard = ({
   isOnline,
   pendingCount,
   onStartCollection,
+  onStartSelling,
   onLogout,
 }: DashboardProps) => {
   const navigate = useNavigate();
@@ -59,7 +61,9 @@ export const Dashboard = ({
   };
 
   const handleSellProduce = () => {
-    navigate('/store');
+    if (selectedRoute && selectedSession) {
+      onStartSelling(selectedRoute, selectedSession);
+    }
   };
 
   const handleReconnect = async () => {
