@@ -1,10 +1,33 @@
+import { useState, useEffect } from 'react';
 import { useOfflineStatus } from '@/hooks/useOfflineStatus';
-import { Wifi, WifiOff, AlertTriangle } from 'lucide-react';
+import { WifiOff, AlertTriangle, X } from 'lucide-react';
 
 export const OfflineIndicator = () => {
   const { isOnline, isSlowConnection } = useOfflineStatus();
+  const [dismissed, setDismissed] = useState(false);
+  const [visible, setVisible] = useState(false);
 
-  if (isOnline && !isSlowConnection) return null;
+  // Show indicator only when offline or slow, reset dismissed on status change
+  useEffect(() => {
+    if (!isOnline || isSlowConnection) {
+      setVisible(true);
+      setDismissed(false);
+    } else {
+      // Hide after coming online with a small delay
+      const timer = setTimeout(() => setVisible(false), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [isOnline, isSlowConnection]);
+
+  // Auto-dismiss slow connection warning after 5 seconds
+  useEffect(() => {
+    if (isOnline && isSlowConnection && !dismissed) {
+      const timer = setTimeout(() => setDismissed(true), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [isOnline, isSlowConnection, dismissed]);
+
+  if (!visible || dismissed || (isOnline && !isSlowConnection)) return null;
 
   return (
     <div 
@@ -19,12 +42,18 @@ export const OfflineIndicator = () => {
         {!isOnline ? (
           <>
             <WifiOff className="h-4 w-4" />
-            <span>You're offline. Data will sync when connected.</span>
+            <span>Offline - Data saved locally</span>
           </>
         ) : (
           <>
             <AlertTriangle className="h-4 w-4" />
-            <span>Slow connection detected</span>
+            <span>Slow connection</span>
+            <button 
+              onClick={() => setDismissed(true)}
+              className="ml-2 p-0.5 hover:bg-yellow-600 rounded"
+            >
+              <X className="h-3 w-3" />
+            </button>
           </>
         )}
       </div>

@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v14';
+const CACHE_VERSION = 'v15';
 const CACHE_NAMES = {
   STATIC: `milk-collection-static-${CACHE_VERSION}`,
   DYNAMIC: `milk-collection-dynamic-${CACHE_VERSION}`,
