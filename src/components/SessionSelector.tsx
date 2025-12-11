@@ -30,54 +30,44 @@ export const SessionSelector = ({
     return () => clearInterval(interval);
   }, []);
 
-  // Normalize time value to "HH:MM:SS" string format
-  const normalizeTime = (time: any): string | null => {
-    if (!time) return null;
+  // Convert time_from/time_to to integer hour
+  const toHour = (value: any): number | null => {
+    if (value === null || value === undefined) return null;
     
-    // If it's a Date object
-    if (time instanceof Date) {
-      return time.toTimeString().split(' ')[0];
-    }
+    // If already a number
+    if (typeof value === 'number') return value;
     
-    // If it's a string
-    if (typeof time === 'string') {
-      // Handle ISO date-time strings (e.g., "1970-01-01T06:00:00.000Z")
-      if (time.includes('T')) {
-        const date = new Date(time);
-        if (!isNaN(date.getTime())) {
-          return date.toTimeString().split(' ')[0];
-        }
-      }
-      // Handle "HH:MM:SS" or "HH:MM" format
-      if (time.match(/^\d{1,2}:\d{2}(:\d{2})?$/)) {
-        const parts = time.split(':');
-        const hours = parts[0].padStart(2, '0');
-        const minutes = parts[1].padStart(2, '0');
-        const seconds = parts[2] ? parts[2].padStart(2, '0') : '00';
-        return `${hours}:${minutes}:${seconds}`;
-      }
-      return time;
+    // If string, parse as integer
+    if (typeof value === 'string') {
+      const parsed = parseInt(value, 10);
+      return isNaN(parsed) ? null : parsed;
     }
     
     return null;
   };
 
-  // Check if a session is active based on current time
+  // Check if a session is active based on current hour
   const isSessionActive = useCallback((session: Session): boolean => {
-    const timeFrom = normalizeTime(session.time_from);
-    const timeTo = normalizeTime(session.time_to);
+    const timeFrom = toHour(session.time_from);
+    const timeTo = toHour(session.time_to);
     
-    if (!timeFrom || !timeTo) {
+    if (timeFrom === null || timeTo === null) {
       console.log('Session time validation failed:', { timeFrom, timeTo, session });
       return false;
     }
     
-    const now = currentTime;
-    const currentTimeStr = now.toTimeString().split(' ')[0]; // "HH:MM:SS"
+    const currentHour = currentTime.getHours();
     
-    console.log('Session check:', { descript: session.descript, timeFrom, timeTo, currentTimeStr, isActive: currentTimeStr >= timeFrom && currentTimeStr <= timeTo });
+    // Handle sessions that span midnight (e.g., 22-6)
+    if (timeTo < timeFrom) {
+      const isActive = currentHour >= timeFrom || currentHour < timeTo;
+      console.log('Session check (overnight):', { descript: session.descript?.trim(), timeFrom, timeTo, currentHour, isActive });
+      return isActive;
+    }
     
-    return currentTimeStr >= timeFrom && currentTimeStr <= timeTo;
+    const isActive = currentHour >= timeFrom && currentHour < timeTo;
+    console.log('Session check:', { descript: session.descript?.trim(), timeFrom, timeTo, currentHour, isActive });
+    return isActive;
   }, [currentTime]);
 
   // Find the currently active session from loaded sessions
@@ -145,21 +135,14 @@ export const SessionSelector = ({
     }
   }, [currentTime, sessions, findActiveSession]);
 
-  // Format time for display (12-hour format)
+  // Format hour for display (12-hour format)
   const formatTime = (time: any) => {
-    const normalized = normalizeTime(time);
-    if (!normalized) return 'N/A';
-    
-    const parts = normalized.split(':');
-    if (parts.length < 2) return normalized;
-    
-    const hour = parseInt(parts[0], 10);
-    const minutes = parts[1];
-    if (isNaN(hour)) return normalized;
+    const hour = toHour(time);
+    if (hour === null) return 'N/A';
     
     const ampm = hour >= 12 ? 'PM' : 'AM';
     const hour12 = hour % 12 || 12;
-    return `${hour12}:${minutes} ${ampm}`;
+    return `${hour12}:00 ${ampm}`;
   };
 
   if (loading) {

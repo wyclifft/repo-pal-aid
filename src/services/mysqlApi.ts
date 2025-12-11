@@ -74,8 +74,8 @@ async function apiRequest<T>(
 
 export interface Session {
   descript: string;
-  time_from: string | Date | any; // MySQL TIME can come as string or Date
-  time_to: string | Date | any;   // MySQL TIME can come as string or Date
+  time_from: number; // Hour in 24-hour format (0-24)
+  time_to: number;   // Hour in 24-hour format (0-24)
   ccode?: string;
 }
 
