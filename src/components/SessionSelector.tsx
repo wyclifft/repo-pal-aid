@@ -32,12 +32,16 @@ export const SessionSelector = ({
 
   // Check if a session is active based on current time
   const isSessionActive = useCallback((session: Session): boolean => {
-    const now = currentTime;
-    const currentTimeStr = now.toTimeString().split(' ')[0]; // "HH:MM:SS"
-    
-    // Handle time comparison
     const timeFrom = session.time_from;
     const timeTo = session.time_to;
+    
+    // Validate time fields exist and are strings
+    if (!timeFrom || !timeTo || typeof timeFrom !== 'string' || typeof timeTo !== 'string') {
+      return false;
+    }
+    
+    const now = currentTime;
+    const currentTimeStr = now.toTimeString().split(' ')[0]; // "HH:MM:SS"
     
     return currentTimeStr >= timeFrom && currentTimeStr <= timeTo;
   }, [currentTime]);
@@ -108,9 +112,19 @@ export const SessionSelector = ({
   }, [currentTime, sessions, findActiveSession]);
 
   // Format time for display (HH:MM)
-  const formatTime = (time: string) => {
-    const [hours, minutes] = time.split(':');
-    const hour = parseInt(hours);
+  const formatTime = (time: string | null | undefined) => {
+    if (!time || typeof time !== 'string') {
+      return 'N/A';
+    }
+    const parts = time.split(':');
+    if (parts.length < 2) {
+      return time; // Return original if not in expected format
+    }
+    const [hours, minutes] = parts;
+    const hour = parseInt(hours, 10);
+    if (isNaN(hour)) {
+      return time;
+    }
     const ampm = hour >= 12 ? 'PM' : 'AM';
     const hour12 = hour % 12 || 12;
     return `${hour12}:${minutes} ${ampm}`;
