@@ -30,18 +30,52 @@ export const SessionSelector = ({
     return () => clearInterval(interval);
   }, []);
 
+  // Normalize time value to "HH:MM:SS" string format
+  const normalizeTime = (time: any): string | null => {
+    if (!time) return null;
+    
+    // If it's a Date object
+    if (time instanceof Date) {
+      return time.toTimeString().split(' ')[0];
+    }
+    
+    // If it's a string
+    if (typeof time === 'string') {
+      // Handle ISO date-time strings (e.g., "1970-01-01T06:00:00.000Z")
+      if (time.includes('T')) {
+        const date = new Date(time);
+        if (!isNaN(date.getTime())) {
+          return date.toTimeString().split(' ')[0];
+        }
+      }
+      // Handle "HH:MM:SS" or "HH:MM" format
+      if (time.match(/^\d{1,2}:\d{2}(:\d{2})?$/)) {
+        const parts = time.split(':');
+        const hours = parts[0].padStart(2, '0');
+        const minutes = parts[1].padStart(2, '0');
+        const seconds = parts[2] ? parts[2].padStart(2, '0') : '00';
+        return `${hours}:${minutes}:${seconds}`;
+      }
+      return time;
+    }
+    
+    return null;
+  };
+
   // Check if a session is active based on current time
   const isSessionActive = useCallback((session: Session): boolean => {
-    const timeFrom = session.time_from;
-    const timeTo = session.time_to;
+    const timeFrom = normalizeTime(session.time_from);
+    const timeTo = normalizeTime(session.time_to);
     
-    // Validate time fields exist and are strings
-    if (!timeFrom || !timeTo || typeof timeFrom !== 'string' || typeof timeTo !== 'string') {
+    if (!timeFrom || !timeTo) {
+      console.log('Session time validation failed:', { timeFrom, timeTo, session });
       return false;
     }
     
     const now = currentTime;
     const currentTimeStr = now.toTimeString().split(' ')[0]; // "HH:MM:SS"
+    
+    console.log('Session check:', { descript: session.descript, timeFrom, timeTo, currentTimeStr, isActive: currentTimeStr >= timeFrom && currentTimeStr <= timeTo });
     
     return currentTimeStr >= timeFrom && currentTimeStr <= timeTo;
   }, [currentTime]);
@@ -111,20 +145,18 @@ export const SessionSelector = ({
     }
   }, [currentTime, sessions, findActiveSession]);
 
-  // Format time for display (HH:MM)
-  const formatTime = (time: string | null | undefined) => {
-    if (!time || typeof time !== 'string') {
-      return 'N/A';
-    }
-    const parts = time.split(':');
-    if (parts.length < 2) {
-      return time; // Return original if not in expected format
-    }
-    const [hours, minutes] = parts;
-    const hour = parseInt(hours, 10);
-    if (isNaN(hour)) {
-      return time;
-    }
+  // Format time for display (12-hour format)
+  const formatTime = (time: any) => {
+    const normalized = normalizeTime(time);
+    if (!normalized) return 'N/A';
+    
+    const parts = normalized.split(':');
+    if (parts.length < 2) return normalized;
+    
+    const hour = parseInt(parts[0], 10);
+    const minutes = parts[1];
+    if (isNaN(hour)) return normalized;
+    
     const ampm = hour >= 12 ? 'PM' : 'AM';
     const hour12 = hour % 12 || 12;
     return `${hour12}:${minutes} ${ampm}`;
