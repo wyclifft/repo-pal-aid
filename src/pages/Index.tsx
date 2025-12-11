@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Login } from '@/components/Login';
 import { Dashboard } from '@/components/Dashboard';
 import { BuyProduceScreen } from '@/components/BuyProduceScreen';
+import { SellProduceScreen } from '@/components/SellProduceScreen';
 import { ReceiptModal } from '@/components/ReceiptModal';
 import { ReprintModal } from '@/components/ReprintModal';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
@@ -21,6 +22,7 @@ const Index = () => {
   const { currentUser, isOffline, login, logout, isAuthenticated } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showCollection, setShowCollection] = useState(false); // Controls dashboard vs collection view
+  const [collectionMode, setCollectionMode] = useState<'buy' | 'sell'>('buy'); // Buy or Sell mode
 
   // Company name and authorization status from device
   const [companyName, setCompanyName] = useState<string>(() => {
@@ -189,12 +191,23 @@ const Index = () => {
     toast.info('Route and farmer cleared');
   };
 
-  // Handle starting collection from Dashboard
+  // Handle starting collection from Dashboard (Buy Produce)
   const handleStartCollection = (route: Route, session: Session) => {
     setSelectedRouteCode(route.tcode);
     setRouteName(route.descript);
     setSession(session.descript);
     setActiveSession(session);
+    setCollectionMode('buy');
+    setShowCollection(true);
+  };
+
+  // Handle starting selling from Dashboard (Sell Produce)
+  const handleStartSelling = (route: Route, session: Session) => {
+    setSelectedRouteCode(route.tcode);
+    setRouteName(route.descript);
+    setSession(session.descript);
+    setActiveSession(session);
+    setCollectionMode('sell');
     setShowCollection(true);
   };
 
@@ -487,28 +500,46 @@ const Index = () => {
         isOnline={navigator.onLine}
         pendingCount={pendingCount}
         onStartCollection={handleStartCollection}
+        onStartSelling={handleStartSelling}
         onLogout={handleLogout}
       />
     );
   }
 
-  // Collection View - use new BuyProduceScreen
+  // Collection View - render Buy or Sell screen based on mode
   return (
     <>
-      <BuyProduceScreen
-        route={{ tcode: selectedRouteCode, descript: routeName } as Route}
-        session={activeSession!}
-        userName={currentUser?.user_id || 'User'}
-        weight={weight}
-        capturedCollections={capturedCollections}
-        onBack={handleBackToDashboard}
-        onCapture={handleSaveCollection}
-        onSubmit={handlePrintAllCaptures}
-        onSelectFarmer={handleSelectFarmer}
-        onClearFarmer={handleClearFarmer}
-        selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
-        todayWeight={0}
-      />
+      {collectionMode === 'buy' ? (
+        <BuyProduceScreen
+          route={{ tcode: selectedRouteCode, descript: routeName } as Route}
+          session={activeSession!}
+          userName={currentUser?.user_id || 'User'}
+          weight={weight}
+          capturedCollections={capturedCollections}
+          onBack={handleBackToDashboard}
+          onCapture={handleSaveCollection}
+          onSubmit={handlePrintAllCaptures}
+          onSelectFarmer={handleSelectFarmer}
+          onClearFarmer={handleClearFarmer}
+          selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
+          todayWeight={0}
+        />
+      ) : (
+        <SellProduceScreen
+          route={{ tcode: selectedRouteCode, descript: routeName } as Route}
+          session={activeSession!}
+          userName={currentUser?.user_id || 'User'}
+          weight={weight}
+          capturedCollections={capturedCollections}
+          onBack={handleBackToDashboard}
+          onCapture={handleSaveCollection}
+          onSubmit={handlePrintAllCaptures}
+          onSelectFarmer={handleSelectFarmer}
+          onClearFarmer={handleClearFarmer}
+          selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
+          todayWeight={0}
+        />
+      )}
 
       {/* Receipt Modal */}
       <ReceiptModal
