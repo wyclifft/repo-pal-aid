@@ -1,5 +1,5 @@
 // ============= NATIVE-LIKE PWA SERVICE WORKER v15 =============
-const CACHE_VERSION = 'v15';
+const CACHE_VERSION = 'v16';
 const CACHE_NAMES = {
   STATIC: `milk-collection-static-${CACHE_VERSION}`,
   DYNAMIC: `milk-collection-dynamic-${CACHE_VERSION}`,
@@ -20,13 +20,13 @@ const PRECACHE_URLS = [
   '/icons/icon-512.png',
 ];
 
-// Cache expiration times
+// Cache NEVER expires - permanent offline support
 const CACHE_EXPIRATION = {
-  API: 10 * 60 * 1000,           // 10 minutes for API
-  IMAGES: 30 * 24 * 60 * 60 * 1000, // 30 days for images
-  FONTS: 365 * 24 * 60 * 60 * 1000, // 1 year for fonts
-  DYNAMIC: 7 * 24 * 60 * 60 * 1000, // 7 days for dynamic
-  STATIC: 30 * 24 * 60 * 60 * 1000, // 30 days for static assets
+  API: Infinity,      // Never expires
+  IMAGES: Infinity,   // Never expires
+  FONTS: Infinity,    // Never expires
+  DYNAMIC: Infinity,  // Never expires
+  STATIC: Infinity,   // Never expires
 };
 
 // Notify clients of updates
@@ -99,11 +99,13 @@ function addCacheTimestamp(response) {
   });
 }
 
-// Helper: Check cache expiration
+// Helper: Check cache expiration - NEVER expires for offline support
 function isCacheExpired(response, maxAge) {
   if (!response) return true;
+  // Cache never expires - always use cached version when available
+  if (maxAge === Infinity) return false;
   const cachedTime = response.headers.get('sw-cache-time');
-  if (!cachedTime) return true;
+  if (!cachedTime) return false; // No timestamp = assume valid
   return (Date.now() - parseInt(cachedTime, 10)) > maxAge;
 }
 
@@ -330,30 +332,10 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// Cleanup expired cache entries
+// Cleanup - only removes truly invalid entries, not expired ones
 async function cleanupExpiredCaches() {
-  const now = Date.now();
-  
-  for (const [type, cacheName] of Object.entries(CACHE_NAMES)) {
-    try {
-      const cache = await caches.open(cacheName);
-      const keys = await cache.keys();
-      
-      const maxAge = type === 'API' ? CACHE_EXPIRATION.API :
-                     type === 'IMAGES' ? CACHE_EXPIRATION.IMAGES :
-                     type === 'FONTS' ? CACHE_EXPIRATION.FONTS :
-                     CACHE_EXPIRATION.DYNAMIC;
-      
-      for (const request of keys) {
-        const response = await cache.match(request);
-        if (response && isCacheExpired(response, maxAge * 2)) { // 2x for cleanup
-          await cache.delete(request);
-        }
-      }
-    } catch (e) {
-      console.warn('Cache cleanup error:', e);
-    }
-  }
+  // No-op: We don't expire caches for permanent offline support
+  console.log('📦 Cache cleanup skipped - permanent offline mode enabled');
 }
 
 // Error handlers
