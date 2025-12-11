@@ -70,6 +70,31 @@ async function apiRequest<T>(
   }
 }
 
+// ==================== SESSIONS API ====================
+
+export interface Session {
+  descript: string;
+  time_from: string;
+  time_to: string;
+  ccode?: string;
+}
+
+export const sessionsApi = {
+  /**
+   * Get all sessions for a device's company
+   */
+  getByDevice: async (uniquedevcode: string): Promise<ApiResponse<Session[]>> => {
+    return apiRequest<Session[]>(`/sessions/by-device/${encodeURIComponent(uniquedevcode)}`);
+  },
+  
+  /**
+   * Get the currently active session based on current time
+   */
+  getActive: async (uniquedevcode: string): Promise<ApiResponse<Session | null>> => {
+    return apiRequest<Session | null>(`/sessions/active/${encodeURIComponent(uniquedevcode)}`);
+  },
+};
+
 // ==================== ROUTES API (fm_tanks) ====================
 
 export interface Route {
@@ -560,4 +585,5 @@ export const mysqlApi = {
   sales: salesApi,
   periodicReport: periodicReportApi,
   routes: routesApi,
+  sessions: sessionsApi,
 };

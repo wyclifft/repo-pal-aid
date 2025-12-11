@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Login } from '@/components/Login';
 import { FarmerSearch } from '@/components/FarmerSearch';
 import { RouteSelector } from '@/components/RouteSelector';
+import { SessionSelector } from '@/components/SessionSelector';
 import { WeightInput } from '@/components/WeightInput';
 import { ReceiptList } from '@/components/ReceiptList';
 import { ReceiptModal } from '@/components/ReceiptModal';
@@ -10,7 +11,7 @@ import { ReprintModal } from '@/components/ReprintModal';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { useAuth } from '@/contexts/AuthContext';
 import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
-import { type Route } from '@/services/mysqlApi';
+import { type Route, type Session } from '@/services/mysqlApi';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useDataSync } from '@/hooks/useDataSync';
@@ -69,11 +70,8 @@ const Index = () => {
   const [route, setRoute] = useState('');
   const [routeName, setRouteName] = useState('');
   const [selectedRouteCode, setSelectedRouteCode] = useState(''); // tcode from fm_tanks
-  const [session, setSession] = useState(() => {
-    // Auto-detect session based on current time
-    const currentHour = new Date().getHours();
-    return currentHour < 12 ? 'AM' : 'PM';
-  });
+  const [session, setSession] = useState(''); // Session description from sessions table
+  const [activeSession, setActiveSession] = useState<Session | null>(null); // Currently active session object
   const [searchValue, setSearchValue] = useState('');
 
   // Weight
@@ -111,25 +109,6 @@ const Index = () => {
     
     loadPrintedReceipts();
   }, [isReady, getPrintedReceipts]);
-
-  // Auto-detect and update session based on time of day
-  useEffect(() => {
-    const updateSession = () => {
-      const currentHour = new Date().getHours();
-      const detectedSession = currentHour < 12 ? 'AM' : 'PM';
-      
-      if (session !== detectedSession) {
-        setSession(detectedSession);
-        console.log(`🕐 Session auto-updated to ${detectedSession} based on current time`);
-      }
-    };
-
-    // Update session on mount and every minute to handle time changes
-    updateSession();
-    const interval = setInterval(updateSession, 60000); // Check every minute
-
-    return () => clearInterval(interval);
-  }, []);
 
   // Reset lastSavedWeight when scale reads 0 (ready for next collection)
   useEffect(() => {
@@ -178,6 +157,16 @@ const Index = () => {
     localStorage.setItem('device_authorized', JSON.stringify(authorized));
   };
 
+  const handleSessionChange = (selectedSession: Session | null) => {
+    if (selectedSession) {
+      setSession(selectedSession.descript);
+      setActiveSession(selectedSession);
+    } else {
+      setSession('');
+      setActiveSession(null);
+    }
+  };
+
   const handleClearFarmer = () => {
     setFarmerId('');
     setFarmerName('');
@@ -207,6 +196,12 @@ const Index = () => {
     // Validate route selection first
     if (!selectedRouteCode) {
       toast.error('Please select a route first');
+      return;
+    }
+
+    // Validate active session
+    if (!activeSession) {
+      toast.error('No active session. Data entry is not allowed outside session hours.');
       return;
     }
 
@@ -727,39 +722,12 @@ const Index = () => {
             readOnly
             className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 mb-3"
           />
-          <div className="mb-3">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Session (Auto-detected)
-            </label>
-            <select
-              value={session}
-              onChange={(e) => {
-                const selectedSession = e.target.value;
-                const currentHour = new Date().getHours();
-                
-                // Block PM selection during AM hours (before 12 PM)
-                if (selectedSession === 'PM' && currentHour < 12) {
-                  toast.error('Cannot select PM session during AM hours');
-                  return;
-                }
-                
-                // Block AM selection during PM hours (after 12 PM)
-                if (selectedSession === 'AM' && currentHour >= 12) {
-                  toast.error('Cannot select AM session during PM hours');
-                  return;
-                }
-                
-                setSession(selectedSession);
-              }}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea] bg-green-50"
-            >
-              <option value="AM">AM (Morning)</option>
-              <option value="PM">PM (Evening)</option>
-            </select>
-            <p className="text-xs text-gray-500 mt-1">
-              ✓ Session automatically set based on current time
-            </p>
-          </div>
+          {/* Session Selection - uses sessions table */}
+          <SessionSelector
+            selectedSession={session}
+            onSessionChange={handleSessionChange}
+            disabled={capturedCollections.length > 0}
+          />
         </div>
 
         {/* Weight Card */}
@@ -788,8 +756,9 @@ const Index = () => {
           <div className="flex gap-3 mt-4">
             <button
               onClick={handleSaveCollection}
-              disabled={!isDeviceAuthorized}
+              disabled={!isDeviceAuthorized || !activeSession}
               className="flex-1 py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+              title={!activeSession ? 'No active session - data entry not allowed' : ''}
             >
               Capture
             </button>
