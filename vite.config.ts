@@ -17,15 +17,34 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
-    target: 'es2015', // Android 7.0 / Chrome 55 compatibility
+    target: 'es2015',
     minify: 'esbuild',
     cssCodeSplit: true,
+    cssMinify: true,
+    sourcemap: false,
+    // Aggressive code splitting for better caching
     rollupOptions: {
       output: {
         manualChunks: {
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'react-vendor': ['react', 'react-dom'],
+          'router': ['react-router-dom'],
+          'query': ['@tanstack/react-query', '@tanstack/react-query-persist-client'],
+          'ui': ['@radix-ui/react-dialog', '@radix-ui/react-select', '@radix-ui/react-toast'],
         },
+        // Consistent chunk names for better caching
+        chunkFileNames: 'assets/[name]-[hash].js',
+        entryFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
       },
     },
+    // Increase chunk size warning limit
+    chunkSizeWarningLimit: 1000,
   },
+  // Optimize dependencies
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query'],
+    exclude: ['@capacitor/core'],
+  },
+  // Enable caching
+  cacheDir: 'node_modules/.vite',
 }));

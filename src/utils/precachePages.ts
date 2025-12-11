@@ -1,69 +1,133 @@
 /**
- * Pre-cache all application pages for offline use
- * This should be called after successful login to ensure all pages are accessible offline
+ * Aggressive precaching for native-like offline experience
+ */
+
+// Critical routes to precache
+const CRITICAL_ROUTES = [
+  '/',
+  '/settings',
+  '/z-report',
+  '/periodic-report',
+  '/store',
+  '/device-approval',
+];
+
+// Assets to precache
+const CRITICAL_ASSETS = [
+  '/manifest.json',
+  '/favicon.png',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/offline.html',
+];
+
+/**
+ * Precache all application pages and assets
  */
 export const precacheApplicationPages = async (): Promise<void> => {
-  console.log('🔄 Pre-caching application pages...');
+  console.log('🔄 Starting aggressive precaching...');
   
-  // List of all application routes to pre-cache
-  const pagesToCache = [
-    '/',
-    '/settings',
-    '/z-report',
-    '/periodic-report',
-    '/store',
-    '/device-approval',
-  ];
+  const allUrls = [...CRITICAL_ROUTES, ...CRITICAL_ASSETS];
+  let successCount = 0;
+  let failCount = 0;
 
-  try {
-    // Pre-fetch all pages to trigger service worker caching
-    const cachePromises = pagesToCache.map(async (page) => {
-      try {
-        const response = await fetch(page, {
-          method: 'GET',
-          headers: {
-            'Cache-Control': 'no-cache',
-          },
-        });
-        
-        if (response.ok) {
-          console.log(`✅ Cached page: ${page}`);
-        } else {
-          console.warn(`⚠️ Failed to cache page ${page}: ${response.status}`);
-        }
-      } catch (error) {
-        console.warn(`⚠️ Error caching page ${page}:`, error);
-      }
+  // Use service worker to cache URLs if available
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'CACHE_URLS',
+      payload: { urls: allUrls }
     });
-
-    await Promise.all(cachePromises);
-    console.log('✅ All application pages pre-cached for offline use');
-    
-    // Mark that initial caching is complete
-    localStorage.setItem('pages_cached', 'true');
-    localStorage.setItem('pages_cache_timestamp', Date.now().toString());
-    
-    return Promise.resolve();
-  } catch (error) {
-    console.error('❌ Error during page pre-caching:', error);
-    return Promise.reject(error);
   }
+
+  // Also fetch each URL to trigger caching
+  const cachePromises = allUrls.map(async (url) => {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        cache: 'reload', // Force fresh fetch for caching
+        credentials: 'same-origin'
+      });
+      
+      if (response.ok) {
+        successCount++;
+        console.log(`✅ Cached: ${url}`);
+      } else {
+        failCount++;
+        console.warn(`⚠️ Failed to cache: ${url} (${response.status})`);
+      }
+    } catch (error) {
+      failCount++;
+      console.warn(`⚠️ Error caching: ${url}`, error);
+    }
+  });
+
+  await Promise.allSettled(cachePromises);
+  
+  console.log(`✅ Precaching complete: ${successCount} cached, ${failCount} failed`);
+  
+  // Store cache metadata
+  localStorage.setItem('pages_cached', 'true');
+  localStorage.setItem('pages_cache_timestamp', Date.now().toString());
+  localStorage.setItem('pages_cache_count', successCount.toString());
 };
 
 /**
- * Check if pages have been cached recently
+ * Check if pages have been recently cached
  */
 export const arePagesRecentlyCached = (): boolean => {
   const cached = localStorage.getItem('pages_cached');
   const timestamp = localStorage.getItem('pages_cache_timestamp');
   
-  if (!cached || !timestamp) {
-    return false;
+  if (!cached || !timestamp) return false;
+  
+  // Cache valid for 24 hours
+  const cacheAge = Date.now() - parseInt(timestamp, 10);
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  
+  return cacheAge < oneDayMs;
+};
+
+/**
+ * Force refresh all caches
+ */
+export const refreshAllCaches = async (): Promise<void> => {
+  localStorage.removeItem('pages_cached');
+  localStorage.removeItem('pages_cache_timestamp');
+  await precacheApplicationPages();
+};
+
+/**
+ * Prefetch a specific route for instant navigation
+ */
+export const prefetchRoute = (route: string): void => {
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'CACHE_URLS',
+      payload: { urls: [route] }
+    });
   }
   
-  // Consider cache valid for 7 days
-  const cacheAge = Date.now() - parseInt(timestamp, 10);
-  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+  // Also use link prefetch
+  const link = document.createElement('link');
+  link.rel = 'prefetch';
+  link.href = route;
+  document.head.appendChild(link);
+};
+
+/**
+ * Preload critical assets on app start
+ */
+export const preloadCriticalAssets = (): void => {
+  const assets = [
+    { href: '/icons/icon-192.png', as: 'image' },
+    { href: '/favicon.png', as: 'image' },
+  ];
   
-  return cacheAge < sevenDays;
+  assets.forEach(({ href, as }) => {
+    const link = document.createElement('link');
+    link.rel = 'preload';
+    link.href = href;
+    link.as = as;
+    document.head.appendChild(link);
+  });
 };
