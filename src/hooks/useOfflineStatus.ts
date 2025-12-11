@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 interface OfflineStatus {
   isOnline: boolean;
@@ -8,68 +8,71 @@ interface OfflineStatus {
 }
 
 export const useOfflineStatus = () => {
-  const [status, setStatus] = useState<OfflineStatus>({
-    isOnline: navigator.onLine,
+  const [status, setStatus] = useState<OfflineStatus>(() => ({
+    isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
     isSlowConnection: false,
     connectionType: 'unknown',
     effectiveType: '4g'
-  });
+  }));
+  
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  const updateConnectionInfo = useCallback(() => {
-    const connection = (navigator as any).connection || 
-                       (navigator as any).mozConnection || 
-                       (navigator as any).webkitConnection;
-    
-    if (connection) {
-      setStatus(prev => ({
-        ...prev,
-        isOnline: navigator.onLine,
-        isSlowConnection: connection.effectiveType === '2g' || connection.effectiveType === 'slow-2g',
-        connectionType: connection.type || 'unknown',
-        effectiveType: connection.effectiveType || '4g'
-      }));
-    } else {
-      setStatus(prev => ({
-        ...prev,
-        isOnline: navigator.onLine
-      }));
+  const updateStatus = useCallback((updates: Partial<OfflineStatus>) => {
+    // Debounce rapid updates
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
     }
+    debounceRef.current = setTimeout(() => {
+      setStatus(prev => {
+        const newStatus = { ...prev, ...updates };
+        // Only update if something actually changed
+        if (JSON.stringify(prev) === JSON.stringify(newStatus)) {
+          return prev;
+        }
+        return newStatus;
+      });
+    }, 100);
   }, []);
 
   useEffect(() => {
-    updateConnectionInfo();
-    
-    const handleOnline = () => {
-      setStatus(prev => ({ ...prev, isOnline: true }));
-      updateConnectionInfo();
+    const connection = (navigator as any).connection || 
+                       (navigator as any).mozConnection || 
+                       (navigator as any).webkitConnection;
+
+    const checkConnection = () => {
+      const isOnline = navigator.onLine;
+      const isSlowConnection = connection?.effectiveType === '2g' || connection?.effectiveType === 'slow-2g';
+      
+      updateStatus({
+        isOnline,
+        isSlowConnection,
+        connectionType: connection?.type || 'unknown',
+        effectiveType: connection?.effectiveType || '4g'
+      });
     };
+
+    // Initial check
+    checkConnection();
     
-    const handleOffline = () => {
-      setStatus(prev => ({ ...prev, isOnline: false }));
-    };
-    
-    const handleConnectionChange = (e: CustomEvent) => {
-      setStatus(prev => ({ ...prev, isOnline: e.detail.online }));
-    };
+    const handleOnline = () => updateStatus({ isOnline: true });
+    const handleOffline = () => updateStatus({ isOnline: false });
     
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    window.addEventListener('connectionChange', handleConnectionChange as EventListener);
     
-    const connection = (navigator as any).connection;
     if (connection) {
-      connection.addEventListener('change', updateConnectionInfo);
+      connection.addEventListener('change', checkConnection);
     }
     
     return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('connectionChange', handleConnectionChange as EventListener);
       if (connection) {
-        connection.removeEventListener('change', updateConnectionInfo);
+        connection.removeEventListener('change', checkConnection);
       }
     };
-  }, [updateConnectionInfo]);
+  }, [updateStatus]);
 
   return status;
 };
