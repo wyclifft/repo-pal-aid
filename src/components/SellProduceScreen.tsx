@@ -17,6 +17,7 @@ interface SellProduceScreenProps {
   onClearFarmer: () => void;
   selectedFarmer: { id: string; name: string } | null;
   todayWeight: number;
+  onManualWeightChange?: (weight: number) => void;
 }
 
 export const SellProduceScreen = ({
@@ -32,6 +33,7 @@ export const SellProduceScreen = ({
   onClearFarmer,
   selectedFarmer,
   todayWeight,
+  onManualWeightChange,
 }: SellProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
   const [suggestions, setSuggestions] = useState<Farmer[]>([]);
@@ -132,6 +134,19 @@ export const SellProduceScreen = ({
               {weight > 0 ? weight.toFixed(1) : '--'}
             </span>
           </div>
+        </div>
+
+        {/* Manual Weight Entry */}
+        <div className="flex gap-2 items-center">
+          <span className="text-sm font-medium text-gray-700">Manual Entry:</span>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            placeholder="Enter weight"
+            onChange={(e) => onManualWeightChange?.(parseFloat(e.target.value) || 0)}
+            className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg text-lg"
+          />
         </div>
 
         {/* Member Search */}
