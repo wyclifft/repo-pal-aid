@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Login } from '@/components/Login';
 import { FarmerSearch } from '@/components/FarmerSearch';
+import { RouteSelector } from '@/components/RouteSelector';
 import { WeightInput } from '@/components/WeightInput';
 import { ReceiptList } from '@/components/ReceiptList';
 import { ReceiptModal } from '@/components/ReceiptModal';
@@ -9,13 +10,14 @@ import { ReprintModal } from '@/components/ReprintModal';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { useAuth } from '@/contexts/AuthContext';
 import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
+import { type Route } from '@/services/mysqlApi';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useDataSync } from '@/hooks/useDataSync';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert, Trash2, Cloud, CloudOff, RefreshCw } from 'lucide-react';
+import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert, Trash2, Cloud, CloudOff, RefreshCw, MapPin } from 'lucide-react';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -65,6 +67,8 @@ const Index = () => {
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
   const [route, setRoute] = useState('');
+  const [routeName, setRouteName] = useState('');
+  const [selectedRouteCode, setSelectedRouteCode] = useState(''); // tcode from fm_tanks
   const [session, setSession] = useState(() => {
     // Auto-detect session based on current time
     const currentHour = new Date().getHours();
@@ -150,6 +154,25 @@ const Index = () => {
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
   };
 
+  const handleRouteChange = (selectedRoute: Route | null) => {
+    if (selectedRoute) {
+      setSelectedRouteCode(selectedRoute.tcode);
+      setRouteName(selectedRoute.descript);
+      // Clear farmer when route changes
+      setFarmerId('');
+      setFarmerName('');
+      setRoute('');
+      setSearchValue('');
+    } else {
+      setSelectedRouteCode('');
+      setRouteName('');
+      setFarmerId('');
+      setFarmerName('');
+      setRoute('');
+      setSearchValue('');
+    }
+  };
+
   const handleAuthorizationChange = (authorized: boolean) => {
     setIsDeviceAuthorized(authorized);
     localStorage.setItem('device_authorized', JSON.stringify(authorized));
@@ -163,10 +186,30 @@ const Index = () => {
     setWeight(0);
     setCapturedCollections([]);
     setLastSavedWeight(0);
+    // Keep route selection when clearing farmer
     toast.info('Farmer details cleared');
   };
 
+  const handleClearRoute = () => {
+    setSelectedRouteCode('');
+    setRouteName('');
+    setFarmerId('');
+    setFarmerName('');
+    setRoute('');
+    setSearchValue('');
+    setWeight(0);
+    setCapturedCollections([]);
+    setLastSavedWeight(0);
+    toast.info('Route and farmer cleared');
+  };
+
   const handleSaveCollection = async () => {
+    // Validate route selection first
+    if (!selectedRouteCode) {
+      toast.error('Please select a route first');
+      return;
+    }
+
     if (!farmerId || !route || !weight || !session) {
       toast.error('Enter farmer, route, session, and weight');
       return;
@@ -614,19 +657,55 @@ const Index = () => {
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xl font-bold text-[#667eea] flex items-center gap-2">
               <User className="h-6 w-6" />
-              Farmer Details
+              Collection Details
             </h3>
-            {(farmerId || farmerName) && (
-              <button
-                onClick={handleClearFarmer}
-                className="px-4 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors text-sm"
-              >
-                <X className="h-4 w-4 inline mr-1" />
-                Clear Farmer
-              </button>
+            <div className="flex gap-2">
+              {selectedRouteCode && (
+                <button
+                  onClick={handleClearRoute}
+                  className="px-3 py-2 bg-amber-500 text-white rounded-lg font-semibold hover:bg-amber-600 transition-colors text-sm"
+                >
+                  <MapPin className="h-4 w-4 inline mr-1" />
+                  Clear Route
+                </button>
+              )}
+              {(farmerId || farmerName) && (
+                <button
+                  onClick={handleClearFarmer}
+                  className="px-3 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors text-sm"
+                >
+                  <X className="h-4 w-4 inline mr-1" />
+                  Clear Farmer
+                </button>
+              )}
+            </div>
+          </div>
+          
+          {/* Route Selection - MANDATORY */}
+          <div className="mb-4">
+            <RouteSelector
+              selectedRoute={selectedRouteCode}
+              onRouteChange={handleRouteChange}
+              disabled={capturedCollections.length > 0}
+            />
+            {selectedRouteCode && (
+              <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-lg">
+                <p className="text-sm text-green-700 font-medium">
+                  <MapPin className="h-4 w-4 inline mr-1" />
+                  Route: {routeName} ({selectedRouteCode})
+                </p>
+              </div>
             )}
           </div>
-          <FarmerSearch onSelectFarmer={handleSelectFarmer} value={searchValue} />
+
+          {/* Farmer Search - only enabled when route is selected */}
+          <FarmerSearch 
+            onSelectFarmer={handleSelectFarmer} 
+            value={searchValue}
+            selectedRoute={selectedRouteCode}
+            disabled={!selectedRouteCode || capturedCollections.length > 0}
+          />
+          
           <input
             type="text"
             placeholder="Farmer ID"

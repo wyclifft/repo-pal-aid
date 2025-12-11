@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 6;
+const DB_VERSION = 7; // Incremented for routes store
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -83,6 +83,11 @@ export const useIndexedDB = () => {
       // Add periodic_reports store for offline Periodic Reports
       if (!database.objectStoreNames.contains('periodic_reports')) {
         database.createObjectStore('periodic_reports', { keyPath: 'cacheKey' });
+      }
+
+      // Add routes store for offline route caching (fm_tanks)
+      if (!database.objectStoreNames.contains('routes')) {
+        database.createObjectStore('routes', { keyPath: 'tcode' });
       }
     };
 
@@ -534,6 +539,41 @@ export const useIndexedDB = () => {
     }
   }, [db, getUnsyncedReceipts]);
 
+  /**
+   * Save routes (fm_tanks) to IndexedDB
+   */
+  const saveRoutes = useCallback((routes: any[]) => {
+    if (!db) return;
+    try {
+      const tx = db.transaction('routes', 'readwrite');
+      const store = tx.objectStore('routes');
+      routes.forEach((route) => store.put(route));
+      console.log('Routes cached in IndexedDB');
+    } catch (error) {
+      console.error('Failed to save routes:', error);
+    }
+  }, [db]);
+
+  /**
+   * Get routes (fm_tanks) from IndexedDB
+   */
+  const getRoutes = useCallback((): Promise<any[]> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject('DB not ready');
+      try {
+        const tx = db.transaction('routes', 'readonly');
+        const store = tx.objectStore('routes');
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      } catch (error) {
+        // Routes store may not exist in older DB versions
+        console.warn('Routes store not available:', error);
+        resolve([]);
+      }
+    });
+  }, [db]);
+
   return {
     db,
     isReady,
@@ -558,5 +598,7 @@ export const useIndexedDB = () => {
     savePrintedReceipts,
     getPrintedReceipts,
     clearUnsyncedReceipts,
+    saveRoutes,
+    getRoutes,
   };
 };

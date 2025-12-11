@@ -61,6 +61,35 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, message: 'API running', timestamp: new Date() });
     }
 
+    // Routes endpoint - Fetch from fm_tanks table
+    if (path.startsWith('/api/routes/by-device/') && method === 'GET') {
+      const uniquedevcode = decodeURIComponent(path.split('/')[4]);
+      
+      // Get device and check authorization
+      const [deviceRows] = await pool.query(
+        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+        return sendJSON(res, { 
+          success: false, 
+          message: 'Device not authorized' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      // Get routes from fm_tanks for this company
+      const [rows] = await pool.query(
+        `SELECT tcode, descript, icode, idesc, task1, task2, task3, task4, task5, task6, task7, task8, depart, ccode, mprefix 
+         FROM fm_tanks WHERE ccode = ? ORDER BY descript`,
+        [ccode]
+      );
+      
+      return sendJSON(res, { success: true, data: rows, ccode });
+    }
+
     // Farmers endpoints - Fetch from cm_members table
     
     // NEW: Device-based farmer filtering endpoint
@@ -83,9 +112,19 @@ const server = http.createServer(async (req, res) => {
       
       const ccode = deviceRows[0].ccode;
       
-      // Get farmers for this company
+      // Get route filter from query params
+      const routeFilter = parsedUrl.query.route;
+      const search = parsedUrl.query.search;
+      
+      // Get farmers for this company, optionally filtered by route
       let query = 'SELECT mcode as farmer_id, descript as name, route, ccode FROM cm_members WHERE ccode = ?';
       let params = [ccode];
+      
+      // Filter by route if specified
+      if (routeFilter) {
+        query += ' AND route = ?';
+        params.push(routeFilter);
+      }
       
       if (search) {
         query += ' AND (mcode LIKE ? OR descript LIKE ?)';
