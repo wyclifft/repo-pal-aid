@@ -2,11 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Login } from '@/components/Login';
 import { Dashboard } from '@/components/Dashboard';
-import { FarmerSearch } from '@/components/FarmerSearch';
-import { RouteSelector } from '@/components/RouteSelector';
-import { SessionSelector } from '@/components/SessionSelector';
-import { WeightInput } from '@/components/WeightInput';
-import { ReceiptList } from '@/components/ReceiptList';
+import { BuyProduceScreen } from '@/components/BuyProduceScreen';
 import { ReceiptModal } from '@/components/ReceiptModal';
 import { ReprintModal } from '@/components/ReprintModal';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
@@ -19,7 +15,6 @@ import { useDataSync } from '@/hooks/useDataSync';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
-import { Menu, X, User, Scale, FileText, BarChart3, Printer, ShoppingBag, FileBarChart, Settings, Receipt, ShieldAlert, Trash2, Cloud, CloudOff, RefreshCw, MapPin, ArrowLeft } from 'lucide-react';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -497,339 +492,35 @@ const Index = () => {
     );
   }
 
-  // Collection View
+  // Collection View - use new BuyProduceScreen
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2]">
-      {/* Header */}
-      <header className="bg-white shadow-md sticky top-0 z-50">
-        <div className="flex items-center justify-between px-4 py-3">
-          <button
-            onClick={handleBackToDashboard}
-            className="p-2 hover:bg-gray-100 rounded flex items-center gap-1"
-          >
-            <ArrowLeft className="h-5 w-5 text-gray-700" />
-            <span className="text-sm text-gray-700">Back</span>
-          </button>
-          <div className="flex flex-col items-center gap-1">
-            <h1 className="text-xl font-bold text-[#667eea]">Milk Collection</h1>
-            <DeviceAuthStatus 
-              onCompanyNameChange={setCompanyName} 
-              onAuthorizationChange={handleAuthorizationChange}
-            />
-            {/* Sync Status Indicator */}
-            {pendingCount > 0 && (
-              <div className="flex items-center gap-1 text-xs text-amber-600">
-                <CloudOff className="h-3 w-3" />
-                <span>{pendingCount} pending</span>
-                {navigator.onLine && !isSyncing && (
-                  <button 
-                    onClick={() => syncAllData(false)}
-                    className="ml-1 p-0.5 hover:bg-amber-100 rounded"
-                  >
-                    <RefreshCw className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )}
-            {isSyncing && (
-              <div className="flex items-center gap-1 text-xs text-blue-600">
-                <RefreshCw className="h-3 w-3 animate-spin" />
-                <span>Syncing...</span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setReprintModalOpen(true)}
-              className="p-2 hover:bg-gray-100 rounded"
-              aria-label="Reprint Receipts"
-            >
-              <Receipt className="h-5 w-5 text-gray-700" />
-            </button>
-            <button
-              onClick={() => navigate('/settings')}
-              className="p-2 hover:bg-gray-100 rounded"
-              aria-label="Settings"
-            >
-              <Settings className="h-5 w-5 text-gray-700" />
-            </button>
-            <button
-              onClick={handleLogout}
-              className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-semibold hover:bg-red-600 transition-colors"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Sidebar */}
-      <nav
-        className={`fixed top-0 left-0 h-screen w-72 bg-white shadow-xl z-50 transition-transform duration-300 ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        <div className="p-4">
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="mb-4 hover:bg-gray-100 rounded p-2"
-          >
-            <X className="h-6 w-6 text-gray-700" />
-          </button>
-          <button
-            onClick={() => scrollToSection('farmer-card')}
-            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
-          >
-            <User className="h-5 w-5 text-[#667eea]" />
-            Farmer
-          </button>
-          <button
-            onClick={() => scrollToSection('weight-card')}
-            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
-          >
-            <Scale className="h-5 w-5 text-[#667eea]" />
-            Weight
-          </button>
-          <button
-            onClick={() => scrollToSection('receipts-card')}
-            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
-          >
-            <FileText className="h-5 w-5 text-[#667eea]" />
-            Receipts
-          </button>
-          <button
-            onClick={handleTestPrint}
-            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
-          >
-            <Printer className="h-5 w-5 text-[#667eea]" />
-            Test Print
-          </button>
-          <button
-            onClick={() => {
-              setSidebarOpen(false);
-              navigate('/z-report');
-            }}
-            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
-          >
-            <BarChart3 className="h-5 w-5 text-[#667eea]" />
-            Z Report
-          </button>
-          <button
-            onClick={() => {
-              setSidebarOpen(false);
-              navigate('/store');
-            }}
-            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
-          >
-            <ShoppingBag className="h-5 w-5 text-[#667eea]" />
-            Store
-          </button>
-          <button
-            onClick={() => {
-              setSidebarOpen(false);
-              navigate('/periodic-report');
-            }}
-            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
-          >
-            <FileBarChart className="h-5 w-5 text-[#667eea]" />
-            Periodic Report
-          </button>
-          <button
-            onClick={() => {
-              setSidebarOpen(false);
-              navigate('/settings');
-            }}
-            className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 mb-2 text-lg"
-          >
-            <Settings className="h-5 w-5 text-[#667eea]" />
-            Settings
-          </button>
-        </div>
-      </nav>
-
-      {/* Backdrop */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-40"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-        {/* Main Content */}
-      <div className="max-w-2xl mx-auto p-4 space-y-4">
-        {/* Device Authorization Warning */}
-        {!isDeviceAuthorized && (
-          <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4 shadow-lg">
-            <div className="flex items-start gap-3">
-              <ShieldAlert className="h-6 w-6 text-red-600 flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <h3 className="font-bold text-red-800 text-lg mb-1">Device Not Authorized</h3>
-                <p className="text-red-700 text-sm mb-2">
-                  This device needs admin approval before you can capture milk collections.
-                </p>
-                <p className="text-red-600 text-xs">
-                  Please contact your administrator to approve this device in the Device Approval page.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* User Info */}
-        <div className="bg-white rounded-lg p-3 text-center text-sm shadow">
-          Logged in as {currentUser?.user_id} ({currentUser?.role})
-          {isOffline && ' [Offline]'}
-        </div>
-
-        {/* Farmer Card */}
-        <div id="farmer-card" className="bg-white rounded-xl p-6 shadow-lg scroll-mt-20">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-bold text-[#667eea] flex items-center gap-2">
-              <User className="h-6 w-6" />
-              Collection Details
-            </h3>
-            <div className="flex gap-2">
-              {selectedRouteCode && (
-                <button
-                  onClick={handleClearRoute}
-                  className="px-3 py-2 bg-amber-500 text-white rounded-lg font-semibold hover:bg-amber-600 transition-colors text-sm"
-                >
-                  <MapPin className="h-4 w-4 inline mr-1" />
-                  Clear Route
-                </button>
-              )}
-              {(farmerId || farmerName) && (
-                <button
-                  onClick={handleClearFarmer}
-                  className="px-3 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors text-sm"
-                >
-                  <X className="h-4 w-4 inline mr-1" />
-                  Clear Farmer
-                </button>
-              )}
-            </div>
-          </div>
-          
-          {/* Route Selection - MANDATORY */}
-          <div className="mb-4">
-            <RouteSelector
-              selectedRoute={selectedRouteCode}
-              onRouteChange={handleRouteChange}
-              disabled={capturedCollections.length > 0}
-            />
-            {selectedRouteCode && (
-              <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-sm text-green-700 font-medium">
-                  <MapPin className="h-4 w-4 inline mr-1" />
-                  Route: {routeName} ({selectedRouteCode})
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Farmer Search - only enabled when route is selected */}
-          <FarmerSearch 
-            onSelectFarmer={handleSelectFarmer} 
-            value={searchValue}
-            selectedRoute={selectedRouteCode}
-            disabled={!selectedRouteCode || capturedCollections.length > 0}
-          />
-          
-          <input
-            type="text"
-            placeholder="Farmer ID"
-            value={farmerId}
-            readOnly
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 mb-3"
-          />
-          <input
-            type="text"
-            placeholder="Farmer Name"
-            value={farmerName}
-            readOnly
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 mb-3"
-          />
-          <input
-            type="text"
-            placeholder="Route"
-            value={route}
-            readOnly
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 mb-3"
-          />
-          {/* Session Selection - uses sessions table */}
-          <SessionSelector
-            selectedSession={session}
-            onSessionChange={handleSessionChange}
-            disabled={capturedCollections.length > 0}
-          />
-        </div>
-
-        {/* Weight Card */}
-        <div id="weight-card" className="scroll-mt-20">
-          <WeightInput
-            weight={weight}
-            onWeightChange={setWeight}
-            onEntryTypeChange={setEntryType}
-            currentUserRole={currentUser.role}
-            lastSavedWeight={lastSavedWeight}
-            lastEntryType={entryType}
-          />
-          
-          {/* Captured Collections Count */}
-          {capturedCollections.length > 0 && (
-            <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-              <p className="text-sm font-semibold text-green-700">
-                {capturedCollections.length} collection{capturedCollections.length !== 1 ? 's' : ''} captured for:
-              </p>
-              <p className="text-base font-bold text-green-800 mt-1">
-                {capturedCollections[0].farmer_name} ({capturedCollections[0].farmer_id})
-              </p>
-            </div>
-          )}
-
-          <div className="flex gap-3 mt-4">
-            <button
-              onClick={handleSaveCollection}
-              disabled={!isDeviceAuthorized || !activeSession}
-              className="flex-1 py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-              title={!activeSession ? 'No active session - data entry not allowed' : ''}
-            >
-              Capture
-            </button>
-            <button
-              onClick={handlePrintAllCaptures}
-              disabled={capturedCollections.length === 0 || !isDeviceAuthorized}
-              className="flex-1 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              <Printer className="h-5 w-5" />
-              Print All
-            </button>
-            <button
-              onClick={handleClearCaptures}
-              className="px-4 py-3 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors flex items-center justify-center gap-2"
-            >
-              <Trash2 className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Receipts Card */}
-        <div id="receipts-card" className="scroll-mt-20">
-          <ReceiptList refreshTrigger={refreshTrigger} />
-        </div>
-      </div>
+    <>
+      <BuyProduceScreen
+        route={{ tcode: selectedRouteCode, descript: routeName } as Route}
+        session={activeSession!}
+        userName={currentUser?.user_id || 'User'}
+        weight={weight}
+        capturedCollections={capturedCollections}
+        onBack={handleBackToDashboard}
+        onCapture={handleSaveCollection}
+        onSubmit={handlePrintAllCaptures}
+        onSelectFarmer={handleSelectFarmer}
+        onClearFarmer={handleClearFarmer}
+        selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
+        todayWeight={0}
+      />
 
       {/* Receipt Modal */}
-        <ReceiptModal
-          receipts={capturedCollections}
-          companyName={companyName}
-          open={receiptModalOpen}
-          onClose={() => {
-            setReceiptModalOpen(false);
-            setCapturedCollections([]);
-          }}
-          onPrint={handleSavePrintedReceipt}
-        />
+      <ReceiptModal
+        receipts={capturedCollections}
+        companyName={companyName}
+        open={receiptModalOpen}
+        onClose={() => {
+          setReceiptModalOpen(false);
+          setCapturedCollections([]);
+        }}
+        onPrint={handleSavePrintedReceipt}
+      />
 
       {/* Reprint Modal */}
       <ReprintModal
@@ -838,7 +529,7 @@ const Index = () => {
         receipts={printedReceipts}
         companyName={companyName}
       />
-    </div>
+    </>
   );
 };
 
