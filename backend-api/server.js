@@ -114,7 +114,6 @@ const server = http.createServer(async (req, res) => {
       
       // Get route filter from query params
       const routeFilter = parsedUrl.query.route;
-      const search = parsedUrl.query.search;
       
       // Get farmers for this company, optionally filtered by route
       let query = 'SELECT mcode as farmer_id, descript as name, route, ccode FROM cm_members WHERE ccode = ?';
