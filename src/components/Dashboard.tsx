@@ -165,15 +165,6 @@ export const Dashboard = ({
                 >
                   Periodic Report
                 </button>
-                <button
-                  onClick={() => {
-                    navigate('/device-approval');
-                    setMenuOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
-                >
-                  Device Approval
-                </button>
                 <hr className="my-1 border-gray-200" />
                 <button
                   onClick={() => {
@@ -244,7 +235,7 @@ export const Dashboard = ({
 
           {/* About */}
           <button
-            onClick={() => navigate('/settings')}
+            onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.0')}
             className="flex flex-col items-center"
           >
             <div className="w-20 h-20 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
