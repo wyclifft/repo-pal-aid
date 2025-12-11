@@ -70,6 +70,35 @@ async function apiRequest<T>(
   }
 }
 
+// ==================== ROUTES API (fm_tanks) ====================
+
+export interface Route {
+  tcode: string;
+  descript: string;
+  icode?: string;
+  idesc?: string;
+  task1?: string;
+  task2?: string;
+  task3?: string;
+  task4?: string;
+  task5?: string;
+  task6?: string;
+  task7?: string;
+  task8?: string;
+  depart?: string;
+  ccode?: string;
+  mprefix?: string;
+}
+
+export const routesApi = {
+  /**
+   * Get routes filtered by device company from fm_tanks table
+   */
+  getByDevice: async (uniquedevcode: string): Promise<ApiResponse<Route[]>> => {
+    return apiRequest<Route[]>(`/routes/by-device/${encodeURIComponent(uniquedevcode)}`);
+  },
+};
+
 // ==================== FARMERS API ====================
 
 export interface Farmer {
@@ -83,9 +112,14 @@ export interface Farmer {
 export const farmersApi = {
   /**
    * Get farmers filtered by device company (secure device-based filtering)
+   * Optionally filter by route
    */
-  getByDevice: async (uniquedevcode: string): Promise<ApiResponse<Farmer[]>> => {
-    return apiRequest<Farmer[]>(`/farmers/by-device/${encodeURIComponent(uniquedevcode)}`);
+  getByDevice: async (uniquedevcode: string, route?: string): Promise<ApiResponse<Farmer[]>> => {
+    let url = `/farmers/by-device/${encodeURIComponent(uniquedevcode)}`;
+    if (route) {
+      url += `?route=${encodeURIComponent(route)}`;
+    }
+    return apiRequest<Farmer[]>(url);
   },
 
   /**
@@ -525,4 +559,5 @@ export const mysqlApi = {
   items: itemsApi,
   sales: salesApi,
   periodicReport: periodicReportApi,
+  routes: routesApi,
 };
