@@ -61,6 +61,80 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, message: 'API running', timestamp: new Date() });
     }
 
+    // Sessions endpoint - Fetch from sessions table
+    if (path.startsWith('/api/sessions/by-device/') && method === 'GET') {
+      const uniquedevcode = decodeURIComponent(path.split('/')[4]);
+      
+      // Get device and check authorization
+      const [deviceRows] = await pool.query(
+        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+        return sendJSON(res, { 
+          success: false, 
+          message: 'Device not authorized' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      // Get sessions from sessions table for this company
+      const [rows] = await pool.query(
+        `SELECT descript, time_from, time_to, ccode 
+         FROM sessions WHERE ccode = ? ORDER BY time_from`,
+        [ccode]
+      );
+      
+      return sendJSON(res, { success: true, data: rows, ccode });
+    }
+
+    // Get active session for a device (based on current time)
+    if (path.startsWith('/api/sessions/active/') && method === 'GET') {
+      const uniquedevcode = decodeURIComponent(path.split('/')[4]);
+      
+      // Get device and check authorization
+      const [deviceRows] = await pool.query(
+        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+        return sendJSON(res, { 
+          success: false, 
+          message: 'Device not authorized' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      // Get current time in HH:MM:SS format
+      const now = new Date();
+      const currentTime = now.toTimeString().split(' ')[0]; // "HH:MM:SS"
+      
+      // Find active session where current time is between time_from and time_to
+      const [rows] = await pool.query(
+        `SELECT descript, time_from, time_to, ccode 
+         FROM sessions 
+         WHERE ccode = ? AND time_from <= ? AND time_to >= ?
+         ORDER BY time_from
+         LIMIT 1`,
+        [ccode, currentTime, currentTime]
+      );
+      
+      if (rows.length === 0) {
+        return sendJSON(res, { 
+          success: true, 
+          data: null, 
+          message: 'No active session at current time',
+          ccode 
+        });
+      }
+      
+      return sendJSON(res, { success: true, data: rows[0], ccode });
+    }
+
     // Routes endpoint - Fetch from fm_tanks table
     if (path.startsWith('/api/routes/by-device/') && method === 'GET') {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
