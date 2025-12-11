@@ -5,6 +5,14 @@ import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
 import { type Route, type Session } from '@/services/mysqlApi';
 import { useDataSync } from '@/hooks/useDataSync';
+import { 
+  quickReconnect, 
+  quickReconnectPrinter, 
+  getStoredDeviceInfo, 
+  getStoredPrinterInfo,
+  type ScaleType 
+} from '@/services/bluetooth';
+import { toast } from 'sonner';
 
 interface DashboardProps {
   userName: string;
@@ -30,6 +38,8 @@ export const Dashboard = ({
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [scaleConnected, setScaleConnected] = useState(false);
+  const [printerConnected, setPrinterConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
   const { syncAllData, isSyncing } = useDataSync();
@@ -67,8 +77,44 @@ export const Dashboard = ({
   };
 
   const handleReconnect = async () => {
-    setInitialized(true);
-    await syncAllData(false);
+    setIsReconnecting(true);
+    let scaleSuccess = false;
+    let printerSuccess = false;
+
+    // Try to reconnect scale
+    const storedScale = getStoredDeviceInfo();
+    if (storedScale) {
+      const scaleResult = await quickReconnect(storedScale.deviceId, (weight: number, type: ScaleType) => {
+        console.log(`Scale weight: ${weight} kg (${type})`);
+      });
+      scaleSuccess = scaleResult.success;
+      setScaleConnected(scaleResult.success);
+      if (scaleResult.success) {
+        toast.success(`Scale connected: ${storedScale.deviceName}`);
+      } else {
+        toast.error(`Scale reconnect failed: ${scaleResult.error}`);
+      }
+    } else {
+      toast.info('No previously connected scale found');
+    }
+
+    // Try to reconnect printer
+    const storedPrinter = getStoredPrinterInfo();
+    if (storedPrinter) {
+      const printerResult = await quickReconnectPrinter(storedPrinter.deviceId);
+      printerSuccess = printerResult.success;
+      setPrinterConnected(printerResult.success);
+      if (printerResult.success) {
+        toast.success(`Printer connected: ${storedPrinter.deviceName}`);
+      } else {
+        toast.error(`Printer reconnect failed: ${printerResult.error}`);
+      }
+    } else {
+      toast.info('No previously connected printer found');
+    }
+
+    setInitialized(scaleSuccess || printerSuccess);
+    setIsReconnecting(false);
   };
 
   const currentDate = new Date().toISOString().split('T')[0];
@@ -219,10 +265,10 @@ export const Dashboard = ({
         <div className="flex justify-center mb-4">
           <button
             onClick={handleReconnect}
-            disabled={isSyncing}
+            disabled={isReconnecting}
             className="px-8 py-2 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] transition-colors disabled:opacity-50"
           >
-            {isSyncing ? 'SYNCING...' : 'RECONNECT'}
+            {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
           </button>
         </div>
 
