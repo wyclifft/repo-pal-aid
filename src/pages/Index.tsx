@@ -523,6 +523,10 @@ const Index = () => {
           onClearFarmer={handleClearFarmer}
           selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
           todayWeight={0}
+          onManualWeightChange={(w) => {
+            setWeight(w);
+            setEntryType('manual');
+          }}
         />
       ) : (
         <SellProduceScreen
@@ -538,6 +542,10 @@ const Index = () => {
           onClearFarmer={handleClearFarmer}
           selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
           todayWeight={0}
+          onManualWeightChange={(w) => {
+            setWeight(w);
+            setEntryType('manual');
+          }}
         />
       )}
 

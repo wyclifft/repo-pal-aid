@@ -273,7 +273,7 @@ export const Dashboard = ({
         </div>
 
         {/* Status Indicators */}
-        <div className="flex justify-center gap-8 mb-6">
+        <div className="flex justify-center gap-6 mb-6 flex-wrap">
           <div className="flex items-center gap-2">
             <span className={`w-3 h-3 rounded-full ${initialized ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="text-sm text-gray-700">
@@ -284,6 +284,12 @@ export const Dashboard = ({
             <span className={`w-3 h-3 rounded-full ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="text-sm text-gray-700">
               {scaleConnected ? 'scale connected' : 'scale disconnected'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`w-3 h-3 rounded-full ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-sm text-gray-700">
+              {printerConnected ? 'printer connected' : 'printer disconnected'}
             </span>
           </div>
         </div>
