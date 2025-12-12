@@ -52,8 +52,20 @@ export const useDataSync = () => {
       let synced = 0;
       let failed = 0;
 
+      const deviceFingerprint = await generateDeviceFingerprint();
+      
       for (const receipt of unsyncedReceipts) {
         if (!mountedRef.current) break; // Stop if unmounted
+
+        // Skip invalid receipts (missing required fields)
+        if (!receipt.reference_no || !receipt.farmer_id || !receipt.weight) {
+          console.warn(`⚠️ Skipping invalid receipt:`, receipt);
+          if (receipt.orderId) {
+            await deleteReceipt(receipt.orderId);
+            console.log(`🗑️ Deleted invalid receipt: ${receipt.orderId}`);
+          }
+          continue;
+        }
 
         try {
           console.log(`🔄 Attempting to sync: ${receipt.reference_no}`);
@@ -67,6 +79,7 @@ export const useDataSync = () => {
             weight: receipt.weight,
             clerk_name: receipt.clerk_name,
             collection_date: receipt.collection_date,
+            device_fingerprint: deviceFingerprint,
           });
 
           console.log(`📨 API response for ${receipt.reference_no}:`, result);
