@@ -34,6 +34,13 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
   }, []);
 
   const checkAuthorization = useCallback(async () => {
+    // Skip if offline - use cached values
+    if (!navigator.onLine) {
+      console.log('Offline - using cached device authorization');
+      setLoading(false);
+      return;
+    }
+    
     try {
       const fingerprint = await generateDeviceFingerprint();
       const apiUrl = 'https://backend.maddasystems.co.ke';
@@ -65,14 +72,17 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           onAuthorizationChange?.(authorized);
           localStorage.setItem('device_authorized', JSON.stringify(authorized));
           
+          // Company name from psettings table via API (based on ccode)
           const fetchedCompanyName = data.data.company_name || 'DAIRY COLLECTION';
-          console.log('Fetched company name:', fetchedCompanyName);
+          console.log('Fetched company name from psettings:', fetchedCompanyName);
           setCompanyName(fetchedCompanyName);
           onCompanyNameChange?.(fetchedCompanyName);
           localStorage.setItem('device_company_name', fetchedCompanyName);
           
+          // Also save for offline login
           if (authorized) {
-            const deviceCode = String(data.data.uniquedevcode || '00000').slice(-5);
+            localStorage.setItem('device_approved', 'true');
+            const deviceCode = String(data.data.devcode || data.data.uniquedevcode || '00000').slice(-5);
             await initializeDeviceConfig(fetchedCompanyName, deviceCode);
           }
         }

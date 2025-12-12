@@ -26,7 +26,9 @@ export const Login = memo(({ onLogin }: LoginProps) => {
       return;
     }
 
-    if (!isReady) {
+    // For offline login, don't require IndexedDB - use localStorage fallback
+    const isOffline = !navigator.onLine;
+    if (!isReady && !isOffline) {
       toast.error('Local database not ready yet. Please wait a second and try again.');
       return;
     }
@@ -221,22 +223,36 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           role: cachedCreds.role
         });
 
-        // Check cached device approval status using fingerprint
-        const cachedApproval = await getDeviceApproval(deviceFingerprint);
+        // For offline login, try to get cached device approval but don't block on it
+        let cachedApproval = null;
+        try {
+          if (isReady) {
+            cachedApproval = await getDeviceApproval(deviceFingerprint);
+          }
+        } catch (dbError) {
+          console.warn('IndexedDB not available for offline login, using localStorage fallback');
+        }
         
         if (!cachedApproval) {
+          // Check localStorage for device approval as fallback
+          const storedApproval = localStorage.getItem('device_approved');
+          const storedUserId = localStorage.getItem('device_user_id');
+          
+          if (storedApproval === 'true' && storedUserId === userId) {
+            console.log('✅ Using localStorage device approval fallback');
+            setDeviceStatus('approved');
+            onLogin(user, true);
+            toast.success('Offline login successful');
+            setLoading(false);
+            return;
+          }
+          
           console.log('⚠️ No cached device approval found, but user exists - allowing offline login');
           console.log('User should reconnect online to refresh device approval status');
           
-          // Save a temporary device approval for future offline logins
-          if (deviceFingerprint && deviceFingerprint.trim() && userId && userId.trim()) {
-            try {
-              console.log('Saving device approval with fingerprint:', deviceFingerprint, 'userId:', userId);
-              await saveDeviceApproval(deviceFingerprint, null, userId, true);
-            } catch (saveError) {
-              console.error('Failed to cache device approval:', saveError);
-            }
-          }
+          // Save approval to localStorage for future offline logins
+          localStorage.setItem('device_approved', 'true');
+          localStorage.setItem('device_user_id', userId);
           
           setDeviceStatus('approved');
           onLogin(user, true);
