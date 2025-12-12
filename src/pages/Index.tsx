@@ -45,10 +45,22 @@ const Index = () => {
   const handleSavePrintedReceipt = async () => {
     if (capturedCollections.length === 0) return;
     
+    // Check for duplicate - don't save if same farmer and same collections already exist
+    const existingReceipt = printedReceipts.find(r => 
+      r.farmerId === capturedCollections[0].farmer_id &&
+      r.collections.length === capturedCollections.length &&
+      r.collections.every((c, i) => c.reference_no === capturedCollections[i].reference_no)
+    );
+    
+    if (existingReceipt) {
+      console.log('⚠️ Receipt already saved, skipping duplicate');
+      return;
+    }
+    
     const newPrintedReceipt = {
       farmerId: capturedCollections[0].farmer_id,
       farmerName: capturedCollections[0].farmer_name,
-      collections: capturedCollections,
+      collections: [...capturedCollections], // Create a copy
       printedAt: new Date()
     };
     
@@ -218,7 +230,8 @@ const Index = () => {
     handleClearRoute();
   };
 
-  const handleSaveCollection = async () => {
+  // CAPTURE: Only stores locally, does NOT submit to database
+  const handleCapture = async () => {
     // Validate route selection first
     if (!selectedRouteCode) {
       toast.error('Please select a route first');
@@ -246,7 +259,7 @@ const Index = () => {
     if (capturedCollections.length > 0) {
       const firstCapture = capturedCollections[0];
       if (firstCapture.farmer_id !== farmerId) {
-        toast.error(`Please print receipts for ${firstCapture.farmer_name} before capturing for a different farmer`);
+        toast.error(`Please submit/print receipts for ${firstCapture.farmer_name} before capturing for a different farmer`);
         return;
       }
     }
@@ -257,155 +270,124 @@ const Index = () => {
       return;
     }
 
-    const now = new Date();
-    const year = now.getFullYear();
-
-    // Get device fingerprint
+    // Generate reference number for this capture
     const deviceFingerprint = await generateDeviceFingerprint();
-
-    // Generate reference number synchronously for instant response
     let referenceNo = '';
-    if (navigator.onLine) {
-      // ONLINE: Get reference from backend
-      try {
-        console.log('📡 Fetching reference from backend...');
-        const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
-        if (refResult.data?.reference_no) {
-          referenceNo = refResult.data.reference_no;
-          console.log('✅ Backend reference:', referenceNo);
-        } else {
-          throw new Error('No reference_no in response');
-        }
-      } catch (error: any) {
-        console.error('Backend reference failed:', error);
-        
-        // Check if it's a 401 authorization error
-        const errorMessage = error?.message || '';
-        if (errorMessage.includes('401') || errorMessage.includes('not authorized')) {
-          localStorage.setItem('device_authorized', 'false');
-          setIsDeviceAuthorized(false);
-          toast.error('Device not authorized. Please contact admin.');
-          return;
-        }
-        
-        // Fallback to offline for other errors
-        const offlineRef = await generateOfflineReference();
-        if (offlineRef) {
-          referenceNo = offlineRef;
-          console.log('⚠️ Using offline fallback reference:', referenceNo);
-        } else {
-          toast.error('Failed to generate reference number.');
-          return;
-        }
-      }
-    } else {
-      // OFFLINE: Generate timestamp-based reference
-      const offlineRef = await generateOfflineReference();
-      if (offlineRef) {
-        referenceNo = offlineRef;
-        console.log('✅ Offline reference:', referenceNo);
-      } else {
-        toast.error('Failed to generate offline reference.');
-        return;
-      }
-    }
-
-    // Get start and end of current month
-    const monthStart = new Date(year, now.getMonth(), 1);
-    const monthEnd = new Date(year, now.getMonth() + 1, 0, 23, 59, 59);
-
-    // Prepare milk data for capture
-    let milkData: MilkCollection;
-
-    // Save online - always create new record
-    if (navigator.onLine) {
-      try {
-        const onlineMilkData: any = {
-          reference_no: referenceNo,
-          farmer_id: farmerId,
-          farmer_name: farmerName,
-          route: route,
-          session: session as 'AM' | 'PM',
-          weight: parseFloat(Number(weight).toFixed(2)),
-          clerk_name: currentUser ? currentUser.user_id : 'unknown',
-          collection_date: new Date(),
-          device_fingerprint: deviceFingerprint,
-          entry_type: entryType,
-          orderId: Date.now(),
-          synced: false,
-        };
-
-        console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Creating NEW record online');
-        console.log('📝 Reference:', referenceNo);
-        console.log('👤 Farmer:', farmerId, farmerName);
-        console.log('⚖️ Weight:', onlineMilkData.weight, 'Kg');
-        console.log('📅 Session:', session);
-        
-        const result = await mysqlApi.milkCollection.create(onlineMilkData);
-        
-        if (result.success) {
-          // Check if backend regenerated the reference number
-          const finalReferenceNo = result.reference_no || referenceNo;
-          if (finalReferenceNo !== referenceNo) {
-            console.log(`🔄 Backend regenerated reference: ${referenceNo} → ${finalReferenceNo}`);
-          }
-          
-          console.log('✅ NEW record created successfully in database');
-          milkData = { 
-            ...onlineMilkData, 
-            reference_no: finalReferenceNo,
-            synced: true 
-          };
-        } else {
-          throw new Error('Failed to create record');
-        }
-      } catch (err) {
-        console.error('Save error:', err);
-        // Save locally on error
-        milkData = {
-          reference_no: referenceNo,
-          farmer_id: farmerId,
-          farmer_name: farmerName,
-          route: route,
-          session: session as 'AM' | 'PM',
-          weight: parseFloat(Number(weight).toFixed(2)),
-          clerk_name: currentUser ? currentUser.user_id : 'unknown',
-          collection_date: new Date(),
-          orderId: Date.now(),
-          synced: false,
-        };
-        saveReceipt(milkData);
-        toast.warning('Saved locally, will sync when online');
-      }
-    } else {
-      // Save locally when offline
-      milkData = {
-        reference_no: referenceNo,
-        farmer_id: farmerId,
-        farmer_name: farmerName,
-        route: route,
-        session: session as 'AM' | 'PM',
-        weight: parseFloat(Number(weight).toFixed(2)),
-        clerk_name: currentUser ? currentUser.user_id : 'unknown',
-        collection_date: new Date(),
-        orderId: Date.now(),
-        synced: false,
-      };
-      saveReceipt(milkData);
-      toast.warning('Saved locally, will sync when online');
-    }
-
-    // Add to captured collections immediately for instant UI feedback
-    setCapturedCollections(prev => [...prev, milkData]);
     
-    // Trigger refresh of receipt list
-    setRefreshTrigger(prev => prev + 1);
+    // Always generate offline-style reference for captures (will be validated on submit)
+    const offlineRef = await generateOfflineReference();
+    if (offlineRef) {
+      referenceNo = offlineRef;
+    } else {
+      toast.error('Failed to generate reference number.');
+      return;
+    }
 
+    // Create local capture record (NOT synced to DB yet)
+    const captureData: MilkCollection = {
+      reference_no: referenceNo,
+      farmer_id: farmerId,
+      farmer_name: farmerName,
+      route: route,
+      session: session as 'AM' | 'PM',
+      weight: parseFloat(Number(weight).toFixed(2)),
+      clerk_name: currentUser ? currentUser.user_id : 'unknown',
+      collection_date: new Date(),
+      orderId: Date.now(),
+      synced: false, // Not synced - only locally captured
+    };
+
+    console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Local capture only (not submitted)');
+    console.log('📝 Reference:', referenceNo);
+    console.log('👤 Farmer:', farmerId, farmerName);
+    console.log('⚖️ Weight:', captureData.weight, 'Kg');
+
+    // Add to captured collections for display
+    setCapturedCollections(prev => [...prev, captureData]);
+    
     // Store the saved weight for next collection check
     setLastSavedWeight(weight);
 
-    // Keep farmer details for quick consecutive captures, only reset weight
+    // Reset weight for next capture
     setWeight(0);
+    
+    toast.success(`Captured ${captureData.weight} Kg`);
+  };
+
+  // SUBMIT: Saves all captured collections to database (online) or IndexedDB (offline)
+  const handleSubmit = async () => {
+    if (capturedCollections.length === 0) {
+      toast.error('No collections captured yet');
+      return;
+    }
+
+    const deviceFingerprint = await generateDeviceFingerprint();
+    let successCount = 0;
+    let failedCount = 0;
+
+    // Dispatch sync start event
+    window.dispatchEvent(new CustomEvent('syncStart'));
+
+    for (const capture of capturedCollections) {
+      if (navigator.onLine) {
+        try {
+          // Get fresh reference from backend for online submissions
+          let referenceNo = capture.reference_no;
+          try {
+            const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
+            if (refResult.data?.reference_no) {
+              referenceNo = refResult.data.reference_no;
+            }
+          } catch (refError) {
+            console.warn('Could not get backend reference, using existing:', refError);
+          }
+
+          const result = await mysqlApi.milkCollection.create({
+            reference_no: referenceNo,
+            farmer_id: capture.farmer_id,
+            farmer_name: capture.farmer_name,
+            route: capture.route,
+            session: capture.session as 'AM' | 'PM',
+            weight: capture.weight,
+            clerk_name: capture.clerk_name,
+            collection_date: capture.collection_date,
+          } as any);
+
+          if (result.success) {
+            successCount++;
+            console.log('✅ Submitted to database:', referenceNo);
+          } else {
+            throw new Error('Submit failed');
+          }
+        } catch (err) {
+          console.error('Submit error, saving locally:', err);
+          // Save to IndexedDB for later sync
+          await saveReceipt(capture);
+          failedCount++;
+        }
+      } else {
+        // Offline: save to IndexedDB for later sync
+        await saveReceipt(capture);
+        failedCount++;
+        console.log('📦 Saved offline for sync:', capture.reference_no);
+      }
+    }
+
+    // Dispatch sync complete event
+    window.dispatchEvent(new CustomEvent('syncComplete'));
+
+    if (successCount > 0) {
+      toast.success(`Submitted ${successCount} collection${successCount !== 1 ? 's' : ''} to database`);
+    }
+    if (failedCount > 0) {
+      toast.warning(`${failedCount} collection${failedCount !== 1 ? 's' : ''} saved locally, will sync when online`);
+    }
+
+    // Open receipt modal for printing
+    setReceiptModalOpen(true);
+    
+    // Trigger refresh
+    setRefreshTrigger(prev => prev + 1);
   };
 
   const handlePrintAllCaptures = () => {
@@ -523,8 +505,8 @@ const Index = () => {
           weight={weight}
           capturedCollections={capturedCollections}
           onBack={handleBackToDashboard}
-          onCapture={handleSaveCollection}
-          onSubmit={handlePrintAllCaptures}
+          onCapture={handleCapture}
+          onSubmit={handleSubmit}
           onSelectFarmer={handleSelectFarmer}
           onClearFarmer={handleClearFarmer}
           selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
@@ -542,8 +524,8 @@ const Index = () => {
           weight={weight}
           capturedCollections={capturedCollections}
           onBack={handleBackToDashboard}
-          onCapture={handleSaveCollection}
-          onSubmit={handlePrintAllCaptures}
+          onCapture={handleCapture}
+          onSubmit={handleSubmit}
           onSelectFarmer={handleSelectFarmer}
           onClearFarmer={handleClearFarmer}
           selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
