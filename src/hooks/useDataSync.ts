@@ -43,6 +43,10 @@ export const useDataSync = () => {
       }
 
       console.log(`📤 Syncing ${unsyncedReceipts.length} offline receipts...`);
+      
+      // Dispatch sync start event
+      window.dispatchEvent(new CustomEvent('syncStart'));
+      
       let synced = 0;
       let failed = 0;
 
@@ -64,14 +68,28 @@ export const useDataSync = () => {
           if (result.success && receipt.orderId) {
             await deleteReceipt(receipt.orderId);
             synced++;
+            console.log(`✅ Synced: ${receipt.reference_no}`);
           } else {
             failed++;
+            console.warn(`⚠️ Sync response not successful for: ${receipt.reference_no}`);
           }
-        } catch (err) {
-          failed++;
-          console.error(`❌ Sync error:`, err);
+        } catch (err: any) {
+          // Check if it's a duplicate error (already exists in DB)
+          if (err?.message?.includes('duplicate') || err?.message?.includes('already exists')) {
+            console.log(`⏭️ Already synced (duplicate): ${receipt.reference_no}`);
+            if (receipt.orderId) {
+              await deleteReceipt(receipt.orderId);
+            }
+            synced++;
+          } else {
+            failed++;
+            console.error(`❌ Sync error for ${receipt.reference_no}:`, err);
+          }
         }
       }
+      
+      // Dispatch sync complete event
+      window.dispatchEvent(new CustomEvent('syncComplete'));
 
       if (mountedRef.current) {
         setPendingCount(failed);
