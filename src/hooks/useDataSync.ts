@@ -27,6 +27,7 @@ export const useDataSync = () => {
   // Sync offline receipts TO backend with deduplication
   const syncOfflineReceipts = useCallback(async (): Promise<{ synced: number; failed: number }> => {
     if (!isReady || !navigator.onLine) {
+      console.log('📴 Sync skipped: not ready or offline');
       return { synced: 0, failed: 0 };
     }
 
@@ -39,6 +40,7 @@ export const useDataSync = () => {
       
       if (unsyncedReceipts.length === 0) {
         setPendingCount(0);
+        console.log('✅ No pending receipts to sync');
         return { synced: 0, failed: 0 };
       }
 
@@ -54,6 +56,8 @@ export const useDataSync = () => {
         if (!mountedRef.current) break; // Stop if unmounted
 
         try {
+          console.log(`🔄 Attempting to sync: ${receipt.reference_no}`);
+          
           const result = await mysqlApi.milkCollection.create({
             reference_no: receipt.reference_no,
             farmer_id: receipt.farmer_id,
@@ -65,17 +69,26 @@ export const useDataSync = () => {
             collection_date: receipt.collection_date,
           });
 
-          if (result.success && receipt.orderId) {
-            await deleteReceipt(receipt.orderId);
+          console.log(`📨 API response for ${receipt.reference_no}:`, result);
+
+          // Check if sync was successful - API returns { success: true/false, reference_no: string }
+          if (result.success) {
+            if (receipt.orderId) {
+              await deleteReceipt(receipt.orderId);
+              console.log(`🗑️ Deleted local receipt: ${receipt.orderId}`);
+            }
             synced++;
-            console.log(`✅ Synced: ${receipt.reference_no}`);
+            console.log(`✅ Synced successfully: ${receipt.reference_no}`);
           } else {
             failed++;
-            console.warn(`⚠️ Sync response not successful for: ${receipt.reference_no}`);
+            console.warn(`⚠️ Sync failed for: ${receipt.reference_no}`, result);
           }
         } catch (err: any) {
+          console.error(`❌ Exception syncing ${receipt.reference_no}:`, err);
+          
           // Check if it's a duplicate error (already exists in DB)
-          if (err?.message?.includes('duplicate') || err?.message?.includes('already exists')) {
+          const errorMsg = err?.message?.toLowerCase() || '';
+          if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
             console.log(`⏭️ Already synced (duplicate): ${receipt.reference_no}`);
             if (receipt.orderId) {
               await deleteReceipt(receipt.orderId);
@@ -83,7 +96,6 @@ export const useDataSync = () => {
             synced++;
           } else {
             failed++;
-            console.error(`❌ Sync error for ${receipt.reference_no}:`, err);
           }
         }
       }
@@ -94,9 +106,12 @@ export const useDataSync = () => {
       if (mountedRef.current) {
         setPendingCount(failed);
       }
+      
+      console.log(`📊 Sync complete: ${synced} synced, ${failed} failed`);
       return { synced, failed };
     } catch (err) {
       console.error('Sync failed:', err);
+      window.dispatchEvent(new CustomEvent('syncComplete'));
       return { synced: 0, failed: 0 };
     }
   }, [isReady, getUnsyncedReceipts, deleteReceipt]);
