@@ -1,11 +1,52 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useOfflineStatus } from '@/hooks/useOfflineStatus';
-import { WifiOff, AlertTriangle, X } from 'lucide-react';
+import { WifiOff, AlertTriangle, X, Cloud, CloudOff, RefreshCw } from 'lucide-react';
+import { useIndexedDB } from '@/hooks/useIndexedDB';
 
 export const OfflineIndicator = () => {
   const { isOnline, isSlowConnection } = useOfflineStatus();
   const [dismissed, setDismissed] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const { isReady, getUnsyncedReceipts } = useIndexedDB();
+
+  // Update pending count
+  const updatePendingCount = useCallback(async () => {
+    if (!isReady) return;
+    try {
+      const unsyncedReceipts = await getUnsyncedReceipts();
+      setPendingCount(unsyncedReceipts?.length || 0);
+    } catch (error) {
+      console.warn('Failed to get pending count:', error);
+    }
+  }, [isReady, getUnsyncedReceipts]);
+
+  // Check pending count on mount and periodically
+  useEffect(() => {
+    updatePendingCount();
+    const interval = setInterval(updatePendingCount, 10000); // Check every 10 seconds
+    return () => clearInterval(interval);
+  }, [updatePendingCount]);
+
+  // Listen for sync events
+  useEffect(() => {
+    const handleSyncStart = () => setIsSyncing(true);
+    const handleSyncEnd = () => {
+      setIsSyncing(false);
+      updatePendingCount();
+    };
+
+    window.addEventListener('syncStart', handleSyncStart);
+    window.addEventListener('syncComplete', handleSyncEnd);
+    window.addEventListener('backgroundSync', handleSyncEnd);
+
+    return () => {
+      window.removeEventListener('syncStart', handleSyncStart);
+      window.removeEventListener('syncComplete', handleSyncEnd);
+      window.removeEventListener('backgroundSync', handleSyncEnd);
+    };
+  }, [updatePendingCount]);
 
   // Show indicator only when offline or slow, reset dismissed on status change
   useEffect(() => {
@@ -27,6 +68,32 @@ export const OfflineIndicator = () => {
     }
   }, [isOnline, isSlowConnection, dismissed]);
 
+  // Show pending count badge if there are pending items (even when online)
+  const showPendingBadge = pendingCount > 0 && isOnline && !visible;
+
+  if (showPendingBadge) {
+    return (
+      <div 
+        className="fixed bottom-0 left-0 right-0 z-[100] px-4 py-2 text-center text-sm font-medium bg-amber-500 text-amber-900 transition-all duration-300"
+        style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+      >
+        <div className="flex items-center justify-center gap-2">
+          {isSyncing ? (
+            <>
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              <span>Syncing {pendingCount} pending...</span>
+            </>
+          ) : (
+            <>
+              <CloudOff className="h-4 w-4" />
+              <span>{pendingCount} pending to sync</span>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (!visible || dismissed || (isOnline && !isSlowConnection)) return null;
 
   return (
@@ -42,7 +109,7 @@ export const OfflineIndicator = () => {
         {!isOnline ? (
           <>
             <WifiOff className="h-4 w-4" />
-            <span>Offline - Data saved locally</span>
+            <span>Offline{pendingCount > 0 ? ` - ${pendingCount} pending` : ' - Data saved locally'}</span>
           </>
         ) : (
           <>
