@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Store, Info, MoreVertical } from 'lucide-react';
+import { Store, Info, MoreVertical, Receipt } from 'lucide-react';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
 import { type Route, type Session } from '@/services/mysqlApi';
@@ -14,6 +14,9 @@ import {
 } from '@/services/bluetooth';
 import { toast } from 'sonner';
 
+// Session persistence keys
+const SESSION_STORAGE_KEY = 'active_session_data';
+
 interface DashboardProps {
   userName: string;
   companyName: string;
@@ -22,6 +25,7 @@ interface DashboardProps {
   onStartCollection: (route: Route, session: Session) => void;
   onStartSelling: (route: Route, session: Session) => void;
   onLogout: () => void;
+  onOpenRecentReceipts?: () => void;
 }
 
 export const Dashboard = ({
@@ -32,16 +36,60 @@ export const Dashboard = ({
   onStartCollection,
   onStartSelling,
   onLogout,
+  onOpenRecentReceipts,
 }: DashboardProps) => {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
-  const [selectedSession, setSelectedSession] = useState<Session | null>(null);
+  
+  // Restore session state from localStorage on mount
+  const [selectedRoute, setSelectedRoute] = useState<Route | null>(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (saved) {
+        const data = JSON.parse(saved);
+        return data.route || null;
+      }
+    } catch (e) { console.error('Failed to restore route:', e); }
+    return null;
+  });
+  
+  const [selectedSession, setSelectedSession] = useState<Session | null>(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (saved) {
+        const data = JSON.parse(saved);
+        return data.session || null;
+      }
+    } catch (e) { console.error('Failed to restore session:', e); }
+    return null;
+  });
+  
+  const [sessionActive, setSessionActive] = useState(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (saved) {
+        const data = JSON.parse(saved);
+        return data.active === true;
+      }
+    } catch (e) { console.error('Failed to restore session active state:', e); }
+    return false;
+  });
+  
   const [scaleConnected, setScaleConnected] = useState(false);
   const [printerConnected, setPrinterConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const [sessionActive, setSessionActive] = useState(false);
   const { syncAllData, isSyncing } = useDataSync();
+
+  // Persist session state to localStorage whenever it changes
+  useEffect(() => {
+    const sessionData = {
+      route: selectedRoute,
+      session: selectedSession,
+      active: sessionActive,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionData));
+  }, [selectedRoute, selectedSession, sessionActive]);
 
   const handleRouteChange = (route: Route | null) => {
     setSelectedRoute(route);
@@ -61,6 +109,8 @@ export const Dashboard = ({
     setSessionActive(false);
     setSelectedRoute(null);
     setSelectedSession(null);
+    // Clear persisted session
+    localStorage.removeItem(SESSION_STORAGE_KEY);
   };
 
   const handleBuyProduce = () => {
@@ -205,12 +255,12 @@ export const Dashboard = ({
                 <hr className="my-1 border-gray-200" />
                 <button
                   onClick={() => {
-                    toast.info('Receipt Reprint - Select from recent receipts');
                     setMenuOpen(false);
+                    onOpenRecentReceipts?.();
                   }}
                   className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
                 >
-                  Receipt Reprint
+                  Recent Receipts
                 </button>
                 <hr className="my-1 border-gray-200" />
                 <button
@@ -254,27 +304,27 @@ export const Dashboard = ({
         </div>
 
         {/* Circular Icons */}
-        <div className="flex justify-center items-center gap-6 mb-6">
+        <div className="flex justify-center items-center gap-4 mb-6">
           {/* Store */}
           <button
             onClick={() => navigate('/store')}
             className="flex flex-col items-center"
           >
-            <div className="w-20 h-20 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
-              <Store className="h-10 w-10 text-[#E91E63]" />
+            <div className="w-16 h-16 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
+              <Store className="h-8 w-8 text-[#E91E63]" />
             </div>
-            <span className="mt-2 text-sm font-medium text-gray-700">Store</span>
+            <span className="mt-1 text-xs font-medium text-gray-700">Store</span>
           </button>
 
-          {/* AI (Center - larger) */}
+          {/* Recent Receipts */}
           <button
-            onClick={() => toast.info('AI Assistant - Coming Soon')}
+            onClick={() => onOpenRecentReceipts?.()}
             className="flex flex-col items-center"
           >
-            <div className="w-24 h-24 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
-              <div className="w-12 h-12 bg-[#E91E63] rounded-sm" />
+            <div className="w-20 h-20 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
+              <Receipt className="h-10 w-10 text-[#E91E63]" />
             </div>
-            <span className="mt-2 text-sm font-medium text-gray-700">AI</span>
+            <span className="mt-1 text-xs font-medium text-gray-700">Receipts</span>
           </button>
 
           {/* About */}
@@ -282,10 +332,10 @@ export const Dashboard = ({
             onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.0')}
             className="flex flex-col items-center"
           >
-            <div className="w-20 h-20 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
-              <Info className="h-10 w-10 text-[#E91E63]" />
+            <div className="w-16 h-16 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
+              <Info className="h-8 w-8 text-[#E91E63]" />
             </div>
-            <span className="mt-2 text-sm font-medium text-gray-700">About</span>
+            <span className="mt-1 text-xs font-medium text-gray-700">About</span>
           </button>
         </div>
 
