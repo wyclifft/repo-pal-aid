@@ -220,6 +220,7 @@ export interface MilkCollection {
   updated_at?: string;
   orderId?: number;
   synced?: boolean;
+  device_fingerprint?: string;
 }
 
 export const milkCollectionApi = {
