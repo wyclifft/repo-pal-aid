@@ -205,17 +205,14 @@ export const useDataSync = () => {
     }
   }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, syncOfflineReceipts, updatePendingCount]);
 
-  // Initial sync on mount
+  // Initial sync on mount - immediate without delay
   useEffect(() => {
     if (!navigator.onLine || !isReady) return;
     
-    const timer = setTimeout(() => {
-      if (mountedRef.current) {
-        syncAllData(true);
-      }
-    }, 1000);
-
-    return () => clearTimeout(timer);
+    // Sync immediately on mount for faster startup
+    if (mountedRef.current) {
+      syncAllData(true);
+    }
   }, [isReady]); // Only depend on isReady
 
   // Register centralized online handler

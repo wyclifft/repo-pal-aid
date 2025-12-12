@@ -242,6 +242,15 @@ const Index = () => {
       return;
     }
 
+    // Validate single farmer for consecutive captures
+    if (capturedCollections.length > 0) {
+      const firstCapture = capturedCollections[0];
+      if (firstCapture.farmer_id !== farmerId) {
+        toast.error(`Please print receipts for ${firstCapture.farmer_name} before capturing for a different farmer`);
+        return;
+      }
+    }
+
     // Check if scale reads 0 before next collection (only for scale entry)
     if (entryType === 'scale' && lastSavedWeight > 0 && weight > 0) {
       toast.error('Scale must read 0 before next collection');
@@ -254,9 +263,8 @@ const Index = () => {
     // Get device fingerprint
     const deviceFingerprint = await generateDeviceFingerprint();
 
-    // Generate reference number - SIMPLE APPROACH
+    // Generate reference number synchronously for instant response
     let referenceNo = '';
-    
     if (navigator.onLine) {
       // ONLINE: Get reference from backend
       try {
@@ -387,16 +395,7 @@ const Index = () => {
       toast.warning('Saved locally, will sync when online');
     }
 
-    // Validate single farmer for consecutive captures
-    if (capturedCollections.length > 0) {
-      const firstCapture = capturedCollections[0];
-      if (firstCapture.farmer_id !== farmerId) {
-        toast.error(`Please print receipts for ${firstCapture.farmer_name} before capturing for a different farmer`);
-        return;
-      }
-    }
-
-    // Add to captured collections
+    // Add to captured collections immediately for instant UI feedback
     setCapturedCollections(prev => [...prev, milkData]);
     
     // Trigger refresh of receipt list
@@ -405,11 +404,7 @@ const Index = () => {
     // Store the saved weight for next collection check
     setLastSavedWeight(weight);
 
-    // Success message
-    toast.success('Collection captured! Ready for next entry.');
-
     // Keep farmer details for quick consecutive captures, only reset weight
-    // Scale-based entries require scale to return to 0 before next capture (handled by validation)
     setWeight(0);
   };
 
@@ -494,15 +489,26 @@ const Index = () => {
   // Show Dashboard first
   if (!showCollection) {
     return (
-      <Dashboard
-        userName={currentUser?.user_id || 'User'}
-        companyName={companyName}
-        isOnline={navigator.onLine}
-        pendingCount={pendingCount}
-        onStartCollection={handleStartCollection}
-        onStartSelling={handleStartSelling}
-        onLogout={handleLogout}
-      />
+      <>
+        <Dashboard
+          userName={currentUser?.user_id || 'User'}
+          companyName={companyName}
+          isOnline={navigator.onLine}
+          pendingCount={pendingCount}
+          onStartCollection={handleStartCollection}
+          onStartSelling={handleStartSelling}
+          onLogout={handleLogout}
+          onOpenRecentReceipts={() => setReprintModalOpen(true)}
+        />
+        
+        {/* Reprint Modal - accessible from Dashboard */}
+        <ReprintModal
+          open={reprintModalOpen}
+          onClose={() => setReprintModalOpen(false)}
+          receipts={printedReceipts}
+          companyName={companyName}
+        />
+      </>
     );
   }
 

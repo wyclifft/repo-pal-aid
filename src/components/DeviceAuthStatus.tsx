@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, ShieldAlert, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -10,19 +10,22 @@ interface DeviceAuthStatusProps {
 }
 
 export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }: DeviceAuthStatusProps) => {
-  // Initialize from localStorage to persist across navigation
+  // Initialize from localStorage immediately for instant display
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(() => {
     const cached = localStorage.getItem('device_authorized');
     return cached ? JSON.parse(cached) : null;
   });
   const [companyName, setCompanyName] = useState<string>(() => {
-    return localStorage.getItem('device_company_name') || 'Unknown';
+    return localStorage.getItem('device_company_name') || '';
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    // Only show loading if no cached data exists
+    return !localStorage.getItem('device_company_name');
+  });
+  const hasInitialized = useRef(false);
 
   const initializeDeviceConfig = useCallback(async (companyNameValue: string, deviceCode: string) => {
     try {
-      // Always attempt to store config on authorization
       await storeDeviceConfig(companyNameValue, deviceCode);
       console.log('✅ Device config initialized for offline generation');
     } catch (error) {
@@ -35,14 +38,20 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
       const fingerprint = await generateDeviceFingerprint();
       const apiUrl = 'https://backend.maddasystems.co.ke';
       
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      
       const response = await fetch(
-        `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`
+        `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
+        { signal: controller.signal }
       );
       
-      // Check if response is JSON
+      clearTimeout(timeoutId);
+      
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
         console.warn('Authorization check returned non-JSON response - keeping cached status');
+        setLoading(false);
         return;
       }
       
@@ -54,69 +63,72 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           const authorized = data.data.authorized === 1;
           setIsAuthorized(authorized);
           onAuthorizationChange?.(authorized);
-          
-          // Cache authorization status
           localStorage.setItem('device_authorized', JSON.stringify(authorized));
           
-          // Always update company name from response (default to 'Unknown' if null)
-          const fetchedCompanyName = data.data.company_name || 'Unknown';
+          const fetchedCompanyName = data.data.company_name || 'DAIRY COLLECTION';
           console.log('Fetched company name:', fetchedCompanyName);
           setCompanyName(fetchedCompanyName);
           onCompanyNameChange?.(fetchedCompanyName);
-          
-          // Cache company name in localStorage
           localStorage.setItem('device_company_name', fetchedCompanyName);
           
-          // Store device config for offline reference generation (critical for first install)
           if (authorized) {
             const deviceCode = String(data.data.uniquedevcode || '00000').slice(-5);
-            // Initialize config immediately - this is critical for first install
             await initializeDeviceConfig(fetchedCompanyName, deviceCode);
           }
         }
-        // If data structure is invalid, keep cached values
       }
-      // If response not ok, keep cached values
     } catch (error) {
-      console.error('Authorization check failed:', error);
-      // Keep using cached values when offline or on error
+      if ((error as Error).name === 'AbortError') {
+        console.warn('Authorization check timed out - using cached values');
+      } else {
+        console.error('Authorization check failed:', error);
+      }
     } finally {
       setLoading(false);
     }
   }, [onAuthorizationChange, onCompanyNameChange, initializeDeviceConfig]);
 
+  // Immediately notify parent of cached values on mount
   useEffect(() => {
-    // Check if we have device config on mount (for first install detection)
-    const checkFirstInstall = async () => {
-      const hasConfig = await hasDeviceConfig();
-      if (!hasConfig) {
-        console.log('📱 First install detected - will initialize config on authorization');
-      }
-    };
+    if (hasInitialized.current) return;
+    hasInitialized.current = true;
     
-    checkFirstInstall();
+    // Immediately notify parent with cached values
+    const cachedCompanyName = localStorage.getItem('device_company_name');
+    const cachedAuthorized = localStorage.getItem('device_authorized');
+    
+    if (cachedCompanyName) {
+      onCompanyNameChange?.(cachedCompanyName);
+    }
+    if (cachedAuthorized) {
+      onAuthorizationChange?.(JSON.parse(cachedAuthorized));
+    }
+    
+    // Then check for updates from server
     checkAuthorization();
     
-    // Recheck every 30 seconds
-    const interval = setInterval(checkAuthorization, 30000);
+    // Recheck every 60 seconds (less frequent for stability)
+    const interval = setInterval(checkAuthorization, 60000);
     
     return () => clearInterval(interval);
-  }, [checkAuthorization]);
+  }, [checkAuthorization, onCompanyNameChange, onAuthorizationChange]);
 
-  if (loading) {
+  if (loading && !companyName) {
     return (
       <Badge variant="outline" className="gap-1">
         <Loader2 className="h-3 w-3 animate-spin" />
-        <span className="text-xs">Checking...</span>
+        <span className="text-xs">Loading...</span>
       </Badge>
     );
   }
+
+  const displayName = companyName || 'DAIRY COLLECTION';
 
   if (isAuthorized === null) {
     return (
       <Badge variant="outline" className="gap-1">
         <ShieldAlert className="h-3 w-3" />
-        <span className="text-xs">{companyName}</span>
+        <span className="text-xs">{displayName}</span>
       </Badge>
     );
   }
@@ -125,7 +137,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
     return (
       <Badge variant="outline" className="gap-1 bg-green-50 border-green-200 text-green-700">
         <Shield className="h-3 w-3" />
-        <span className="text-xs">{companyName}</span>
+        <span className="text-xs">{displayName}</span>
       </Badge>
     );
   }
@@ -133,7 +145,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
   return (
     <Badge variant="outline" className="gap-1 bg-red-50 border-red-200 text-red-700">
       <ShieldAlert className="h-3 w-3" />
-      <span className="text-xs">{companyName}</span>
+      <span className="text-xs">{displayName}</span>
     </Badge>
   );
 };
