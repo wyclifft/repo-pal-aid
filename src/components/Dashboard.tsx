@@ -329,7 +329,7 @@ export const Dashboard = ({
 
           {/* About */}
           <button
-            onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.0')}
+            onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.5')}
             className="flex flex-col items-center"
           >
             <div className="w-16 h-16 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">

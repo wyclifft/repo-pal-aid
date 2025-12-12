@@ -323,20 +323,28 @@ const Index = () => {
 
     const deviceFingerprint = await generateDeviceFingerprint();
     let successCount = 0;
-    let failedCount = 0;
+    let offlineCount = 0;
+
+    // Check network status first
+    const isOnline = navigator.onLine;
+    console.log(`📡 Network status: ${isOnline ? 'ONLINE' : 'OFFLINE'}`);
 
     // Dispatch sync start event
     window.dispatchEvent(new CustomEvent('syncStart'));
 
     for (const capture of capturedCollections) {
-      if (navigator.onLine) {
+      if (isOnline) {
+        // ONLINE: Submit directly to database
         try {
+          console.log(`📤 Submitting online: ${capture.reference_no}`);
+          
           // Get fresh reference from backend for online submissions
           let referenceNo = capture.reference_no;
           try {
             const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
             if (refResult.data?.reference_no) {
               referenceNo = refResult.data.reference_no;
+              console.log(`🔢 Got fresh reference: ${referenceNo}`);
             }
           } catch (refError) {
             console.warn('Could not get backend reference, using existing:', refError);
@@ -353,22 +361,27 @@ const Index = () => {
             collection_date: capture.collection_date,
           } as any);
 
+          console.log(`📨 Submit result for ${referenceNo}:`, result);
+
           if (result.success) {
             successCount++;
             console.log('✅ Submitted to database:', referenceNo);
           } else {
-            throw new Error('Submit failed');
+            // API returned failure, save locally for retry
+            console.warn('⚠️ Submit returned failure, saving locally');
+            await saveReceipt({...capture, reference_no: referenceNo});
+            offlineCount++;
           }
         } catch (err) {
-          console.error('Submit error, saving locally:', err);
-          // Save to IndexedDB for later sync
+          console.error('❌ Submit error, saving locally:', err);
+          // Network error or other failure - save to IndexedDB for later sync
           await saveReceipt(capture);
-          failedCount++;
+          offlineCount++;
         }
       } else {
-        // Offline: save to IndexedDB for later sync
+        // OFFLINE: Save to IndexedDB for later sync
         await saveReceipt(capture);
-        failedCount++;
+        offlineCount++;
         console.log('📦 Saved offline for sync:', capture.reference_no);
       }
     }
@@ -376,11 +389,16 @@ const Index = () => {
     // Dispatch sync complete event
     window.dispatchEvent(new CustomEvent('syncComplete'));
 
+    // Show appropriate feedback
     if (successCount > 0) {
       toast.success(`Submitted ${successCount} collection${successCount !== 1 ? 's' : ''} to database`);
     }
-    if (failedCount > 0) {
-      toast.warning(`${failedCount} collection${failedCount !== 1 ? 's' : ''} saved locally, will sync when online`);
+    if (offlineCount > 0) {
+      if (isOnline) {
+        toast.warning(`${offlineCount} collection${offlineCount !== 1 ? 's' : ''} failed, saved for retry`);
+      } else {
+        toast.info(`${offlineCount} collection${offlineCount !== 1 ? 's' : ''} saved offline, will sync when online`);
+      }
     }
 
     // Open receipt modal for printing
