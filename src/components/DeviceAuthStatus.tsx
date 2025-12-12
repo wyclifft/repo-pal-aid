@@ -23,6 +23,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
     return !localStorage.getItem('device_company_name');
   });
   const hasInitialized = useRef(false);
+  const fetchAttempted = useRef(false);
 
   const initializeDeviceConfig = useCallback(async (companyNameValue: string, deviceCode: string) => {
     try {
@@ -31,6 +32,34 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
     } catch (error) {
       console.error('⚠️ Failed to initialize device config:', error);
     }
+  }, []);
+
+  // Fetch company name from psettings based on ccode
+  const fetchCompanyNameByCcode = useCallback(async (ccode: string): Promise<string | null> => {
+    if (!ccode || !navigator.onLine) return null;
+    
+    try {
+      const apiUrl = 'https://backend.maddasystems.co.ke';
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const response = await fetch(
+        `${apiUrl}/api/psettings?ccode=${encodeURIComponent(ccode)}`,
+        { signal: controller.signal }
+      );
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data?.company_name) {
+          return data.data.company_name;
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to fetch company name by ccode:', error);
+    }
+    return null;
   }, []);
 
   const checkAuthorization = useCallback(async () => {
@@ -73,11 +102,23 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           localStorage.setItem('device_authorized', JSON.stringify(authorized));
           
           // Company name from psettings table via API (based on ccode)
-          const fetchedCompanyName = data.data.company_name || 'DAIRY COLLECTION';
+          let fetchedCompanyName = data.data.company_name;
+          
+          // If no company name from device, try fetching by ccode
+          if (!fetchedCompanyName && data.data.ccode) {
+            fetchedCompanyName = await fetchCompanyNameByCcode(data.data.ccode);
+          }
+          
+          fetchedCompanyName = fetchedCompanyName || 'DAIRY COLLECTION';
           console.log('Fetched company name from psettings:', fetchedCompanyName);
           setCompanyName(fetchedCompanyName);
           onCompanyNameChange?.(fetchedCompanyName);
           localStorage.setItem('device_company_name', fetchedCompanyName);
+          
+          // Store ccode for future reference
+          if (data.data.ccode) {
+            localStorage.setItem('device_ccode', data.data.ccode);
+          }
           
           // Also save for offline login
           if (authorized) {
@@ -95,8 +136,9 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
       }
     } finally {
       setLoading(false);
+      fetchAttempted.current = true;
     }
-  }, [onAuthorizationChange, onCompanyNameChange, initializeDeviceConfig]);
+  }, [onAuthorizationChange, onCompanyNameChange, initializeDeviceConfig, fetchCompanyNameByCcode]);
 
   // Immediately notify parent of cached values on mount
   useEffect(() => {
@@ -108,6 +150,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
     const cachedAuthorized = localStorage.getItem('device_authorized');
     
     if (cachedCompanyName) {
+      setCompanyName(cachedCompanyName);
       onCompanyNameChange?.(cachedCompanyName);
     }
     if (cachedAuthorized) {
@@ -122,6 +165,29 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
     
     return () => clearInterval(interval);
   }, [checkAuthorization, onCompanyNameChange, onAuthorizationChange]);
+
+  // Try to load company name from ccode stored in credentials on first launch
+  useEffect(() => {
+    if (companyName || fetchAttempted.current || !navigator.onLine) return;
+    
+    const cachedCreds = localStorage.getItem('cachedCredentials');
+    if (cachedCreds) {
+      try {
+        const creds = JSON.parse(cachedCreds);
+        if (creds.ccode) {
+          fetchCompanyNameByCcode(creds.ccode).then((name) => {
+            if (name) {
+              setCompanyName(name);
+              onCompanyNameChange?.(name);
+              localStorage.setItem('device_company_name', name);
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to parse cached credentials:', e);
+      }
+    }
+  }, [companyName, fetchCompanyNameByCcode, onCompanyNameChange]);
 
   if (loading && !companyName) {
     return (

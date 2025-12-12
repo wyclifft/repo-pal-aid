@@ -126,6 +126,20 @@ const initAppStateListener = async (): Promise<void> => {
       }
     });
     
+    // Listen for back button - close app when pressed
+    await App.addListener('backButton', ({ canGoBack }) => {
+      console.log('📱 Back button pressed, canGoBack:', canGoBack);
+      
+      // Check if we're on the main/login page (no history to go back to)
+      if (!canGoBack || window.location.pathname === '/') {
+        // Exit the app
+        App.exitApp();
+      } else {
+        // Go back in browser history
+        window.history.back();
+      }
+    });
+    
     // Listen for URL open (deep links)
     await App.addListener('appUrlOpen', ({ url }) => {
       console.log('🔗 App URL opened:', url);
