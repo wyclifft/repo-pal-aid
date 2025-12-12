@@ -1,75 +1,154 @@
-# Capacitor Mobile App Build Guide
+# Capacitor Mobile App Build Guide (Windows CMD)
 
-Complete guide to build and deploy the Milk Collection app as a native Android/iOS application.
+Complete guide to build and deploy the Milk Collection app as a native Android application on Windows.
 
 ## Prerequisites
 
 ### Required Software
-- **Node.js** (v18+)
-- **npm** or **yarn**
-- **Git**
-- **Android Studio** (for Android builds)
-- **Xcode** (for iOS builds, Mac only)
+- **Node.js** (v18+) - Download from https://nodejs.org
+- **Git for Windows** - Download from https://git-scm.com
+- **Android Studio** - Download from https://developer.android.com/studio
 
-### System Requirements
-- **Android**: Android Studio with SDK 24+ (Android 7.0+)
-- **iOS**: macOS with Xcode 14+
+### Android Studio Setup
+1. Download and install Android Studio
+2. Open Android Studio → SDK Manager (File → Settings → Languages & Frameworks → Android SDK)
+3. In "SDK Platforms" tab, install:
+   - Android 14 (API 34) or latest
+4. In "SDK Tools" tab, install:
+   - Android SDK Build-Tools
+   - Android SDK Command-line Tools
+   - Android SDK Platform-Tools
+   - Android Emulator (optional, for testing without physical device)
+
+### Set Environment Variables (Windows)
+1. Open System Properties → Advanced → Environment Variables
+2. Under "User variables", click "New" and add:
+   - Variable name: `ANDROID_HOME`
+   - Variable value: `C:\Users\<YourUsername>\AppData\Local\Android\Sdk`
+3. Edit the "Path" variable and add:
+   - `%ANDROID_HOME%\platform-tools`
+   - `%ANDROID_HOME%\cmdline-tools\latest\bin`
+4. Click OK and restart CMD
 
 ---
 
-## Quick Start
+## Step-by-Step Build Guide (Windows CMD)
 
-### 1. Clone and Setup
+### Step 1: Navigate to Project and Install Dependencies
 
-```bash
-# Clone the repository
-git clone <your-repo-url>
-cd <project-folder>
+```cmd
+cd C:\Users\TESH\milkapp\repo-pal-aid
 
-# Install dependencies
 npm install
 ```
 
-### 2. Build the Web App
+### Step 2: Build the Web App
 
-```bash
-# Build for production
+**IMPORTANT: Use `npm run build` NOT `npx run build`**
+
+```cmd
 npm run build
 ```
 
-### 3. Add Native Platforms
+This creates the `dist` folder with your compiled web app.
 
-```bash
-# Add Android
+### Step 3: Add Android Platform (First Time Only)
+
+```cmd
 npx cap add android
-
-# Add iOS (Mac only)
-npx cap add ios
 ```
 
-### 4. Sync Changes
+### Step 4: Sync Web App to Android
 
-```bash
-# Sync web code to native projects
-npx cap sync
+Run this every time you make code changes:
+
+```cmd
+npx cap sync android
 ```
 
-### 5. Run on Device/Emulator
+### Step 5: Build Debug APK
 
-```bash
-# Run on Android
-npx cap run android
-
-# Run on iOS (Mac only)
-npx cap run ios
+```cmd
+cd android
+gradlew.bat assembleDebug
 ```
+
+Wait for the build to complete. Your APK will be at:
+```
+android\app\build\outputs\apk\debug\app-debug.apk
+```
+
+### Step 6: Install APK to Phone
+
+1. Connect your Android phone via USB
+2. Enable "USB Debugging" on your phone (Settings → Developer Options)
+3. Run:
+
+```cmd
+adb install app\build\outputs\apk\debug\app-debug.apk
+```
+
+Or copy the APK file to your phone and install it manually.
+
+---
+
+## Quick Reference Commands (Windows CMD)
+
+```cmd
+:: Navigate to project
+cd C:\Users\TESH\milkapp\repo-pal-aid
+
+:: Install dependencies (first time or after pull)
+npm install
+
+:: Build web app (CORRECT command)
+npm run build
+
+:: Sync to Android
+npx cap sync android
+
+:: Build debug APK
+cd android
+gradlew.bat assembleDebug
+
+:: Build release APK
+cd android
+gradlew.bat assembleRelease
+
+:: Open in Android Studio
+npx cap open android
+
+:: Check connected devices
+adb devices
+
+:: Install APK to connected device
+adb install android\app\build\outputs\apk\debug\app-debug.apk
+```
+
+---
+
+## Complete Build Flow (Copy-Paste Ready)
+
+Run these commands one by one in Windows CMD:
+
+```cmd
+cd C:\Users\TESH\milkapp\repo-pal-aid
+npm install
+npm run build
+npx cap sync android
+cd android
+gradlew.bat assembleDebug
+```
+
+After successful build, find your APK at:
+`C:\Users\TESH\milkapp\repo-pal-aid\android\app\build\outputs\apk\debug\app-debug.apk`
 
 ---
 
 ## Project Structure
 
 ```
-project/
+repo-pal-aid/
 ├── android/                 # Android native project
 │   ├── app/
 │   │   ├── src/main/
@@ -77,14 +156,60 @@ project/
 │   │   │   ├── java/
 │   │   │   └── res/
 │   │   └── build.gradle
-│   └── capacitor.settings.gradle
-├── ios/                     # iOS native project (after cap add ios)
-│   └── App/
+│   └── gradlew.bat          # Windows build script
 ├── src/                     # Web source code
-├── dist/                    # Built web app (webDir)
+├── dist/                    # Built web app (created by npm run build)
 ├── capacitor.config.ts      # Capacitor configuration
 └── package.json
 ```
+
+---
+
+## Building Release APK (For Distribution)
+
+### 1. Create Signing Key (First Time Only)
+
+Open CMD in your project folder:
+
+```cmd
+keytool -genkey -v -keystore milk-collection.keystore -alias milk-collection -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Follow the prompts to set a password and key details.
+
+### 2. Configure Signing
+
+Edit `android\app\build.gradle` and add before `dependencies`:
+
+```gradle
+android {
+    signingConfigs {
+        release {
+            storeFile file('../../milk-collection.keystore')
+            storePassword 'your-store-password'
+            keyAlias 'milk-collection'
+            keyPassword 'your-key-password'
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+```
+
+### 3. Build Release APK
+
+```cmd
+cd android
+gradlew.bat assembleRelease
+```
+
+Release APK location:
+`android\app\build\outputs\apk\release\app-release.apk`
 
 ---
 
@@ -92,23 +217,17 @@ project/
 
 ### capacitor.config.ts
 
-Key settings for native behavior:
+Key settings:
 
 ```typescript
 {
-  appId: 'app.lovable.milkcollection',
-  appName: 'Milk Collection',
+  appId: 'app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e',
+  appName: 'repo-pal-aid',
   webDir: 'dist',
   
   android: {
-    minWebViewVersion: 55,        // Chrome 55 minimum
-    allowMixedContent: true,      // Allow HTTP in WebView
-    backgroundColor: '#1a1a2e',
-  },
-  
-  ios: {
-    backgroundColor: '#1a1a2e',
-    contentInset: 'automatic',
+    minWebViewVersion: 55,
+    allowMixedContent: true,
   },
   
   plugins: {
@@ -126,258 +245,112 @@ Key settings for native behavior:
 
 ### Development Hot-Reload
 
-For live development on device, uncomment in `capacitor.config.ts`:
+For live development on device, the config already includes:
 
 ```typescript
 server: {
-  url: 'https://your-preview-url.lovableproject.com?forceHideBadge=true',
+  url: 'https://a468e475-ee6a-4fda-9a7e-5e39ba8c375e.lovableproject.com?forceHideBadge=true',
   cleartext: true,
 }
 ```
 
----
-
-## Android Build
-
-### Debug APK
-
-```bash
-# Build debug APK
-cd android
-./gradlew assembleDebug
-
-# APK location: android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-### Release APK
-
-1. **Create Signing Key** (first time only):
-```bash
-keytool -genkey -v -keystore milk-collection.keystore \
-  -alias milk-collection -keyalg RSA -keysize 2048 -validity 10000
-```
-
-2. **Configure Signing** in `android/app/build.gradle`:
-```gradle
-android {
-    signingConfigs {
-        release {
-            storeFile file('milk-collection.keystore')
-            storePassword 'your-store-password'
-            keyAlias 'milk-collection'
-            keyPassword 'your-key-password'
-        }
-    }
-    buildTypes {
-        release {
-            signingConfig signingConfigs.release
-            minifyEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-        }
-    }
-}
-```
-
-3. **Build Release APK**:
-```bash
-cd android
-./gradlew assembleRelease
-# APK: android/app/build/outputs/apk/release/app-release.apk
-```
-
-### Android App Bundle (for Play Store)
-
-```bash
-cd android
-./gradlew bundleRelease
-# AAB: android/app/build/outputs/bundle/release/app-release.aab
-```
-
----
-
-## iOS Build
-
-### Development Build
-
-```bash
-# Open in Xcode
-npx cap open ios
-
-# Select device/simulator and run
-```
-
-### Archive for App Store
-
-1. Open project in Xcode
-2. Product → Archive
-3. Window → Organizer
-4. Distribute App
+This lets the app load from the Lovable preview server for instant updates.
 
 ---
 
 ## Installed Capacitor Plugins
 
-| Plugin | Purpose |
-|--------|---------|
-| `@capacitor/core` | Core Capacitor runtime |
-| `@capacitor/android` | Android platform |
-| `@capacitor/app` | App state, URL handling |
-| `@capacitor/haptics` | Haptic feedback |
-| `@capacitor/network` | Network status monitoring |
-| `@capacitor/splash-screen` | Native splash screen |
-| `@capacitor/status-bar` | Status bar styling |
-| `@capacitor-community/bluetooth-le` | Bluetooth LE for scales/printers |
-
----
-
-## Offline-First Architecture
-
-### Service Worker Caching
-
-The PWA service worker (`public/sw.js`) handles:
-- **Static Assets**: Cached on install, never expire
-- **API Responses**: Cached with network-first fallback
-- **Dynamic Content**: Stale-while-revalidate strategy
-- **Offline Fallback**: Shows offline page when unavailable
-
-### IndexedDB Storage
-
-Local database stores:
-- **Farmers**: Cached farmer list
-- **Receipts**: Pending/synced milk collections
-- **Sessions**: Available collection sessions
-- **Routes**: Route/tank information
-- **Device Config**: Device fingerprint and settings
-
-### Sync Strategy
-
-1. **Offline Capture**: Data saved to IndexedDB
-2. **Deduplication**: Prevents duplicate entries
-3. **Background Sync**: Automatic sync when online
-4. **Retry Logic**: Failed syncs retry with backoff
-5. **Conflict Resolution**: Server timestamp wins
-
----
-
-## Bluetooth Integration
-
-### Scale Connection
-
-```typescript
-import { connectBluetoothScale } from '@/services/bluetooth';
-
-const result = await connectBluetoothScale((weight, type) => {
-  console.log(`Weight: ${weight} kg, Type: ${type}`);
-});
-
-if (result.success) {
-  console.log('Connected to scale');
-}
-```
-
-### Printer Connection
-
-```typescript
-import { connectBluetoothPrinter, printReceipt } from '@/services/bluetooth';
-
-await connectBluetoothPrinter();
-await printReceipt(receiptData);
-```
-
----
-
-## Performance Optimization
-
-### Build Optimization (vite.config.ts)
-
-- **Code Splitting**: Separate chunks for vendors
-- **Tree Shaking**: Remove unused code
-- **Minification**: Compressed production build
-- **ES2015 Target**: Compatible with Android 7.0+
-
-### Runtime Optimization
-
-- **Lazy Loading**: Components loaded on demand
-- **Virtual Scrolling**: Large lists rendered efficiently
-- **Debounced Sync**: Prevents rapid API calls
-- **Memory Management**: Cleanup on component unmount
+| Plugin | Version | Purpose |
+|--------|---------|---------|
+| `@capacitor/core` | ^7.4.4 | Core Capacitor runtime |
+| `@capacitor/android` | ^7.4.4 | Android platform |
+| `@capacitor/cli` | ^7.4.4 | Capacitor CLI |
+| `@capacitor/app` | ^7.1.1 | App state, URL handling |
+| `@capacitor/haptics` | ^7.0.3 | Haptic feedback (vibration) |
+| `@capacitor/network` | ^7.0.3 | Network status monitoring |
+| `@capacitor/preferences` | ^7.0.3 | Persistent key-value storage |
+| `@capacitor/splash-screen` | ^7.0.4 | Native splash screen |
+| `@capacitor/status-bar` | ^7.0.4 | Status bar styling |
+| `@capacitor-community/bluetooth-le` | ^7.2.0 | Bluetooth LE for scales/printers |
 
 ---
 
 ## Troubleshooting
 
-### Android Issues
+### "Cannot find module 'build'" Error
+You typed `npx run build` which is wrong. Use `npm run build` instead.
 
-**Blank Screen on Launch**
-- Ensure `build.target` in `vite.config.ts` is `'es2015'`
-- Check WebView version: must be Chrome 55+
+### "gradlew is not recognized"
+Make sure you're in the `android` folder:
+```cmd
+cd android
+gradlew.bat assembleDebug
+```
 
-**Bluetooth Not Working**
-- Check Bluetooth permissions in AndroidManifest.xml
-- Ensure location permission is granted (required for BLE)
+### "ANDROID_HOME is not set"
+Set environment variable (see Prerequisites section above).
 
-**App Crashes**
-- Check logcat: `adb logcat | grep -i "capacitor"`
-- Look for JavaScript errors in WebView
+### "SDK not found"
+1. Open Android Studio
+2. Go to File → Settings → Languages & Frameworks → Android SDK
+3. Note the "Android SDK Location" path
+4. Set that as your ANDROID_HOME environment variable
 
-### iOS Issues
+### Build Fails with Gradle Errors
+```cmd
+cd android
+gradlew.bat clean
+gradlew.bat assembleDebug
+```
 
-**Build Fails**
-- Update Xcode to latest version
-- Run `pod install` in ios/App directory
+### Blank Screen on Launch
+- Ensure `npm run build` completed successfully
+- Check that `dist` folder exists and has content
+- Run `npx cap sync android` again
 
-**Network Requests Blocked**
-- Check App Transport Security settings
-- Ensure HTTPS is used for API calls
+### Bluetooth Not Working
+Check that these permissions exist in `android\app\src\main\AndroidManifest.xml`:
+```xml
+<uses-permission android:name="android.permission.BLUETOOTH"/>
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/>
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+```
 
-### General Issues
-
-**Offline Sync Not Working**
-- Check IndexedDB initialization in console
-- Verify network status detection
-- Look for sync errors in console
-
-**Slow Performance**
-- Enable production build (`npm run build`)
-- Check for memory leaks in dev tools
-- Verify large lists use virtualization
+### Check Logs
+```cmd
+adb logcat | findstr -i "capacitor"
+```
 
 ---
 
 ## Update Process
 
-After code changes:
+After making code changes in Lovable:
 
-```bash
-# 1. Build web app
+```cmd
+:: 1. Pull latest changes
+git pull
+
+:: 2. Install any new dependencies
+npm install
+
+:: 3. Build web app
 npm run build
 
-# 2. Sync to native projects
-npx cap sync
+:: 4. Sync to Android
+npx cap sync android
 
-# 3. Run updated app
-npx cap run android
-# or
-npx cap run ios
-```
-
----
-
-## Environment Variables
-
-For native builds, environment variables must be baked in at build time:
-
-```bash
-# Set before building
-VITE_API_URL=https://backend.maddasystems.co.ke/api npm run build
+:: 5. Build new APK
+cd android
+gradlew.bat assembleDebug
 ```
 
 ---
 
 ## Support
 
-For issues specific to:
-- **Capacitor**: https://capacitorjs.com/docs
-- **Android**: Check Android Studio logs
-- **iOS**: Check Xcode console
-- **Bluetooth**: See `SCALE_CONNECTION_GUIDE.md`
+- **Capacitor Docs**: https://capacitorjs.com/docs
+- **Android Studio**: Check logs in Logcat tab
+- **Bluetooth Issues**: See `SCALE_CONNECTION_GUIDE.md`
