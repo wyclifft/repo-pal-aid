@@ -101,12 +101,23 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           onAuthorizationChange?.(authorized);
           localStorage.setItem('device_authorized', JSON.stringify(authorized));
           
-          // Company name from psettings table via API (based on ccode)
-          let fetchedCompanyName = data.data.company_name;
+          // Check if ccode changed - clear cached company name if so
+          const cachedCcode = localStorage.getItem('device_ccode');
+          const newCcode = data.data.ccode;
+          if (cachedCcode && newCcode && cachedCcode !== newCcode) {
+            console.log('🔄 CCODE changed from', cachedCcode, 'to', newCcode, '- clearing cached company name');
+            localStorage.removeItem('device_company_name');
+          }
           
-          // If no company name from device, try fetching by ccode
-          if (!fetchedCompanyName && data.data.ccode) {
-            fetchedCompanyName = await fetchCompanyNameByCcode(data.data.ccode);
+          // Always fetch fresh company name by ccode for immediate updates
+          let fetchedCompanyName = null;
+          if (newCcode) {
+            fetchedCompanyName = await fetchCompanyNameByCcode(newCcode);
+          }
+          
+          // Fallback to device-level company name if psettings fetch fails
+          if (!fetchedCompanyName) {
+            fetchedCompanyName = data.data.company_name;
           }
           
           fetchedCompanyName = fetchedCompanyName || 'DAIRY COLLECTION';
@@ -116,8 +127,8 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           localStorage.setItem('device_company_name', fetchedCompanyName);
           
           // Store ccode for future reference
-          if (data.data.ccode) {
-            localStorage.setItem('device_ccode', data.data.ccode);
+          if (newCcode) {
+            localStorage.setItem('device_ccode', newCcode);
           }
           
           // Also save for offline login
@@ -157,11 +168,11 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
       onAuthorizationChange?.(JSON.parse(cachedAuthorized));
     }
     
-    // Then check for updates from server
+    // Then check for updates from server (always fetch fresh to catch ccode changes)
     checkAuthorization();
     
-    // Recheck every 60 seconds (less frequent for stability)
-    const interval = setInterval(checkAuthorization, 60000);
+    // Recheck every 30 seconds for faster ccode change detection
+    const interval = setInterval(checkAuthorization, 30000);
     
     return () => clearInterval(interval);
   }, [checkAuthorization, onCompanyNameChange, onAuthorizationChange]);
