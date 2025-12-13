@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { CornerDownLeft, Search, X } from 'lucide-react';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
 import { type Route, type Session } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
-import { mysqlApi } from '@/services/mysqlApi';
+import { FarmerSearchModal } from './FarmerSearchModal';
 import { toast } from 'sonner';
 
 interface BuyProduceScreenProps {
@@ -38,8 +39,7 @@ export const BuyProduceScreen = ({
   onManualWeightChange,
 }: BuyProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
-  const [suggestions, setSuggestions] = useState<Farmer[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const { getFarmers } = useIndexedDB();
@@ -62,48 +62,66 @@ export const BuyProduceScreen = ({
     loadFarmers();
   }, [getFarmers, route?.tcode]);
 
-  // Search farmers
-  const searchFarmers = (query: string) => {
-    if (!query) {
-      setSuggestions(cachedFarmers.slice(0, 10));
-      return;
+  // Resolve numeric input to full farmer ID
+  const resolveFarmerId = (input: string): Farmer | null => {
+    if (!input.trim()) return null;
+    
+    const numericInput = input.replace(/\D/g, '');
+    
+    // Search by exact farmer_id first
+    const exactMatch = cachedFarmers.find(
+      f => f.farmer_id.toLowerCase() === input.toLowerCase()
+    );
+    if (exactMatch) return exactMatch;
+    
+    // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
+    if (numericInput && numericInput === input.trim()) {
+      const paddedId = `M${numericInput.padStart(5, '0')}`;
+      const paddedMatch = cachedFarmers.find(
+        f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
+      );
+      if (paddedMatch) return paddedMatch;
+      
+      // Also try matching by numeric portion
+      const numericMatch = cachedFarmers.find(f => {
+        const farmerNumeric = f.farmer_id.replace(/\D/g, '');
+        return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
+      });
+      if (numericMatch) return numericMatch;
     }
-    const lowerQuery = query.toLowerCase();
-    const filtered = cachedFarmers.filter((f) => {
-      const idMatch = String(f.farmer_id || '').toLowerCase().startsWith(lowerQuery);
-      const nameMatch = String(f.name || '').toLowerCase().includes(lowerQuery);
-      return idMatch || nameMatch;
-    });
-    setSuggestions(filtered.slice(0, 10));
+    
+    return null;
   };
 
-  useEffect(() => {
-    searchFarmers(memberNo);
-  }, [memberNo, cachedFarmers]);
-
+  // Handle arrow button - resolve and select farmer
   const handleEnter = () => {
-    if (suggestions.length === 1) {
-      handleSelectFarmer(suggestions[0]);
-    } else if (suggestions.length > 1) {
-      setShowSuggestions(true);
+    const farmer = resolveFarmerId(memberNo);
+    if (farmer) {
+      handleSelectFarmer(farmer);
+    } else if (memberNo.trim()) {
+      toast.error(`Farmer "${memberNo}" not found`);
     }
   };
 
+  // Handle search button - open modal
   const handleSearch = () => {
-    setShowSuggestions(true);
-    searchFarmers(memberNo);
+    setShowSearchModal(true);
   };
 
-  const handleClear = () => {
+  // Handle clear button with haptic feedback
+  const handleClear = async () => {
+    try {
+      await Haptics.impact({ style: ImpactStyle.Light });
+    } catch (err) {
+      // Haptics not available (web browser)
+    }
     setMemberNo('');
-    setSuggestions([]);
-    setShowSuggestions(false);
     onClearFarmer();
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
     setMemberNo(farmer.farmer_id);
-    setShowSuggestions(false);
+    setShowSearchModal(false);
     onSelectFarmer(farmer);
   };
 
@@ -153,19 +171,16 @@ export const BuyProduceScreen = ({
         </div>
 
         {/* Member Search */}
-        <div className="flex gap-1.5 sm:gap-2 relative">
+        <div className="flex gap-1.5 sm:gap-2">
           <input
             ref={inputRef}
             type="text"
             inputMode="text"
             placeholder="Enter Member No."
             value={memberNo}
-            onChange={(e) => {
-              setMemberNo(e.target.value);
-              setShowSuggestions(true);
-            }}
-            onFocus={() => setShowSuggestions(true)}
-            className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-300 rounded-lg text-base sm:text-lg min-h-[44px]"
+            onChange={(e) => setMemberNo(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleEnter()}
+            className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-800 bg-white rounded-lg text-base sm:text-lg min-h-[44px] font-semibold"
           />
           <button
             onClick={handleEnter}
@@ -185,22 +200,15 @@ export const BuyProduceScreen = ({
           >
             <X className="h-5 w-5 sm:h-6 sm:w-6" />
           </button>
-
-          {/* Suggestions Dropdown */}
-          {showSuggestions && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 right-20 bg-white border-2 border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto z-50 mt-1">
-              {suggestions.map((farmer) => (
-                <div
-                  key={farmer.farmer_id}
-                  className="px-4 py-3 cursor-pointer hover:bg-teal-100 border-b border-gray-100"
-                  onClick={() => handleSelectFarmer(farmer)}
-                >
-                  <div className="font-semibold">{farmer.farmer_id} - {farmer.name}</div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
+
+        {/* Farmer Search Modal */}
+        <FarmerSearchModal
+          isOpen={showSearchModal}
+          onClose={() => setShowSearchModal(false)}
+          onSelectFarmer={handleSelectFarmer}
+          farmers={cachedFarmers}
+        />
 
         {/* Member Info Card */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-2">
@@ -251,16 +259,30 @@ export const BuyProduceScreen = ({
           </button>
         </div>
 
-        {/* Transactions */}
-        <div className="bg-white border border-gray-200 rounded-lg p-4 text-center">
+        {/* Transactions List */}
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
           {capturedCollections.length === 0 ? (
-            <span className="text-gray-500">NO TRANSACTIONS ...</span>
+            <div className="p-4 text-center text-gray-500">NO TRANSACTIONS ...</div>
           ) : (
-            <div className="space-y-2">
+            <div className="divide-y divide-gray-100">
               {capturedCollections.map((c, i) => (
-                <div key={i} className="flex justify-between text-sm border-b border-gray-100 pb-1">
-                  <span>#{i + 1} - {c.reference_no?.slice(-6)}</span>
-                  <span className="font-semibold">{c.weight.toFixed(1)} KGS</span>
+                <div key={i} className="flex items-center px-3 py-2 text-sm">
+                  <span className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded text-xs font-semibold text-gray-600">
+                    {i + 1}
+                  </span>
+                  <span className="flex-1 ml-3 text-gray-700">
+                    {new Date(c.collection_date).toLocaleDateString('en-GB', { 
+                      day: '2-digit', 
+                      month: '2-digit', 
+                      year: 'numeric' 
+                    })} {new Date(c.collection_date).toLocaleTimeString('en-US', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                      hour12: true
+                    })}
+                  </span>
+                  <span className="font-bold text-gray-900">{c.weight.toFixed(1)}</span>
                 </div>
               ))}
             </div>
