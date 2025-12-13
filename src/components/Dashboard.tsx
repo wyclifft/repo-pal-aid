@@ -168,14 +168,14 @@ export const Dashboard = ({
   const currentDate = new Date().toISOString().split('T')[0];
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="bg-[#7B68A6] text-white px-4 py-3 flex items-center justify-between">
-        <h1 className="text-lg font-semibold tracking-wide">{companyName}</h1>
+    <div className="min-h-screen min-h-[100dvh] flex flex-col overflow-x-hidden">
+      {/* Header - with safe area */}
+      <header className="bg-[#7B68A6] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-40" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
+        <h1 className="text-base sm:text-lg font-semibold tracking-wide truncate max-w-[70%]">{companyName}</h1>
         <div className="relative">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className="p-2 hover:bg-white/10 rounded-full transition-colors"
+            className="p-3 -m-1 hover:bg-white/10 rounded-full transition-colors active:bg-white/20 min-w-[44px] min-h-[44px] flex items-center justify-center"
           >
             <MoreVertical className="h-5 w-5" />
           </button>
@@ -279,24 +279,24 @@ export const Dashboard = ({
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 bg-gradient-to-b from-[#3CB4B4] to-[#E8F4F4] px-4 pt-6 pb-8">
+      <main className="flex-1 bg-gradient-to-b from-[#3CB4B4] to-[#E8F4F4] px-4 pt-4 pb-8 overflow-y-auto" style={{ paddingBottom: 'max(2rem, calc(env(safe-area-inset-bottom) + 1rem))' }}>
         {/* Welcome Section */}
-        <div className="text-center mb-6">
-          <h2 className="text-2xl font-bold text-gray-800">{userName}</h2>
+        <div className="text-center mb-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 truncate px-2">{userName}</h2>
           {sessionActive && selectedSession && selectedRoute ? (
             <>
-              <div className="flex items-center justify-center gap-2 mt-1">
-                <span className="w-3 h-3 rounded-full bg-red-500" />
-                <p className="text-lg font-semibold text-gray-800">
+              <div className="flex items-center justify-center gap-2 mt-1 flex-wrap px-2">
+                <span className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
+                <p className="text-sm sm:text-lg font-semibold text-gray-800 break-words">
                   Active {selectedSession.descript?.trim()} Session {selectedRoute.tcode}#{selectedRoute.descript?.trim()}
                 </p>
               </div>
-              <p className="text-lg font-bold text-gray-800 mt-1">{currentDate}</p>
+              <p className="text-base sm:text-lg font-bold text-gray-800 mt-1">{currentDate}</p>
               <p className="text-gray-600">--</p>
             </>
           ) : (
             <>
-              <p className="text-lg text-gray-700">Welcome</p>
+              <p className="text-base sm:text-lg text-gray-700">Welcome</p>
               <p className="text-gray-600 mt-1">--</p>
               <p className="text-gray-600">--</p>
             </>
@@ -304,14 +304,14 @@ export const Dashboard = ({
         </div>
 
         {/* Circular Icons */}
-        <div className="flex justify-center items-center gap-4 mb-6">
+        <div className="flex justify-center items-center gap-3 sm:gap-4 mb-4">
           {/* Store */}
           <button
             onClick={() => navigate('/store')}
-            className="flex flex-col items-center"
+            className="flex flex-col items-center active:scale-95 transition-transform"
           >
-            <div className="w-16 h-16 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
-              <Store className="h-8 w-8 text-[#E91E63]" />
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 active:bg-white/90 transition-colors">
+              <Store className="h-6 w-6 sm:h-8 sm:w-8 text-[#E91E63]" />
             </div>
             <span className="mt-1 text-xs font-medium text-gray-700">Store</span>
           </button>
@@ -319,10 +319,10 @@ export const Dashboard = ({
           {/* Recent Receipts */}
           <button
             onClick={() => onOpenRecentReceipts?.()}
-            className="flex flex-col items-center"
+            className="flex flex-col items-center active:scale-95 transition-transform"
           >
-            <div className="w-20 h-20 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
-              <Receipt className="h-10 w-10 text-[#E91E63]" />
+            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 active:bg-white/90 transition-colors">
+              <Receipt className="h-8 w-8 sm:h-10 sm:w-10 text-[#E91E63]" />
             </div>
             <span className="mt-1 text-xs font-medium text-gray-700">Receipts</span>
           </button>
@@ -330,10 +330,10 @@ export const Dashboard = ({
           {/* About */}
           <button
             onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.5')}
-            className="flex flex-col items-center"
+            className="flex flex-col items-center active:scale-95 transition-transform"
           >
-            <div className="w-16 h-16 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 transition-colors">
-              <Info className="h-8 w-8 text-[#E91E63]" />
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 active:bg-white/90 transition-colors">
+              <Info className="h-6 w-6 sm:h-8 sm:w-8 text-[#E91E63]" />
             </div>
             <span className="mt-1 text-xs font-medium text-gray-700">About</span>
           </button>
@@ -351,61 +351,61 @@ export const Dashboard = ({
           <button
             onClick={handleReconnect}
             disabled={isReconnecting}
-            className="px-8 py-2 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] transition-colors disabled:opacity-50"
+            className="px-6 sm:px-8 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 min-h-[48px] text-sm sm:text-base"
           >
             {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
           </button>
         </div>
 
         {/* Status Indicators */}
-        <div className="flex justify-center gap-6 mb-6 flex-wrap">
+        <div className="flex justify-center gap-4 sm:gap-6 mb-4 flex-wrap px-2">
           <div className="flex items-center gap-2">
-            <span className={`w-3 h-3 rounded-full ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-sm text-gray-700">
-              {scaleConnected ? 'Scale Connected' : 'Scale Disconnected'}
+            <span className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-xs sm:text-sm text-gray-700">
+              {scaleConnected ? 'Scale' : 'No Scale'}
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className={`w-3 h-3 rounded-full ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-sm text-gray-700">
-              {printerConnected ? 'Printer Connected' : 'Printer Disconnected'}
+            <span className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-xs sm:text-sm text-gray-700">
+              {printerConnected ? 'Printer' : 'No Printer'}
             </span>
           </div>
         </div>
 
         {/* Session Active View */}
         {sessionActive ? (
-          <div className="max-w-md mx-auto space-y-4">
+          <div className="max-w-md mx-auto space-y-4 px-2">
             {/* Close Session Button */}
             <div className="flex justify-center">
               <button
                 onClick={handleCloseSession}
-                className="px-8 py-2 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] transition-colors"
+                className="px-6 sm:px-8 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[48px] text-sm sm:text-base"
               >
                 Close Session
               </button>
             </div>
 
             {/* Buy/Sell Produce Buttons */}
-            <div className="flex justify-center gap-4">
+            <div className="flex justify-center gap-3 sm:gap-4">
               <button
                 onClick={handleBuyProduce}
-                className="px-6 py-2 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] transition-colors"
+                className="flex-1 max-w-[160px] py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[48px] text-sm sm:text-base"
               >
                 Buy Produce
               </button>
               <button
                 onClick={handleSellProduce}
-                className="px-6 py-2 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] transition-colors"
+                className="flex-1 max-w-[160px] py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[48px] text-sm sm:text-base"
               >
                 Sell Produce
               </button>
             </div>
           </div>
         ) : (
-          <>
+          <div className="px-2">
             {/* Route Selector */}
-            <div className="max-w-md mx-auto mb-4">
+            <div className="max-w-md mx-auto mb-3">
               <div className="bg-white rounded-lg border border-gray-300 overflow-hidden">
                 <RouteSelector
                   selectedRoute={selectedRoute?.tcode || ''}
@@ -416,7 +416,7 @@ export const Dashboard = ({
             </div>
 
             {/* Session Selector */}
-            <div className="max-w-md mx-auto mb-6">
+            <div className="max-w-md mx-auto mb-4">
               <div className="bg-white rounded-lg border border-gray-300 overflow-hidden">
                 <SessionSelector
                   selectedSession={selectedSession?.descript || ''}
@@ -431,12 +431,12 @@ export const Dashboard = ({
               <button
                 onClick={handleNewSession}
                 disabled={!selectedRoute || !selectedSession}
-                className="px-8 py-2 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-6 sm:px-8 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[48px] text-sm sm:text-base"
               >
                 NEW SESSION
               </button>
             </div>
-          </>
+          </div>
         )}
       </main>
     </div>

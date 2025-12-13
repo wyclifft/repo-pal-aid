@@ -289,19 +289,19 @@ export const Login = memo(({ onLogin }: LoginProps) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-[#667eea] to-[#764ba2]">
-      <div className="bg-white rounded-xl p-8 w-full max-w-md shadow-2xl">
-        <h2 className="text-3xl font-bold mb-6 text-center text-[#667eea]">
+    <div className="min-h-screen min-h-[100dvh] flex items-center justify-center p-4 bg-gradient-to-br from-[#667eea] to-[#764ba2]" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+      <div className="bg-white rounded-xl p-6 sm:p-8 w-full max-w-md shadow-2xl">
+        <h2 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6 text-center text-[#667eea]">
           Milk Collection
         </h2>
         
         {deviceStatus === 'pending' && (
-          <div className="mb-6 p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
-            <div className="flex items-start gap-3">
-              <span className="text-2xl">⏳</span>
-              <div className="flex-1">
-                <h3 className="font-semibold text-yellow-800 mb-2">Device Pending Approval</h3>
-                <p className="text-sm text-yellow-700 mb-2">
+          <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
+            <div className="flex items-start gap-2 sm:gap-3">
+              <span className="text-xl sm:text-2xl">⏳</span>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-yellow-800 mb-1 sm:mb-2 text-sm sm:text-base">Device Pending Approval</h3>
+                <p className="text-xs sm:text-sm text-yellow-700 mb-2">
                   Your device has been registered and is waiting for administrator approval.
                 </p>
                 <div className="bg-white p-2 rounded border border-yellow-300 mt-2">
@@ -318,30 +318,33 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         )}
 
         {deviceStatus === 'approved' && (
-          <div className="mb-4 p-3 bg-green-50 border border-green-400 rounded-lg text-center">
-            <span className="text-green-700 font-semibold">✓ Device Approved</span>
+          <div className="mb-3 sm:mb-4 p-2.5 sm:p-3 bg-green-50 border border-green-400 rounded-lg text-center">
+            <span className="text-green-700 font-semibold text-sm sm:text-base">✓ Device Approved</span>
           </div>
         )}
         
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleLogin} className="space-y-3 sm:space-y-4">
           <input
             type="text"
+            inputMode="text"
+            autoComplete="username"
             placeholder="User ID"
             value={userId}
             onChange={(e) => setUserId(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea] text-base min-h-[48px]"
           />
           <input
             type="password"
+            autoComplete="current-password"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea]"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea] text-base min-h-[48px]"
           />
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] transition-colors disabled:opacity-50"
+            className="w-full py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] active:bg-[#4458c3] transition-colors disabled:opacity-50 min-h-[48px] text-base"
           >
             {loading ? 'Logging in...' : 'Login'}
           </button>
