@@ -111,28 +111,28 @@ export const BuyProduceScreen = ({
   const totalCapturedWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-teal-100 to-teal-200 flex flex-col">
+    <div className="min-h-screen min-h-[100dvh] bg-gradient-to-b from-teal-100 to-teal-200 flex flex-col overflow-x-hidden">
       {/* Purple Header */}
-      <header className="bg-purple-600 text-white px-4 py-3">
-        <h1 className="text-lg font-semibold">
+      <header className="bg-purple-600 text-white px-3 sm:px-4 py-3 sticky top-0 z-40" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
+        <h1 className="text-sm sm:text-lg font-semibold truncate">
           [{route?.tcode}] {route?.descript} {session?.descript} {today}
         </h1>
       </header>
 
       {/* Produce Buying Banner */}
-      <div className="bg-teal-500 text-white text-center py-2 font-semibold">
+      <div className="bg-teal-500 text-white text-center py-2 font-semibold text-sm sm:text-base">
         Produce Buying
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 px-4 py-4 space-y-4">
+      <div className="flex-1 px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4 overflow-y-auto" style={{ paddingBottom: 'max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))' }}>
         {/* Weight Display */}
         <div className="flex gap-2">
-          <div className="flex-1 bg-white border-2 border-gray-800 rounded-lg p-6 flex items-center justify-center">
-            <span className="text-3xl font-bold">Kgs</span>
+          <div className="flex-1 bg-white border-2 border-gray-800 rounded-lg p-4 sm:p-6 flex items-center justify-center">
+            <span className="text-2xl sm:text-3xl font-bold">Kgs</span>
           </div>
-          <div className="flex-1 bg-white border-2 border-gray-800 rounded-lg p-6 flex items-center justify-center">
-            <span className="text-3xl font-bold">
+          <div className="flex-1 bg-white border-2 border-gray-800 rounded-lg p-4 sm:p-6 flex items-center justify-center">
+            <span className="text-2xl sm:text-3xl font-bold">
               {weight > 0 ? weight.toFixed(1) : '--'}
             </span>
           </div>
@@ -140,22 +140,24 @@ export const BuyProduceScreen = ({
 
         {/* Manual Weight Entry */}
         <div className="flex gap-2 items-center">
-          <span className="text-sm font-medium text-gray-700">Manual Entry:</span>
+          <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">Manual:</span>
           <input
             type="number"
+            inputMode="decimal"
             step="0.1"
             min="0"
             placeholder="Enter weight"
             onChange={(e) => onManualWeightChange?.(parseFloat(e.target.value) || 0)}
-            className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg text-lg"
+            className="flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 border-gray-300 rounded-lg text-base sm:text-lg min-h-[44px]"
           />
         </div>
 
         {/* Member Search */}
-        <div className="flex gap-2 relative">
+        <div className="flex gap-1.5 sm:gap-2 relative">
           <input
             ref={inputRef}
             type="text"
+            inputMode="text"
             placeholder="Enter Member No."
             value={memberNo}
             onChange={(e) => {
@@ -163,25 +165,25 @@ export const BuyProduceScreen = ({
               setShowSuggestions(true);
             }}
             onFocus={() => setShowSuggestions(true)}
-            className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg text-lg"
+            className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-300 rounded-lg text-base sm:text-lg min-h-[44px]"
           />
           <button
             onClick={handleEnter}
-            className="w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center"
+            className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
           >
-            <CornerDownLeft className="h-6 w-6" />
+            <CornerDownLeft className="h-5 w-5 sm:h-6 sm:w-6" />
           </button>
           <button
             onClick={handleSearch}
-            className="w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center"
+            className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
           >
-            <Search className="h-6 w-6" />
+            <Search className="h-5 w-5 sm:h-6 sm:w-6" />
           </button>
           <button
             onClick={handleClear}
-            className="w-14 bg-red-500 text-white rounded-lg flex items-center justify-center"
+            className="w-11 sm:w-14 bg-red-500 text-white rounded-lg flex items-center justify-center active:bg-red-600 min-h-[44px]"
           >
-            <X className="h-6 w-6" />
+            <X className="h-5 w-5 sm:h-6 sm:w-6" />
           </button>
 
           {/* Suggestions Dropdown */}
@@ -228,22 +230,22 @@ export const BuyProduceScreen = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-3">
+        <div className="flex gap-2 sm:gap-3">
           <button
             onClick={onBack}
-            className="flex-1 py-3 bg-white border-2 border-gray-800 rounded-lg font-semibold text-gray-800 hover:bg-gray-100"
+            className="flex-1 py-3 bg-white border-2 border-gray-800 rounded-lg font-semibold text-gray-800 hover:bg-gray-100 active:bg-gray-200 min-h-[48px] text-sm sm:text-base"
           >
             Back
           </button>
           <button
             onClick={onCapture}
-            className="flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50"
+            className="flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base"
           >
             Capture
           </button>
           <button
             onClick={onSubmit}
-            className="flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50"
+            className="flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base"
           >
             Submit
           </button>
