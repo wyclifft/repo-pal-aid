@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
-import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug } from "lucide-react";
+import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
   ScaleType 
 } from "@/services/bluetooth";
 import { runBluetoothDiagnostics, logConnectionTips } from "@/utils/bluetoothDiagnostics";
+import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -42,6 +43,12 @@ const Settings = () => {
   const [printerName, setPrinterName] = useState<string>("");
   const [isConnectingPrinter, setIsConnectingPrinter] = useState(false);
   const [storedPrinter, setStoredPrinter] = useState<ReturnType<typeof getStoredPrinterInfo>>(null);
+  
+  // Company refresh state
+  const [companyName, setCompanyName] = useState<string>(() => {
+    return localStorage.getItem('device_company_name') || '';
+  });
+  const [isRefreshingCompany, setIsRefreshingCompany] = useState(false);
 
   useEffect(() => {
     const deviceInfo = getStoredDeviceInfo();
@@ -49,6 +56,78 @@ const Settings = () => {
     
     const printerInfo = getStoredPrinterInfo();
     setStoredPrinter(printerInfo);
+  }, []);
+
+  // Force refresh company name from server
+  const handleRefreshCompany = useCallback(async () => {
+    if (!navigator.onLine) {
+      toast.error('Cannot refresh while offline');
+      return;
+    }
+    
+    setIsRefreshingCompany(true);
+    toast.info('Refreshing company data...');
+    
+    try {
+      const fingerprint = await generateDeviceFingerprint();
+      const apiUrl = 'https://backend.maddasystems.co.ke';
+      
+      // First get device info to get ccode
+      const deviceResponse = await fetch(
+        `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`
+      );
+      
+      if (!deviceResponse.ok) {
+        throw new Error('Failed to fetch device info');
+      }
+      
+      const deviceData = await deviceResponse.json();
+      
+      if (!deviceData.success || !deviceData.data) {
+        throw new Error('Device not found');
+      }
+      
+      const ccode = deviceData.data.ccode;
+      
+      if (!ccode) {
+        toast.warning('No company code assigned to this device');
+        setIsRefreshingCompany(false);
+        return;
+      }
+      
+      // Clear cached company name to force fresh fetch
+      localStorage.removeItem('device_company_name');
+      
+      // Fetch company name by ccode
+      const companyResponse = await fetch(
+        `${apiUrl}/api/psettings?ccode=${encodeURIComponent(ccode)}`
+      );
+      
+      if (companyResponse.ok) {
+        const companyData = await companyResponse.json();
+        if (companyData.success && companyData.data?.company_name) {
+          const newCompanyName = companyData.data.company_name;
+          setCompanyName(newCompanyName);
+          localStorage.setItem('device_company_name', newCompanyName);
+          localStorage.setItem('device_ccode', ccode);
+          toast.success(`Company updated: ${newCompanyName}`);
+          
+          // Dispatch event to notify other components
+          window.dispatchEvent(new CustomEvent('companyNameUpdated', { 
+            detail: { companyName: newCompanyName } 
+          }));
+        } else {
+          toast.warning('No company name found for this code');
+        }
+      } else {
+        throw new Error('Failed to fetch company name');
+      }
+    } catch (error) {
+      console.error('Failed to refresh company:', error);
+      toast.error('Failed to refresh company data');
+    } finally {
+      setIsRefreshingCompany(false);
+    }
   }, []);
 
   const handleQuickReconnect = async () => {
@@ -436,6 +515,63 @@ Date: ${new Date().toLocaleString()}
                 </>
               )}
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Company Settings */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Building2 className="h-5 w-5 text-primary" />
+                <div>
+                  <CardTitle>Company Settings</CardTitle>
+                  <CardDescription>Refresh company data from server</CardDescription>
+                </div>
+              </div>
+              {isRefreshingCompany && (
+                <Badge variant="secondary" className="gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Refreshing...
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Current Company:</span>
+                <span className="font-medium">{companyName || 'Not set'}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Company Code:</span>
+                <span className="font-medium">{localStorage.getItem('device_ccode') || 'Not set'}</span>
+              </div>
+            </div>
+
+            <Separator />
+
+            <Button
+              onClick={handleRefreshCompany}
+              disabled={isRefreshingCompany || !navigator.onLine}
+              className="w-full gap-2"
+            >
+              {isRefreshingCompany ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Refreshing...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4" />
+                  Refresh Company Data
+                </>
+              )}
+            </Button>
+            
+            <p className="text-xs text-muted-foreground text-center">
+              Force fetch the latest company name from the server. Useful when company code has been updated in the database.
+            </p>
           </CardContent>
         </Card>
 

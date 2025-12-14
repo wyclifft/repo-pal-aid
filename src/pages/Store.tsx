@@ -18,6 +18,7 @@ const Store = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
+  const [hasRoutes, setHasRoutes] = useState<boolean | null>(null);
 
   // Check authentication
   useEffect(() => {
@@ -57,7 +58,7 @@ const Store = () => {
     if (!isReady) return;
     
     const timer = setTimeout(() => {
-      loadItems();
+      checkRoutesAndLoadItems();
       loadFarmers();
       loadLoggedInUser();
       syncPendingSales();
@@ -65,6 +66,52 @@ const Store = () => {
 
     return () => clearTimeout(timer);
   }, [isReady]);
+
+  // Check if ccode has routes in fm_tanks before loading items
+  const checkRoutesAndLoadItems = async () => {
+    try {
+      setLoading(true);
+      
+      // Get device fingerprint to check routes
+      const deviceFingerprint = await generateDeviceFingerprint();
+      
+      // Try to fetch routes first to check if ccode has any
+      if (navigator.onLine) {
+        try {
+          const apiUrl = 'https://backend.maddasystems.co.ke';
+          const response = await fetch(
+            `${apiUrl}/api/routes?uniquedevcode=${encodeURIComponent(deviceFingerprint)}`
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            const routesExist = data.success && data.data && data.data.length > 0;
+            setHasRoutes(routesExist);
+            
+            if (!routesExist) {
+              console.log('📭 No routes found for this ccode - store items will not be displayed');
+              setItems([]);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to check routes:', err);
+          // On error, allow items to load (fallback behavior)
+          setHasRoutes(true);
+        }
+      } else {
+        // Offline - assume routes exist and load cached items
+        setHasRoutes(true);
+      }
+      
+      // Routes exist, load items
+      await loadItems();
+    } catch (error) {
+      console.error('Failed to check routes:', error);
+      setLoading(false);
+    }
+  };
 
   const loadLoggedInUser = () => {
     if (currentUser) {
@@ -374,6 +421,14 @@ const Store = () => {
           <div className="text-center py-12">
             <p className="text-muted-foreground">Loading items...</p>
           </div>
+        ) : hasRoutes === false ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <Package className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+              <p className="text-muted-foreground">No routes assigned to this company code</p>
+              <p className="text-sm text-muted-foreground mt-2">Store items require routes to be configured in fm_tanks</p>
+            </CardContent>
+          </Card>
         ) : items.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
