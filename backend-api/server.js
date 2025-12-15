@@ -355,9 +355,9 @@ const server = http.createServer(async (req, res) => {
         // Start transaction
         await connection.beginTransaction();
         
-        // Get ccode from device
+        // Get device_ref from devsettings (slot-based reference, e.g., AE10000001)
         const [deviceRows] = await connection.query(
-          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, device_ref FROM devsettings WHERE uniquedevcode = ?',
           [deviceserial]
         );
         
@@ -370,55 +370,39 @@ const server = http.createServer(async (req, res) => {
           }, 404);
         }
         
-        const ccode = deviceRows[0].ccode;
+        const deviceRef = deviceRows[0].device_ref;
         
-        // Get company name and device code
-        const [companyAndDeviceRows] = await connection.query(
-          `SELECT p.cname, d.devcode 
-           FROM psettings p 
-           JOIN devsettings d ON p.ccode = d.ccode 
-           WHERE d.ccode = ? AND d.uniquedevcode = ?`,
-          [ccode, deviceserial]
-        );
-        
-        if (companyAndDeviceRows.length === 0) {
+        if (!deviceRef) {
           await connection.rollback();
           connection.release();
           return sendJSON(res, { 
             success: false, 
-            error: 'Company or device not found' 
-          }, 404);
+            error: 'Device has no assigned device_ref. Please re-register the device.' 
+          }, 400);
         }
         
-        const cname = companyAndDeviceRows[0].cname;
-        const devcode = companyAndDeviceRows[0].devcode || '00000';
+        // Extract prefix from device_ref (e.g., "AE1" from "AE10000001")
+        const devicePrefix = deviceRef.slice(0, 3);
         
-        // Generate company prefix (first 2 chars of company name)
-        const companyPrefix = cname.substring(0, 2).toUpperCase();
-        
-        // Pad device code to 5 characters
-        const deviceCode = String(devcode).padStart(5, '0');
-        
-        // Create the prefix for this specific device
-        const devicePrefix = `${companyPrefix}${deviceCode}`;
-        
-        // Get the last transaction number for THIS SPECIFIC DEVICE with row lock
+        // Get the last transaction number for THIS DEVICE SLOT with row lock
         const [lastTransRows] = await connection.query(
-          'SELECT transrefno FROM transactions WHERE deviceserial = ? AND transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
-          [deviceserial, `${devicePrefix}%`]
+          'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
+          [`${devicePrefix}%`]
         );
         
-        let nextNumber = 1; // Starting number for this device
+        let nextNumber = 1; // Starting number for this device slot
         
         if (lastTransRows.length > 0) {
           const lastRef = lastTransRows[0].transrefno;
-          // Extract the sequential number (everything after the 7-char prefix)
-          const lastNumber = parseInt(lastRef.substring(7));
-          nextNumber = lastNumber + 1;
+          // Extract the sequential number (everything after the 3-char prefix "AE1")
+          const lastNumber = parseInt(lastRef.substring(3));
+          if (!isNaN(lastNumber)) {
+            nextNumber = lastNumber + 1;
+          }
         }
         
-        // Generate continuous reference number: CompanyCode + DeviceCode + SequentialNumber
-        const transrefno = `${devicePrefix}${nextNumber}`;
+        // Generate reference: Prefix (AE1) + 7-digit sequential number
+        const transrefno = `${devicePrefix}${String(nextNumber).padStart(7, '0')}`;
         
         // Commit transaction
         await connection.commit();
@@ -458,9 +442,9 @@ const server = http.createServer(async (req, res) => {
       try {
         await connection.beginTransaction();
         
-        // Get ccode from device
+        // Get device_ref from devsettings (slot-based reference)
         const [deviceRows] = await connection.query(
-          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, device_ref FROM devsettings WHERE uniquedevcode = ?',
           [deviceserial]
         );
         
@@ -474,30 +458,19 @@ const server = http.createServer(async (req, res) => {
         }
         
         const ccode = deviceRows[0].ccode;
+        const deviceRef = deviceRows[0].device_ref;
         
-        // Get company name and device code
-        const [companyAndDeviceRows] = await connection.query(
-          `SELECT p.cname, d.devcode 
-           FROM psettings p 
-           JOIN devsettings d ON p.ccode = d.ccode 
-           WHERE d.ccode = ? AND d.uniquedevcode = ?`,
-          [ccode, deviceserial]
-        );
-        
-        if (companyAndDeviceRows.length === 0) {
+        if (!deviceRef) {
           await connection.rollback();
           connection.release();
           return sendJSON(res, { 
             success: false, 
-            error: 'Company or device not found' 
-          }, 404);
+            error: 'Device has no assigned device_ref' 
+          }, 400);
         }
         
-        const cname = companyAndDeviceRows[0].cname;
-        const devcode = companyAndDeviceRows[0].devcode || '00000';
-        const companyPrefix = cname.substring(0, 2).toUpperCase();
-        const deviceCode = String(devcode).padStart(5, '0');
-        const devicePrefix = `${companyPrefix}${deviceCode}`;
+        // Extract prefix from device_ref (e.g., "AE1" from "AE10000001")
+        const devicePrefix = deviceRef.slice(0, 3);
         
         // CRITICAL: Get the highest transaction number with row lock to prevent duplicates
         const [lastTransRows] = await connection.query(
@@ -509,15 +482,17 @@ const server = http.createServer(async (req, res) => {
         
         if (lastTransRows.length > 0) {
           const lastRef = lastTransRows[0].transrefno;
-          const lastNumber = parseInt(lastRef.substring(7));
-          startNumber = lastNumber + 1;
+          const lastNumber = parseInt(lastRef.substring(3));
+          if (!isNaN(lastNumber)) {
+            startNumber = lastNumber + 1;
+          }
         }
         
         const endNumber = startNumber + batchSize;
         
         // DUPLICATE PREVENTION: Insert a placeholder record at the end of the batch
-        // This ensures the next reservation request will start AFTER this batch
-        const placeholderRefNo = `${devicePrefix}${endNumber - 1}`;
+        // Format: AE1 + 7-digit padded number
+        const placeholderRefNo = `${devicePrefix}${String(endNumber - 1).padStart(7, '0')}`;
         
         await connection.query(
           `INSERT INTO transactions (
@@ -639,34 +614,27 @@ const server = http.createServer(async (req, res) => {
                 await new Promise(resolve => setTimeout(resolve, delay));
               }
               
-              // Regenerate a new reference number
+              // Regenerate a new reference number using device_ref format
               const connection = await pool.getConnection();
               try {
                 await connection.beginTransaction();
                 
-                // Get company name and device code
-                const [companyAndDeviceRows] = await connection.query(
-                  `SELECT p.cname, d.devcode 
-                   FROM psettings p 
-                   JOIN devsettings d ON p.ccode = d.ccode 
-                   WHERE d.ccode = ? AND d.uniquedevcode = ?`,
-                  [ccode, deviceserial]
+                // Get device_ref from devsettings
+                const [devRefRows] = await connection.query(
+                  'SELECT device_ref FROM devsettings WHERE uniquedevcode = ?',
+                  [deviceserial]
                 );
                 
-                if (companyAndDeviceRows.length === 0) {
+                if (devRefRows.length === 0 || !devRefRows[0].device_ref) {
                   await connection.rollback();
                   connection.release();
-                  throw new Error('Company or device not found');
+                  throw new Error('Device ref not found');
                 }
                 
-                const cname = companyAndDeviceRows[0].cname;
-                const devcode = companyAndDeviceRows[0].devcode || '00000';
-                const companyPrefix = cname.substring(0, 2).toUpperCase();
-                const deviceCode = String(devcode).padStart(5, '0');
-                const devicePrefix = `${companyPrefix}${deviceCode}`;
+                const deviceRef = devRefRows[0].device_ref;
+                const devicePrefix = deviceRef.slice(0, 3); // e.g., "AE1"
                 
-                // Get the highest transaction number across ALL devices for this prefix with row lock
-                // This ensures we don't have race conditions between devices
+                // Get the highest transaction number with row lock
                 const [lastTransRows] = await connection.query(
                   'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
                   [`${devicePrefix}%`]
@@ -675,11 +643,13 @@ const server = http.createServer(async (req, res) => {
                 let nextNumber = 1;
                 if (lastTransRows.length > 0) {
                   const lastRef = lastTransRows[0].transrefno;
-                  const lastNumber = parseInt(lastRef.substring(7));
-                  nextNumber = lastNumber + 1;
+                  const lastNumber = parseInt(lastRef.substring(3));
+                  if (!isNaN(lastNumber)) {
+                    nextNumber = lastNumber + 1;
+                  }
                 }
                 
-                attemptTransrefno = `${devicePrefix}${nextNumber}`;
+                attemptTransrefno = `${devicePrefix}${String(nextNumber).padStart(7, '0')}`;
                 await connection.commit();
                 connection.release();
                 
