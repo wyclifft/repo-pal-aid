@@ -187,25 +187,26 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
   }, [checkAuthorization, onCompanyNameChange, onAuthorizationChange]);
 
   // Try to load company name from ccode stored in credentials on first launch
+  // NOTE: do not block on the authorization check — devices can still show branding even if not yet authorized.
   useEffect(() => {
-    if (companyName || fetchAttempted.current || !navigator.onLine) return;
-    
+    if (companyName || !navigator.onLine) return;
+
     const cachedCreds = localStorage.getItem('cachedCredentials');
-    if (cachedCreds) {
-      try {
-        const creds = JSON.parse(cachedCreds);
-        if (creds.ccode) {
-          fetchCompanyNameByCcode(creds.ccode).then((name) => {
-            if (name) {
-              setCompanyName(name);
-              onCompanyNameChange?.(name);
-              localStorage.setItem('device_company_name', name);
-            }
-          });
-        }
-      } catch (e) {
-        console.warn('Failed to parse cached credentials:', e);
+    if (!cachedCreds) return;
+
+    try {
+      const creds = JSON.parse(cachedCreds);
+      if (creds.ccode) {
+        fetchCompanyNameByCcode(creds.ccode).then((name) => {
+          if (name) {
+            setCompanyName(name);
+            onCompanyNameChange?.(name);
+            localStorage.setItem('device_company_name', name);
+          }
+        });
       }
+    } catch (e) {
+      console.warn('Failed to parse cached credentials:', e);
     }
   }, [companyName, fetchCompanyNameByCcode, onCompanyNameChange]);
 
