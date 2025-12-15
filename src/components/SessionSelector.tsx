@@ -77,23 +77,30 @@ export const SessionSelector = ({
 
   // Load sessions - wait for DB to be ready
   useEffect(() => {
+    let isMounted = true;
+    
     const loadSessions = async () => {
+      if (!isMounted) return;
       setLoading(true);
       setError(null);
       
       try {
         const deviceFingerprint = await generateDeviceFingerprint();
+        let loadedSessions: Session[] = [];
         
         // Try to load from cache first (only if DB is ready)
         if (isReady) {
           try {
             const cached = await getSessions();
             if (cached && cached.length > 0) {
-              setSessions(cached);
-              const active = findActiveSession(cached);
-              setActiveSession(active);
-              if (active && !selectedSession) {
-                onSessionChange(active);
+              loadedSessions = cached;
+              if (isMounted) {
+                setSessions(cached);
+                const active = findActiveSession(cached);
+                setActiveSession(active);
+                if (active && !selectedSession) {
+                  onSessionChange(active);
+                }
               }
             }
           } catch (cacheErr) {
@@ -103,44 +110,59 @@ export const SessionSelector = ({
         
         // Fetch fresh data if online
         if (navigator.onLine) {
-          const response = await mysqlApi.sessions.getByDevice(deviceFingerprint);
-          
-          if (response.success && response.data) {
-            setSessions(response.data);
-            if (isReady) {
-              try {
-                await saveSessions(response.data);
-              } catch (saveErr) {
-                console.warn('Cache save error:', saveErr);
+          try {
+            const response = await mysqlApi.sessions.getByDevice(deviceFingerprint);
+            
+            if (response.success && response.data && response.data.length > 0) {
+              loadedSessions = response.data;
+              if (isMounted) {
+                setSessions(response.data);
+                if (isReady) {
+                  try {
+                    await saveSessions(response.data);
+                  } catch (saveErr) {
+                    console.warn('Cache save error:', saveErr);
+                  }
+                }
+                
+                const active = findActiveSession(response.data);
+                setActiveSession(active);
+                
+                // Auto-select active session if none selected
+                if (active && !selectedSession) {
+                  onSessionChange(active);
+                }
               }
+            } else if (loadedSessions.length === 0) {
+              // No sessions found for this ccode - that's OK, not an error
+              console.log('No sessions configured for this company code');
             }
-            
-            const active = findActiveSession(response.data);
-            setActiveSession(active);
-            
-            // Auto-select active session if none selected
-            if (active && !selectedSession) {
-              onSessionChange(active);
-            }
-          } else if (sessions.length === 0) {
-            // Only show error if we have no cached data
-            setError(response.error || 'Failed to load sessions');
+          } catch (fetchErr) {
+            console.warn('Session fetch error:', fetchErr);
+            // Continue with cached data if available
           }
-        } else if (sessions.length === 0) {
-          setError('Offline - no cached sessions available');
+        } else if (loadedSessions.length === 0 && !isReady) {
+          // Only show error if we have no cached data AND offline AND DB not ready
+          if (isMounted) {
+            setError('Offline - loading sessions...');
+          }
         }
       } catch (err) {
-        console.error('Error loading sessions:', err);
-        if (sessions.length === 0) {
-          setError('Failed to load sessions');
-        }
+        console.warn('Error loading sessions:', err);
+        // Don't set error - silently continue with empty sessions
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     loadSessions();
-  }, [isReady, findActiveSession, selectedSession, onSessionChange]);
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [isReady, findActiveSession, selectedSession, onSessionChange, getSessions, saveSessions]);
 
   // Re-check active session when time changes
   useEffect(() => {

@@ -17,6 +17,8 @@ export const useDataSync = () => {
     saveItems, 
     saveZReport, 
     savePeriodicReport,
+    saveRoutes,
+    saveSessions,
     getUnsyncedReceipts,
     deleteReceipt,
     isReady 
@@ -174,31 +176,57 @@ export const useDataSync = () => {
         toast.success(`Synced ${offlineSync.synced} collection${offlineSync.synced !== 1 ? 's' : ''}`);
       }
 
-      // 2. Fetch and cache farmers
+      // 2. Fetch and cache routes (only if ccode has routes configured)
+      try {
+        const routesResponse = await mysqlApi.routes.getByDevice(deviceFingerprint);
+        if (routesResponse.success && routesResponse.data && routesResponse.data.length > 0) {
+          await saveRoutes(routesResponse.data);
+          syncedCount++;
+          console.log(`✅ Synced ${routesResponse.data.length} routes`);
+        }
+      } catch (err) {
+        console.warn('Routes sync skipped:', err);
+      }
+
+      // 3. Fetch and cache sessions (only if ccode has sessions configured)
+      try {
+        const sessionsResponse = await mysqlApi.sessions.getByDevice(deviceFingerprint);
+        if (sessionsResponse.success && sessionsResponse.data && sessionsResponse.data.length > 0) {
+          await saveSessions(sessionsResponse.data);
+          syncedCount++;
+          console.log(`✅ Synced ${sessionsResponse.data.length} sessions`);
+        }
+      } catch (err) {
+        console.warn('Sessions sync skipped:', err);
+      }
+
+      // 4. Fetch and cache farmers (only if ccode has farmers configured)
       try {
         const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
-        if (response.success && response.data) {
+        if (response.success && response.data && response.data.length > 0) {
           await saveFarmers(response.data);
           syncedCount++;
+          console.log(`✅ Synced ${response.data.length} farmers`);
         } else if (response.message?.includes('not authorized')) {
           hasAuthError = true;
         }
       } catch (err) {
-        console.error('Farmers sync error:', err);
+        console.warn('Farmers sync skipped:', err);
       }
 
-      // 3. Fetch and cache items
+      // 5. Fetch and cache items (only if ccode has items configured)
       try {
         const itemsResponse = await mysqlApi.items.getAll(deviceFingerprint);
-        if (itemsResponse.success && itemsResponse.data) {
+        if (itemsResponse.success && itemsResponse.data && itemsResponse.data.length > 0) {
           await saveItems(itemsResponse.data);
           syncedCount++;
+          console.log(`✅ Synced ${itemsResponse.data.length} items`);
         }
       } catch (err) {
-        console.error('Items sync error:', err);
+        console.warn('Items sync skipped:', err);
       }
 
-      // 4. Cache today's Z report
+      // 6. Cache today's Z report
       try {
         const today = new Date().toISOString().split('T')[0];
         const zReportData = await mysqlApi.zReport.get(today, deviceFingerprint);
@@ -220,7 +248,7 @@ export const useDataSync = () => {
         console.warn('Z Report sync skipped:', err);
       }
 
-      // 5. Cache current month's periodic report
+      // 7. Cache current month's periodic report
       try {
         const now = new Date();
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -234,7 +262,7 @@ export const useDataSync = () => {
           syncedCount++;
         }
       } catch (err) {
-        console.error('Periodic Report sync error:', err);
+        console.warn('Periodic Report sync skipped:', err);
       }
 
       if (mountedRef.current) {
@@ -259,7 +287,7 @@ export const useDataSync = () => {
       releaseLock();
       if (mountedRef.current) setIsSyncing(false);
     }
-  }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, syncOfflineReceipts, updatePendingCount]);
+  }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, saveRoutes, saveSessions, syncOfflineReceipts, updatePendingCount]);
 
   // Initial sync on mount - immediate without delay
   useEffect(() => {
