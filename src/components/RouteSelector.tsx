@@ -25,7 +25,7 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
           setRoutes(cachedRoutes);
         }
       } catch (err) {
-        console.error('Failed to load cached routes:', err);
+        console.warn('Failed to load cached routes:', err);
       }
     }
 
@@ -42,9 +42,12 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
             await saveRoutes(response.data);
           }
           console.log(`✅ Synced ${response.data.length} routes from fm_tanks`);
+        } else {
+          // No routes for this ccode - that's OK, not an error
+          console.log('No routes configured for this company code');
         }
       } catch (err) {
-        console.error('Route sync error:', err);
+        console.warn('Route sync skipped:', err);
       } finally {
         setIsLoading(false);
       }
