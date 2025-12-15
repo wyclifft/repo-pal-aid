@@ -99,28 +99,49 @@ const Settings = () => {
       localStorage.removeItem('device_company_name');
       
       // Fetch company name by ccode
-      const companyResponse = await fetch(
-        `${apiUrl}/api/psettings?ccode=${encodeURIComponent(ccode)}`
-      );
-      
-      if (companyResponse.ok) {
-        const companyData = await companyResponse.json();
-        if (companyData.success && companyData.data?.company_name) {
-          const newCompanyName = companyData.data.company_name;
-          setCompanyName(newCompanyName);
-          localStorage.setItem('device_company_name', newCompanyName);
+      try {
+        const companyResponse = await fetch(
+          `${apiUrl}/api/psettings?ccode=${encodeURIComponent(ccode)}`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+        
+        // Handle 404 gracefully - endpoint doesn't exist
+        if (companyResponse.status === 404) {
+          // Use device-level company name as fallback
+          const fallbackName = deviceData.data.company_name || 'DAIRY COLLECTION';
+          setCompanyName(fallbackName);
+          localStorage.setItem('device_company_name', fallbackName);
           localStorage.setItem('device_ccode', ccode);
-          toast.success(`Company updated: ${newCompanyName}`);
+          toast.success(`Company updated: ${fallbackName}`);
           
-          // Dispatch event to notify other components
           window.dispatchEvent(new CustomEvent('companyNameUpdated', { 
-            detail: { companyName: newCompanyName } 
+            detail: { companyName: fallbackName } 
           }));
+        } else if (companyResponse.ok) {
+          const companyData = await companyResponse.json();
+          if (companyData.success && companyData.data?.company_name) {
+            const newCompanyName = companyData.data.company_name;
+            setCompanyName(newCompanyName);
+            localStorage.setItem('device_company_name', newCompanyName);
+            localStorage.setItem('device_ccode', ccode);
+            toast.success(`Company updated: ${newCompanyName}`);
+            
+            // Dispatch event to notify other components
+            window.dispatchEvent(new CustomEvent('companyNameUpdated', { 
+              detail: { companyName: newCompanyName } 
+            }));
+          } else {
+            toast.warning('No company name found for this code');
+          }
         } else {
-          toast.warning('No company name found for this code');
+          toast.warning('Could not retrieve company settings');
         }
-      } else {
-        throw new Error('Failed to fetch company name');
+      } catch (fetchErr) {
+        // Handle company settings fetch error with fallback
+        const fallbackName = deviceData.data.company_name || 'DAIRY COLLECTION';
+        setCompanyName(fallbackName);
+        localStorage.setItem('device_company_name', fallbackName);
+        toast.success(`Company updated: ${fallbackName}`);
       }
     } catch (error) {
       console.error('Failed to refresh company:', error);

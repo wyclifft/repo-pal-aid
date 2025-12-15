@@ -77,16 +77,30 @@ const ZReport = () => {
       try {
         const data = await mysqlApi.zReport.get(selectedDate, deviceFingerprint);
         if (data) {
-          setReportData(data);
+          // Ensure data has valid structure before using
+          const safeData: ZReportData = {
+            date: data.date || selectedDate,
+            totals: data.totals || { liters: 0, farmers: 0, entries: 0 },
+            byRoute: data.byRoute || {},
+            bySession: data.bySession || { AM: { entries: 0, liters: 0 }, PM: { entries: 0, liters: 0 } },
+            byCollector: data.byCollector || {},
+            collections: data.collections || []
+          };
+          setReportData(safeData);
           // Cache in IndexedDB for offline access
-          await saveZReport(selectedDate, data);
-          console.log('✅ Z Report synced and cached');
+          try {
+            await saveZReport(selectedDate, safeData);
+            console.log('✅ Z Report synced and cached');
+          } catch (saveErr) {
+            console.warn('Failed to cache Z Report:', saveErr);
+          }
         }
       } catch (error) {
         console.error('Error syncing report:', error);
         // Data already loaded from cache, just log the error
         if (!reportData) {
-          toast.error('No data available for this date');
+          // Only show toast if no data at all
+          console.log('No data available for this date');
         }
       }
     }
