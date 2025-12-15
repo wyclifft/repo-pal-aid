@@ -1177,21 +1177,28 @@ const server = http.createServer(async (req, res) => {
         
         // If device exists in devsettings but has no device_ref, assign one
         if (devRows.length > 0 && !deviceRef) {
-          // Get the next device_ref number
-          const [maxRefRows] = await pool.query(
-            `SELECT device_ref FROM devsettings 
-             WHERE device_ref IS NOT NULL 
-             ORDER BY device_ref DESC LIMIT 1`
+          // Get the next device slot number (1, 2, 3, etc.)
+          // Each device gets its own slot: Device 1 = AE10000001, Device 2 = AE20000001, etc.
+          const [slotRows] = await pool.query(
+            `SELECT COUNT(DISTINCT SUBSTRING(device_ref, 3, 1)) as slot_count 
+             FROM devsettings 
+             WHERE device_ref IS NOT NULL AND device_ref LIKE 'AE%'`
           );
           
-          let nextNum = 10000001; // Start at AE10000001
-          if (maxRefRows.length > 0 && maxRefRows[0].device_ref) {
-            const lastRef = maxRefRows[0].device_ref;
-            const lastNum = parseInt(lastRef.substring(2)); // Remove 'AE' prefix
-            nextNum = lastNum + 1;
+          // Also find the max slot number in case some slots were skipped
+          const [maxSlotRows] = await pool.query(
+            `SELECT MAX(CAST(SUBSTRING(device_ref, 3, 1) AS UNSIGNED)) as max_slot 
+             FROM devsettings 
+             WHERE device_ref IS NOT NULL AND device_ref LIKE 'AE%'`
+          );
+          
+          let nextSlot = 1; // Start at device slot 1
+          if (maxSlotRows.length > 0 && maxSlotRows[0].max_slot) {
+            nextSlot = maxSlotRows[0].max_slot + 1;
           }
           
-          deviceRef = `AE${String(nextNum).padStart(8, '0')}`;
+          // Format: AE + slot (1 digit) + 0000001 (7 digits) = AE10000001
+          deviceRef = `AE${nextSlot}0000001`;
           
           // Update device with new device_ref
           await pool.query(
