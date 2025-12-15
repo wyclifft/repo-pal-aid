@@ -236,20 +236,36 @@ const getNextSequential = async (): Promise<number> => {
 };
 
 /**
- * Generate offline reference using timestamp-based approach
- * Format: CompanyCode + DeviceCode + Timestamp(last 8 digits) + Counter(3 digits)
+ * Generate reference using device_ref from backend
+ * Format: device_ref (e.g., AE10000001) - increments based on device slot
  * 
- * Handles missing config gracefully with fallback generation
+ * Device slots: Device 1 = AE1xxxxxxx, Device 2 = AE2xxxxxxx, etc.
+ * Each device increments sequentially within its slot.
  */
 export const generateOfflineReference = async (): Promise<string | null> => {
-  const config = await getDeviceConfig();
+  // First, try to use device_ref from backend (stored in localStorage)
+  const deviceRef = localStorage.getItem('device_ref');
   
-  // Use config if available, otherwise use fallback values
+  if (deviceRef) {
+    // Extract the base prefix (e.g., "AE1" from "AE10000001") and increment
+    // device_ref format: AE + slot(1 digit) + sequence(7 digits) = AE10000001
+    const prefix = deviceRef.slice(0, 3); // "AE1", "AE2", etc.
+    const nextSequential = await getNextSequential();
+    
+    // Generate reference: prefix + 7-digit sequential padded
+    const reference = `${prefix}${String(nextSequential).padStart(7, '0')}`;
+    
+    console.log(`⚡ Reference generated using device_ref: ${reference}`);
+    return reference;
+  }
+  
+  // Fallback to old format if device_ref not available
+  const config = await getDeviceConfig();
   const companyCode = config?.companyCode || 'XX';
   const deviceCode = config?.deviceCode || '00000';
   
-  if (!config) {
-    console.warn('⚠️ Device config not available, using fallback codes');
+  if (!deviceRef) {
+    console.warn('⚠️ device_ref not available, using fallback codes');
   }
 
   // Use timestamp + incremental counter for uniqueness
@@ -261,7 +277,7 @@ export const generateOfflineReference = async (): Promise<string | null> => {
   const counterPart = String(nextSequential).padStart(3, '0');
   const reference = `${companyCode}${deviceCode}${timestampPart}${counterPart}`;
   
-  console.log(`⚡ Offline reference generated: ${reference}`);
+  console.log(`⚡ Fallback reference generated: ${reference}`);
   
   return reference;
 };

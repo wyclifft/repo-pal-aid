@@ -143,6 +143,11 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           // Also save for offline login
           if (authorized) {
             localStorage.setItem('device_approved', 'true');
+            // Store device_ref for reference generation (e.g., AE10000001)
+            if (data.data.device_ref) {
+              localStorage.setItem('device_ref', data.data.device_ref);
+              console.log('📦 Stored device_ref:', data.data.device_ref);
+            }
             const deviceCode = String(data.data.devcode || data.data.uniquedevcode || '00000').slice(-5);
             await initializeDeviceConfig(fetchedCompanyName, deviceCode);
           }
