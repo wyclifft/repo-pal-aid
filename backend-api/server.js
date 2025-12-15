@@ -1098,7 +1098,7 @@ const server = http.createServer(async (req, res) => {
       
       // Then check devsettings for authorization, company info, and device code
       const [devRows] = await pool.query(
-        'SELECT uniquedevcode, ccode, devcode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT uniquedevcode, ccode, devcode, device_ref, authorized FROM devsettings WHERE uniquedevcode = ?',
         [fingerprint]
       );
       
@@ -1111,7 +1111,8 @@ const server = http.createServer(async (req, res) => {
         ...(approvedRows.length > 0 ? approvedRows[0] : {}),
         authorized: devRows.length > 0 ? devRows[0].authorized : 0,
         ccode: devRows.length > 0 && devRows[0].ccode ? devRows[0].ccode : (approvedRows[0]?.ccode || null),
-        devcode: devRows.length > 0 ? devRows[0].devcode : null
+        devcode: devRows.length > 0 ? devRows[0].devcode : null,
+        device_ref: devRows.length > 0 ? devRows[0].device_ref : null
       };
       
       // Get company name from psettings if ccode exists
@@ -1156,14 +1157,48 @@ const server = http.createServer(async (req, res) => {
           [body.device_fingerprint]
         );
         const [updated] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
-        return sendJSON(res, { success: true, data: updated[0], message: 'Device already registered' });
-      } else {
-        // Check if device exists in devsettings to get ccode
+        
+        // Also get device_ref from devsettings
         const [devRows] = await pool.query(
-          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT device_ref FROM devsettings WHERE uniquedevcode = ?',
+          [body.device_fingerprint]
+        );
+        const deviceData = { ...updated[0], device_ref: devRows.length > 0 ? devRows[0].device_ref : null };
+        
+        return sendJSON(res, { success: true, data: deviceData, message: 'Device already registered' });
+      } else {
+        // Check if device exists in devsettings to get ccode and device_ref
+        const [devRows] = await pool.query(
+          'SELECT ccode, device_ref FROM devsettings WHERE uniquedevcode = ?',
           [body.device_fingerprint]
         );
         const ccode = devRows.length > 0 ? devRows[0].ccode : null;
+        let deviceRef = devRows.length > 0 ? devRows[0].device_ref : null;
+        
+        // If device exists in devsettings but has no device_ref, assign one
+        if (devRows.length > 0 && !deviceRef) {
+          // Get the next device_ref number
+          const [maxRefRows] = await pool.query(
+            `SELECT device_ref FROM devsettings 
+             WHERE device_ref IS NOT NULL 
+             ORDER BY device_ref DESC LIMIT 1`
+          );
+          
+          let nextNum = 10000001; // Start at AE10000001
+          if (maxRefRows.length > 0 && maxRefRows[0].device_ref) {
+            const lastRef = maxRefRows[0].device_ref;
+            const lastNum = parseInt(lastRef.substring(2)); // Remove 'AE' prefix
+            nextNum = lastNum + 1;
+          }
+          
+          deviceRef = `AE${String(nextNum).padStart(8, '0')}`;
+          
+          // Update device with new device_ref
+          await pool.query(
+            'UPDATE devsettings SET device_ref = ? WHERE uniquedevcode = ?',
+            [deviceRef, body.device_fingerprint]
+          );
+        }
         
         // Insert new device - ALWAYS set approved to FALSE for new devices
         const [result] = await pool.query(
@@ -1171,7 +1206,11 @@ const server = http.createServer(async (req, res) => {
           [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
         );
         const [newDevice] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [result.insertId]);
-        return sendJSON(res, { success: true, data: newDevice[0], message: 'Device registered' }, 201);
+        
+        // Include device_ref in response
+        const deviceData = { ...newDevice[0], device_ref: deviceRef };
+        
+        return sendJSON(res, { success: true, data: deviceData, message: 'Device registered' }, 201);
       }
     }
 

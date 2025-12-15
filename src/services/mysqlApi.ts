@@ -343,6 +343,7 @@ export interface ApprovedDevice {
   ccode?: string;
   uniquedevcode?: string;
   company_name?: string;
+  device_ref?: string; // Unique device reference number (e.g., AE10000001)
 }
 
 export const devicesApi = {
