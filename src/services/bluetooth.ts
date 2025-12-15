@@ -425,9 +425,21 @@ export const quickReconnect = async (
   }
 };
 
-// Printer-specific UUIDs - common thermal printer service
+// Printer-specific UUIDs - common thermal printer services
 const PRINTER_SERVICE_UUID = numberToUUID(0x18f0);
-const PRINTER_WRITE_CHARACTERISTIC_UUID = numberToUUID(0x2af1); // Common write characteristic
+const PRINTER_WRITE_CHARACTERISTIC_UUID = numberToUUID(0x2af1);
+
+// Common printer service UUIDs for various manufacturers
+const COMMON_PRINTER_SERVICES = [
+  numberToUUID(0x18f0),                               // Standard printer service
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455',            // Microchip Transparent UART
+  '0000ff00-0000-1000-8000-00805f9b34fb',            // Generic custom
+  '0000ffe0-0000-1000-8000-00805f9b34fb',            // Common Chinese printers
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2',            // Serial Port Profile
+  '000018f0-0000-1000-8000-00805f9b34fb',            // Print service
+  '0000fee7-0000-1000-8000-00805f9b34fb',            // HM-10 based
+  '38eb4a80-c570-11e3-9507-0002a5d5c51b',            // Goojprt/similar
+];
 
 export const connectBluetoothPrinter = async (): Promise<{ 
   success: boolean; 
@@ -438,23 +450,55 @@ export const connectBluetoothPrinter = async (): Promise<{
     if (Capacitor.isNativePlatform()) {
       await BleClient.initialize();
 
+      console.log('🔍 Scanning for Bluetooth printers...');
+      
       const device = await BleClient.requestDevice({
-        optionalServices: [PRINTER_SERVICE_UUID],
+        optionalServices: COMMON_PRINTER_SERVICES,
       });
 
+      console.log(`📱 Printer selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
+      
       await BleClient.connect(device.deviceId);
+      console.log('✅ Connected to printer');
 
-      printer = { device, characteristic: null };
+      // Get services and find write characteristic
+      const services = await BleClient.getServices(device.deviceId);
+      console.log(`📋 Found ${services.length} services:`);
+      
+      let writeServiceUuid: string | null = null;
+      let writeCharUuid: string | null = null;
+      
+      for (const service of services) {
+        console.log(`  Service: ${service.uuid}`);
+        for (const char of service.characteristics) {
+          console.log(`    Char: ${char.uuid} - write=${char.properties.write}, writeNoResp=${char.properties.writeWithoutResponse}`);
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            writeServiceUuid = service.uuid;
+            writeCharUuid = char.uuid;
+            console.log(`✅ Found writable characteristic: ${char.uuid}`);
+          }
+        }
+      }
+      
+      // Store the write characteristic for later use
+      printer = { 
+        device, 
+        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid, charUuid: writeCharUuid } : null 
+      };
       savePrinterInfo(device.deviceId, device.name || 'Bluetooth Printer');
 
       return { success: true, deviceName: device.name || 'Bluetooth Printer' };
     } else if ('bluetooth' in navigator) {
+      console.log('🔍 Scanning for Bluetooth printers (Web Bluetooth)...');
+      
       const device = await (navigator as any).bluetooth.requestDevice({
         acceptAllDevices: true,
-        optionalServices: [PRINTER_SERVICE_UUID],
+        optionalServices: COMMON_PRINTER_SERVICES,
       });
 
       const server = await device.gatt.connect();
+      console.log('✅ Connected to printer via Web Bluetooth');
+      
       printer = { device, characteristic: null };
       savePrinterInfo(device.id, device.name || 'Bluetooth Printer');
 
@@ -475,17 +519,38 @@ export const quickReconnectPrinter = async (deviceId: string): Promise<{
   try {
     if (Capacitor.isNativePlatform()) {
       await BleClient.initialize();
+      console.log(`🔄 Quick reconnecting to printer: ${deviceId}`);
       await BleClient.connect(deviceId);
       
-      const device = { deviceId } as BleDevice;
-      printer = { device, characteristic: null };
+      // Get services and find write characteristic
+      const services = await BleClient.getServices(deviceId);
+      let writeServiceUuid: string | null = null;
+      let writeCharUuid: string | null = null;
       
+      for (const service of services) {
+        for (const char of service.characteristics) {
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            writeServiceUuid = service.uuid;
+            writeCharUuid = char.uuid;
+            break;
+          }
+        }
+        if (writeCharUuid) break;
+      }
+      
+      const device = { deviceId } as BleDevice;
+      printer = { 
+        device, 
+        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid, charUuid: writeCharUuid } : null 
+      };
+      
+      console.log('✅ Reconnected to printer');
       return { success: true };
     } else if ('bluetooth' in navigator) {
       // Web Bluetooth API support for PWA on mobile browsers
       const device = await (navigator as any).bluetooth.requestDevice({
         acceptAllDevices: true,
-        optionalServices: [PRINTER_SERVICE_UUID],
+        optionalServices: COMMON_PRINTER_SERVICES,
       });
 
       const server = await device.gatt.connect();
@@ -553,7 +618,9 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
       return { success: false, error: 'No printer connected' };
     }
 
-    // Build the print data
+    console.log('🖨️ Starting print job...');
+
+    // Build the print data with ESC/POS commands
     const printData: number[] = [
       ...COMMANDS.INIT,
       ...COMMANDS.ALIGN_CENTER,
@@ -561,57 +628,115 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
       ...COMMANDS.LINE_FEED,
       ...COMMANDS.LINE_FEED,
       ...COMMANDS.LINE_FEED,
+      ...COMMANDS.LINE_FEED,
+      ...COMMANDS.LINE_FEED,
       ...COMMANDS.CUT_PAPER,
     ];
 
     const dataView = new Uint8Array(printData);
+    console.log(`📄 Print data size: ${dataView.length} bytes`);
 
     if (Capacitor.isNativePlatform()) {
-      // For native platforms, we need to find the write characteristic first
-      const services = await BleClient.getServices(printer.device.deviceId);
+      const deviceId = printer.device.deviceId;
       
-      // Try to find a writable characteristic
-      let writeChar: string | null = null;
-      for (const service of services) {
-        for (const char of service.characteristics) {
-          // Look for write or write without response properties
-          if (char.properties.write || char.properties.writeWithoutResponse) {
-            writeChar = char.uuid;
-            break;
+      // Use cached characteristic if available
+      let serviceUuid: string | null = null;
+      let writeCharUuid: string | null = null;
+      
+      if (printer.characteristic && typeof printer.characteristic === 'object') {
+        serviceUuid = printer.characteristic.serviceUuid;
+        writeCharUuid = printer.characteristic.charUuid;
+        console.log(`📌 Using cached write characteristic: ${writeCharUuid}`);
+      }
+      
+      // If not cached, find the write characteristic
+      if (!writeCharUuid) {
+        console.log('🔍 Discovering printer services...');
+        const services = await BleClient.getServices(deviceId);
+        
+        for (const service of services) {
+          // Skip standard Bluetooth services
+          if (service.uuid.toLowerCase().includes('1800') || 
+              service.uuid.toLowerCase().includes('1801') ||
+              service.uuid.toLowerCase().includes('180a')) {
+            continue;
           }
+          
+          for (const char of service.characteristics) {
+            if (char.properties.write || char.properties.writeWithoutResponse) {
+              serviceUuid = service.uuid;
+              writeCharUuid = char.uuid;
+              console.log(`✅ Found writable characteristic: ${char.uuid} in service ${service.uuid}`);
+              break;
+            }
+          }
+          if (writeCharUuid) break;
         }
-        if (writeChar) break;
       }
 
-      if (!writeChar) {
-        return { success: false, error: 'No writable characteristic found' };
+      if (!serviceUuid || !writeCharUuid) {
+        console.error('❌ No writable characteristic found on printer');
+        return { success: false, error: 'No writable characteristic found. Printer may not be compatible.' };
       }
 
-      // Write data in chunks (some printers have MTU limitations)
-      const chunkSize = 20;
+      // Write data in chunks - use larger chunk size for faster printing
+      const chunkSize = 100; // Increased from 20 for better performance
+      console.log(`📤 Sending ${Math.ceil(dataView.length / chunkSize)} chunks...`);
+      
       for (let i = 0; i < dataView.length; i += chunkSize) {
         const chunk = dataView.slice(i, Math.min(i + chunkSize, dataView.length));
         const dataViewChunk = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-        await BleClient.write(
-          printer.device.deviceId,
-          services[0].uuid,
-          writeChar,
-          dataViewChunk
-        );
+        
+        try {
+          await BleClient.write(
+            deviceId,
+            serviceUuid,
+            writeCharUuid,
+            dataViewChunk
+          );
+        } catch (writeError) {
+          console.error(`❌ Write error at chunk ${Math.floor(i/chunkSize)}:`, writeError);
+          // Try write without response as fallback
+          try {
+            await BleClient.writeWithoutResponse(
+              deviceId,
+              serviceUuid,
+              writeCharUuid,
+              dataViewChunk
+            );
+          } catch (retryError) {
+            throw retryError;
+          }
+        }
+        
+        // Small delay between chunks to prevent buffer overflow
+        if (i + chunkSize < dataView.length) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
       }
 
+      console.log('✅ Print job completed successfully');
       return { success: true };
     } else if ('bluetooth' in navigator && printer.device.gatt?.connected) {
-      // For web Bluetooth
-      const service = await printer.device.gatt.getPrimaryService(PRINTER_SERVICE_UUID);
-      const characteristics = await service.getCharacteristics();
+      // For web Bluetooth - try multiple services
+      let writeChar: any = null;
       
-      // Find writable characteristic
-      let writeChar: BluetoothRemoteGATTCharacteristic | null = null;
-      for (const char of characteristics) {
-        if (char.properties.write || char.properties.writeWithoutResponse) {
-          writeChar = char;
-          break;
+      for (const serviceUuid of COMMON_PRINTER_SERVICES) {
+        try {
+          const service = await printer.device.gatt.getPrimaryService(serviceUuid);
+          const characteristics = await service.getCharacteristics();
+          
+          for (const char of characteristics) {
+            if (char.properties.write || char.properties.writeWithoutResponse) {
+              writeChar = char;
+              console.log(`✅ Found writable characteristic via Web Bluetooth`);
+              break;
+            }
+          }
+          if (writeChar) break;
+        } catch (e) {
+          // Service not available, try next
+          continue;
         }
       }
 
@@ -620,18 +745,22 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
       }
 
       // Write data in chunks
-      const chunkSize = 20;
+      const chunkSize = 100;
       for (let i = 0; i < dataView.length; i += chunkSize) {
         const chunk = dataView.slice(i, Math.min(i + chunkSize, dataView.length));
         await writeChar.writeValue(chunk);
+        if (i + chunkSize < dataView.length) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
       }
 
+      console.log('✅ Print job completed successfully');
       return { success: true };
     } else {
-      return { success: false, error: 'Bluetooth not available' };
+      return { success: false, error: 'Printer not connected or Bluetooth not available' };
     }
   } catch (error: any) {
-    console.error('Failed to print:', error);
+    console.error('❌ Print failed:', error);
     return { success: false, error: error.message || 'Failed to print' };
   }
 };
