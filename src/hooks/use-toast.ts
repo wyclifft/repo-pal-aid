@@ -121,7 +121,10 @@ export const reducer = (state: State, action: Action): State => {
   }
 };
 
-const listeners: Array<(state: State) => void> = [];
+// Keep listeners in a stable global to avoid rare re-init issues (e.g., HMR/native reload edge cases)
+const globalKey = '__lovable_toast_listeners__';
+const globalObj = globalThis as any;
+const listeners: Array<(state: State) => void> = (globalObj[globalKey] ||= []);
 
 let memoryState: State = { toasts: [] };
 
@@ -174,7 +177,7 @@ function useToast() {
         listeners.splice(index, 1);
       }
     };
-  }, [state]);
+  }, []);
 
   return {
     ...state,
