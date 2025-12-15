@@ -871,13 +871,17 @@ const server = http.createServer(async (req, res) => {
       const totalFarmers = new Set(collections.map(c => c.farmer_id)).size;
       const totalEntries = collections.length;
 
-      // Group by route
+      // Group by route (defensive: normalize unexpected session values)
       const byRoute = collections.reduce((acc, c) => {
-        if (!acc[c.route]) {
-          acc[c.route] = { AM: [], PM: [], total: 0 };
+        const routeKey = c.route || 'Unknown';
+        const sessionKey = c.session === 'PM' ? 'PM' : 'AM';
+
+        if (!acc[routeKey]) {
+          acc[routeKey] = { AM: [], PM: [], total: 0 };
         }
-        acc[c.route][c.session].push(c);
-        acc[c.route].total += parseFloat(c.weight || 0);
+
+        acc[routeKey][sessionKey].push(c);
+        acc[routeKey].total += parseFloat(c.weight || 0);
         return acc;
       }, {});
 
@@ -1174,39 +1178,35 @@ const server = http.createServer(async (req, res) => {
         );
         const ccode = devRows.length > 0 ? devRows[0].ccode : null;
         let deviceRef = devRows.length > 0 ? devRows[0].device_ref : null;
-        
-        // If device exists in devsettings but has no device_ref, assign one
-        if (devRows.length > 0 && !deviceRef) {
-          // Get the next device slot number (1, 2, 3, etc.)
-          // Each device gets its own slot: Device 1 = AE10000001, Device 2 = AE20000001, etc.
-          const [slotRows] = await pool.query(
-            `SELECT COUNT(DISTINCT SUBSTRING(device_ref, 3, 1)) as slot_count 
-             FROM devsettings 
-             WHERE device_ref IS NOT NULL AND device_ref LIKE 'AE%'`
-          );
-          
-          // Also find the max slot number in case some slots were skipped
+
+        // Ensure every device gets a slot-based device_ref:
+        // Device 1 => AE10000001, AE10000002 ... (slot=1, sequence=7 digits)
+        // Device 2 => AE20000001, AE20000002 ... (slot=2, sequence=7 digits)
+        if (!deviceRef) {
           const [maxSlotRows] = await pool.query(
-            `SELECT MAX(CAST(SUBSTRING(device_ref, 3, 1) AS UNSIGNED)) as max_slot 
-             FROM devsettings 
+            `SELECT MAX(CAST(SUBSTRING(device_ref, 3, 1) AS UNSIGNED)) as max_slot
+             FROM devsettings
              WHERE device_ref IS NOT NULL AND device_ref LIKE 'AE%'`
           );
-          
-          let nextSlot = 1; // Start at device slot 1
-          if (maxSlotRows.length > 0 && maxSlotRows[0].max_slot) {
-            nextSlot = maxSlotRows[0].max_slot + 1;
+
+          const nextSlot = maxSlotRows?.[0]?.max_slot ? Number(maxSlotRows[0].max_slot) + 1 : 1;
+          deviceRef = `AE${nextSlot}${String(1).padStart(7, '0')}`; // e.g. AE10000001
+
+          if (devRows.length > 0) {
+            // Update existing devsettings record
+            await pool.query(
+              'UPDATE devsettings SET device_ref = ? WHERE uniquedevcode = ?',
+              [deviceRef, body.device_fingerprint]
+            );
+          } else {
+            // Create minimal devsettings record so the device_ref exists immediately
+            await pool.query(
+              'INSERT INTO devsettings (uniquedevcode, device, authorized, device_ref) VALUES (?, ?, 0, ?)',
+              [body.device_fingerprint, body.device_info || null, deviceRef]
+            );
           }
-          
-          // Format: AE + slot (1 digit) + 0000001 (7 digits) = AE10000001
-          deviceRef = `AE${nextSlot}0000001`;
-          
-          // Update device with new device_ref
-          await pool.query(
-            'UPDATE devsettings SET device_ref = ? WHERE uniquedevcode = ?',
-            [deviceRef, body.device_fingerprint]
-          );
         }
-        
+
         // Insert new device - ALWAYS set approved to FALSE for new devices
         const [result] = await pool.query(
           'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
