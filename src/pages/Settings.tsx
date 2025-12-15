@@ -73,9 +73,15 @@ const Settings = () => {
       const apiUrl = 'https://backend.maddasystems.co.ke';
       
       // First get device info to get ccode
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      
       const deviceResponse = await fetch(
-        `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`
+        `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
+        { signal: controller.signal }
       );
+      
+      clearTimeout(timeoutId);
       
       if (!deviceResponse.ok) {
         throw new Error('Failed to fetch device info');
@@ -88,64 +94,64 @@ const Settings = () => {
       }
       
       const ccode = deviceData.data.ccode;
-      
-      if (!ccode) {
-        toast.warning('No company code assigned to this device');
-        setIsRefreshingCompany(false);
-        return;
-      }
+      const deviceCompanyName = deviceData.data.company_name;
       
       // Clear cached company name to force fresh fetch
       localStorage.removeItem('device_company_name');
       
-      // Fetch company name by ccode
-      try {
-        const companyResponse = await fetch(
-          `${apiUrl}/api/psettings?ccode=${encodeURIComponent(ccode)}`,
-          { signal: AbortSignal.timeout(5000) }
-        );
-        
-        // Handle 404 gracefully - endpoint doesn't exist
-        if (companyResponse.status === 404) {
-          // Use device-level company name as fallback
-          const fallbackName = deviceData.data.company_name || 'DAIRY COLLECTION';
-          setCompanyName(fallbackName);
-          localStorage.setItem('device_company_name', fallbackName);
-          localStorage.setItem('device_ccode', ccode);
-          toast.success(`Company updated: ${fallbackName}`);
-          
-          window.dispatchEvent(new CustomEvent('companyNameUpdated', { 
-            detail: { companyName: fallbackName } 
-          }));
-        } else if (companyResponse.ok) {
-          const companyData = await companyResponse.json();
-          if (companyData.success && companyData.data?.company_name) {
-            const newCompanyName = companyData.data.company_name;
-            setCompanyName(newCompanyName);
-            localStorage.setItem('device_company_name', newCompanyName);
-            localStorage.setItem('device_ccode', ccode);
-            toast.success(`Company updated: ${newCompanyName}`);
-            
-            // Dispatch event to notify other components
-            window.dispatchEvent(new CustomEvent('companyNameUpdated', { 
-              detail: { companyName: newCompanyName } 
-            }));
-          } else {
-            toast.warning('No company name found for this code');
-          }
-        } else {
-          toast.warning('Could not retrieve company settings');
-        }
-      } catch (fetchErr) {
-        // Handle company settings fetch error with fallback
-        const fallbackName = deviceData.data.company_name || 'DAIRY COLLECTION';
-        setCompanyName(fallbackName);
-        localStorage.setItem('device_company_name', fallbackName);
-        toast.success(`Company updated: ${fallbackName}`);
+      // Update ccode in storage
+      if (ccode) {
+        localStorage.setItem('device_ccode', ccode);
       }
+      
+      // Try to fetch company name from psettings
+      let finalCompanyName = deviceCompanyName || 'DAIRY COLLECTION';
+      
+      if (ccode && navigator.onLine) {
+        try {
+          const psettingsController = new AbortController();
+          const psettingsTimeoutId = setTimeout(() => psettingsController.abort(), 5000);
+          
+          const companyResponse = await fetch(
+            `${apiUrl}/api/psettings?ccode=${encodeURIComponent(ccode)}`,
+            { signal: psettingsController.signal }
+          );
+          
+          clearTimeout(psettingsTimeoutId);
+          
+          if (companyResponse.ok) {
+            const companyData = await companyResponse.json();
+            if (companyData.success && companyData.data?.company_name) {
+              finalCompanyName = companyData.data.company_name;
+            }
+          }
+          // If 404 or other error, we fall back to deviceCompanyName (already set)
+        } catch (psettingsErr) {
+          // Silently ignore psettings errors - use device company name
+          console.log('psettings fetch skipped, using device company name');
+        }
+      }
+      
+      // Update state and storage with final company name
+      setCompanyName(finalCompanyName);
+      localStorage.setItem('device_company_name', finalCompanyName);
+      toast.success(`Company: ${finalCompanyName}`);
+      
+      // Dispatch event to notify other components
+      window.dispatchEvent(new CustomEvent('companyNameUpdated', { 
+        detail: { companyName: finalCompanyName } 
+      }));
+      
     } catch (error) {
       console.error('Failed to refresh company:', error);
-      toast.error('Failed to refresh company data');
+      // Even on error, try to use cached device company name
+      const cachedName = localStorage.getItem('device_company_name');
+      if (cachedName) {
+        setCompanyName(cachedName);
+        toast.info(`Using cached: ${cachedName}`);
+      } else {
+        toast.error('Failed to refresh company data');
+      }
     } finally {
       setIsRefreshingCompany(false);
     }
