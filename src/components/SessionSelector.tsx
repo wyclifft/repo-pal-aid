@@ -20,7 +20,7 @@ export const SessionSelector = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const { saveSessions, getSessions } = useIndexedDB();
+  const { saveSessions, getSessions, isReady } = useIndexedDB();
 
   // Update current time every minute
   useEffect(() => {
@@ -75,7 +75,7 @@ export const SessionSelector = ({
     return sessionList.find(s => isSessionActive(s)) || null;
   }, [isSessionActive]);
 
-  // Load sessions
+  // Load sessions - wait for DB to be ready
   useEffect(() => {
     const loadSessions = async () => {
       setLoading(true);
@@ -84,14 +84,20 @@ export const SessionSelector = ({
       try {
         const deviceFingerprint = await generateDeviceFingerprint();
         
-        // Try to load from cache first
-        const cached = await getSessions();
-        if (cached && cached.length > 0) {
-          setSessions(cached);
-          const active = findActiveSession(cached);
-          setActiveSession(active);
-          if (active && !selectedSession) {
-            onSessionChange(active);
+        // Try to load from cache first (only if DB is ready)
+        if (isReady) {
+          try {
+            const cached = await getSessions();
+            if (cached && cached.length > 0) {
+              setSessions(cached);
+              const active = findActiveSession(cached);
+              setActiveSession(active);
+              if (active && !selectedSession) {
+                onSessionChange(active);
+              }
+            }
+          } catch (cacheErr) {
+            console.warn('Cache read error:', cacheErr);
           }
         }
         
@@ -101,7 +107,13 @@ export const SessionSelector = ({
           
           if (response.success && response.data) {
             setSessions(response.data);
-            await saveSessions(response.data);
+            if (isReady) {
+              try {
+                await saveSessions(response.data);
+              } catch (saveErr) {
+                console.warn('Cache save error:', saveErr);
+              }
+            }
             
             const active = findActiveSession(response.data);
             setActiveSession(active);
@@ -110,22 +122,25 @@ export const SessionSelector = ({
             if (active && !selectedSession) {
               onSessionChange(active);
             }
-          } else if (!cached || cached.length === 0) {
+          } else if (sessions.length === 0) {
+            // Only show error if we have no cached data
             setError(response.error || 'Failed to load sessions');
           }
-        } else if (!cached || cached.length === 0) {
+        } else if (sessions.length === 0) {
           setError('Offline - no cached sessions available');
         }
       } catch (err) {
         console.error('Error loading sessions:', err);
-        setError('Failed to load sessions');
+        if (sessions.length === 0) {
+          setError('Failed to load sessions');
+        }
       } finally {
         setLoading(false);
       }
     };
 
     loadSessions();
-  }, [getSessions, saveSessions, findActiveSession, selectedSession, onSessionChange]);
+  }, [isReady, findActiveSession, selectedSession, onSessionChange]);
 
   // Re-check active session when time changes
   useEffect(() => {

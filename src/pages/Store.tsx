@@ -80,10 +80,15 @@ const Store = () => {
         try {
           const apiUrl = 'https://backend.maddasystems.co.ke';
           const response = await fetch(
-            `${apiUrl}/api/routes?uniquedevcode=${encodeURIComponent(deviceFingerprint)}`
+            `${apiUrl}/api/routes?uniquedevcode=${encodeURIComponent(deviceFingerprint)}`,
+            { signal: AbortSignal.timeout(5000) } // 5 second timeout
           );
           
-          if (response.ok) {
+          // Handle 404 gracefully - endpoint doesn't exist, allow items to load
+          if (response.status === 404) {
+            console.log('📭 Routes endpoint not found - proceeding with items load');
+            setHasRoutes(true);
+          } else if (response.ok) {
             const data = await response.json();
             const routesExist = data.success && data.data && data.data.length > 0;
             setHasRoutes(routesExist);
@@ -94,6 +99,10 @@ const Store = () => {
               setLoading(false);
               return;
             }
+          } else {
+            // Other error - allow items to load as fallback
+            console.warn('Routes check returned status:', response.status);
+            setHasRoutes(true);
           }
         } catch (err) {
           console.warn('Failed to check routes:', err);
@@ -109,6 +118,7 @@ const Store = () => {
       await loadItems();
     } catch (error) {
       console.error('Failed to check routes:', error);
+      setHasRoutes(true); // Fallback to allow items
       setLoading(false);
     }
   };

@@ -203,11 +203,21 @@ export const useDataSync = () => {
         const today = new Date().toISOString().split('T')[0];
         const zReportData = await mysqlApi.zReport.get(today, deviceFingerprint);
         if (zReportData) {
-          await saveZReport(today, zReportData);
+          // Ensure safe data structure
+          const safeData = {
+            date: zReportData.date || today,
+            totals: zReportData.totals || { liters: 0, farmers: 0, entries: 0 },
+            byRoute: zReportData.byRoute || {},
+            bySession: zReportData.bySession || { AM: { entries: 0, liters: 0 }, PM: { entries: 0, liters: 0 } },
+            byCollector: zReportData.byCollector || {},
+            collections: zReportData.collections || []
+          };
+          await saveZReport(today, safeData);
           syncedCount++;
         }
       } catch (err) {
-        console.error('Z Report sync error:', err);
+        // Silently log - don't break sync for Z report errors
+        console.warn('Z Report sync skipped:', err);
       }
 
       // 5. Cache current month's periodic report

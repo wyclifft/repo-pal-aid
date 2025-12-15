@@ -50,6 +50,12 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
       
       clearTimeout(timeoutId);
       
+      // Handle 404 - endpoint doesn't exist, return null silently
+      if (response.status === 404) {
+        console.log('psettings endpoint not found - using fallback company name');
+        return null;
+      }
+      
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.data?.company_name) {
@@ -57,7 +63,10 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
         }
       }
     } catch (error) {
-      console.warn('Failed to fetch company name by ccode:', error);
+      // Silently handle errors - psettings is optional
+      if ((error as Error).name !== 'AbortError') {
+        console.warn('psettings fetch skipped:', error);
+      }
     }
     return null;
   }, []);
