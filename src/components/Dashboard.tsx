@@ -77,7 +77,11 @@ export const Dashboard = ({
   });
   
   const [scaleConnected, setScaleConnected] = useState(false);
-  const [printerConnected, setPrinterConnected] = useState(false);
+  const [printerConnected, setPrinterConnected] = useState(() => {
+    // Check if there's a stored printer on mount
+    const stored = getStoredPrinterInfo();
+    return !!stored;
+  });
   const [isReconnecting, setIsReconnecting] = useState(false);
   const { syncAllData, isSyncing } = useDataSync();
 

@@ -27,6 +27,10 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
     const stored = getStoredPrinterInfo();
     if (stored) {
       setLastConnected(stored.deviceName);
+      // Notify parent that printer was previously connected
+      if (!isPrinterConnected) {
+        onPrinterConnected?.(stored.deviceName);
+      }
     }
   }, []);
 
