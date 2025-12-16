@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Store, Info, MoreVertical, Receipt } from 'lucide-react';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
+import { PrinterSelector } from '@/components/PrinterSelector';
 import { type Route, type Session } from '@/services/mysqlApi';
 import { useDataSync } from '@/hooks/useDataSync';
 import { 
@@ -371,6 +372,13 @@ export const Dashboard = ({
               {printerConnected ? 'Printer' : 'No Printer'}
             </span>
           </div>
+          <PrinterSelector 
+            onPrinterConnected={(name) => {
+              setPrinterConnected(true);
+              toast.success(`Printer ready: ${name}`);
+            }}
+            isPrinterConnected={printerConnected}
+          />
         </div>
 
         {/* Session Active View */}

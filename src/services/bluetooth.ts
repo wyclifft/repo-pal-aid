@@ -441,6 +441,131 @@ const COMMON_PRINTER_SERVICES = [
   '38eb4a80-c570-11e3-9507-0002a5d5c51b',            // Goojprt/similar
 ];
 
+// Interface for discovered printers
+export interface DiscoveredPrinter {
+  deviceId: string;
+  name: string;
+  rssi?: number;
+}
+
+// Scan for available Bluetooth printers
+export const scanForPrinters = async (scanDuration: number = 5000): Promise<{
+  success: boolean;
+  printers: DiscoveredPrinter[];
+  error?: string;
+}> => {
+  const discoveredPrinters: DiscoveredPrinter[] = [];
+  
+  try {
+    if (Capacitor.isNativePlatform()) {
+      await BleClient.initialize();
+      
+      console.log('🔍 Scanning for Bluetooth printers...');
+      
+      // Start scanning
+      await BleClient.requestLEScan(
+        { allowDuplicates: false },
+        (result) => {
+          // Filter for likely printers (devices with names containing print-related keywords)
+          const deviceName = result.device.name || '';
+          const isPrinter = deviceName.toLowerCase().includes('print') ||
+                           deviceName.toLowerCase().includes('pos') ||
+                           deviceName.toLowerCase().includes('esc') ||
+                           deviceName.toLowerCase().includes('bt') ||
+                           deviceName.toLowerCase().includes('thermal') ||
+                           deviceName.toLowerCase().includes('receipt') ||
+                           deviceName.toLowerCase().includes('gprinter') ||
+                           deviceName.toLowerCase().includes('xprinter') ||
+                           deviceName.toLowerCase().includes('mpt') ||
+                           deviceName.toLowerCase().includes('hm-') ||
+                           deviceName.toLowerCase().includes('spp') ||
+                           deviceName.length > 0; // Include any named device
+          
+          if (isPrinter && !discoveredPrinters.find(p => p.deviceId === result.device.deviceId)) {
+            console.log(`📱 Found device: ${deviceName || 'Unknown'} (${result.device.deviceId})`);
+            discoveredPrinters.push({
+              deviceId: result.device.deviceId,
+              name: deviceName || `Unknown Device (${result.device.deviceId.slice(-6)})`,
+              rssi: result.rssi,
+            });
+          }
+        }
+      );
+      
+      // Wait for scan duration
+      await new Promise(resolve => setTimeout(resolve, scanDuration));
+      
+      // Stop scanning
+      await BleClient.stopLEScan();
+      
+      console.log(`✅ Scan complete. Found ${discoveredPrinters.length} devices.`);
+      return { success: true, printers: discoveredPrinters };
+    } else {
+      // Web Bluetooth doesn't support background scanning
+      return { 
+        success: false, 
+        printers: [], 
+        error: 'Printer scanning requires native app. Use "Connect Printer" to select manually.' 
+      };
+    }
+  } catch (error: any) {
+    console.error('❌ Printer scan failed:', error);
+    await BleClient.stopLEScan().catch(() => {});
+    return { success: false, printers: discoveredPrinters, error: error.message || 'Scan failed' };
+  }
+};
+
+// Connect to a specific printer by device ID
+export const connectToSpecificPrinter = async (deviceId: string, deviceName: string): Promise<{
+  success: boolean;
+  deviceName?: string;
+  error?: string;
+}> => {
+  try {
+    if (Capacitor.isNativePlatform()) {
+      await BleClient.initialize();
+      
+      console.log(`🔗 Connecting to printer: ${deviceName} (${deviceId})`);
+      
+      await BleClient.connect(deviceId);
+      console.log('✅ Connected to printer');
+
+      // Get services and find write characteristic
+      const services = await BleClient.getServices(deviceId);
+      console.log(`📋 Found ${services.length} services:`);
+      
+      let writeServiceUuid: string | null = null;
+      let writeCharUuid: string | null = null;
+      
+      for (const service of services) {
+        console.log(`  Service: ${service.uuid}`);
+        for (const char of service.characteristics) {
+          console.log(`    Char: ${char.uuid} - write=${char.properties.write}, writeNoResp=${char.properties.writeWithoutResponse}`);
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            writeServiceUuid = service.uuid;
+            writeCharUuid = char.uuid;
+            console.log(`✅ Found writable characteristic: ${char.uuid}`);
+          }
+        }
+      }
+      
+      // Store the write characteristic for later use
+      printer = { 
+        device: { deviceId } as BleDevice, 
+        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid, charUuid: writeCharUuid } : null 
+      };
+      savePrinterInfo(deviceId, deviceName);
+
+      return { success: true, deviceName };
+    } else {
+      return { success: false, error: 'Native platform required for direct connection' };
+    }
+  } catch (error: any) {
+    console.error('❌ Failed to connect to printer:', error);
+    return { success: false, error: error.message || 'Connection failed' };
+  }
+};
+
 export const connectBluetoothPrinter = async (): Promise<{ 
   success: boolean; 
   deviceName?: string;
