@@ -161,10 +161,7 @@ const App = () => {
   const handleSplashComplete = useCallback(() => {
     sessionStorage.setItem('splashShown', 'true');
     setShowSplash(false);
-    // Small delay for smooth transition
-    requestAnimationFrame(() => {
-      setIsReady(true);
-    });
+    setIsReady(true); // Immediately ready - no transition delay
   }, []);
 
   if (showSplash) {

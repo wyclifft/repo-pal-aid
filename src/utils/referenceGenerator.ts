@@ -249,22 +249,21 @@ export const generateOfflineReference = async (): Promise<string | null> => {
   if (deviceRef) {
     // device_ref format: AE + slot(1 digit) + sequence(7 digits) = AE10000001
     const prefix = deviceRef.slice(0, 3); // "AE1", "AE2", etc.
-    const baseSequence = parseInt(deviceRef.slice(3), 10) || 0; // Extract starting sequence
     
-    // Get local offset (how many we've generated locally since last sync)
+    // Get synced last sequence from config (this is the actual last used number)
     const config = await getDeviceConfig();
-    const localOffset = config?.lastOfflineSequential || 0;
+    const lastUsed = config?.lastOfflineSequential || 0;
     
-    // Continue from device_ref sequence + local offset
-    const nextSequence = baseSequence + localOffset + 1;
+    // Generate next sequential number
+    const nextSequence = lastUsed + 1;
     
-    // Update local offset
-    await updateConfig({ lastOfflineSequential: localOffset + 1 });
+    // Update for next call
+    await updateConfig({ lastOfflineSequential: nextSequence });
     
     // Generate reference: prefix + 7-digit sequential padded
     const reference = `${prefix}${String(nextSequence).padStart(7, '0')}`;
     
-    console.log(`⚡ Reference: ${reference} (base: ${baseSequence}, offset: ${localOffset + 1})`);
+    console.log(`⚡ Reference: ${reference} (last: ${lastUsed}, next: ${nextSequence})`);
     return reference;
   }
   
@@ -298,8 +297,30 @@ export const hasDeviceConfig = async (): Promise<boolean> => {
 };
 
 /**
- * Reset local offline counter when device_ref is updated from backend
- * Call this when storing a fresh device_ref to sync with backend state
+ * Sync local counter with backend's last used sequence
+ * This stores the actual last used sequence number directly
+ */
+export const syncOfflineCounter = async (deviceRef: string, lastBackendSequence?: number): Promise<void> => {
+  if (lastBackendSequence !== undefined && lastBackendSequence > 0) {
+    // Store the actual last used sequence number directly
+    await updateConfig({ lastOfflineSequential: lastBackendSequence });
+    console.log(`🔄 Synced counter to ${lastBackendSequence} (will generate from ${lastBackendSequence + 1})`);
+  } else {
+    // No backend data - check if device_ref has a base sequence
+    const baseSequence = parseInt(deviceRef.slice(3), 10) || 0;
+    if (baseSequence > 0) {
+      // Use device_ref base - 1 as starting point (first generation will be baseSequence)
+      await updateConfig({ lastOfflineSequential: baseSequence - 1 });
+      console.log(`🔄 Initialized counter to ${baseSequence - 1} (will generate from ${baseSequence})`);
+    } else {
+      await updateConfig({ lastOfflineSequential: 0 });
+      console.log('🔄 Reset offline counter to 0');
+    }
+  }
+};
+
+/**
+ * Reset local offline counter (deprecated - use syncOfflineCounter)
  */
 export const resetOfflineCounter = async (): Promise<void> => {
   await updateConfig({ lastOfflineSequential: 0 });

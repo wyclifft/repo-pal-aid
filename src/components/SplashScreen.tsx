@@ -8,12 +8,12 @@ export const SplashScreen = memo(({ onComplete }: SplashScreenProps) => {
   const [isVisible, setIsVisible] = useState(true);
 
   useEffect(() => {
-    // Show splash for 2 seconds
+    // Show splash for 1 second for faster app launch
     const timer = setTimeout(() => {
       setIsVisible(false);
-      // Wait for fade out animation before calling onComplete
-      setTimeout(onComplete, 300);
-    }, 2000);
+      // Quick fade out then complete
+      setTimeout(onComplete, 200);
+    }, 1000);
 
     return () => clearTimeout(timer);
   }, [onComplete]);
