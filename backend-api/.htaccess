@@ -15,9 +15,16 @@ SetEnv MYSQL_PASSWORD 0741899183Mutee
 SetEnv MYSQL_PORT 3306
 SetEnv PORT 3000
 
-Header set Access-Control-Allow-Origin "*"
-Header set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
-Header set Access-Control-Allow-Headers "Content-Type"
+# CORS headers for all origins (including Capacitor app and Netlify)
+Header always set Access-Control-Allow-Origin "*"
+Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+Header always set Access-Control-Allow-Headers "Content-Type, Accept, Authorization, X-Requested-With, Origin"
+Header always set Access-Control-Max-Age "86400"
+
+# Handle OPTIONS preflight requests at Apache level
+RewriteEngine On
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ $1 [R=200,L]
 
 <Files "*.js">
   Order Deny,Allow
