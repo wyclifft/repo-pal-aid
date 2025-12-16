@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, ShieldAlert, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-import { storeDeviceConfig, hasDeviceConfig, resetOfflineCounter } from '@/utils/referenceGenerator';
+import { storeDeviceConfig, hasDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
 
 interface DeviceAuthStatusProps {
   onCompanyNameChange?: (companyName: string) => void;
@@ -143,15 +143,13 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           // Also save for offline login
           if (authorized) {
             localStorage.setItem('device_approved', 'true');
-            // Store device_ref for reference generation (e.g., AE10000001)
+            // Store device_ref and sync counter for reference generation
             if (data.data.device_ref) {
-              const oldDeviceRef = localStorage.getItem('device_ref');
               localStorage.setItem('device_ref', data.data.device_ref);
-              // Reset counter if device_ref changed (new assignment or first time)
-              if (oldDeviceRef !== data.data.device_ref) {
-                await resetOfflineCounter();
-                console.log('📦 Stored new device_ref:', data.data.device_ref);
-              }
+              // Sync counter from backend's last sequence to maintain consistency
+              const lastSequence = data.data.last_sequence ? parseInt(data.data.last_sequence, 10) : undefined;
+              await syncOfflineCounter(data.data.device_ref, lastSequence);
+              console.log('📦 Synced device_ref:', data.data.device_ref, 'last_sequence:', lastSequence);
             }
             const deviceCode = String(data.data.devcode || data.data.uniquedevcode || '00000').slice(-5);
             await initializeDeviceConfig(fetchedCompanyName, deviceCode);

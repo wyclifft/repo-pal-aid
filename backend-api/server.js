@@ -1105,6 +1105,25 @@ const server = http.createServer(async (req, res) => {
       // Always include company_name in response (null if not found)
       deviceData.company_name = companyName;
       
+      // Get last used sequence for this device_ref prefix for counter sync
+      let lastSequence = null;
+      if (deviceData.device_ref) {
+        const prefix = deviceData.device_ref.slice(0, 3); // e.g., "AE1"
+        const [lastRefRows] = await pool.query(
+          `SELECT transrefno FROM transactions 
+           WHERE transrefno LIKE ? 
+           ORDER BY transrefno DESC LIMIT 1`,
+          [`${prefix}%`]
+        );
+        if (lastRefRows.length > 0 && lastRefRows[0].transrefno) {
+          // Extract the sequence number from the last reference
+          const lastRef = lastRefRows[0].transrefno;
+          const seqPart = lastRef.slice(3); // Remove prefix to get sequence
+          lastSequence = parseInt(seqPart, 10) || 0;
+        }
+      }
+      deviceData.last_sequence = lastSequence;
+      
       return sendJSON(res, { success: true, data: deviceData });
     }
 

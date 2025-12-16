@@ -4,7 +4,7 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
 import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName } from '@/utils/deviceFingerprint';
-import { storeDeviceConfig, resetOfflineCounter } from '@/utils/referenceGenerator';
+import { storeDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
 
 interface LoginProps {
   onLogin: (user: AppUser, isOffline: boolean, password?: string) => void;
@@ -92,12 +92,11 @@ export const Login = memo(({ onLogin }: LoginProps) => {
               storeDeviceConfig(deviceData.company_name, deviceData.devcode);
             }
             if (deviceData.device_ref) {
-              const oldDeviceRef = localStorage.getItem('device_ref');
               localStorage.setItem('device_ref', deviceData.device_ref);
-              if (oldDeviceRef !== deviceData.device_ref) {
-                resetOfflineCounter().catch(e => console.warn('Reset counter failed:', e));
-                console.log('📦 Stored device_ref:', deviceData.device_ref);
-              }
+              // Sync counter from backend's last sequence to maintain consistency
+              const lastSequence = deviceData.last_sequence ? parseInt(deviceData.last_sequence, 10) : undefined;
+              syncOfflineCounter(deviceData.device_ref, lastSequence).catch(e => console.warn('Sync counter failed:', e));
+              console.log('📦 Stored device_ref:', deviceData.device_ref, 'last_sequence:', lastSequence);
             }
             
             // Update last sync timestamp (fire and forget)
