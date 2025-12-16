@@ -4,7 +4,7 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
 import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName } from '@/utils/deviceFingerprint';
-import { storeDeviceConfig } from '@/utils/referenceGenerator';
+import { storeDeviceConfig, resetOfflineCounter } from '@/utils/referenceGenerator';
 
 interface LoginProps {
   onLogin: (user: AppUser, isOffline: boolean, password?: string) => void;
@@ -49,7 +49,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
     
     if (navigator.onLine) {
       try {
-        // Authenticate with MySQL backend
+        // Authenticate with MySQL backend - don't wait for device check
         const authResponse = await mysqlApi.auth.login(userId, password);
 
         if (!authResponse.success || !authResponse.data) {
@@ -60,23 +60,22 @@ export const Login = memo(({ onLogin }: LoginProps) => {
 
         const userData = authResponse.data;
 
-        // Try to check device approval status from MySQL (best effort)
+        // Try to check device approval status from MySQL (non-blocking with timeout)
         let deviceData = null;
         let needsRegistration = false;
         
         try {
-          deviceData = await mysqlApi.devices.getByFingerprint(deviceFingerprint);
+          // Use Promise.race to timeout device check after 3s
+          const deviceCheckPromise = mysqlApi.devices.getByFingerprint(deviceFingerprint);
+          const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
           
-          // Check if device exists in approved_devices (has an id)
-          // If it only exists in devsettings, it won't have an id
+          deviceData = await Promise.race([deviceCheckPromise, timeoutPromise]);
+          
           if (deviceData && deviceData.id) {
-            // Device is registered in approved_devices
-            try {
-              await saveDeviceApproval(deviceFingerprint, deviceData.id, userId, deviceData.approved);
-            } catch (saveError) {
-              console.error('Failed to cache device approval:', saveError);
-              // Continue anyway - this is just caching
-            }
+            // Device is registered - cache approval asynchronously (don't await)
+            saveDeviceApproval(deviceFingerprint, deviceData.id, userId, deviceData.approved).catch(e => 
+              console.warn('Cache device approval failed:', e)
+            );
             
             if (!deviceData.approved) {
               setDeviceStatus('pending');
@@ -88,26 +87,28 @@ export const Login = memo(({ onLogin }: LoginProps) => {
 
             setDeviceStatus('approved');
             
-            // Store device config for offline reference generation
+            // Store device config and device_ref asynchronously
             if (deviceData.company_name && deviceData.devcode) {
               storeDeviceConfig(deviceData.company_name, deviceData.devcode);
             }
-            
-            // Update last sync timestamp (best effort)
-            try {
-              await mysqlApi.devices.update(deviceData.id, { user_id: userId });
-            } catch (updateError) {
-              console.warn('Failed to update device sync time:', updateError);
+            if (deviceData.device_ref) {
+              const oldDeviceRef = localStorage.getItem('device_ref');
+              localStorage.setItem('device_ref', deviceData.device_ref);
+              if (oldDeviceRef !== deviceData.device_ref) {
+                resetOfflineCounter().catch(e => console.warn('Reset counter failed:', e));
+                console.log('📦 Stored device_ref:', deviceData.device_ref);
+              }
             }
+            
+            // Update last sync timestamp (fire and forget)
+            mysqlApi.devices.update(deviceData.id, { user_id: userId }).catch(() => {});
           } else if (deviceData && !deviceData.id) {
-            // Device exists in devsettings but not in approved_devices
-            console.log('Device found in devsettings but not in approved_devices - needs registration');
+            console.log('Device in devsettings but not approved_devices - needs registration');
             needsRegistration = true;
             deviceData = null;
           }
         } catch (apiError) {
-          console.warn('MySQL API unavailable, using cached approval:', apiError);
-          // API failed - fall back to cached approval
+          console.warn('Device check failed, using cached:', apiError);
           deviceData = null;
         }
 

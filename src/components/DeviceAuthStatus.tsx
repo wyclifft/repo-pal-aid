@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, ShieldAlert, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-import { storeDeviceConfig, hasDeviceConfig } from '@/utils/referenceGenerator';
+import { storeDeviceConfig, hasDeviceConfig, resetOfflineCounter } from '@/utils/referenceGenerator';
 
 interface DeviceAuthStatusProps {
   onCompanyNameChange?: (companyName: string) => void;
@@ -84,7 +84,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
       const apiUrl = 'https://backend.maddasystems.co.ke';
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout (faster)
       
       const response = await fetch(
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
@@ -145,8 +145,13 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
             localStorage.setItem('device_approved', 'true');
             // Store device_ref for reference generation (e.g., AE10000001)
             if (data.data.device_ref) {
+              const oldDeviceRef = localStorage.getItem('device_ref');
               localStorage.setItem('device_ref', data.data.device_ref);
-              console.log('📦 Stored device_ref:', data.data.device_ref);
+              // Reset counter if device_ref changed (new assignment or first time)
+              if (oldDeviceRef !== data.data.device_ref) {
+                await resetOfflineCounter();
+                console.log('📦 Stored new device_ref:', data.data.device_ref);
+              }
             }
             const deviceCode = String(data.data.devcode || data.data.uniquedevcode || '00000').slice(-5);
             await initializeDeviceConfig(fetchedCompanyName, deviceCode);

@@ -247,15 +247,24 @@ export const generateOfflineReference = async (): Promise<string | null> => {
   const deviceRef = localStorage.getItem('device_ref');
   
   if (deviceRef) {
-    // Extract the base prefix (e.g., "AE1" from "AE10000001") and increment
     // device_ref format: AE + slot(1 digit) + sequence(7 digits) = AE10000001
     const prefix = deviceRef.slice(0, 3); // "AE1", "AE2", etc.
-    const nextSequential = await getNextSequential();
+    const baseSequence = parseInt(deviceRef.slice(3), 10) || 0; // Extract starting sequence
+    
+    // Get local offset (how many we've generated locally since last sync)
+    const config = await getDeviceConfig();
+    const localOffset = config?.lastOfflineSequential || 0;
+    
+    // Continue from device_ref sequence + local offset
+    const nextSequence = baseSequence + localOffset + 1;
+    
+    // Update local offset
+    await updateConfig({ lastOfflineSequential: localOffset + 1 });
     
     // Generate reference: prefix + 7-digit sequential padded
-    const reference = `${prefix}${String(nextSequential).padStart(7, '0')}`;
+    const reference = `${prefix}${String(nextSequence).padStart(7, '0')}`;
     
-    console.log(`⚡ Reference generated using device_ref: ${reference}`);
+    console.log(`⚡ Reference: ${reference} (base: ${baseSequence}, offset: ${localOffset + 1})`);
     return reference;
   }
   
@@ -264,9 +273,7 @@ export const generateOfflineReference = async (): Promise<string | null> => {
   const companyCode = config?.companyCode || 'XX';
   const deviceCode = config?.deviceCode || '00000';
   
-  if (!deviceRef) {
-    console.warn('⚠️ device_ref not available, using fallback codes');
-  }
+  console.warn('⚠️ device_ref not available, using fallback codes');
 
   // Use timestamp + incremental counter for uniqueness
   const timestamp = Date.now();
@@ -288,6 +295,15 @@ export const generateOfflineReference = async (): Promise<string | null> => {
 export const hasDeviceConfig = async (): Promise<boolean> => {
   const config = await getDeviceConfig();
   return config !== null && config.companyCode !== undefined;
+};
+
+/**
+ * Reset local offline counter when device_ref is updated from backend
+ * Call this when storing a fresh device_ref to sync with backend state
+ */
+export const resetOfflineCounter = async (): Promise<void> => {
+  await updateConfig({ lastOfflineSequential: 0 });
+  console.log('🔄 Reset offline counter to 0');
 };
 
 /**
