@@ -28,13 +28,20 @@ const parseBody = (req) => new Promise((resolve) => {
   });
 });
 
+// CORS headers for all responses (including Capacitor app origin 'https://app')
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
+  'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, Origin',
+  'Access-Control-Allow-Credentials': 'false',
+  'Access-Control-Max-Age': '86400'
+};
+
 // Helper: Send JSON response
 const sendJSON = (res, data, status = 200) => {
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    ...corsHeaders
   });
   res.end(JSON.stringify(data));
 };
@@ -45,13 +52,9 @@ const server = http.createServer(async (req, res) => {
   const path = parsedUrl.pathname;
   const method = req.method;
 
-  // CORS preflight
+  // CORS preflight - handle ALL OPTIONS requests immediately
   if (method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
-    });
+    res.writeHead(204, corsHeaders);
     return res.end();
   }
 
