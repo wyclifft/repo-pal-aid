@@ -28,17 +28,24 @@ const parseBody = (req) => new Promise((resolve) => {
   });
 });
 
-// CORS headers for all responses (including Capacitor app origin 'https://app')
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-  'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, Origin',
-  'Access-Control-Allow-Credentials': 'false',
-  'Access-Control-Max-Age': '86400'
+// CORS
+// NOTE: Some Apache/Passenger setups strip or override wildcard CORS, so we
+// echo back the request Origin when present.
+const getCorsHeaders = (origin) => {
+  const allowOrigin = origin || '*';
+
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Vary': 'Origin',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
+    'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, Origin',
+    'Access-Control-Max-Age': '86400'
+  };
 };
 
 // Helper: Send JSON response
-const sendJSON = (res, data, status = 200) => {
+const sendJSON = (res, data, status = 200, origin) => {
+  const corsHeaders = getCorsHeaders(origin);
   res.writeHead(status, {
     'Content-Type': 'application/json',
     ...corsHeaders
@@ -48,13 +55,22 @@ const sendJSON = (res, data, status = 200) => {
 
 // Main server
 const server = http.createServer(async (req, res) => {
+  const origin = req.headers.origin;
+  const corsHeaders = getCorsHeaders(origin);
+
+  // Ensure headers exist even if something writes early
+  for (const [k, v] of Object.entries(corsHeaders)) {
+    res.setHeader(k, v);
+  }
+
   const parsedUrl = url.parse(req.url, true);
   const path = parsedUrl.pathname;
   const method = req.method;
 
   // CORS preflight - handle ALL OPTIONS requests immediately
   if (method === 'OPTIONS') {
-    res.writeHead(204, corsHeaders);
+    // Use 200 (not 204) to satisfy stricter preflight checks in some environments
+    res.writeHead(200, corsHeaders);
     return res.end();
   }
 
