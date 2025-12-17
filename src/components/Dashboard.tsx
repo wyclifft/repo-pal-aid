@@ -349,60 +349,64 @@ export const Dashboard = ({
           </button>
         </div>
 
-        {/* Sync Status & Reconnect Row */}
-        <div className="flex justify-center items-center gap-4 mb-2 flex-shrink-0">
+        {/* Sync Status */}
+        <div className="flex justify-center mb-1 flex-shrink-0">
           <p className="text-sm font-bold text-gray-800">
             SYNC- {pendingCount > 0 ? `0/${pendingCount}` : '0/0'}
           </p>
+        </div>
+
+        {/* Reconnect Button */}
+        <div className="flex justify-center mb-2 flex-shrink-0">
           <button
             onClick={handleReconnect}
             disabled={isReconnecting}
-            className="px-6 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 min-h-[48px] text-sm"
+            className="px-8 py-2.5 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 min-h-[44px] text-sm tracking-wide"
           >
             {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
           </button>
         </div>
 
         {/* Status Indicators */}
-        <div className="flex justify-center gap-4 mb-2 flex-shrink-0">
+        <div className="flex justify-center gap-6 mb-3 flex-shrink-0">
           <div className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="text-xs text-gray-700">
-              {scaleConnected ? 'Scale' : 'No Scale'}
+              {printerConnected ? 'Initialized' : 'Not Initialized'}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="text-xs text-gray-700">
-              {printerConnected ? 'Printer' : 'No Printer'}
+              {scaleConnected ? 'scale connected' : 'scale disconnected'}
             </span>
           </div>
         </div>
 
         {/* Session Active View */}
         {sessionActive ? (
-          <div className="max-w-md mx-auto space-y-3 px-2 flex-shrink-0">
+          <div className="max-w-md mx-auto space-y-4 px-4 flex-shrink-0">
             {/* Close Session Button */}
             <div className="flex justify-center">
               <button
                 onClick={handleCloseSession}
-                className="px-6 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[52px] text-base"
+                className="px-10 py-2.5 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[44px] text-base"
               >
                 Close Session
               </button>
             </div>
 
             {/* Buy/Sell Produce Buttons */}
-            <div className="flex justify-center gap-3">
+            <div className="flex justify-center gap-4">
               <button
                 onClick={handleBuyProduce}
-                className="flex-1 max-w-[160px] py-3.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[52px] text-base"
+                className="px-6 py-2.5 bg-[#7B68A6] text-white font-semibold italic rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[44px] text-base"
               >
                 Buy Produce
               </button>
               <button
                 onClick={handleSellProduce}
-                className="flex-1 max-w-[160px] py-3.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[52px] text-base"
+                className="px-6 py-2.5 bg-[#7B68A6] text-white font-semibold italic rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[44px] text-base"
               >
                 Sell Produce
               </button>
@@ -437,7 +441,7 @@ export const Dashboard = ({
               <button
                 onClick={handleNewSession}
                 disabled={!selectedRoute || !selectedSession}
-                className="px-8 py-3.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[52px] text-base"
+                className="px-10 py-2.5 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] text-base tracking-wide"
               >
                 NEW SESSION
               </button>
