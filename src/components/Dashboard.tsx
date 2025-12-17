@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Store, Info, MoreVertical, Receipt } from 'lucide-react';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
+import { MemberSyncBanner } from '@/components/MemberSyncBanner';
 
 import { type Route, type Session } from '@/services/mysqlApi';
 import { useDataSync } from '@/hooks/useDataSync';
@@ -83,7 +84,7 @@ export const Dashboard = ({
     return !!stored;
   });
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const { syncAllData, isSyncing } = useDataSync();
+  const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
 
   // Persist session state to localStorage whenever it changes
   useEffect(() => {
@@ -174,6 +175,12 @@ export const Dashboard = ({
 
   return (
     <div className="min-h-screen min-h-[100dvh] flex flex-col overflow-x-hidden">
+      {/* Member Sync Banner */}
+      <MemberSyncBanner 
+        isVisible={isSyncingMembers} 
+        syncedCount={memberSyncCount} 
+      />
+
       {/* Header - with safe area */}
       <header className="bg-[#7B68A6] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-40" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
         <h1 className="text-base sm:text-lg font-semibold tracking-wide truncate max-w-[70%]">{companyName}</h1>
