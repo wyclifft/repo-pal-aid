@@ -77,10 +77,10 @@ export const useDataSync = () => {
           
           const result = await mysqlApi.milkCollection.create({
             reference_no: receipt.reference_no,
-            farmer_id: receipt.farmer_id,
-            farmer_name: receipt.farmer_name,
-            route: receipt.route,
-            session: receipt.session as 'AM' | 'PM',
+            farmer_id: String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+            farmer_name: String(receipt.farmer_name || '').trim(),
+            route: String(receipt.route || '').trim(),
+            session: String(receipt.session || '').trim() as 'AM' | 'PM',
             weight: receipt.weight,
             clerk_name: receipt.clerk_name,
             collection_date: receipt.collection_date,

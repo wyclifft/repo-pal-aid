@@ -102,22 +102,26 @@ export const FarmerSearchModal = ({
             </div>
           ) : (
             <div className="space-y-1">
-              {filteredFarmers.map((farmer) => (
-                <div
-                  key={farmer.farmer_id}
-                  onClick={() => handleSelect(farmer)}
-                  className="flex items-center justify-between px-3 py-3 rounded-lg cursor-pointer hover:bg-teal-50 active:bg-teal-100 border border-gray-100 transition-colors min-h-[48px]"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-gray-900 truncate">
-                      {farmer.farmer_id}
-                    </div>
-                    <div className="text-sm text-gray-600 truncate">
-                      {farmer.name}
+              {filteredFarmers.map((farmer) => {
+                // Clean farmer_id for display (strip leading #)
+                const displayId = farmer.farmer_id.replace(/^#/, '').trim();
+                return (
+                  <div
+                    key={farmer.farmer_id}
+                    onClick={() => handleSelect(farmer)}
+                    className="flex items-center justify-between px-3 py-3 rounded-lg cursor-pointer hover:bg-teal-50 active:bg-teal-100 border border-gray-100 transition-colors min-h-[48px]"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-gray-900 truncate">
+                        {displayId}
+                      </div>
+                      <div className="text-sm text-gray-600 truncate">
+                        {farmer.name}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

@@ -157,7 +157,9 @@ const Index = () => {
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
-    setFarmerId(farmer.farmer_id);
+    // Strip any leading # from farmer_id (some databases store it with prefix)
+    const cleanFarmerId = farmer.farmer_id.replace(/^#/, '');
+    setFarmerId(cleanFarmerId);
     setFarmerName(farmer.name);
     setRoute(farmer.route);
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
@@ -303,12 +305,16 @@ const Index = () => {
     }
 
     // Create local capture record (NOT synced to DB yet)
+    // Clean farmer_id and session values before storing
+    const cleanFarmerId = farmerId.replace(/^#/, '').trim();
+    const cleanSession = session.trim() as 'AM' | 'PM';
+    
     const captureData: MilkCollection = {
       reference_no: referenceNo,
-      farmer_id: farmerId,
-      farmer_name: farmerName,
-      route: route,
-      session: session as 'AM' | 'PM',
+      farmer_id: cleanFarmerId,
+      farmer_name: farmerName.trim(),
+      route: route.trim(),
+      session: cleanSession,
       weight: parseFloat(Number(weight).toFixed(2)),
       clerk_name: currentUser ? currentUser.user_id : 'unknown',
       collection_date: new Date(),
@@ -371,14 +377,15 @@ const Index = () => {
 
           const result = await mysqlApi.milkCollection.create({
             reference_no: referenceNo,
-            farmer_id: capture.farmer_id,
-            farmer_name: capture.farmer_name,
-            route: capture.route,
-            session: capture.session as 'AM' | 'PM',
+            farmer_id: capture.farmer_id.replace(/^#/, '').trim(),
+            farmer_name: capture.farmer_name.trim(),
+            route: capture.route.trim(),
+            session: capture.session.trim() as 'AM' | 'PM',
             weight: capture.weight,
             clerk_name: capture.clerk_name,
             collection_date: capture.collection_date,
-          } as any);
+            device_fingerprint: deviceFingerprint, // CRITICAL: Required for authorization
+          });
 
           console.log(`📨 Submit result for ${referenceNo}:`, result);
 
