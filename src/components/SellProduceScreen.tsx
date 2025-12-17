@@ -120,7 +120,9 @@ export const SellProduceScreen = ({
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
-    setMemberNo(farmer.farmer_id);
+    // Strip any leading # from farmer_id for display
+    const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
+    setMemberNo(cleanId);
     setShowSearchModal(false);
     onSelectFarmer(farmer);
   };

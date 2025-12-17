@@ -3,8 +3,20 @@
  * Generate unique device fingerprints and parse device information
  */
 
-// Generate a unique device fingerprint using SHA-256 hash
+const DEVICE_ID_KEY = 'device_id';
+
+/**
+ * Generate a unique device fingerprint using SHA-256 hash
+ * IMPORTANT: Always returns the same fingerprint for a device by using localStorage
+ */
 export const generateDeviceFingerprint = async (): Promise<string> => {
+  // ALWAYS check stored ID first for consistency
+  const storedId = localStorage.getItem(DEVICE_ID_KEY);
+  if (storedId) {
+    return storedId;
+  }
+  
+  // Generate new fingerprint only if no stored ID exists
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   
@@ -23,6 +35,8 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
     screenResolution: `${screen.width}x${screen.height}`,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     canvasFingerprint: canvasData,
+    // Add random component for truly unique ID
+    randomSeed: Math.random().toString(36).substring(2, 15),
   };
   
   // Convert fingerprint to string and hash it
@@ -32,6 +46,10 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  // Store immediately for consistency
+  localStorage.setItem(DEVICE_ID_KEY, hashHex);
+  console.log('🔑 Generated and stored new device fingerprint:', hashHex.substring(0, 16) + '...');
   
   return hashHex;
 };

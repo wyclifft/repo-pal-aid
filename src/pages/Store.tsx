@@ -205,8 +205,9 @@ const Store = () => {
   };
 
   const handleFarmerSelect = (farmer: Farmer) => {
-    setFarmerId(farmer.farmer_id);
-    setFarmerName(farmer.name);
+    // Strip any leading # from farmer_id
+    setFarmerId(farmer.farmer_id.replace(/^#/, '').trim());
+    setFarmerName(farmer.name.trim());
     setShowFarmerDropdown(false);
     setFilteredFarmers([]);
   };
@@ -227,13 +228,13 @@ const Store = () => {
           
           // Clean the sale object - ONLY include API fields, NO IndexedDB fields
           const cleanSale: Sale = {
-            farmer_id: String(saleRecord.farmer_id || ''),
-            farmer_name: String(saleRecord.farmer_name || ''),
-            item_code: String(saleRecord.item_code || ''),
-            item_name: String(saleRecord.item_name || ''),
+            farmer_id: String(saleRecord.farmer_id || '').replace(/^#/, '').trim(),
+            farmer_name: String(saleRecord.farmer_name || '').trim(),
+            item_code: String(saleRecord.item_code || '').trim(),
+            item_name: String(saleRecord.item_name || '').trim(),
             quantity: Number(saleRecord.quantity) || 0,
             price: Number(saleRecord.price) || 0,
-            sold_by: String(saleRecord.sold_by || ''),
+            sold_by: String(saleRecord.sold_by || '').trim(),
             device_fingerprint: deviceFingerprint,
           };
           
