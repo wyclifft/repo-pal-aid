@@ -376,7 +376,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-4 bg-[#7B68A6] text-white rounded-full font-bold text-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 min-h-[56px] shadow-lg mt-6"
+            className="w-full py-5 bg-[#7B68A6] text-white rounded-full font-bold text-xl hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 min-h-[60px] shadow-lg mt-6"
           >
             {loading ? 'Logging in...' : 'Login'}
           </button>
