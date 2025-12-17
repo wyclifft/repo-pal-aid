@@ -293,7 +293,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
 
   return (
     <div 
-      className="min-h-screen min-h-[100dvh] flex flex-col bg-gray-100"
+      className="h-screen h-[100dvh] flex flex-col bg-gray-100 overflow-hidden"
       style={{ 
         backgroundImage: `url(${loginBg})`,
         backgroundSize: 'cover',
@@ -308,7 +308,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
       />
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 py-8">
+      <main className="flex-1 flex flex-col items-center justify-center px-6 py-4 overflow-hidden">
         {deviceStatus === 'pending' && (
           <div className="mb-4 p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg max-w-sm w-full">
             <div className="flex items-start gap-3">
