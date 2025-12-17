@@ -1,10 +1,12 @@
 import { useState, memo } from 'react';
+import { Mail, Eye, EyeOff } from 'lucide-react';
 import { type AppUser } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
 import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName } from '@/utils/deviceFingerprint';
 import { storeDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
+import loginBg from '@/assets/login-bg.jpg';
 
 interface LoginProps {
   onLogin: (user: AppUser, isOffline: boolean, password?: string) => void;
@@ -13,6 +15,7 @@ interface LoginProps {
 export const Login = memo(({ onLogin }: LoginProps) => {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [deviceStatus, setDeviceStatus] = useState<'pending' | 'approved' | null>(null);
   const [currentDeviceId, setCurrentDeviceId] = useState<string>('');
@@ -289,67 +292,96 @@ export const Login = memo(({ onLogin }: LoginProps) => {
   };
 
   return (
-    <div className="min-h-screen min-h-[100dvh] flex items-center justify-center p-4 bg-gradient-to-br from-[#667eea] to-[#764ba2]" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
-      <div className="bg-white rounded-xl p-6 sm:p-8 w-full max-w-md shadow-2xl">
-        <h2 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6 text-center text-[#667eea]">
-          Milk Collection
-        </h2>
-        
+    <div 
+      className="min-h-screen min-h-[100dvh] flex flex-col bg-gray-100"
+      style={{ 
+        backgroundImage: `url(${loginBg})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat'
+      }}
+    >
+      {/* Purple Header */}
+      <header 
+        className="bg-[#7B68A6] h-12 w-full flex-shrink-0"
+        style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      />
+
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col items-center justify-center px-6 py-8">
         {deviceStatus === 'pending' && (
-          <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg">
-            <div className="flex items-start gap-2 sm:gap-3">
-              <span className="text-xl sm:text-2xl">⏳</span>
+          <div className="mb-4 p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg max-w-sm w-full">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">⏳</span>
               <div className="flex-1 min-w-0">
-                <h3 className="font-semibold text-yellow-800 mb-1 sm:mb-2 text-sm sm:text-base">Device Pending Approval</h3>
-                <p className="text-xs sm:text-sm text-yellow-700 mb-2">
-                  Your device has been registered and is waiting for administrator approval.
+                <h3 className="font-semibold text-yellow-800 mb-1 text-sm">Device Pending Approval</h3>
+                <p className="text-xs text-yellow-700 mb-2">
+                  Your device is waiting for administrator approval.
                 </p>
-                <div className="bg-white p-2 rounded border border-yellow-300 mt-2">
+                <div className="bg-white p-2 rounded border border-yellow-300">
                   <p className="text-xs font-mono text-gray-600 break-all">
-                    <strong>Device:</strong> {currentDeviceId.substring(0, 40)}...
+                    <strong>Device:</strong> {currentDeviceId.substring(0, 30)}...
                   </p>
                 </div>
-                <p className="text-xs text-yellow-600 mt-2">
-                  Contact your administrator to approve this device.
-                </p>
               </div>
             </div>
           </div>
         )}
 
         {deviceStatus === 'approved' && (
-          <div className="mb-3 sm:mb-4 p-2.5 sm:p-3 bg-green-50 border border-green-400 rounded-lg text-center">
-            <span className="text-green-700 font-semibold text-sm sm:text-base">✓ Device Approved</span>
+          <div className="mb-3 p-3 bg-green-50 border border-green-400 rounded-lg text-center max-w-sm w-full">
+            <span className="text-green-700 font-semibold text-sm">✓ Device Approved</span>
           </div>
         )}
         
-        <form onSubmit={handleLogin} className="space-y-3 sm:space-y-4">
-          <input
-            type="text"
-            inputMode="text"
-            autoComplete="username"
-            placeholder="User ID"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea] text-base min-h-[48px]"
-          />
-          <input
-            type="password"
-            autoComplete="current-password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea] text-base min-h-[48px]"
-          />
+        <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
+          {/* User ID Field */}
+          <div className="relative">
+            <input
+              type="text"
+              inputMode="text"
+              autoComplete="username"
+              placeholder="User ID"
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              className="w-full px-4 py-4 pr-12 bg-white/90 border border-gray-300 rounded-md focus:outline-none focus:border-[#7B68A6] text-base min-h-[56px]"
+            />
+            <Mail className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+          </div>
+
+          {/* Password Field */}
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-4 py-4 pr-12 bg-white/90 border border-gray-300 rounded-md focus:outline-none focus:border-[#7B68A6] text-base min-h-[56px]"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-4 top-1/2 -translate-y-1/2 p-1"
+            >
+              {showPassword ? (
+                <EyeOff className="h-5 w-5 text-gray-400" />
+              ) : (
+                <Eye className="h-5 w-5 text-gray-400" />
+              )}
+            </button>
+          </div>
+
+          {/* Login Button */}
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] active:bg-[#4458c3] transition-colors disabled:opacity-50 min-h-[48px] text-base"
+            className="w-full py-4 bg-[#7B68A6] text-white rounded-full font-bold text-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 min-h-[56px] shadow-lg mt-6"
           >
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
-      </div>
+      </main>
     </div>
   );
 });
