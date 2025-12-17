@@ -9,6 +9,9 @@ export const useDataSync = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
+  // Member sync state for banner display
+  const [isSyncingMembers, setIsSyncingMembers] = useState(false);
+  const [memberSyncCount, setMemberSyncCount] = useState(0);
   const mountedRef = useRef(true);
   const periodicSyncRef = useRef<NodeJS.Timeout | null>(null);
   
@@ -200,18 +203,39 @@ export const useDataSync = () => {
         console.warn('Sessions sync skipped:', err);
       }
 
-      // 4. Fetch and cache farmers (only if ccode has farmers configured)
+      // 4. Fetch and cache ALL farmers for offline use (with progress banner)
       try {
+        if (mountedRef.current) {
+          setIsSyncingMembers(true);
+          setMemberSyncCount(0);
+        }
+        
+        // Fetch ALL farmers for the device's ccode (no route filter for full offline cache)
         const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
         if (response.success && response.data && response.data.length > 0) {
+          // Save all farmers to IndexedDB for offline use
           await saveFarmers(response.data);
+          
+          if (mountedRef.current) {
+            setMemberSyncCount(response.data.length);
+          }
+          
           syncedCount++;
-          console.log(`✅ Synced ${response.data.length} farmers`);
+          console.log(`✅ Synced ALL ${response.data.length} farmers for offline use`);
         } else if (response.message?.includes('not authorized')) {
           hasAuthError = true;
         }
       } catch (err) {
         console.warn('Farmers sync skipped:', err);
+      } finally {
+        // Small delay to show final count before hiding banner
+        if (mountedRef.current) {
+          setTimeout(() => {
+            if (mountedRef.current) {
+              setIsSyncingMembers(false);
+            }
+          }, 800);
+        }
       }
 
       // 5. Fetch and cache items (only if ccode has items configured)
@@ -348,6 +372,9 @@ export const useDataSync = () => {
     isSyncing,
     lastSyncTime,
     pendingCount,
-    updatePendingCount
+    updatePendingCount,
+    // Member sync state for banner
+    isSyncingMembers,
+    memberSyncCount
   };
 };
