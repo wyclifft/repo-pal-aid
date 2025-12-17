@@ -357,7 +357,7 @@ export const Dashboard = ({
           <button
             onClick={handleReconnect}
             disabled={isReconnecting}
-            className="px-4 py-2 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 min-h-[40px] text-xs sm:text-sm"
+            className="px-6 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 min-h-[48px] text-sm"
           >
             {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
           </button>
@@ -386,7 +386,7 @@ export const Dashboard = ({
             <div className="flex justify-center">
               <button
                 onClick={handleCloseSession}
-                className="px-5 py-2.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[44px] text-sm"
+                className="px-6 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[52px] text-base"
               >
                 Close Session
               </button>
@@ -396,13 +396,13 @@ export const Dashboard = ({
             <div className="flex justify-center gap-3">
               <button
                 onClick={handleBuyProduce}
-                className="flex-1 max-w-[140px] py-2.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[44px] text-sm"
+                className="flex-1 max-w-[160px] py-3.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[52px] text-base"
               >
                 Buy Produce
               </button>
               <button
                 onClick={handleSellProduce}
-                className="flex-1 max-w-[140px] py-2.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[44px] text-sm"
+                className="flex-1 max-w-[160px] py-3.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[52px] text-base"
               >
                 Sell Produce
               </button>
@@ -437,7 +437,7 @@ export const Dashboard = ({
               <button
                 onClick={handleNewSession}
                 disabled={!selectedRoute || !selectedSession}
-                className="px-5 py-2.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] text-sm"
+                className="px-8 py-3.5 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[52px] text-base"
               >
                 NEW SESSION
               </button>
