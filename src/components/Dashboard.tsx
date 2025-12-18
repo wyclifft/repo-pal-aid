@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Store, Info, MoreVertical, Receipt } from 'lucide-react';
+import { Store, Info, MoreVertical, Square, BarChart3 } from 'lucide-react';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
 import { MemberSyncBanner } from '@/components/MemberSyncBanner';
@@ -174,22 +174,22 @@ export const Dashboard = ({
   const currentDate = new Date().toISOString().split('T')[0];
 
   return (
-    <div className="h-screen h-[100dvh] flex flex-col overflow-hidden">
+    <div className="h-screen h-[100dvh] flex flex-col overflow-hidden bg-white">
       {/* Member Sync Banner */}
       <MemberSyncBanner 
         isVisible={isSyncingMembers} 
         syncedCount={memberSyncCount} 
       />
 
-      {/* Header - with safe area */}
-      <header className="bg-[#7B68A6] text-white px-4 py-3 flex items-center justify-between sticky top-0 z-40" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
-        <h1 className="text-base sm:text-lg font-semibold tracking-wide truncate max-w-[70%]">{companyName}</h1>
+      {/* Header - Purple bar with company name */}
+      <header className="bg-[#7B68A6] text-white px-4 py-3 flex items-center justify-between" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
+        <h1 className="text-lg font-semibold tracking-wide truncate max-w-[80%]">{companyName}</h1>
         <div className="relative">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className="p-3 -m-1 hover:bg-white/10 rounded-full transition-colors active:bg-white/20 min-w-[44px] min-h-[44px] flex items-center justify-center"
+            className="p-2 hover:bg-white/10 rounded-full transition-colors active:bg-white/20 min-w-[44px] min-h-[44px] flex items-center justify-center"
           >
-            <MoreVertical className="h-5 w-5" />
+            <MoreVertical className="h-6 w-6" />
           </button>
           {menuOpen && (
             <>
@@ -290,94 +290,99 @@ export const Dashboard = ({
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 bg-gradient-to-b from-[#3CB4B4] to-[#E8F4F4] px-4 pt-3 pb-4 overflow-hidden flex flex-col" style={{ paddingBottom: 'max(1rem, calc(env(safe-area-inset-bottom) + 0.5rem))' }}>
-        {/* Welcome Section */}
-        <div className="text-center mb-2 flex-shrink-0">
-          <h2 className="text-lg sm:text-xl font-bold text-gray-800 truncate px-2">{userName}</h2>
-          {sessionActive && selectedSession && selectedRoute ? (
-            <>
-              <div className="flex items-center justify-center gap-2 flex-wrap px-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500 flex-shrink-0" />
-                <p className="text-xs sm:text-sm font-semibold text-gray-800 break-words">
-                  Active {selectedSession.descript?.trim()} Session {selectedRoute.tcode}#{selectedRoute.descript?.trim()}
-                </p>
+      {/* Purple Info Section */}
+      <div className="bg-[#7B68A6] text-white text-center px-4 py-4">
+        <h2 className="text-xl font-bold">{userName}</h2>
+        {sessionActive && selectedSession && selectedRoute ? (
+          <>
+            <div className="flex items-center justify-center gap-2 mt-1">
+              <span className="w-3 h-3 rounded-full bg-red-500" />
+              <p className="text-sm font-semibold">
+                Active {selectedSession.descript?.trim()} Session {selectedRoute.tcode}#{selectedRoute.descript?.trim()}
+              </p>
+            </div>
+            <p className="text-lg font-bold mt-1">{currentDate}</p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm mt-1">Welcome</p>
+          </>
+        )}
+        <p className="text-sm mt-1">--</p>
+      </div>
+
+      {/* Teal Curved Section with Icons */}
+      <div className="relative">
+        <div className="bg-[#4DB6AC] pt-6 pb-8 px-4" style={{ borderBottomLeftRadius: '50% 40px', borderBottomRightRadius: '50% 40px' }}>
+          {/* Circular Icons Row */}
+          <div className="flex justify-center items-end gap-6">
+            {/* Store */}
+            <button
+              onClick={() => navigate('/store')}
+              className="flex flex-col items-center active:scale-95 transition-transform"
+            >
+              <div className="w-20 h-20 rounded-full border-4 border-[#80CBC4] bg-white/20 flex items-center justify-center">
+                <Store className="h-10 w-10 text-[#E91E63]" strokeWidth={1.5} />
               </div>
-              <p className="text-sm sm:text-base font-bold text-gray-800">{currentDate}</p>
-            </>
-          ) : (
-            <>
-              <p className="text-sm sm:text-base text-gray-700">Welcome</p>
-              <p className="text-gray-600 text-sm">--</p>
-            </>
-          )}
+              <span className="mt-2 text-sm font-medium text-gray-800">Store</span>
+            </button>
+
+            {/* AI (center, larger) */}
+            <button
+              onClick={() => toast.info('AI Assistant - Coming Soon')}
+              className="flex flex-col items-center active:scale-95 transition-transform -mt-4"
+            >
+              <div className="w-24 h-24 rounded-full border-4 border-[#80CBC4] bg-white/20 flex items-center justify-center">
+                <Square className="h-12 w-12 text-[#E91E63] fill-[#E91E63]" strokeWidth={0} />
+              </div>
+              <span className="mt-2 text-sm font-medium text-gray-800">AI</span>
+            </button>
+
+            {/* About */}
+            <button
+              onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.5')}
+              className="flex flex-col items-center active:scale-95 transition-transform"
+            >
+              <div className="w-20 h-20 rounded-full border-4 border-[#80CBC4] bg-white/20 flex items-center justify-center">
+                <BarChart3 className="h-10 w-10 text-[#E91E63]" strokeWidth={1.5} />
+              </div>
+              <span className="mt-2 text-sm font-medium text-gray-800">About</span>
+            </button>
+          </div>
         </div>
+      </div>
 
-        {/* Circular Icons */}
-        <div className="flex justify-center items-center gap-3 mb-2 flex-shrink-0">
-          {/* Store */}
-          <button
-            onClick={() => navigate('/store')}
-            className="flex flex-col items-center active:scale-95 transition-transform"
-          >
-            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 active:bg-white/90 transition-colors">
-              <Store className="h-5 w-5 sm:h-6 sm:w-6 text-[#E91E63]" />
-            </div>
-            <span className="mt-0.5 text-xs font-medium text-gray-700">Store</span>
-          </button>
-
-          {/* Recent Receipts */}
-          <button
-            onClick={() => onOpenRecentReceipts?.()}
-            className="flex flex-col items-center active:scale-95 transition-transform"
-          >
-            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 active:bg-white/90 transition-colors">
-              <Receipt className="h-6 w-6 sm:h-8 sm:w-8 text-[#E91E63]" />
-            </div>
-            <span className="mt-0.5 text-xs font-medium text-gray-700">Receipts</span>
-          </button>
-
-          {/* About */}
-          <button
-            onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.5')}
-            className="flex flex-col items-center active:scale-95 transition-transform"
-          >
-            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full border-2 border-[#3CB4B4] bg-white/50 flex items-center justify-center hover:bg-white/80 active:bg-white/90 transition-colors">
-              <Info className="h-5 w-5 sm:h-6 sm:w-6 text-[#E91E63]" />
-            </div>
-            <span className="mt-0.5 text-xs font-medium text-gray-700">About</span>
-          </button>
-        </div>
-
+      {/* White Bottom Section */}
+      <div className="flex-1 bg-white px-4 pt-4 flex flex-col overflow-hidden" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
         {/* Sync Status */}
-        <div className="flex justify-center mb-1 flex-shrink-0">
-          <p className="text-sm font-bold text-gray-800">
+        <div className="flex justify-center mb-3">
+          <p className="text-base font-bold text-gray-900">
             SYNC- {pendingCount > 0 ? `0/${pendingCount}` : '0/0'}
           </p>
         </div>
 
         {/* Reconnect Button */}
-        <div className="flex justify-center mb-2 flex-shrink-0">
+        <div className="flex justify-center mb-3">
           <button
             onClick={handleReconnect}
             disabled={isReconnecting}
-            className="px-8 py-2.5 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 min-h-[44px] text-sm tracking-wide"
+            className="px-10 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 text-base"
           >
             {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
           </button>
         </div>
 
         {/* Status Indicators */}
-        <div className="flex justify-center gap-6 mb-3 flex-shrink-0">
-          <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-xs text-gray-700">
+        <div className="flex justify-center gap-8 mb-4">
+          <div className="flex items-center gap-2">
+            <span className={`w-3 h-3 rounded-full ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-sm text-gray-700">
               {printerConnected ? 'Initialized' : 'Not Initialized'}
             </span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-xs text-gray-700">
+          <div className="flex items-center gap-2">
+            <span className={`w-3 h-3 rounded-full ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-sm text-gray-700">
               {scaleConnected ? 'scale connected' : 'scale disconnected'}
             </span>
           </div>
@@ -385,12 +390,12 @@ export const Dashboard = ({
 
         {/* Session Active View */}
         {sessionActive ? (
-          <div className="max-w-md mx-auto space-y-4 px-4 flex-shrink-0">
+          <div className="space-y-4">
             {/* Close Session Button */}
             <div className="flex justify-center">
               <button
                 onClick={handleCloseSession}
-                className="px-10 py-2.5 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[44px] text-base"
+                className="px-10 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors text-base"
               >
                 Close Session
               </button>
@@ -400,22 +405,22 @@ export const Dashboard = ({
             <div className="flex justify-center gap-4">
               <button
                 onClick={handleBuyProduce}
-                className="px-6 py-2.5 bg-[#7B68A6] text-white font-semibold italic rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[44px] text-base"
+                className="px-8 py-3 bg-[#7B68A6] text-white font-semibold italic rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors text-base"
               >
                 Buy Produce
               </button>
               <button
                 onClick={handleSellProduce}
-                className="px-6 py-2.5 bg-[#7B68A6] text-white font-semibold italic rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors min-h-[44px] text-base"
+                className="px-8 py-3 bg-[#7B68A6] text-white font-semibold italic rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors text-base"
               >
                 Sell Produce
               </button>
             </div>
           </div>
         ) : (
-          <div className="px-2 flex-shrink-0">
+          <div className="space-y-3">
             {/* Route Selector */}
-            <div className="max-w-md mx-auto mb-2">
+            <div className="max-w-md mx-auto">
               <div className="bg-white rounded-lg border border-gray-300 overflow-hidden">
                 <RouteSelector
                   selectedRoute={selectedRoute?.tcode || ''}
@@ -426,7 +431,7 @@ export const Dashboard = ({
             </div>
 
             {/* Session Selector */}
-            <div className="max-w-md mx-auto mb-3">
+            <div className="max-w-md mx-auto">
               <div className="bg-white rounded-lg border border-gray-300 overflow-hidden">
                 <SessionSelector
                   selectedSession={selectedSession?.descript || ''}
@@ -437,18 +442,18 @@ export const Dashboard = ({
             </div>
 
             {/* New Session Button */}
-            <div className="flex justify-center">
+            <div className="flex justify-center pt-2">
               <button
                 onClick={handleNewSession}
                 disabled={!selectedRoute || !selectedSession}
-                className="px-10 py-2.5 bg-[#7B68A6] text-white font-semibold rounded-md hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px] text-base tracking-wide"
+                className="px-10 py-3 bg-[#7B68A6] text-white font-semibold rounded-lg hover:bg-[#6B5996] active:bg-[#5A4985] transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-base"
               >
                 NEW SESSION
               </button>
             </div>
           </div>
         )}
-      </main>
+      </div>
     </div>
   );
 };
