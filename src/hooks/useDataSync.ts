@@ -148,7 +148,7 @@ export const useDataSync = () => {
     }
   }, [isReady, getUnsyncedReceipts]);
 
-  const syncAllData = useCallback(async (silent = false) => {
+  const syncAllData = useCallback(async (silent = false, showMemberBanner = false) => {
     // Use global lock to prevent concurrent syncs
     if (!acquireLock()) {
       return false;
@@ -203,9 +203,9 @@ export const useDataSync = () => {
         console.warn('Sessions sync skipped:', err);
       }
 
-      // 4. Fetch and cache ALL farmers for offline use (with progress banner)
+      // 4. Fetch and cache ALL farmers for offline use (with progress banner only when requested)
       try {
-        if (mountedRef.current) {
+        if (mountedRef.current && showMemberBanner) {
           setIsSyncingMembers(true);
           setMemberSyncCount(0);
         }
@@ -216,7 +216,7 @@ export const useDataSync = () => {
           // Save all farmers to IndexedDB for offline use
           await saveFarmers(response.data);
           
-          if (mountedRef.current) {
+          if (mountedRef.current && showMemberBanner) {
             setMemberSyncCount(response.data.length);
           }
           
@@ -313,13 +313,18 @@ export const useDataSync = () => {
     }
   }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, saveRoutes, saveSessions, syncOfflineReceipts, updatePendingCount]);
 
-  // Initial sync on mount - immediate without delay
+  // Initial sync on mount - show banner only on first launch
   useEffect(() => {
     if (!navigator.onLine || !isReady) return;
     
-    // Sync immediately on mount for faster startup
+    // Check if this is first launch (no sync time stored)
+    const isFirstLaunch = !localStorage.getItem('lastSyncTime');
+    
+    // Sync immediately on mount, show member banner only on first launch
     if (mountedRef.current) {
-      syncAllData(true);
+      syncAllData(true, isFirstLaunch).then(() => {
+        localStorage.setItem('lastSyncTime', Date.now().toString());
+      });
     }
   }, [isReady]); // Only depend on isReady
 
@@ -328,7 +333,7 @@ export const useDataSync = () => {
     const unregister = registerOnlineHandler(() => {
       if (mountedRef.current && isReady) {
         console.log('📡 Online handler triggered');
-        syncAllData(false);
+        syncAllData(false, false); // Don't show member banner on auto-reconnect
       }
     });
 
@@ -342,7 +347,7 @@ export const useDataSync = () => {
     periodicSyncRef.current = setInterval(() => {
       if (navigator.onLine && mountedRef.current) {
         console.log('🔄 Periodic sync');
-        syncAllData(true);
+        syncAllData(true, false); // Don't show member banner on periodic sync
       }
     }, 5 * 60 * 1000);
 
