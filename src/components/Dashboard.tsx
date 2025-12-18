@@ -243,24 +243,24 @@ export const Dashboard = ({
         {/* Quick Action Icons */}
         <div className="flex justify-center gap-8 pb-6">
           <button onClick={() => navigate('/store')} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-16 h-16 rounded-full bg-white/20 border-2 border-white/40 flex items-center justify-center">
-              <Store className="h-8 w-8 text-white" strokeWidth={1.5} />
+            <div className="w-20 h-20 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
+              <Store className="h-10 w-10" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
-            <span className="mt-1.5 text-xs font-medium text-white/90">Store</span>
+            <span className="mt-1.5 text-sm font-medium text-gray-700">Store</span>
           </button>
 
           <button onClick={() => toast.info('AI Assistant - Coming Soon')} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-16 h-16 rounded-full bg-white/20 border-2 border-white/40 flex items-center justify-center">
-              <Cpu className="h-8 w-8 text-white" strokeWidth={1.5} />
+            <div className="w-16 h-16 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
+              <div className="w-8 h-8" style={{ backgroundColor: '#D81B60' }} />
             </div>
-            <span className="mt-1.5 text-xs font-medium text-white/90">AI</span>
+            <span className="mt-1.5 text-sm font-medium text-gray-700">AI</span>
           </button>
 
           <button onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.5')} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-16 h-16 rounded-full bg-white/20 border-2 border-white/40 flex items-center justify-center">
-              <Info className="h-8 w-8 text-white" strokeWidth={1.5} />
+            <div className="w-20 h-20 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
+              <BarChart3 className="h-10 w-10" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
-            <span className="mt-1.5 text-xs font-medium text-white/90">About</span>
+            <span className="mt-1.5 text-sm font-medium text-gray-700">About</span>
           </button>
         </div>
       </div>
