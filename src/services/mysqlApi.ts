@@ -576,6 +576,26 @@ export const authApi = {
   },
 };
 
+// ==================== FARMER FREQUENCY API ====================
+
+export interface FarmerMonthlyFrequency {
+  farmer_id: string;
+  frequency: number;
+  month_start: string;
+  month_end: string;
+}
+
+export const farmerFrequencyApi = {
+  /**
+   * Get farmer's monthly cumulative frequency (collection count for current month)
+   */
+  getMonthlyFrequency: async (farmerId: string, uniquedevcode: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
+    return apiRequest<FarmerMonthlyFrequency>(
+      `/farmer-monthly-frequency?farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`
+    );
+  },
+};
+
 // Export all APIs
 export const mysqlApi = {
   auth: authApi,
@@ -588,4 +608,5 @@ export const mysqlApi = {
   periodicReport: periodicReportApi,
   routes: routesApi,
   sessions: sessionsApi,
+  farmerFrequency: farmerFrequencyApi,
 };

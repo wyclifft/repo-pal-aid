@@ -902,6 +902,7 @@ export const printReceipt = async (data: {
     time: string;
     weight: number;
   }>;
+  cumulativeFrequency?: number; // Monthly cumulative frequency (if enabled)
 }): Promise<{ success: boolean; error?: string }> => {
   const companyName = data.companyName || 'DAIRY COLLECTION';
   const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
@@ -919,6 +920,11 @@ export const printReceipt = async (data: {
     collectionsText += `${lineNum}${time}${weight}\n`;
   });
 
+  // Build cumulative frequency line if provided
+  const frequencyLine = data.cumulativeFrequency !== undefined 
+    ? `Monthly Freq: ${data.cumulativeFrequency}\n` 
+    : '';
+
   const receiptText = `
       ${companyName}
 ${separator}
@@ -928,7 +934,7 @@ ${data.route ? `Route: ${data.route}` : ''}${data.session ? ` | ${data.session}`
 Collector: ${data.collectorName}
 Date: ${currentDate}
 ${data.referenceNo ? `Ref: ${data.referenceNo}` : ''}
-${separator}
+${frequencyLine}${separator}
 #  TIME     LITERS
 ${separator}
 ${collectionsText}${separator}

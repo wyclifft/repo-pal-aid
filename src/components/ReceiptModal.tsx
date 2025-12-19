@@ -10,9 +10,19 @@ interface ReceiptModalProps {
   open: boolean;
   onClose: () => void;
   onPrint?: () => void; // Callback when receipt is successfully printed
+  cumulativeFrequency?: number; // Monthly cumulative frequency (if enabled by psettings)
+  showCumulativeFrequency?: boolean; // Whether to show cumulative frequency
 }
 
-export const ReceiptModal = ({ receipts, companyName, open, onClose, onPrint }: ReceiptModalProps) => {
+export const ReceiptModal = ({ 
+  receipts, 
+  companyName, 
+  open, 
+  onClose, 
+  onPrint,
+  cumulativeFrequency,
+  showCumulativeFrequency = false
+}: ReceiptModalProps) => {
   const handlePrint = async () => {
     if (receipts.length === 0) return;
 
@@ -35,7 +45,8 @@ export const ReceiptModal = ({ receipts, companyName, open, onClose, onPrint }: 
       session: firstReceipt.session,
       referenceNo: firstReceipt.reference_no,
       collectorName: firstReceipt.clerk_name,
-      collections
+      collections,
+      cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined
     });
 
     if (result.success) {
@@ -90,6 +101,13 @@ export const ReceiptModal = ({ receipts, companyName, open, onClose, onPrint }: 
               <span>Reference:</span>
               <span className="font-medium">{firstReceipt.reference_no}</span>
             </div>
+            {/* Cumulative Frequency - only shown when enabled */}
+            {showCumulativeFrequency && cumulativeFrequency !== undefined && (
+              <div className="flex justify-between text-xs text-muted-foreground border-t pt-1 mt-1">
+                <span>Monthly Frequency:</span>
+                <span className="font-medium text-primary">{cumulativeFrequency}</span>
+              </div>
+            )}
           </div>
 
           {/* Compact Collections Table */}

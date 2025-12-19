@@ -1108,21 +1108,24 @@ const server = http.createServer(async (req, res) => {
         device_ref: devRows.length > 0 ? devRows[0].device_ref : null
       };
       
-      // Get company name from psettings if ccode exists
+      // Get company name and settings from psettings if ccode exists
       let companyName = null;
+      let cumulativeFrequencyStatus = 0;
       if (deviceData.ccode) {
         const [companyRows] = await pool.query(
-          'SELECT cname FROM psettings WHERE ccode = ?',
+          'SELECT cname, cumulative_frequency_status FROM psettings WHERE ccode = ?',
           [deviceData.ccode]
         );
         
         if (companyRows.length > 0) {
           companyName = companyRows[0].cname;
+          cumulativeFrequencyStatus = companyRows[0].cumulative_frequency_status || 0;
         }
       }
       
-      // Always include company_name in response (null if not found)
+      // Always include company_name and settings in response (null if not found)
       deviceData.company_name = companyName;
+      deviceData.cumulative_frequency_status = cumulativeFrequencyStatus;
       
       // Get last used sequence for this device_ref prefix for counter sync
       let lastSequence = null;
@@ -1405,6 +1408,89 @@ const server = http.createServer(async (req, res) => {
           details: error.message 
         }, 500);
       }
+    }
+
+    // psettings endpoint - Get company settings
+    if (path === '/api/psettings' && method === 'GET') {
+      const ccode = parsedUrl.query.ccode;
+      
+      if (!ccode) {
+        return sendJSON(res, { success: false, error: 'ccode is required' }, 400);
+      }
+      
+      const [rows] = await pool.query(
+        'SELECT cname as company_name, cumulative_frequency_status FROM psettings WHERE ccode = ?',
+        [ccode]
+      );
+      
+      if (rows.length === 0) {
+        return sendJSON(res, { 
+          success: true, 
+          data: { company_name: null, cumulative_frequency_status: 0 } 
+        });
+      }
+      
+      return sendJSON(res, { 
+        success: true, 
+        data: {
+          company_name: rows[0].company_name,
+          cumulative_frequency_status: rows[0].cumulative_frequency_status || 0
+        }
+      });
+    }
+
+    // Farmer monthly cumulative frequency endpoint
+    // Returns the count of collections for a farmer in the current month
+    if (path === '/api/farmer-monthly-frequency' && method === 'GET') {
+      const { farmer_id, uniquedevcode } = parsedUrl.query;
+      
+      if (!farmer_id || !uniquedevcode) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'farmer_id and uniquedevcode are required' 
+        }, 400);
+      }
+      
+      // Get device's ccode
+      const [deviceRows] = await pool.query(
+        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      // Get current month's start and end dates
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+      
+      // Count collections for this farmer in the current month
+      const [countRows] = await pool.query(
+        `SELECT COUNT(*) as frequency 
+         FROM transactions 
+         WHERE memberno = ? AND ccode = ? AND Transtype = 'MILK'
+         AND transdate >= ? AND transdate <= ?`,
+        [farmer_id, ccode, monthStart, monthEnd]
+      );
+      
+      const frequency = countRows.length > 0 ? countRows[0].frequency : 0;
+      
+      return sendJSON(res, { 
+        success: true, 
+        data: {
+          farmer_id,
+          frequency,
+          month_start: monthStart,
+          month_end: monthEnd
+        }
+      });
     }
 
     // Authentication endpoints
