@@ -9,11 +9,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { ArrowLeft, ShoppingCart, Package, Loader2, Receipt as ReceiptIcon } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Package, Loader2, Receipt as ReceiptIcon, Search, CornerDownLeft, X } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
-
+import { FarmerSearchModal } from '@/components/FarmerSearchModal';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 const Store = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
@@ -43,6 +44,12 @@ const Store = () => {
   const [filteredFarmers, setFilteredFarmers] = useState<Farmer[]>([]);
   const [showFarmerDropdown, setShowFarmerDropdown] = useState(false);
   const farmerInputRef = useRef<HTMLInputElement>(null);
+  
+  // Store-level farmer search (outside dialog)
+  const [storeSearchQuery, setStoreSearchQuery] = useState('');
+  const [showStoreSearchModal, setShowStoreSearchModal] = useState(false);
+  const [selectedStoreFarmer, setSelectedStoreFarmer] = useState<{ id: string; name: string } | null>(null);
+  const storeSearchInputRef = useRef<HTMLInputElement>(null);
   
   // Receipt data
   const [lastReceipt, setLastReceipt] = useState<{
@@ -170,12 +177,79 @@ const Store = () => {
   const handleSellClick = (item: Item) => {
     setSelectedItem(item);
     setQuantity('');
-    setFarmerId('');
-    setFarmerName('');
+    // Pre-populate with store-level selected farmer if available
+    if (selectedStoreFarmer) {
+      setFarmerId(selectedStoreFarmer.id);
+      setFarmerName(selectedStoreFarmer.name);
+    } else {
+      setFarmerId('');
+      setFarmerName('');
+    }
     setFilteredFarmers([]);
     setShowFarmerDropdown(false);
     loadLoggedInUser(); // Refresh sold by
     setSellDialogOpen(true);
+  };
+
+  // Resolve numeric input to full farmer ID (same logic as BuyProduceScreen)
+  const resolveFarmerId = (input: string): Farmer | null => {
+    if (!input.trim()) return null;
+    
+    const numericInput = input.replace(/\D/g, '');
+    
+    // Search by exact farmer_id first
+    const exactMatch = farmers.find(
+      f => f.farmer_id.toLowerCase() === input.toLowerCase()
+    );
+    if (exactMatch) return exactMatch;
+    
+    // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
+    if (numericInput && numericInput === input.trim()) {
+      const paddedId = `M${numericInput.padStart(5, '0')}`;
+      const paddedMatch = farmers.find(
+        f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
+      );
+      if (paddedMatch) return paddedMatch;
+      
+      // Also try matching by numeric portion
+      const numericMatch = farmers.find(f => {
+        const farmerNumeric = f.farmer_id.replace(/\D/g, '');
+        return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
+      });
+      if (numericMatch) return numericMatch;
+    }
+    
+    return null;
+  };
+
+  // Handle store-level search enter button
+  const handleStoreSearchEnter = () => {
+    const farmer = resolveFarmerId(storeSearchQuery);
+    if (farmer) {
+      handleStoreSelectFarmer(farmer);
+    } else if (storeSearchQuery.trim()) {
+      toast.error(`Farmer "${storeSearchQuery}" not found`);
+    }
+  };
+
+  // Handle store-level farmer selection
+  const handleStoreSelectFarmer = (farmer: Farmer) => {
+    const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
+    setStoreSearchQuery(cleanId);
+    setSelectedStoreFarmer({ id: cleanId, name: farmer.name.trim() });
+    setShowStoreSearchModal(false);
+    toast.success(`Selected: ${cleanId} - ${farmer.name.trim()}`);
+  };
+
+  // Handle store search clear with haptic feedback
+  const handleStoreSearchClear = async () => {
+    try {
+      await Haptics.impact({ style: ImpactStyle.Light });
+    } catch (err) {
+      // Haptics not available (web browser)
+    }
+    setStoreSearchQuery('');
+    setSelectedStoreFarmer(null);
   };
 
   const handleFarmerIdChange = (value: string) => {
@@ -426,6 +500,58 @@ const Store = () => {
             </div>
           </div>
         </div>
+
+        {/* Farmer Search Bar - same style as BuyProduceScreen */}
+        <div className="mb-6 bg-white rounded-lg p-4 shadow-sm border">
+          <div className="flex flex-col gap-2">
+            <Label className="text-sm font-medium text-muted-foreground">Select Farmer for Sale</Label>
+            <div className="flex gap-1.5 sm:gap-2">
+              <input
+                ref={storeSearchInputRef}
+                type="text"
+                inputMode="text"
+                placeholder="Enter Member No."
+                value={storeSearchQuery}
+                onChange={(e) => setStoreSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleStoreSearchEnter()}
+                className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-800 bg-white rounded-lg text-base sm:text-lg min-h-[44px] font-semibold"
+              />
+              <button
+                onClick={handleStoreSearchEnter}
+                className="w-11 sm:w-14 bg-primary text-primary-foreground rounded-lg flex items-center justify-center active:opacity-80 min-h-[44px]"
+              >
+                <CornerDownLeft className="h-5 w-5 sm:h-6 sm:w-6" />
+              </button>
+              <button
+                onClick={() => setShowStoreSearchModal(true)}
+                className="w-11 sm:w-14 bg-primary text-primary-foreground rounded-lg flex items-center justify-center active:opacity-80 min-h-[44px]"
+              >
+                <Search className="h-5 w-5 sm:h-6 sm:w-6" />
+              </button>
+              <button
+                onClick={handleStoreSearchClear}
+                className="w-11 sm:w-14 bg-destructive text-destructive-foreground rounded-lg flex items-center justify-center active:opacity-80 min-h-[44px]"
+              >
+                <X className="h-5 w-5 sm:h-6 sm:w-6" />
+              </button>
+            </div>
+            {selectedStoreFarmer && (
+              <div className="mt-2 p-2 bg-primary/10 rounded-lg">
+                <span className="font-semibold text-primary">
+                  Selected: {selectedStoreFarmer.id} - {selectedStoreFarmer.name}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Farmer Search Modal */}
+        <FarmerSearchModal
+          isOpen={showStoreSearchModal}
+          onClose={() => setShowStoreSearchModal(false)}
+          onSelectFarmer={handleStoreSelectFarmer}
+          farmers={farmers}
+        />
 
         {/* Items Grid */}
         {loading ? (
