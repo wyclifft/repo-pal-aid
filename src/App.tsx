@@ -76,7 +76,7 @@ const persister = {
 
 // Loading skeleton component
 const PageLoader = () => (
-  <div className="min-h-screen flex items-center justify-center bg-background">
+  <div className="h-full flex items-center justify-center bg-background">
     <div className="flex flex-col items-center gap-4">
       <div className="w-10 h-10 border-3 border-primary/30 border-t-primary rounded-full animate-spin" />
       <span className="text-sm text-muted-foreground">Loading...</span>
@@ -84,12 +84,16 @@ const PageLoader = () => (
   </div>
 );
 
-// Page transition wrapper
+// Page transition wrapper with fixed viewport
 const PageWrapper = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
   
   return (
-    <div key={location.pathname} className="animate-fade-in gpu-accelerated">
+    <div 
+      key={location.pathname} 
+      className="h-full overflow-y-auto overflow-x-hidden animate-fade-in gpu-accelerated"
+      style={{ WebkitOverflowScrolling: 'touch' }}
+    >
       {children}
     </div>
   );
