@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Store, Info, MoreVertical, Cpu, BarChart3 } from 'lucide-react';
 import { RouteSelector } from '@/components/RouteSelector';
@@ -18,6 +18,19 @@ import { toast } from 'sonner';
 
 // Session persistence keys
 const SESSION_STORAGE_KEY = 'active_session_data';
+
+// Read session data once at module level to avoid re-reads
+const getInitialSessionData = () => {
+  try {
+    const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) { 
+    console.error('Failed to restore session:', e); 
+  }
+  return null;
+};
 
 interface DashboardProps {
   userName: string;
@@ -42,39 +55,19 @@ export const Dashboard = ({
 }: DashboardProps) => {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const initialDataRef = useRef(getInitialSessionData());
   
-  // Restore session state from localStorage on mount
+  // Restore session state from localStorage on mount (read once)
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(() => {
-    try {
-      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
-      if (saved) {
-        const data = JSON.parse(saved);
-        return data.route || null;
-      }
-    } catch (e) { console.error('Failed to restore route:', e); }
-    return null;
+    return initialDataRef.current?.route || null;
   });
   
   const [selectedSession, setSelectedSession] = useState<Session | null>(() => {
-    try {
-      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
-      if (saved) {
-        const data = JSON.parse(saved);
-        return data.session || null;
-      }
-    } catch (e) { console.error('Failed to restore session:', e); }
-    return null;
+    return initialDataRef.current?.session || null;
   });
   
   const [sessionActive, setSessionActive] = useState(() => {
-    try {
-      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
-      if (saved) {
-        const data = JSON.parse(saved);
-        return data.active === true;
-      }
-    } catch (e) { console.error('Failed to restore session active state:', e); }
-    return false;
+    return initialDataRef.current?.active === true;
   });
   
   const [scaleConnected, setScaleConnected] = useState(false);
@@ -84,6 +77,15 @@ export const Dashboard = ({
   });
   const [isReconnecting, setIsReconnecting] = useState(false);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
+
+  // Memoize date to prevent recalculation on every render
+  const currentDate = useMemo(() => {
+    return new Date().toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+  }, []);
 
   // Persist session state to localStorage whenever it changes
   useEffect(() => {
@@ -167,11 +169,6 @@ export const Dashboard = ({
     setIsReconnecting(false);
   };
 
-  const currentDate = new Date().toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric'
-  });
 
   return (
     <div className="h-screen h-[100dvh] flex flex-col overflow-y-auto overflow-x-hidden bg-white">
@@ -294,14 +291,14 @@ export const Dashboard = ({
           </button>
         </div>
 
-        {/* Status Indicators */}
+        {/* Status Indicators - static dots, no animation */}
         <div className="flex justify-center gap-4 mb-2 flex-wrap">
           <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{printerConnected ? 'Initialized' : 'Not Initialized'}</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{scaleConnected ? 'Scale connected' : 'Scale disconnected'}</span>
           </div>
         </div>
