@@ -291,14 +291,14 @@ export const Dashboard = ({
           </button>
         </div>
 
-        {/* Status Indicators - static dots, no animation */}
+        {/* Status Indicators */}
         <div className="flex justify-center gap-4 mb-2 flex-wrap">
           <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
             <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{printerConnected ? 'Initialized' : 'Not Initialized'}</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
             <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{scaleConnected ? 'Scale connected' : 'Scale disconnected'}</span>
           </div>
         </div>
