@@ -174,7 +174,7 @@ export const Dashboard = ({
   });
 
   return (
-    <div className="h-screen h-[100dvh] flex flex-col overflow-hidden">
+    <div className="h-screen h-[100dvh] flex flex-col overflow-hidden bg-white">
       {/* Member Sync Banner */}
       <MemberSyncBanner 
         isVisible={isSyncingMembers} 
@@ -184,34 +184,34 @@ export const Dashboard = ({
       {/* ============ TOP SECTION - TEAL/BLUE CONTEXTUAL INFO ============ */}
       <div className="bg-[#26A69A] flex-shrink-0" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
         {/* Header Bar */}
-        <div className="flex items-center justify-between px-4 py-3">
-          <h1 className="text-white text-lg font-bold tracking-wide truncate max-w-[75%]">
+        <div className="flex items-center justify-between px-3 py-2">
+          <h1 className="text-white text-base font-bold tracking-wide truncate max-w-[75%]">
             {companyName}
           </h1>
           <div className="relative">
             <button
               onClick={() => setMenuOpen(!menuOpen)}
-              className="p-2 hover:bg-white/10 rounded-full transition-colors active:bg-white/20 min-w-[44px] min-h-[44px] flex items-center justify-center"
+              className="p-1.5 hover:bg-white/10 rounded-full transition-colors active:bg-white/20 min-w-[40px] min-h-[40px] flex items-center justify-center"
             >
-              <MoreVertical className="h-6 w-6 text-white" />
+              <MoreVertical className="h-5 w-5 text-white" />
             </button>
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-xl z-50 py-1 max-h-[70vh] overflow-y-auto">
-                  <button onClick={() => { navigate('/settings'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Settings</button>
-                  <hr className="my-1 border-gray-200" />
-                  <button onClick={async () => { setMenuOpen(false); await syncAllData(false, true); }} disabled={isSyncing} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100 disabled:opacity-50">{isSyncing ? 'Syncing...' : 'Sync Data'}</button>
-                  <button onClick={() => { navigate('/z-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Z Report</button>
-                  <button onClick={() => { navigate('/z-report?generate=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Generate Z Report</button>
-                  <button onClick={() => { navigate('/z-report?reprint=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Reprint Z Report</button>
-                  <hr className="my-1 border-gray-200" />
-                  <button onClick={() => { navigate('/periodic-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Periodic Report</button>
-                  <button onClick={() => { navigate('/periodic-report?sync=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Sync Periodic Report</button>
-                  <hr className="my-1 border-gray-200" />
-                  <button onClick={() => { setMenuOpen(false); onOpenRecentReceipts?.(); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Recent Receipts</button>
-                  <hr className="my-1 border-gray-200" />
-                  <button onClick={() => { onLogout(); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-red-600 hover:bg-red-50">Logout</button>
+                <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-xl z-50 py-1 max-h-[70vh] overflow-y-auto">
+                  <button onClick={() => { navigate('/settings'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Settings</button>
+                  <hr className="my-0.5 border-gray-200" />
+                  <button onClick={async () => { setMenuOpen(false); await syncAllData(false, true); }} disabled={isSyncing} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50">{isSyncing ? 'Syncing...' : 'Sync Data'}</button>
+                  <button onClick={() => { navigate('/z-report'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Z Report</button>
+                  <button onClick={() => { navigate('/z-report?generate=true'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Generate Z Report</button>
+                  <button onClick={() => { navigate('/z-report?reprint=true'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Reprint Z Report</button>
+                  <hr className="my-0.5 border-gray-200" />
+                  <button onClick={() => { navigate('/periodic-report'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Periodic Report</button>
+                  <button onClick={() => { navigate('/periodic-report?sync=true'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Sync Periodic Report</button>
+                  <hr className="my-0.5 border-gray-200" />
+                  <button onClick={() => { setMenuOpen(false); onOpenRecentReceipts?.(); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Recent Receipts</button>
+                  <hr className="my-0.5 border-gray-200" />
+                  <button onClick={() => { onLogout(); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-red-600 hover:bg-red-50">Logout</button>
                 </div>
               </>
             )}
@@ -219,124 +219,124 @@ export const Dashboard = ({
         </div>
 
         {/* User Info & Session Status */}
-        <div className="text-center px-4 pb-2">
-          <h2 className="text-white text-2xl font-bold">{userName}</h2>
+        <div className="text-center px-3 pb-1">
+          <h2 className="text-white text-xl font-bold">{userName}</h2>
           {sessionActive && selectedSession && selectedRoute ? (
-            <div className="mt-2">
-              <div className="inline-flex items-center gap-2 bg-white/15 px-4 py-1.5 rounded-full">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-white text-sm font-medium">
+            <div className="mt-1">
+              <div className="inline-flex items-center gap-1.5 bg-white/15 px-3 py-1 rounded-full">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-white text-xs font-medium">
                   Active {selectedSession.descript?.trim()} • {selectedRoute.descript?.trim()}
                 </span>
               </div>
             </div>
           ) : (
-            <p className="text-white/80 text-sm mt-1">Welcome back</p>
+            <p className="text-white/80 text-xs mt-0.5">Welcome back</p>
           )}
         </div>
 
         {/* Date Display */}
-        <div className="text-center pb-4">
-          <span className="text-white text-lg font-semibold">{currentDate}</span>
+        <div className="text-center py-1.5">
+          <span className="text-white text-sm font-semibold">{currentDate}</span>
         </div>
 
         {/* Quick Action Icons */}
-        <div className="flex justify-center gap-8 pb-6">
+        <div className="flex justify-center gap-6 pb-3">
           <button onClick={() => navigate('/store')} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-20 h-20 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
-              <Store className="h-10 w-10" style={{ color: '#D81B60' }} strokeWidth={1.5} />
+            <div className="w-14 h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
+              <Store className="h-7 w-7" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
-            <span className="mt-1.5 text-sm font-medium text-gray-700">Store</span>
+            <span className="mt-1 text-xs font-medium text-gray-700">Store</span>
           </button>
 
           <button onClick={() => toast.info('AI Assistant - Coming Soon')} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-16 h-16 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
-              <div className="w-8 h-8" style={{ backgroundColor: '#D81B60' }} />
+            <div className="w-12 h-12 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
+              <div className="w-5 h-5 rounded-sm" style={{ backgroundColor: '#D81B60' }} />
             </div>
-            <span className="mt-1.5 text-sm font-medium text-gray-700">AI</span>
+            <span className="mt-1 text-xs font-medium text-gray-700">AI</span>
           </button>
 
           <button onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.5')} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-20 h-20 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
-              <BarChart3 className="h-10 w-10" style={{ color: '#D81B60' }} strokeWidth={1.5} />
+            <div className="w-14 h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
+              <BarChart3 className="h-7 w-7" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
-            <span className="mt-1.5 text-sm font-medium text-gray-700">About</span>
+            <span className="mt-1 text-xs font-medium text-gray-700">About</span>
           </button>
         </div>
       </div>
 
       {/* ============ CURVED DIVIDER ============ */}
-      <div className="relative h-8 flex-shrink-0">
+      <div className="relative h-5 flex-shrink-0">
         <svg viewBox="0 0 100 20" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
-          <path d="M0,0 L0,10 Q50,25 100,10 L100,0 Z" fill="#26A69A" />
+          <path d="M0,0 L0,8 Q50,20 100,8 L100,0 Z" fill="#26A69A" />
         </svg>
       </div>
 
       {/* ============ BOTTOM SECTION - WHITE ACTION AREA ============ */}
-      <div className="flex-1 bg-white flex flex-col px-4" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+      <div className="flex-1 bg-white flex flex-col px-3 min-h-0" style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
         
         {/* Sync Status */}
-        <div className="text-center py-3">
-          <span className="text-gray-800 font-bold text-base tracking-wide">
+        <div className="text-center py-2">
+          <span className="text-gray-800 font-bold text-sm tracking-wide">
             SYNC- {pendingCount > 0 ? `0/${pendingCount}` : '0/0'}
           </span>
         </div>
 
         {/* Reconnect Button */}
-        <div className="flex justify-center mb-4">
+        <div className="flex justify-center mb-2">
           <button
             onClick={handleReconnect}
             disabled={isReconnecting}
-            className="px-12 py-3 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-50 text-base shadow-md"
+            className="px-8 py-2 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-50 text-sm shadow-md"
           >
             {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
           </button>
         </div>
 
         {/* Status Indicators */}
-        <div className="flex justify-center gap-10 mb-4">
-          <div className="flex items-center gap-2">
-            <span className={`w-3 h-3 rounded-full ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
-            <span className="text-sm text-gray-600">{printerConnected ? 'Initialized' : 'Not Initialized'}</span>
+        <div className="flex justify-center gap-6 mb-2">
+          <div className="flex items-center gap-1.5">
+            <span className={`w-2.5 h-2.5 rounded-full ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
+            <span className="text-xs text-gray-600">{printerConnected ? 'Initialized' : 'Not Initialized'}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`w-3 h-3 rounded-full ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
-            <span className="text-sm text-gray-600">{scaleConnected ? 'Scale connected' : 'Scale disconnected'}</span>
+          <div className="flex items-center gap-1.5">
+            <span className={`w-2.5 h-2.5 rounded-full ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
+            <span className="text-xs text-gray-600">{scaleConnected ? 'Scale connected' : 'Scale disconnected'}</span>
           </div>
         </div>
 
         {/* Dynamic Content Area */}
-        <div className="flex-1 flex flex-col justify-center">
+        <div className="flex-1 flex flex-col justify-center min-h-0">
           {sessionActive ? (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {/* Close Session */}
               <div className="flex justify-center">
                 <button
                   onClick={handleCloseSession}
-                  className="px-12 py-3 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors text-base shadow-md"
+                  className="px-8 py-2 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors text-sm shadow-md"
                 >
                   Close Session
                 </button>
               </div>
 
               {/* Buy/Sell Buttons */}
-              <div className="flex justify-center gap-4">
+              <div className="flex justify-center gap-3">
                 <button
                   onClick={handleBuyProduce}
-                  className="flex-1 max-w-[160px] py-3 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors text-base shadow-md"
+                  className="flex-1 max-w-[140px] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors text-sm shadow-md"
                 >
                   Buy Produce
                 </button>
                 <button
                   onClick={handleSellProduce}
-                  className="flex-1 max-w-[160px] py-3 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors text-base shadow-md"
+                  className="flex-1 max-w-[140px] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors text-sm shadow-md"
                 >
                   Sell Produce
                 </button>
               </div>
             </div>
           ) : (
-            <div className="space-y-4 max-w-sm mx-auto w-full">
+            <div className="space-y-2.5 max-w-xs mx-auto w-full">
               {/* Route Selector */}
               <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
                 <RouteSelector
@@ -356,11 +356,11 @@ export const Dashboard = ({
               </div>
 
               {/* New Session Button */}
-              <div className="flex justify-center pt-2">
+              <div className="flex justify-center pt-1">
                 <button
                   onClick={handleNewSession}
                   disabled={!selectedRoute || !selectedSession}
-                  className="px-12 py-3 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-base shadow-md"
+                  className="px-8 py-2 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm shadow-md"
                 >
                   NEW SESSION
                 </button>
