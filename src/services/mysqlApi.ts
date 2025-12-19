@@ -19,7 +19,8 @@ interface ApiResponse<T> {
  */
 async function apiRequest<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  timeoutMs = 15000 // 15 second default timeout
 ): Promise<ApiResponse<T>> {
   // Check if offline before attempting fetch
   if (!navigator.onLine) {
@@ -30,14 +31,21 @@ async function apiRequest<T>(
     };
   }
 
+  // Create abort controller for timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
       },
     });
+
+    clearTimeout(timeoutId);
 
     // Check if response is JSON
     const contentType = response.headers.get('content-type');
@@ -62,6 +70,17 @@ async function apiRequest<T>(
 
     return data;
   } catch (error) {
+    clearTimeout(timeoutId);
+    
+    // Handle timeout specifically
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.warn(`API request timeout: ${endpoint}`);
+      return {
+        success: false,
+        error: 'Request timed out. Please check your connection.',
+      };
+    }
+    
     console.error(`API request failed: ${endpoint}`, error);
     return {
       success: false,
