@@ -109,6 +109,8 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
         <div className="flex gap-2">
           <input
             type="number"
+            inputMode="decimal"
+            pattern="[0-9]*\.?[0-9]*"
             placeholder="Manual Weight (Kg)"
             step="0.1"
             value={manualWeight}
