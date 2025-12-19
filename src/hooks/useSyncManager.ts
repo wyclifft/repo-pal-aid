@@ -5,19 +5,22 @@ let globalSyncLock = false;
 let lastSyncTimestamp = 0;
 const SYNC_DEBOUNCE_MS = 3000; // Minimum 3 seconds between syncs
 const onlineHandlers = new Set<() => void>();
+let onlineListenerAttached = false;
 
 // Centralized online event handler - only one listener for the entire app
-if (typeof window !== 'undefined') {
-  let onlineListenerAttached = false;
-  
-  if (!onlineListenerAttached) {
-    window.addEventListener('online', () => {
+const initOnlineListener = () => {
+  if (typeof window !== 'undefined' && !onlineListenerAttached) {
+    const handleOnline = () => {
       console.log('📡 App back online - triggering sync handlers');
       onlineHandlers.forEach(handler => handler());
-    });
+    };
+    window.addEventListener('online', handleOnline);
     onlineListenerAttached = true;
   }
-}
+};
+
+// Initialize on module load
+initOnlineListener();
 
 export const useSyncManager = () => {
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
