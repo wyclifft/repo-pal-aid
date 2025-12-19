@@ -9,11 +9,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { ArrowLeft, ShoppingCart, Package, Loader2, Receipt as ReceiptIcon, Search, CornerDownLeft, X } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Package, Loader2, Receipt as ReceiptIcon, Search, X } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
-import { FarmerSearchModal } from '@/components/FarmerSearchModal';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 const Store = () => {
   const navigate = useNavigate();
@@ -45,11 +44,10 @@ const Store = () => {
   const [showFarmerDropdown, setShowFarmerDropdown] = useState(false);
   const farmerInputRef = useRef<HTMLInputElement>(null);
   
-  // Store-level farmer search (outside dialog)
-  const [storeSearchQuery, setStoreSearchQuery] = useState('');
-  const [showStoreSearchModal, setShowStoreSearchModal] = useState(false);
-  const [selectedStoreFarmer, setSelectedStoreFarmer] = useState<{ id: string; name: string } | null>(null);
-  const storeSearchInputRef = useRef<HTMLInputElement>(null);
+  // Store-level item search (outside dialog)
+  const [itemSearchQuery, setItemSearchQuery] = useState('');
+  const [filteredItems, setFilteredItems] = useState<Item[]>([]);
+  const itemSearchInputRef = useRef<HTMLInputElement>(null);
   
   // Receipt data
   const [lastReceipt, setLastReceipt] = useState<{
@@ -177,14 +175,8 @@ const Store = () => {
   const handleSellClick = (item: Item) => {
     setSelectedItem(item);
     setQuantity('');
-    // Pre-populate with store-level selected farmer if available
-    if (selectedStoreFarmer) {
-      setFarmerId(selectedStoreFarmer.id);
-      setFarmerName(selectedStoreFarmer.name);
-    } else {
-      setFarmerId('');
-      setFarmerName('');
-    }
+    setFarmerId('');
+    setFarmerName('');
     setFilteredFarmers([]);
     setShowFarmerDropdown(false);
     loadLoggedInUser(); // Refresh sold by
@@ -222,34 +214,29 @@ const Store = () => {
     return null;
   };
 
-  // Handle store-level search enter button
-  const handleStoreSearchEnter = () => {
-    const farmer = resolveFarmerId(storeSearchQuery);
-    if (farmer) {
-      handleStoreSelectFarmer(farmer);
-    } else if (storeSearchQuery.trim()) {
-      toast.error(`Farmer "${storeSearchQuery}" not found`);
+  // Filter items based on search query
+  useEffect(() => {
+    if (!itemSearchQuery.trim()) {
+      setFilteredItems(items);
+      return;
     }
-  };
+    
+    const query = itemSearchQuery.toLowerCase();
+    const filtered = items.filter(item => 
+      item.descript.toLowerCase().includes(query) ||
+      item.icode.toLowerCase().includes(query)
+    );
+    setFilteredItems(filtered);
+  }, [itemSearchQuery, items]);
 
-  // Handle store-level farmer selection
-  const handleStoreSelectFarmer = (farmer: Farmer) => {
-    const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
-    setStoreSearchQuery(cleanId);
-    setSelectedStoreFarmer({ id: cleanId, name: farmer.name.trim() });
-    setShowStoreSearchModal(false);
-    toast.success(`Selected: ${cleanId} - ${farmer.name.trim()}`);
-  };
-
-  // Handle store search clear with haptic feedback
-  const handleStoreSearchClear = async () => {
+  // Handle item search clear with haptic feedback
+  const handleItemSearchClear = async () => {
     try {
       await Haptics.impact({ style: ImpactStyle.Light });
     } catch (err) {
       // Haptics not available (web browser)
     }
-    setStoreSearchQuery('');
-    setSelectedStoreFarmer(null);
+    setItemSearchQuery('');
   };
 
   const handleFarmerIdChange = (value: string) => {
@@ -501,57 +488,39 @@ const Store = () => {
           </div>
         </div>
 
-        {/* Farmer Search Bar - same style as BuyProduceScreen */}
+        {/* Item Search Bar */}
         <div className="mb-6 bg-white rounded-lg p-4 shadow-sm border">
           <div className="flex flex-col gap-2">
-            <Label className="text-sm font-medium text-muted-foreground">Select Farmer for Sale</Label>
+            <Label className="text-sm font-medium text-muted-foreground">Search Items</Label>
             <div className="flex gap-1.5 sm:gap-2">
-              <input
-                ref={storeSearchInputRef}
-                type="text"
-                inputMode="text"
-                placeholder="Enter Member No."
-                value={storeSearchQuery}
-                onChange={(e) => setStoreSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleStoreSearchEnter()}
-                className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-800 bg-white rounded-lg text-base sm:text-lg min-h-[44px] font-semibold"
-              />
-              <button
-                onClick={handleStoreSearchEnter}
-                className="w-11 sm:w-14 bg-primary text-primary-foreground rounded-lg flex items-center justify-center active:opacity-80 min-h-[44px]"
-              >
-                <CornerDownLeft className="h-5 w-5 sm:h-6 sm:w-6" />
-              </button>
-              <button
-                onClick={() => setShowStoreSearchModal(true)}
-                className="w-11 sm:w-14 bg-primary text-primary-foreground rounded-lg flex items-center justify-center active:opacity-80 min-h-[44px]"
-              >
-                <Search className="h-5 w-5 sm:h-6 sm:w-6" />
-              </button>
-              <button
-                onClick={handleStoreSearchClear}
-                className="w-11 sm:w-14 bg-destructive text-destructive-foreground rounded-lg flex items-center justify-center active:opacity-80 min-h-[44px]"
-              >
-                <X className="h-5 w-5 sm:h-6 sm:w-6" />
-              </button>
-            </div>
-            {selectedStoreFarmer && (
-              <div className="mt-2 p-2 bg-primary/10 rounded-lg">
-                <span className="font-semibold text-primary">
-                  Selected: {selectedStoreFarmer.id} - {selectedStoreFarmer.name}
-                </span>
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <input
+                  ref={itemSearchInputRef}
+                  type="text"
+                  inputMode="text"
+                  placeholder="Search by item name or code..."
+                  value={itemSearchQuery}
+                  onChange={(e) => setItemSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 sm:py-3 border-2 border-gray-300 bg-white rounded-lg text-base sm:text-lg min-h-[44px]"
+                />
               </div>
+              {itemSearchQuery && (
+                <button
+                  onClick={handleItemSearchClear}
+                  className="w-11 sm:w-14 bg-destructive text-destructive-foreground rounded-lg flex items-center justify-center active:opacity-80 min-h-[44px]"
+                >
+                  <X className="h-5 w-5 sm:h-6 sm:w-6" />
+                </button>
+              )}
+            </div>
+            {itemSearchQuery && (
+              <p className="text-sm text-muted-foreground">
+                Found {filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''}
+              </p>
             )}
           </div>
         </div>
-
-        {/* Farmer Search Modal */}
-        <FarmerSearchModal
-          isOpen={showStoreSearchModal}
-          onClose={() => setShowStoreSearchModal(false)}
-          onSelectFarmer={handleStoreSelectFarmer}
-          farmers={farmers}
-        />
 
         {/* Items Grid */}
         {loading ? (
@@ -573,9 +542,16 @@ const Store = () => {
               <p className="text-muted-foreground">No sellable items available</p>
             </CardContent>
           </Card>
+        ) : filteredItems.length === 0 ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <Search className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+              <p className="text-muted-foreground">No items match "{itemSearchQuery}"</p>
+            </CardContent>
+          </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {items.map((item) => (
+            {filteredItems.map((item) => (
               <Card key={item.ID} className="hover:shadow-lg transition-shadow">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
