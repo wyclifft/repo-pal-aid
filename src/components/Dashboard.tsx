@@ -174,7 +174,7 @@ export const Dashboard = ({
   });
 
   return (
-    <div className="h-screen h-[100dvh] flex flex-col overflow-hidden bg-white">
+    <div className="h-screen h-[100dvh] flex flex-col overflow-y-auto overflow-x-hidden bg-white">
       {/* Member Sync Banner */}
       <MemberSyncBanner 
         isVisible={isSyncingMembers} 
@@ -185,33 +185,33 @@ export const Dashboard = ({
       <div className="bg-[#26A69A] flex-shrink-0" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
         {/* Header Bar */}
         <div className="flex items-center justify-between px-3 py-2">
-          <h1 className="text-white text-base font-bold tracking-wide truncate max-w-[75%]">
+          <h1 className="text-white font-bold tracking-wide truncate max-w-[75%]" style={{ fontSize: 'clamp(0.875rem, 4vw, 1.125rem)' }}>
             {companyName}
           </h1>
           <div className="relative">
             <button
               onClick={() => setMenuOpen(!menuOpen)}
-              className="p-1.5 hover:bg-white/10 rounded-full transition-colors active:bg-white/20 min-w-[40px] min-h-[40px] flex items-center justify-center"
+              className="p-2 hover:bg-white/10 rounded-full transition-colors active:bg-white/20 min-w-[2.75rem] min-h-[2.75rem] flex items-center justify-center"
             >
-              <MoreVertical className="h-5 w-5 text-white" />
+              <MoreVertical className="h-5 w-5 text-white flex-shrink-0" />
             </button>
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-xl z-50 py-1 max-h-[70vh] overflow-y-auto">
-                  <button onClick={() => { navigate('/settings'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Settings</button>
+                <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-xl z-50 py-1 max-h-[70vh] overflow-y-auto">
+                  <button onClick={() => { navigate('/settings'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Settings</button>
                   <hr className="my-0.5 border-gray-200" />
-                  <button onClick={async () => { setMenuOpen(false); await syncAllData(false, true); }} disabled={isSyncing} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50">{isSyncing ? 'Syncing...' : 'Sync Data'}</button>
-                  <button onClick={() => { navigate('/z-report'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Z Report</button>
-                  <button onClick={() => { navigate('/z-report?generate=true'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Generate Z Report</button>
-                  <button onClick={() => { navigate('/z-report?reprint=true'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Reprint Z Report</button>
+                  <button onClick={async () => { setMenuOpen(false); await syncAllData(false, true); }} disabled={isSyncing} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100 disabled:opacity-50">{isSyncing ? 'Syncing...' : 'Sync Data'}</button>
+                  <button onClick={() => { navigate('/z-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Z Report</button>
+                  <button onClick={() => { navigate('/z-report?generate=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Generate Z Report</button>
+                  <button onClick={() => { navigate('/z-report?reprint=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Reprint Z Report</button>
                   <hr className="my-0.5 border-gray-200" />
-                  <button onClick={() => { navigate('/periodic-report'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Periodic Report</button>
-                  <button onClick={() => { navigate('/periodic-report?sync=true'); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Sync Periodic Report</button>
+                  <button onClick={() => { navigate('/periodic-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Periodic Report</button>
+                  <button onClick={() => { navigate('/periodic-report?sync=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Sync Periodic Report</button>
                   <hr className="my-0.5 border-gray-200" />
-                  <button onClick={() => { setMenuOpen(false); onOpenRecentReceipts?.(); }} className="w-full text-left px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100">Recent Receipts</button>
+                  <button onClick={() => { setMenuOpen(false); onOpenRecentReceipts?.(); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Recent Receipts</button>
                   <hr className="my-0.5 border-gray-200" />
-                  <button onClick={() => { onLogout(); setMenuOpen(false); }} className="w-full text-left px-3 py-2.5 text-sm text-red-600 hover:bg-red-50">Logout</button>
+                  <button onClick={() => { onLogout(); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-red-600 hover:bg-red-50">Logout</button>
                 </div>
               </>
             )}
@@ -220,64 +220,64 @@ export const Dashboard = ({
 
         {/* User Info & Session Status */}
         <div className="text-center px-3 pb-1">
-          <h2 className="text-white text-xl font-bold">{userName}</h2>
+          <h2 className="text-white font-bold" style={{ fontSize: 'clamp(1.125rem, 5vw, 1.5rem)' }}>{userName}</h2>
           {sessionActive && selectedSession && selectedRoute ? (
             <div className="mt-1">
-              <div className="inline-flex items-center gap-1.5 bg-white/15 px-3 py-1 rounded-full">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-white text-xs font-medium">
+              <div className="inline-flex items-center gap-1.5 bg-white/15 px-3 py-1.5 rounded-full flex-wrap justify-center">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <span className="text-white font-medium" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.875rem)' }}>
                   Active {selectedSession.descript?.trim()} • {selectedRoute.descript?.trim()}
                 </span>
               </div>
             </div>
           ) : (
-            <p className="text-white/80 text-xs mt-0.5">Welcome back</p>
+            <p className="text-white/80 mt-0.5" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.875rem)' }}>Welcome back</p>
           )}
         </div>
 
         {/* Date Display */}
         <div className="text-center py-1.5">
-          <span className="text-white text-sm font-semibold">{currentDate}</span>
+          <span className="text-white font-semibold" style={{ fontSize: 'clamp(0.75rem, 3vw, 1rem)' }}>{currentDate}</span>
         </div>
 
         {/* Quick Action Icons */}
-        <div className="flex justify-center gap-6 pb-3">
+        <div className="flex justify-center gap-4 pb-3 flex-wrap px-2">
           <button onClick={() => navigate('/store')} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-14 h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
-              <Store className="h-7 w-7" style={{ color: '#D81B60' }} strokeWidth={1.5} />
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
+              <Store className="h-6 w-6 sm:h-7 sm:w-7 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
-            <span className="mt-1 text-xs font-medium text-gray-700">Store</span>
+            <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>Store</span>
           </button>
 
           <button onClick={() => toast.info('AI Assistant - Coming Soon')} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-12 h-12 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
-              <div className="w-5 h-5 rounded-sm" style={{ backgroundColor: '#D81B60' }} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
+              <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-sm flex-shrink-0" style={{ backgroundColor: '#D81B60' }} />
             </div>
-            <span className="mt-1 text-xs font-medium text-gray-700">AI</span>
+            <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>AI</span>
           </button>
 
           <button onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.5')} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-14 h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm">
-              <BarChart3 className="h-7 w-7" style={{ color: '#D81B60' }} strokeWidth={1.5} />
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
+              <BarChart3 className="h-6 w-6 sm:h-7 sm:w-7 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
-            <span className="mt-1 text-xs font-medium text-gray-700">About</span>
+            <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>About</span>
           </button>
         </div>
       </div>
 
       {/* ============ CURVED DIVIDER ============ */}
-      <div className="relative h-5 flex-shrink-0">
+      <div className="relative h-4 flex-shrink-0">
         <svg viewBox="0 0 100 20" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
           <path d="M0,0 L0,8 Q50,20 100,8 L100,0 Z" fill="#26A69A" />
         </svg>
       </div>
 
       {/* ============ BOTTOM SECTION - WHITE ACTION AREA ============ */}
-      <div className="flex-1 bg-white flex flex-col px-3 min-h-0" style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
+      <div className="flex-1 bg-white flex flex-col px-3 py-2" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
         
         {/* Sync Status */}
-        <div className="text-center py-2">
-          <span className="text-gray-800 font-bold text-sm tracking-wide">
+        <div className="text-center py-1.5">
+          <span className="text-gray-800 font-bold tracking-wide" style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}>
             SYNC- {pendingCount > 0 ? `0/${pendingCount}` : '0/0'}
           </span>
         </div>
@@ -287,58 +287,62 @@ export const Dashboard = ({
           <button
             onClick={handleReconnect}
             disabled={isReconnecting}
-            className="px-8 py-2 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-50 text-sm shadow-md"
+            className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-50 shadow-md min-h-[2.75rem]"
+            style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
           >
             {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
           </button>
         </div>
 
         {/* Status Indicators */}
-        <div className="flex justify-center gap-6 mb-2">
+        <div className="flex justify-center gap-4 mb-2 flex-wrap">
           <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
-            <span className="text-xs text-gray-600">{printerConnected ? 'Initialized' : 'Not Initialized'}</span>
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
+            <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{printerConnected ? 'Initialized' : 'Not Initialized'}</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
-            <span className="text-xs text-gray-600">{scaleConnected ? 'Scale connected' : 'Scale disconnected'}</span>
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
+            <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{scaleConnected ? 'Scale connected' : 'Scale disconnected'}</span>
           </div>
         </div>
 
         {/* Dynamic Content Area */}
-        <div className="flex-1 flex flex-col justify-center min-h-0">
+        <div className="flex-1 flex flex-col justify-center">
           {sessionActive ? (
             <div className="space-y-3">
               {/* Close Session */}
               <div className="flex justify-center">
                 <button
                   onClick={handleCloseSession}
-                  className="px-8 py-2 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors text-sm shadow-md"
+                  className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem]"
+                  style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
                   Close Session
                 </button>
               </div>
 
               {/* Buy/Sell Buttons */}
-              <div className="flex justify-center gap-3">
+              <div className="flex justify-center gap-3 flex-wrap">
                 <button
                   onClick={handleBuyProduce}
-                  className="flex-1 max-w-[140px] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors text-sm shadow-md"
+                  className="flex-1 max-w-[10rem] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem]"
+                  style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
                   Buy Produce
                 </button>
                 <button
                   onClick={handleSellProduce}
-                  className="flex-1 max-w-[140px] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors text-sm shadow-md"
+                  className="flex-1 max-w-[10rem] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem]"
+                  style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
                   Sell Produce
                 </button>
               </div>
             </div>
           ) : (
-            <div className="space-y-2.5 max-w-xs mx-auto w-full">
+            <div className="space-y-2.5 max-w-sm mx-auto w-full">
               {/* Route Selector */}
-              <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+              <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden min-h-[2.75rem]">
                 <RouteSelector
                   selectedRoute={selectedRoute?.tcode || ''}
                   onRouteChange={handleRouteChange}
@@ -347,7 +351,7 @@ export const Dashboard = ({
               </div>
 
               {/* Session Selector */}
-              <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+              <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden min-h-[2.75rem]">
                 <SessionSelector
                   selectedSession={selectedSession?.descript || ''}
                   onSessionChange={handleSessionChange}
@@ -360,7 +364,8 @@ export const Dashboard = ({
                 <button
                   onClick={handleNewSession}
                   disabled={!selectedRoute || !selectedSession}
-                  className="px-8 py-2 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm shadow-md"
+                  className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md min-h-[2.75rem]"
+                  style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
                   NEW SESSION
                 </button>
