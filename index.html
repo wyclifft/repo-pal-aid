@@ -44,13 +44,18 @@
       html, body, #root {
         margin: 0;
         padding: 0;
-        min-height: 100vh;
-        min-height: 100dvh;
+        height: 100%;
+        height: 100dvh;
+        max-height: 100dvh;
         background: #f9fafb;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
-        overflow-x: hidden;
+        overflow: hidden;
+        position: fixed;
+        width: 100%;
+        top: 0;
+        left: 0;
       }
       
       /* Native-like touch behavior */
@@ -60,15 +65,16 @@
         box-sizing: border-box;
       }
       
-      /* Smooth scrolling */
+      /* Disable scrolling on body */
       html {
-        scroll-behavior: smooth;
         -webkit-overflow-scrolling: touch;
       }
       
       /* Safe area support for notched devices */
       body {
         padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        overscroll-behavior: none;
+        touch-action: pan-x pan-y;
       }
       
       /* Initial loading state */
@@ -76,8 +82,6 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 100vh;
-        min-height: 100dvh;
       }
       
       #root:empty::after {
@@ -92,11 +96,6 @@
       
       @keyframes spin {
         to { transform: rotate(360deg); }
-      }
-      
-      /* Prevent pull-to-refresh on mobile */
-      body {
-        overscroll-behavior-y: contain;
       }
       
       /* Hide scrollbars for native feel */

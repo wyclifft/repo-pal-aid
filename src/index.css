@@ -105,8 +105,18 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
-  body {
+  html, body, #root {
     @apply bg-background text-foreground;
+    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  /* Scrollable content containers */
+  .scrollable-content {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 
   @media print {
