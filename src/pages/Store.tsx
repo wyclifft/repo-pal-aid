@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { ArrowLeft, ShoppingCart, Package, Loader2, Receipt as ReceiptIcon, Search, X } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Package, Loader2, Receipt as ReceiptIcon, Search, X, CornerDownLeft } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
@@ -494,7 +494,6 @@ const Store = () => {
             <Label className="text-sm font-medium text-muted-foreground">Search Items</Label>
             <div className="flex gap-1.5 sm:gap-2">
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                 <input
                   ref={itemSearchInputRef}
                   type="text"
@@ -502,9 +501,26 @@ const Store = () => {
                   placeholder="Search by item name or code..."
                   value={itemSearchQuery}
                   onChange={(e) => setItemSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 sm:py-3 border-2 border-gray-300 bg-white rounded-lg text-base sm:text-lg min-h-[44px]"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      itemSearchInputRef.current?.blur();
+                    }
+                  }}
+                  className="w-full px-4 py-2.5 sm:py-3 border-2 border-gray-300 bg-white rounded-lg text-base sm:text-lg min-h-[44px]"
                 />
               </div>
+              <button
+                onClick={() => itemSearchInputRef.current?.blur()}
+                className="w-11 sm:w-14 bg-primary text-primary-foreground rounded-lg flex items-center justify-center active:opacity-80 min-h-[44px]"
+              >
+                <CornerDownLeft className="h-5 w-5 sm:h-6 sm:w-6" />
+              </button>
+              <button
+                onClick={() => itemSearchInputRef.current?.focus()}
+                className="w-11 sm:w-14 bg-secondary text-secondary-foreground rounded-lg flex items-center justify-center active:opacity-80 min-h-[44px]"
+              >
+                <Search className="h-5 w-5 sm:h-6 sm:w-6" />
+              </button>
               {itemSearchQuery && (
                 <button
                   onClick={handleItemSearchClear}
