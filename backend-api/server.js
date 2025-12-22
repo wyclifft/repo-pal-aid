@@ -638,7 +638,11 @@ const server = http.createServer(async (req, res) => {
         // Check if member already has a milk transaction (Transtype = 'MILK') in this session today
         const [existingTransRows] = await pool.query(
           `SELECT transrefno FROM transactions 
-           WHERE memberno = ? AND session = ? AND transdate = ? AND Transtype = 'MILK' AND ccode = ?
+           WHERE memberno = ?
+             AND UPPER(TRIM(session)) = ?
+             AND transdate = ?
+             AND Transtype = 'MILK'
+             AND ccode = ?
            LIMIT 1`,
           [cleanFarmerId, normalizedSession, transdate, ccode]
         );

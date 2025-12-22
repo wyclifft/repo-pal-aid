@@ -21,6 +21,7 @@ interface SellProduceScreenProps {
   selectedFarmer: { id: string; name: string } | null;
   todayWeight: number;
   onManualWeightChange?: (weight: number) => void;
+  captureDisabled?: boolean;
 }
 
 export const SellProduceScreen = ({
@@ -37,6 +38,7 @@ export const SellProduceScreen = ({
   selectedFarmer,
   todayWeight,
   onManualWeightChange,
+  captureDisabled,
 }: SellProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -249,7 +251,8 @@ export const SellProduceScreen = ({
           </button>
           <button
             onClick={onCapture}
-            className="flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base"
+            disabled={!!captureDisabled}
+            className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${captureDisabled ? 'opacity-50 pointer-events-none' : ''}`}
           >
             Capture
           </button>
