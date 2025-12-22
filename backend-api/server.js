@@ -1200,17 +1200,20 @@ const server = http.createServer(async (req, res) => {
         const [companyRows] = await pool.query(
           `SELECT 
             cname, 
+            caddress,
+            tel,
+            email,
             cumulative_frequency_status,
-            IFNULL(printoptions, 1) as printoptions,
-            IFNULL(chkroute, 1) as chkroute,
+            IFNULL(printOptions, 1) as printOptions,
+            IFNULL(chkRoute, 1) as chkRoute,
             IFNULL(rdesc, 'Route') as rdesc,
-            IFNULL(stableopt, 0) as stableopt,
-            IFNULL(sessprint, 0) as sessprint,
-            IFNULL(autow, 0) as autow,
-            IFNULL(online, 0) as online,
+            IFNULL(stableOpt, 0) as stableOpt,
+            IFNULL(sessPrint, 0) as sessPrint,
+            IFNULL(AutoW, 0) as AutoW,
+            IFNULL(onlinemode, 0) as onlinemode,
             IFNULL(orgtype, 'D') as orgtype,
             IFNULL(printcumm, 0) as printcumm,
-            IFNULL(zeroOpt, 0) as zeroOpt
+            IFNULL(zeroopt, 0) as zeroopt
           FROM psettings WHERE ccode = ?`,
           [deviceData.ccode]
         );
@@ -1219,16 +1222,20 @@ const server = http.createServer(async (req, res) => {
           companyName = companyRows[0].cname;
           cumulativeFrequencyStatus = companyRows[0].cumulative_frequency_status || 0;
           appSettings = {
-            printoptions: companyRows[0].printoptions,
-            chkroute: companyRows[0].chkroute,
+            printoptions: companyRows[0].printOptions,
+            chkroute: companyRows[0].chkRoute,
             rdesc: companyRows[0].rdesc,
-            stableopt: companyRows[0].stableopt,
-            sessprint: companyRows[0].sessprint,
-            autow: companyRows[0].autow,
-            online: companyRows[0].online,
+            stableopt: companyRows[0].stableOpt,
+            sessprint: companyRows[0].sessPrint,
+            autow: companyRows[0].AutoW,
+            online: companyRows[0].onlinemode,
             orgtype: companyRows[0].orgtype,
             printcumm: companyRows[0].printcumm,
-            zeroOpt: companyRows[0].zeroOpt
+            zeroOpt: companyRows[0].zeroopt,
+            // Additional company info
+            caddress: companyRows[0].caddress,
+            tel: companyRows[0].tel,
+            email: companyRows[0].email
           };
         }
       }
@@ -1531,18 +1538,21 @@ const server = http.createServer(async (req, res) => {
       
       const [rows] = await pool.query(
         `SELECT 
-          cname as company_name, 
+          cname as company_name,
+          caddress,
+          tel,
+          email,
           cumulative_frequency_status,
-          IFNULL(printoptions, 1) as printoptions,
-          IFNULL(chkroute, 1) as chkroute,
+          IFNULL(printOptions, 1) as printOptions,
+          IFNULL(chkRoute, 1) as chkRoute,
           IFNULL(rdesc, 'Route') as rdesc,
-          IFNULL(stableopt, 0) as stableopt,
-          IFNULL(sessprint, 0) as sessprint,
-          IFNULL(autow, 0) as autow,
-          IFNULL(online, 0) as online,
+          IFNULL(stableOpt, 0) as stableOpt,
+          IFNULL(sessPrint, 0) as sessPrint,
+          IFNULL(AutoW, 0) as AutoW,
+          IFNULL(onlinemode, 0) as onlinemode,
           IFNULL(orgtype, 'D') as orgtype,
           IFNULL(printcumm, 0) as printcumm,
-          IFNULL(zeroOpt, 0) as zeroOpt
+          IFNULL(zeroopt, 0) as zeroopt
         FROM psettings WHERE ccode = ?`,
         [ccode]
       );
@@ -1551,7 +1561,10 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { 
           success: true, 
           data: { 
-            company_name: null, 
+            company_name: null,
+            caddress: null,
+            tel: null,
+            email: null,
             cumulative_frequency_status: 0,
             printoptions: 1,
             chkroute: 1,
@@ -1571,17 +1584,20 @@ const server = http.createServer(async (req, res) => {
         success: true, 
         data: {
           company_name: rows[0].company_name,
+          caddress: rows[0].caddress,
+          tel: rows[0].tel,
+          email: rows[0].email,
           cumulative_frequency_status: rows[0].cumulative_frequency_status || 0,
-          printoptions: rows[0].printoptions,
-          chkroute: rows[0].chkroute,
+          printoptions: rows[0].printOptions,
+          chkroute: rows[0].chkRoute,
           rdesc: rows[0].rdesc,
-          stableopt: rows[0].stableopt,
-          sessprint: rows[0].sessprint,
-          autow: rows[0].autow,
-          online: rows[0].online,
+          stableopt: rows[0].stableOpt,
+          sessprint: rows[0].sessPrint,
+          autow: rows[0].AutoW,
+          online: rows[0].onlinemode,
           orgtype: rows[0].orgtype,
           printcumm: rows[0].printcumm,
-          zeroOpt: rows[0].zeroOpt
+          zeroOpt: rows[0].zeroopt
         }
       });
     }
