@@ -141,6 +141,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
       
+      let settingsLoaded = false;
+      
       const response = await fetch(
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(deviceFingerprint)}`,
         { signal: controller.signal }
@@ -174,7 +176,52 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           
           setSettings(newSettings);
           saveCachedSettings(newSettings, deviceData.ccode);
-          console.log('✅ App settings synced:', newSettings);
+          console.log('✅ App settings synced from device:', newSettings);
+          settingsLoaded = true;
+        }
+      }
+      
+      // Fallback: If device API failed (404/401), try direct psettings endpoint
+      if (!settingsLoaded) {
+        console.log('📡 Device not authorized, trying direct psettings endpoint...');
+        const controller2 = new AbortController();
+        const timeoutId2 = setTimeout(() => controller2.abort(), 8000);
+        
+        const psettingsResponse = await fetch(
+          `${apiUrl}/api/psettings?uniquedevcode=${encodeURIComponent(deviceFingerprint)}`,
+          { signal: controller2.signal }
+        );
+        
+        clearTimeout(timeoutId2);
+        
+        if (psettingsResponse.ok) {
+          const psData = await psettingsResponse.json();
+          if (psData.success && psData.data) {
+            const ps = psData.data;
+            
+            // Map directly from psettings table columns
+            const newSettings: AppSettings = {
+              printoptions: ps.printOptions ?? ps.printoptions ?? DEFAULT_SETTINGS.printoptions,
+              chkroute: ps.chkRoute ?? ps.chkroute ?? DEFAULT_SETTINGS.chkroute,
+              rdesc: ps.rdesc ?? DEFAULT_SETTINGS.rdesc,
+              stableopt: ps.stableOpt ?? ps.stableopt ?? DEFAULT_SETTINGS.stableopt,
+              sessprint: ps.sessPrint ?? ps.sessprint ?? DEFAULT_SETTINGS.sessprint,
+              autow: ps.AutoW ?? ps.autow ?? DEFAULT_SETTINGS.autow,
+              online: ps.onlinemode ?? ps.online ?? DEFAULT_SETTINGS.online,
+              orgtype: ps.orgtype ?? DEFAULT_SETTINGS.orgtype,
+              printcumm: ps.printcumm ?? DEFAULT_SETTINGS.printcumm,
+              zeroOpt: ps.zeroopt ?? ps.zeroOpt ?? DEFAULT_SETTINGS.zeroOpt,
+              company_name: ps.cname ?? ps.company_name ?? DEFAULT_SETTINGS.company_name,
+              caddress: ps.caddress ?? DEFAULT_SETTINGS.caddress,
+              tel: ps.tel ?? DEFAULT_SETTINGS.tel,
+              email: ps.email ?? DEFAULT_SETTINGS.email,
+              cumulative_frequency_status: ps.cumulative_frequency_status ?? DEFAULT_SETTINGS.cumulative_frequency_status
+            };
+            
+            setSettings(newSettings);
+            saveCachedSettings(newSettings, ps.ccode);
+            console.log('✅ App settings synced from psettings:', newSettings);
+          }
         }
       }
     } catch (error) {
