@@ -307,7 +307,16 @@ const Index = () => {
     // Create local capture record (NOT synced to DB yet)
     // Clean farmer_id and session values before storing
     const cleanFarmerId = farmerId.replace(/^#/, '').trim();
-    const cleanSession = session.trim() as 'AM' | 'PM';
+    
+    // Derive AM/PM from the active session's time_from (hour-based)
+    // If time_from is before noon (12), it's AM; otherwise PM
+    let cleanSession: 'AM' | 'PM' = 'AM';
+    if (activeSession) {
+      const timeFrom = typeof activeSession.time_from === 'number' 
+        ? activeSession.time_from 
+        : parseInt(String(activeSession.time_from), 10);
+      cleanSession = (timeFrom >= 12) ? 'PM' : 'AM';
+    }
     
     const captureData: MilkCollection = {
       reference_no: referenceNo,
@@ -375,12 +384,19 @@ const Index = () => {
             console.warn('Could not get backend reference, using existing:', refError);
           }
 
+          // Normalize session to AM/PM - handle legacy data that might have description
+          let normalizedSession: 'AM' | 'PM' = 'AM';
+          const sessionVal = (capture.session || '').trim().toUpperCase();
+          if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
+            normalizedSession = 'PM';
+          }
+
           const result = await mysqlApi.milkCollection.create({
             reference_no: referenceNo,
             farmer_id: capture.farmer_id.replace(/^#/, '').trim(),
             farmer_name: capture.farmer_name.trim(),
             route: capture.route.trim(),
-            session: capture.session.trim() as 'AM' | 'PM',
+            session: normalizedSession,
             weight: capture.weight,
             clerk_name: capture.clerk_name,
             collection_date: capture.collection_date,

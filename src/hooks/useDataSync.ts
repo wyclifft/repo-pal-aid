@@ -75,12 +75,19 @@ export const useDataSync = () => {
         try {
           console.log(`🔄 Attempting to sync: ${receipt.reference_no}`);
           
+          // Normalize session to AM/PM - handle legacy data that might have description
+          let normalizedSession: 'AM' | 'PM' = 'AM';
+          const sessionVal = String(receipt.session || '').trim().toUpperCase();
+          if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
+            normalizedSession = 'PM';
+          }
+          
           const result = await mysqlApi.milkCollection.create({
             reference_no: receipt.reference_no,
             farmer_id: String(receipt.farmer_id || '').replace(/^#/, '').trim(),
             farmer_name: String(receipt.farmer_name || '').trim(),
             route: String(receipt.route || '').trim(),
-            session: String(receipt.session || '').trim() as 'AM' | 'PM',
+            session: normalizedSession,
             weight: receipt.weight,
             clerk_name: receipt.clerk_name,
             collection_date: receipt.collection_date,
