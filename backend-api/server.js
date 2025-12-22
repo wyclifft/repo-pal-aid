@@ -1529,15 +1529,32 @@ const server = http.createServer(async (req, res) => {
     }
 
     // psettings endpoint - Get company settings (ALL behavior switches)
+    // Supports both ccode and uniquedevcode query params
     if (path === '/api/psettings' && method === 'GET') {
       const ccode = parsedUrl.query.ccode;
+      const uniquedevcode = parsedUrl.query.uniquedevcode;
       
-      if (!ccode) {
-        return sendJSON(res, { success: false, error: 'ccode is required' }, 400);
+      let targetCcode = ccode;
+      
+      // If uniquedevcode provided, look up the ccode from devsettings
+      if (!targetCcode && uniquedevcode) {
+        const [deviceRows] = await pool.query(
+          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          [uniquedevcode]
+        );
+        
+        if (deviceRows.length > 0 && deviceRows[0].ccode) {
+          targetCcode = deviceRows[0].ccode;
+        }
+      }
+      
+      if (!targetCcode) {
+        return sendJSON(res, { success: false, error: 'ccode or uniquedevcode is required' }, 400);
       }
       
       const [rows] = await pool.query(
         `SELECT 
+          ccode,
           cname as company_name,
           caddress,
           tel,
@@ -1554,13 +1571,14 @@ const server = http.createServer(async (req, res) => {
           IFNULL(printcumm, 0) as printcumm,
           IFNULL(zeroopt, 0) as zeroopt
         FROM psettings WHERE ccode = ?`,
-        [ccode]
+        [targetCcode]
       );
       
       if (rows.length === 0) {
         return sendJSON(res, { 
           success: true, 
           data: { 
+            ccode: targetCcode,
             company_name: null,
             caddress: null,
             tel: null,
@@ -1583,6 +1601,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { 
         success: true, 
         data: {
+          ccode: rows[0].ccode,
           company_name: rows[0].company_name,
           caddress: rows[0].caddress,
           tel: rows[0].tel,
