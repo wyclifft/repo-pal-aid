@@ -116,7 +116,7 @@ const Index = () => {
   const activeSessionTimeFrom = activeSession ? 
     (typeof activeSession.time_from === 'number' ? activeSession.time_from : parseInt(String(activeSession.time_from), 10)) 
     : undefined;
-  const { blacklistedFarmerIds, addToBlacklist, refreshBlacklist, clearBlacklist } = useSessionBlacklist(activeSessionTimeFrom);
+  const { blacklistedFarmerIds, isBlacklisted, addToBlacklist, refreshBlacklist, clearBlacklist } = useSessionBlacklist(activeSessionTimeFrom);
   
   // Get set of farmer IDs with multOpt=0
   const farmersWithMultOptZero = useCallback(() => {
@@ -715,6 +715,12 @@ const Index = () => {
   }
 
   // Collection View - render Buy or Sell screen based on mode
+  const captureDisabledForSelectedFarmer =
+    !!selectedFarmer &&
+    (selectedFarmer.multOpt ?? 1) === 0 &&
+    !!farmerId &&
+    isBlacklisted(farmerId);
+
   return (
     <>
       {collectionMode === 'buy' ? (
@@ -737,6 +743,7 @@ const Index = () => {
           }}
           blacklistedFarmerIds={blacklistedFarmerIds}
           onFarmersLoaded={handleFarmersLoaded}
+          captureDisabled={captureDisabledForSelectedFarmer}
         />
       ) : (
         <SellProduceScreen
@@ -756,6 +763,7 @@ const Index = () => {
             setWeight(w);
             setEntryType('manual');
           }}
+          captureDisabled={captureDisabledForSelectedFarmer}
         />
       )}
 
