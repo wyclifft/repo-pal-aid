@@ -431,6 +431,7 @@ const Index = () => {
       weight: parseFloat(Number(weight).toFixed(2)),
       clerk_name: currentUser ? currentUser.user_id : 'unknown',
       collection_date: new Date(),
+      multOpt: farmerMultOpt,
       orderId: Date.now(),
       synced: false, // Not synced - only locally captured
     };
@@ -480,7 +481,37 @@ const Index = () => {
         // ONLINE: Submit directly to database
         try {
           console.log(`📤 Submitting online: ${capture.reference_no}`);
-          
+
+          // Normalize session to AM/PM - handle legacy data that might have description
+          let normalizedSession: 'AM' | 'PM' = 'AM';
+          const sessionVal = (capture.session || '').trim().toUpperCase();
+          if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
+            normalizedSession = 'PM';
+          }
+
+          // Client-side FINAL GUARD for multOpt=0 (works even if backend is not enforcing yet)
+          if (capture.multOpt === 0) {
+            const captureDate = new Date(capture.collection_date).toISOString().split('T')[0];
+            const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
+              capture.farmer_id.replace(/^#/, '').trim(),
+              normalizedSession,
+              captureDate,
+              captureDate,
+              deviceFingerprint
+            );
+
+            if (existing) {
+              toast.error(
+                `${capture.farmer_name} has already delivered in the ${normalizedSession} session today. Use Reprint for previous slip.`,
+                { duration: 6000 }
+              );
+              setCapturedCollections([]);
+              setReprintModalOpen(true);
+              window.dispatchEvent(new CustomEvent('syncComplete'));
+              return;
+            }
+          }
+
           // Get fresh reference from backend for online submissions
           let referenceNo = capture.reference_no;
           try {
@@ -491,13 +522,6 @@ const Index = () => {
             }
           } catch (refError) {
             console.warn('Could not get backend reference, using existing:', refError);
-          }
-
-          // Normalize session to AM/PM - handle legacy data that might have description
-          let normalizedSession: 'AM' | 'PM' = 'AM';
-          const sessionVal = (capture.session || '').trim().toUpperCase();
-          if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
-            normalizedSession = 'PM';
           }
 
           const result = await mysqlApi.milkCollection.create({

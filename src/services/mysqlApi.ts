@@ -248,6 +248,10 @@ export interface MilkCollection {
   collection_date: Date | string;
   created_at?: string;
   updated_at?: string;
+  /**
+   * Snapshot of member multOpt at the time of capture (optional; used for client-side rules).
+   */
+  multOpt?: number;
   orderId?: number;
   synced?: boolean;
   device_fingerprint?: string;
