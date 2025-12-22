@@ -14,6 +14,7 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionBlacklist } from '@/hooks/useSessionBlacklist';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
@@ -110,6 +111,17 @@ const Index = () => {
   
   // Data sync hook for background syncing
   const { isSyncing, pendingCount, syncAllData } = useDataSync();
+  
+  // App-wide settings from psettings
+  const { 
+    settings: appSettings, 
+    requireZeroScale, 
+    autoWeightOnly, 
+    showCumulative,
+    printCopies,
+    produceLabel,
+    routeLabel
+  } = useAppSettings();
 
   // Session blacklist for farmers with multOpt=0
   const [loadedFarmers, setLoadedFarmers] = useState<Farmer[]>([]);
@@ -325,9 +337,15 @@ const Index = () => {
       }
     }
 
-    // Check if scale reads 0 before next collection (only for scale entry)
-    if (entryType === 'scale' && lastSavedWeight > 0 && weight > 0) {
+    // Check if scale reads 0 before next collection (enforced when zeroOpt=1 or for scale entry)
+    if ((requireZeroScale || entryType === 'scale') && lastSavedWeight > 0 && weight > 0) {
       toast.error('Scale must read 0 before next collection');
+      return;
+    }
+    
+    // Enforce autow: restrict to digital scale only when enabled
+    if (autoWeightOnly && entryType === 'manual') {
+      toast.error('Manual weight entry is disabled. Please use the digital scale.');
       return;
     }
 
@@ -777,6 +795,8 @@ const Index = () => {
           setCapturedCollections([]);
         }}
         onPrint={handleSavePrintedReceipt}
+        showCumulativeFrequency={showCumulative}
+        printCopies={printCopies}
       />
 
       {/* Reprint Modal */}
@@ -785,6 +805,7 @@ const Index = () => {
         onClose={() => setReprintModalOpen(false)}
         receipts={printedReceipts}
         companyName={companyName}
+        printCopies={printCopies}
       />
     </>
   );
