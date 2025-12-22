@@ -9,9 +9,10 @@ interface ReceiptModalProps {
   companyName: string;
   open: boolean;
   onClose: () => void;
-  onPrint?: () => void; // Callback when receipt is successfully printed
-  cumulativeFrequency?: number; // Monthly cumulative frequency (if enabled by psettings)
-  showCumulativeFrequency?: boolean; // Whether to show cumulative frequency
+  onPrint?: () => void;
+  cumulativeFrequency?: number;
+  showCumulativeFrequency?: boolean;
+  printCopies?: number; // Number of copies to print (from psettings.printoptions)
 }
 
 export const ReceiptModal = ({ 
@@ -21,7 +22,8 @@ export const ReceiptModal = ({
   onClose, 
   onPrint,
   cumulativeFrequency,
-  showCumulativeFrequency = false
+  showCumulativeFrequency = false,
+  printCopies = 1
 }: ReceiptModalProps) => {
   const handlePrint = async () => {
     if (receipts.length === 0) return;
@@ -37,30 +39,40 @@ export const ReceiptModal = ({
       weight: r.weight
     }));
 
-    const result = await printReceipt({
-      companyName: companyName,
-      farmerName: firstReceipt.farmer_name,
-      farmerId: firstReceipt.farmer_id,
-      route: firstReceipt.route,
-      session: firstReceipt.session,
-      referenceNo: firstReceipt.reference_no,
-      collectorName: firstReceipt.clerk_name,
-      collections,
-      cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined
-    });
+    // Print multiple copies based on printoptions setting
+    for (let copy = 0; copy < printCopies; copy++) {
+      const result = await printReceipt({
+        companyName: companyName,
+        farmerName: firstReceipt.farmer_name,
+        farmerId: firstReceipt.farmer_id,
+        route: firstReceipt.route,
+        session: firstReceipt.session,
+        referenceNo: firstReceipt.reference_no,
+        collectorName: firstReceipt.clerk_name,
+        collections,
+        cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined
+      });
 
-    if (result.success) {
-      toast.success('Receipt printed successfully');
-    } else {
-      if (result.error?.includes('No printer connected')) {
-        toast.info('No Bluetooth printer connected. Opening browser print...');
-        window.print();
-      } else {
-        toast.error(result.error || 'Failed to print receipt');
+      if (!result.success) {
+        if (result.error?.includes('No printer connected')) {
+          toast.info('No Bluetooth printer connected. Opening browser print...');
+          window.print();
+          break; // Browser print handles copies itself
+        } else {
+          toast.error(result.error || 'Failed to print receipt');
+          break;
+        }
+      } else if (copy === printCopies - 1) {
+        toast.success(`Receipt printed (${printCopies} ${printCopies === 1 ? 'copy' : 'copies'})`);
+      }
+      
+      // Small delay between copies
+      if (copy < printCopies - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
     
-    // Always save receipt for reprinting, regardless of print method
+    // Always save receipt for reprinting
     onPrint?.();
   };
 

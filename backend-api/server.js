@@ -1180,24 +1180,63 @@ const server = http.createServer(async (req, res) => {
         device_ref: devRows.length > 0 ? devRows[0].device_ref : null
       };
       
-      // Get company name and settings from psettings if ccode exists
+      // Get company name and ALL settings from psettings if ccode exists
       let companyName = null;
       let cumulativeFrequencyStatus = 0;
+      let appSettings = {
+        printoptions: 1,
+        chkroute: 1,
+        rdesc: 'Route',
+        stableopt: 0,
+        sessprint: 0,
+        autow: 0,
+        online: 0,
+        orgtype: 'D',
+        printcumm: 0,
+        zeroOpt: 0
+      };
+      
       if (deviceData.ccode) {
         const [companyRows] = await pool.query(
-          'SELECT cname, cumulative_frequency_status FROM psettings WHERE ccode = ?',
+          `SELECT 
+            cname, 
+            cumulative_frequency_status,
+            IFNULL(printoptions, 1) as printoptions,
+            IFNULL(chkroute, 1) as chkroute,
+            IFNULL(rdesc, 'Route') as rdesc,
+            IFNULL(stableopt, 0) as stableopt,
+            IFNULL(sessprint, 0) as sessprint,
+            IFNULL(autow, 0) as autow,
+            IFNULL(online, 0) as online,
+            IFNULL(orgtype, 'D') as orgtype,
+            IFNULL(printcumm, 0) as printcumm,
+            IFNULL(zeroOpt, 0) as zeroOpt
+          FROM psettings WHERE ccode = ?`,
           [deviceData.ccode]
         );
         
         if (companyRows.length > 0) {
           companyName = companyRows[0].cname;
           cumulativeFrequencyStatus = companyRows[0].cumulative_frequency_status || 0;
+          appSettings = {
+            printoptions: companyRows[0].printoptions,
+            chkroute: companyRows[0].chkroute,
+            rdesc: companyRows[0].rdesc,
+            stableopt: companyRows[0].stableopt,
+            sessprint: companyRows[0].sessprint,
+            autow: companyRows[0].autow,
+            online: companyRows[0].online,
+            orgtype: companyRows[0].orgtype,
+            printcumm: companyRows[0].printcumm,
+            zeroOpt: companyRows[0].zeroOpt
+          };
         }
       }
       
-      // Always include company_name and settings in response (null if not found)
+      // Always include company_name and ALL settings in response
       deviceData.company_name = companyName;
       deviceData.cumulative_frequency_status = cumulativeFrequencyStatus;
+      deviceData.app_settings = appSettings;
       
       // Get last used sequence for this device_ref prefix for counter sync
       let lastSequence = null;
@@ -1482,7 +1521,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // psettings endpoint - Get company settings
+    // psettings endpoint - Get company settings (ALL behavior switches)
     if (path === '/api/psettings' && method === 'GET') {
       const ccode = parsedUrl.query.ccode;
       
@@ -1491,14 +1530,40 @@ const server = http.createServer(async (req, res) => {
       }
       
       const [rows] = await pool.query(
-        'SELECT cname as company_name, cumulative_frequency_status FROM psettings WHERE ccode = ?',
+        `SELECT 
+          cname as company_name, 
+          cumulative_frequency_status,
+          IFNULL(printoptions, 1) as printoptions,
+          IFNULL(chkroute, 1) as chkroute,
+          IFNULL(rdesc, 'Route') as rdesc,
+          IFNULL(stableopt, 0) as stableopt,
+          IFNULL(sessprint, 0) as sessprint,
+          IFNULL(autow, 0) as autow,
+          IFNULL(online, 0) as online,
+          IFNULL(orgtype, 'D') as orgtype,
+          IFNULL(printcumm, 0) as printcumm,
+          IFNULL(zeroOpt, 0) as zeroOpt
+        FROM psettings WHERE ccode = ?`,
         [ccode]
       );
       
       if (rows.length === 0) {
         return sendJSON(res, { 
           success: true, 
-          data: { company_name: null, cumulative_frequency_status: 0 } 
+          data: { 
+            company_name: null, 
+            cumulative_frequency_status: 0,
+            printoptions: 1,
+            chkroute: 1,
+            rdesc: 'Route',
+            stableopt: 0,
+            sessprint: 0,
+            autow: 0,
+            online: 0,
+            orgtype: 'D',
+            printcumm: 0,
+            zeroOpt: 0
+          } 
         });
       }
       
@@ -1506,7 +1571,17 @@ const server = http.createServer(async (req, res) => {
         success: true, 
         data: {
           company_name: rows[0].company_name,
-          cumulative_frequency_status: rows[0].cumulative_frequency_status || 0
+          cumulative_frequency_status: rows[0].cumulative_frequency_status || 0,
+          printoptions: rows[0].printoptions,
+          chkroute: rows[0].chkroute,
+          rdesc: rows[0].rdesc,
+          stableopt: rows[0].stableopt,
+          sessprint: rows[0].sessprint,
+          autow: rows[0].autow,
+          online: rows[0].online,
+          orgtype: rows[0].orgtype,
+          printcumm: rows[0].printcumm,
+          zeroOpt: rows[0].zeroOpt
         }
       });
     }

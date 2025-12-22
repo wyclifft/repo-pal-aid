@@ -17,9 +17,10 @@ interface ReprintModalProps {
   onClose: () => void;
   receipts: PrintedReceipt[];
   companyName: string;
+  printCopies?: number;
 }
 
-export const ReprintModal = ({ open, onClose, receipts, companyName }: ReprintModalProps) => {
+export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies = 1 }: ReprintModalProps) => {
   const handleReprint = async (receipt: PrintedReceipt) => {
     if (receipt.collections.length === 0) return;
 
