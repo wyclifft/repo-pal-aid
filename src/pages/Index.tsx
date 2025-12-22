@@ -393,12 +393,39 @@ const Index = () => {
             successCount++;
             console.log('✅ Submitted to database:', referenceNo);
           } else {
+            // Check if it's a duplicate session delivery error
+            if (result.error === 'DUPLICATE_SESSION_DELIVERY') {
+              console.warn(`⚠️ Member already delivered in ${capture.session} session`);
+              toast.error(
+                `${capture.farmer_name} has already delivered in the ${capture.session} session today. Open Reprint to print the previous slip.`,
+                { duration: 6000 }
+              );
+              // Clear this capture and open reprint modal
+              setCapturedCollections([]);
+              setReprintModalOpen(true);
+              window.dispatchEvent(new CustomEvent('syncComplete'));
+              return; // Stop processing
+            }
             // API returned failure, save locally for retry
             console.warn('⚠️ Submit returned failure, saving locally');
             await saveReceipt({...capture, reference_no: referenceNo});
             offlineCount++;
           }
-        } catch (err) {
+        } catch (err: unknown) {
+          // Check if the error response contains duplicate session info
+          const errorData = (err as { data?: { error?: string; message?: string; existing_reference?: string } })?.data;
+          if (errorData?.error === 'DUPLICATE_SESSION_DELIVERY') {
+            console.warn(`⚠️ Member already delivered in ${capture.session} session`);
+            toast.error(
+              `${capture.farmer_name} has already delivered in the ${capture.session} session today. Open Reprint to print the previous slip.`,
+              { duration: 6000 }
+            );
+            // Clear this capture and open reprint modal
+            setCapturedCollections([]);
+            setReprintModalOpen(true);
+            window.dispatchEvent(new CustomEvent('syncComplete'));
+            return; // Stop processing
+          }
           console.error('❌ Submit error, saving locally:', err);
           // Network error or other failure - save to IndexedDB for later sync
           await saveReceipt(capture);

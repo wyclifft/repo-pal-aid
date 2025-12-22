@@ -64,6 +64,16 @@ async function apiRequest<T>(
       };
     }
 
+    // Handle 409 (Conflict) for duplicate session delivery - return full response
+    if (response.status === 409) {
+      return {
+        success: false,
+        error: data.error || 'Conflict',
+        message: data.message,
+        data: data, // Include full response data for existing_reference etc.
+      };
+    }
+
     if (!response.ok) {
       throw new Error(data.error || `HTTP error! status: ${response.status}`);
     }
@@ -309,15 +319,25 @@ export const milkCollectionApi = {
   /**
    * Create new milk collection
    * Returns both success status and the final reference number (may differ if backend regenerated it)
+   * Also returns error details for duplicate session delivery cases
    */
-  create: async (collection: Omit<MilkCollection, 'id' | 'created_at' | 'updated_at'>): Promise<{ success: boolean; reference_no?: string }> => {
-    const response = await apiRequest<{ reference_no: string }>('/milk-collection', {
+  create: async (collection: Omit<MilkCollection, 'id' | 'created_at' | 'updated_at'>): Promise<{ 
+    success: boolean; 
+    reference_no?: string; 
+    error?: string;
+    message?: string;
+    existing_reference?: string;
+  }> => {
+    const response = await apiRequest<{ reference_no: string; existing_reference?: string }>('/milk-collection', {
       method: 'POST',
       body: JSON.stringify(collection),
     });
     return { 
       success: response.success || false,
-      reference_no: response.data?.reference_no || collection.reference_no
+      reference_no: response.data?.reference_no || collection.reference_no,
+      error: response.error,
+      message: response.message,
+      existing_reference: response.data?.existing_reference
     };
   },
 
