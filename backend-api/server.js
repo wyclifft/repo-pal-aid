@@ -605,45 +605,58 @@ const server = http.createServer(async (req, res) => {
       
       // CHECK multOpt: If member has multOpt = 0, check for existing transaction in this session
       const cleanFarmerId = (body.farmer_id || '').replace(/^#/, '').trim();
-      const cleanSession = (body.session || '').trim();
-      
+      const rawSession = (body.session || '').trim();
+
+      // Normalize session to AM/PM for both validation and storage
+      let normalizedSession = rawSession.toUpperCase();
+      if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
+        normalizedSession = 'PM';
+      } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
+        normalizedSession = 'AM';
+      }
+
+      console.log('🧼 Normalized values:', {
+        farmer_id: { raw: body.farmer_id, clean: cleanFarmerId },
+        session: { raw: body.session, normalized: normalizedSession },
+      });
+
       // Get member's multOpt setting
       const [memberRows] = await pool.query(
         'SELECT multOpt FROM cm_members WHERE mcode = ? AND ccode = ?',
         [cleanFarmerId, ccode]
       );
-      
+
       // Default to allowing multiple if member not found or multOpt not set
       const multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null 
         ? parseInt(memberRows[0].multOpt) 
         : 1;
-      
+
       console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
-      
+
       if (multOpt === 0) {
-        // Check if member already has a produce transaction (Transtype = 'MILK') in this session today
+        // Check if member already has a milk transaction (Transtype = 'MILK') in this session today
         const [existingTransRows] = await pool.query(
           `SELECT transrefno FROM transactions 
            WHERE memberno = ? AND session = ? AND transdate = ? AND Transtype = 'MILK' AND ccode = ?
            LIMIT 1`,
-          [cleanFarmerId, cleanSession, transdate, ccode]
+          [cleanFarmerId, normalizedSession, transdate, ccode]
         );
-        
+
         if (existingTransRows.length > 0) {
           const existingRef = existingTransRows[0].transrefno;
-          console.log(`⚠️ Member ${cleanFarmerId} already delivered in ${cleanSession} session today. Existing ref: ${existingRef}`);
+          console.log(`⚠️ Member ${cleanFarmerId} already delivered in ${normalizedSession} session today. Existing ref: ${existingRef}`);
           return sendJSON(res, { 
             success: false, 
             error: 'DUPLICATE_SESSION_DELIVERY',
-            message: `Member already delivered in ${cleanSession} session today`,
+            message: `Member already delivered in ${normalizedSession} session today`,
             existing_reference: existingRef,
             farmer_id: cleanFarmerId,
-            session: cleanSession,
+            session: normalizedSession,
             date: transdate
           }, 409); // 409 Conflict
         }
       }
-    
+
       // Helper function to attempt insert with auto-regeneration on duplicate
       // Infinite retries for production - will keep trying until unique reference is generated
       const attemptInsert = async (attemptTransrefno) => {
@@ -657,10 +670,23 @@ const server = http.createServer(async (req, res) => {
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
                  amount, icode, time, capType, entry_type)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
-              [attemptTransrefno, clerk, clerk, deviceserial, body.farmer_id, body.route, body.weight, 
-               body.session, transdate, transtime, ccode, timestamp, body.entry_type || 'manual']
+              [
+                attemptTransrefno,
+                clerk,
+                clerk,
+                deviceserial,
+                cleanFarmerId,
+                body.route,
+                body.weight,
+                normalizedSession,
+                transdate,
+                transtime,
+                ccode,
+                timestamp,
+                body.entry_type || 'manual',
+              ]
             );
-            
+
             console.log('✅ BACKEND: NEW record INSERTED successfully with reference:', attemptTransrefno);
             return { success: true, reference_no: attemptTransrefno };
           } catch (error) {
