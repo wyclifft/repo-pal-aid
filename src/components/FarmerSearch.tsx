@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { type Farmer } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { Progress } from '@/components/ui/progress';
 import { Loader2, Ban } from 'lucide-react';
 
@@ -15,6 +16,7 @@ interface FarmerSearchProps {
 }
 
 export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, blacklistedFarmerIds, onFarmersLoaded }: FarmerSearchProps) => {
+  const { useRouteFilter } = useAppSettings();
   const [searchQuery, setSearchQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<Farmer[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -31,12 +33,13 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
   }, [value]);
 
   // Load cached farmers immediately on mount and when route changes
+  // chkroute: 0 = filter by tank prefix only (no route filter), 1 = filter by selected route
   useEffect(() => {
     const loadCached = async () => {
       try {
         const farmers = await getFarmers();
-        // Filter by route if selected
-        const filtered = selectedRoute 
+        // Filter by route only if useRouteFilter (chkroute=1) is enabled
+        const filtered = (useRouteFilter && selectedRoute)
           ? farmers.filter(f => f.route === selectedRoute)
           : farmers;
         setCachedFarmers(filtered);
@@ -49,7 +52,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
       }
     };
     loadCached();
-  }, [getFarmers, selectedRoute, onFarmersLoaded]);
+  }, [getFarmers, selectedRoute, onFarmersLoaded, useRouteFilter]);
 
   const searchFarmers = useCallback((query: string, farmers: Farmer[]) => {
     // Filter out blacklisted farmers (multOpt=0 who already delivered this session)
@@ -78,6 +81,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
   }, [searchQuery, cachedFarmers, searchFarmers]);
 
   // Sync farmers from MySQL API (device-filtered) on mount, route change, and when online
+  // chkroute: 0 = no route filter (tank prefix only), 1 = filter by selected route
   useEffect(() => {
     const syncFarmers = async () => {
       if (navigator.onLine) {
@@ -93,15 +97,16 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
           const deviceFingerprint = await generateDeviceFingerprint();
           
           setSyncProgress(40);
-          // Pass route filter to API if selected
-          const response = await mysqlApi.farmers.getByDevice(deviceFingerprint, selectedRoute || undefined);
+          // Pass route filter to API only if useRouteFilter (chkroute=1) is enabled
+          const routeParam = useRouteFilter ? (selectedRoute || undefined) : undefined;
+          const response = await mysqlApi.farmers.getByDevice(deviceFingerprint, routeParam);
           setSyncProgress(70);
           
           if (response.success && response.data && response.data.length > 0) {
             setFarmerCount(response.data.length);
             setSyncProgress(90);
-            // Only save all farmers if no route filter (to keep full cache)
-            if (!selectedRoute) {
+            // Only save all farmers if no route filter or chkroute=0 (to keep full cache)
+            if (!useRouteFilter || !selectedRoute) {
               await saveFarmers(response.data);
             }
             setCachedFarmers(response.data);
@@ -110,7 +115,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
               onFarmersLoaded(response.data);
             }
             setSyncProgress(100);
-            console.log(`✅ Synced ${response.data.length} farmers${selectedRoute ? ` for route ${selectedRoute}` : ''} from MySQL`);
+            console.log(`✅ Synced ${response.data.length} farmers${useRouteFilter && selectedRoute ? ` for route ${selectedRoute}` : ''} from MySQL`);
             
             // Keep success state visible for a moment
             setTimeout(() => {
@@ -142,7 +147,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
     syncFarmers();
     window.addEventListener('online', syncFarmers);
     return () => window.removeEventListener('online', syncFarmers);
-  }, [saveFarmers, selectedRoute]);
+  }, [saveFarmers, selectedRoute, useRouteFilter]);
 
   // Poll for farmers updates every 5 minutes when online (device-filtered)
   useEffect(() => {

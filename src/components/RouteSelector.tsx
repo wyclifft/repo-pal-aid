@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { mysqlApi, Route } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { Loader2, MapPin } from 'lucide-react';
 
 interface RouteSelectorProps {
@@ -14,6 +15,7 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
   const [routes, setRoutes] = useState<Route[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const { getRoutes, saveRoutes, isReady } = useIndexedDB();
+  const { routeLabel, useRouteFilter } = useAppSettings();
 
   // Load routes on mount
   const loadRoutes = useCallback(async () => {
@@ -79,7 +81,7 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
     <div className="relative">
       <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
         <MapPin className="h-4 w-4 text-[#667eea]" />
-        Select Route <span className="text-red-500">*</span>
+        Select {routeLabel} <span className="text-red-500">*</span>
       </label>
       <div className="relative">
         <select
@@ -90,7 +92,7 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
             selectedRoute ? 'border-green-500 bg-green-50' : 'border-gray-300'
           } ${disabled || isLoading ? 'bg-gray-100 cursor-not-allowed' : ''}`}
         >
-          <option value="">-- Select a Route --</option>
+          <option value="">-- Select a {routeLabel} --</option>
           {routes.map((route) => (
             <option key={route.tcode} value={route.tcode}>
               {route.descript} ({route.tcode})
@@ -105,12 +107,12 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
       </div>
       {routes.length === 0 && !isLoading && (
         <p className="text-xs text-amber-600 mt-1">
-          No routes available. Check device authorization.
+          No {routeLabel.toLowerCase()}s available. Check device authorization.
         </p>
       )}
       {!selectedRoute && routes.length > 0 && (
         <p className="text-xs text-red-500 mt-1">
-          Please select a route before searching farmers
+          Please select a {routeLabel.toLowerCase()} before searching farmers
         </p>
       )}
     </div>
