@@ -31,6 +31,11 @@ export interface MilkCollection {
   weight: number;
   clerk_name: string;
   collection_date: Date;
+  /**
+   * Snapshot of member multOpt at the time of capture.
+   * 0 = single delivery per session, 1 = multiple allowed.
+   */
+  multOpt?: number;
   orderId?: number;
   synced?: boolean;
 }

@@ -74,14 +74,35 @@ export const useDataSync = () => {
 
         try {
           console.log(`🔄 Attempting to sync: ${receipt.reference_no}`);
-          
+
           // Normalize session to AM/PM - handle legacy data that might have description
           let normalizedSession: 'AM' | 'PM' = 'AM';
           const sessionVal = String(receipt.session || '').trim().toUpperCase();
           if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
             normalizedSession = 'PM';
           }
-          
+
+          // Client-side FINAL GUARD for multOpt=0 during background sync
+          if (receipt.multOpt === 0) {
+            const receiptDate = new Date(receipt.collection_date).toISOString().split('T')[0];
+            const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
+              String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+              normalizedSession,
+              receiptDate,
+              receiptDate,
+              deviceFingerprint
+            );
+
+            if (existing) {
+              console.log(`⏭️ Skipping multOpt=0 duplicate (already exists): ${receipt.reference_no}`);
+              if (receipt.orderId) {
+                await deleteReceipt(receipt.orderId);
+              }
+              synced++;
+              continue;
+            }
+          }
+
           const result = await mysqlApi.milkCollection.create({
             reference_no: receipt.reference_no,
             farmer_id: String(receipt.farmer_id || '').replace(/^#/, '').trim(),
