@@ -201,7 +201,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   // Derived helper values
   const isDairy = settings.orgtype === 'D';
   const isCoffee = settings.orgtype === 'C';
-  const routeLabel = settings.rdesc || (isDairy ? 'Route' : 'Center');
+  // Trim rdesc since DB column may have trailing whitespace
+  const trimmedRdesc = settings.rdesc?.trim();
+  const routeLabel = trimmedRdesc || (isDairy ? 'Route' : 'Center');
   const centerLabel = isCoffee ? 'Center' : 'Route';
   const produceLabel = isDairy ? 'Milk' : 'Coffee';
   const requireStableReading = settings.stableopt === 1;
