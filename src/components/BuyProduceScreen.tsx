@@ -21,6 +21,8 @@ interface BuyProduceScreenProps {
   selectedFarmer: { id: string; name: string } | null;
   todayWeight: number;
   onManualWeightChange?: (weight: number) => void;
+  blacklistedFarmerIds?: Set<string>; // Farmers who already delivered (multOpt=0)
+  onFarmersLoaded?: (farmers: Farmer[]) => void;
 }
 
 export const BuyProduceScreen = ({
@@ -37,6 +39,8 @@ export const BuyProduceScreen = ({
   selectedFarmer,
   todayWeight,
   onManualWeightChange,
+  blacklistedFarmerIds,
+  onFarmersLoaded,
 }: BuyProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -55,21 +59,30 @@ export const BuyProduceScreen = ({
           ? farmers.filter(f => f.route === route.tcode)
           : farmers;
         setCachedFarmers(filtered);
+        // Notify parent of loaded farmers
+        if (onFarmersLoaded) {
+          onFarmersLoaded(filtered);
+        }
       } catch (err) {
         console.error('Failed to load farmers:', err);
       }
     };
     loadFarmers();
-  }, [getFarmers, route?.tcode]);
+  }, [getFarmers, route?.tcode, onFarmersLoaded]);
 
-  // Resolve numeric input to full farmer ID
+  // Filter out blacklisted farmers for display
+  const availableFarmers = blacklistedFarmerIds && blacklistedFarmerIds.size > 0
+    ? cachedFarmers.filter(f => !blacklistedFarmerIds.has(f.farmer_id.replace(/^#/, '').trim()))
+    : cachedFarmers;
+
+  // Resolve numeric input to full farmer ID (only from available farmers)
   const resolveFarmerId = (input: string): Farmer | null => {
     if (!input.trim()) return null;
     
     const numericInput = input.replace(/\D/g, '');
     
     // Search by exact farmer_id first
-    const exactMatch = cachedFarmers.find(
+    const exactMatch = availableFarmers.find(
       f => f.farmer_id.toLowerCase() === input.toLowerCase()
     );
     if (exactMatch) return exactMatch;
@@ -77,17 +90,27 @@ export const BuyProduceScreen = ({
     // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
     if (numericInput && numericInput === input.trim()) {
       const paddedId = `M${numericInput.padStart(5, '0')}`;
-      const paddedMatch = cachedFarmers.find(
+      const paddedMatch = availableFarmers.find(
         f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
       );
       if (paddedMatch) return paddedMatch;
       
       // Also try matching by numeric portion
-      const numericMatch = cachedFarmers.find(f => {
+      const numericMatch = availableFarmers.find(f => {
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
         return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
       });
       if (numericMatch) return numericMatch;
+    }
+    
+    // Check if farmer is blacklisted
+    const blacklisted = cachedFarmers.find(
+      f => f.farmer_id.toLowerCase() === input.toLowerCase() || 
+           f.farmer_id.replace(/\D/g, '') === numericInput
+    );
+    if (blacklisted && blacklistedFarmerIds?.has(blacklisted.farmer_id.replace(/^#/, '').trim())) {
+      toast.error(`${blacklisted.name} has already delivered this session`);
+      return null;
     }
     
     return null;
@@ -209,7 +232,7 @@ export const BuyProduceScreen = ({
           isOpen={showSearchModal}
           onClose={() => setShowSearchModal(false)}
           onSelectFarmer={handleSelectFarmer}
-          farmers={cachedFarmers}
+          farmers={availableFarmers}
         />
 
         {/* Member Info Card */}

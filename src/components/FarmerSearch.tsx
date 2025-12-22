@@ -3,16 +3,18 @@ import { type Farmer } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { Progress } from '@/components/ui/progress';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Ban } from 'lucide-react';
 
 interface FarmerSearchProps {
   onSelectFarmer: (farmer: Farmer) => void;
   value: string;
   selectedRoute?: string; // Route tcode to filter farmers
   disabled?: boolean;
+  blacklistedFarmerIds?: Set<string>; // Farmers who already delivered (multOpt=0)
+  onFarmersLoaded?: (farmers: Farmer[]) => void; // Callback when farmers are loaded
 }
 
-export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled }: FarmerSearchProps) => {
+export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, blacklistedFarmerIds, onFarmersLoaded }: FarmerSearchProps) => {
   const [searchQuery, setSearchQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<Farmer[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -38,29 +40,38 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled }:
           ? farmers.filter(f => f.route === selectedRoute)
           : farmers;
         setCachedFarmers(filtered);
+        // Notify parent of loaded farmers
+        if (onFarmersLoaded) {
+          onFarmersLoaded(filtered);
+        }
       } catch (err) {
         console.error('Failed to load cached farmers:', err);
       }
     };
     loadCached();
-  }, [getFarmers, selectedRoute]);
+  }, [getFarmers, selectedRoute, onFarmersLoaded]);
 
   const searchFarmers = useCallback((query: string, farmers: Farmer[]) => {
+    // Filter out blacklisted farmers (multOpt=0 who already delivered this session)
+    const availableFarmers = blacklistedFarmerIds && blacklistedFarmerIds.size > 0
+      ? farmers.filter(f => !blacklistedFarmerIds.has(f.farmer_id.replace(/^#/, '').trim()))
+      : farmers;
+    
     // Show suggestions immediately on focus, even with empty query
     if (!query) {
-      setSuggestions(farmers.slice(0, 10));
+      setSuggestions(availableFarmers.slice(0, 10));
       return;
     }
 
     const lowerQuery = query.toLowerCase();
-    const filtered = farmers.filter((f) => {
+    const filtered = availableFarmers.filter((f) => {
       const idMatch = String(f.farmer_id || '').toLowerCase().startsWith(lowerQuery);
       const nameMatch = String(f.name || '').toLowerCase().includes(lowerQuery);
       return idMatch || nameMatch;
     });
     
     setSuggestions(filtered.slice(0, 10));
-  }, []);
+  }, [blacklistedFarmerIds]);
 
   useEffect(() => {
     searchFarmers(searchQuery, cachedFarmers);
@@ -94,6 +105,10 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled }:
               await saveFarmers(response.data);
             }
             setCachedFarmers(response.data);
+            // Notify parent of loaded farmers
+            if (onFarmersLoaded) {
+              onFarmersLoaded(response.data);
+            }
             setSyncProgress(100);
             console.log(`✅ Synced ${response.data.length} farmers${selectedRoute ? ` for route ${selectedRoute}` : ''} from MySQL`);
             

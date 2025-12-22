@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Login } from '@/components/Login';
 import { Dashboard } from '@/components/Dashboard';
@@ -13,6 +13,7 @@ import { type Route, type Session } from '@/services/mysqlApi';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useDataSync } from '@/hooks/useDataSync';
+import { useSessionBlacklist } from '@/hooks/useSessionBlacklist';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateOfflineReference } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
@@ -109,6 +110,41 @@ const Index = () => {
   
   // Data sync hook for background syncing
   const { isSyncing, pendingCount, syncAllData } = useDataSync();
+
+  // Session blacklist for farmers with multOpt=0
+  const [loadedFarmers, setLoadedFarmers] = useState<Farmer[]>([]);
+  const activeSessionTimeFrom = activeSession ? 
+    (typeof activeSession.time_from === 'number' ? activeSession.time_from : parseInt(String(activeSession.time_from), 10)) 
+    : undefined;
+  const { blacklistedFarmerIds, addToBlacklist, refreshBlacklist, clearBlacklist } = useSessionBlacklist(activeSessionTimeFrom);
+  
+  // Get set of farmer IDs with multOpt=0
+  const farmersWithMultOptZero = useCallback(() => {
+    const set = new Set<string>();
+    loadedFarmers.forEach(f => {
+      if (f.multOpt === 0) {
+        set.add(f.farmer_id.replace(/^#/, '').trim());
+      }
+    });
+    return set;
+  }, [loadedFarmers]);
+
+  // Handle farmers loaded from FarmerSearch
+  const handleFarmersLoaded = useCallback((farmers: Farmer[]) => {
+    setLoadedFarmers(farmers);
+  }, []);
+
+  // Refresh blacklist when session changes, farmers load, or captures change
+  useEffect(() => {
+    if (activeSession && loadedFarmers.length > 0) {
+      refreshBlacklist(capturedCollections, farmersWithMultOptZero());
+    }
+  }, [activeSession, loadedFarmers, capturedCollections, refreshBlacklist, farmersWithMultOptZero]);
+
+  // Clear blacklist when session changes
+  useEffect(() => {
+    clearBlacklist();
+  }, [activeSession?.descript, clearBlacklist]);
 
   // Load printed receipts from IndexedDB on mount and filter out old ones
   useEffect(() => {
@@ -407,6 +443,11 @@ const Index = () => {
     // Add to captured collections for display
     setCapturedCollections(prev => [...prev, captureData]);
     
+    // If farmer has multOpt=0, add to blacklist so they can't be selected again this session
+    if (farmerMultOpt === 0) {
+      addToBlacklist(cleanFarmerId);
+    }
+    
     // Store the saved weight for next collection check
     setLastSavedWeight(weight);
 
@@ -670,6 +711,8 @@ const Index = () => {
             setWeight(w);
             setEntryType('manual');
           }}
+          blacklistedFarmerIds={blacklistedFarmerIds}
+          onFarmersLoaded={handleFarmersLoaded}
         />
       ) : (
         <SellProduceScreen
