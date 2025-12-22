@@ -3,30 +3,38 @@ import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { API_CONFIG } from '@/config/api';
 
 // App settings interface based on psettings table
+// Maps exactly to database columns: printOptions, chkRoute, rdesc, stableOpt, 
+// sessPrint, AutoW, onlinemode, orgtype, printcumm, zeroopt
 export interface AppSettings {
-  // Number of print copies per transaction (default: 1)
+  // Number of print copies per transaction (DB: printOptions, default: 1)
   printoptions: number;
-  // Route filtering: 0 = by tank prefix only, 1 = by selected route
+  // Route filtering: 0 = by tank prefix only, 1 = by selected route (DB: chkRoute)
   chkroute: number;
-  // Route label: "Route" (dairy) or "Center" (coffee)
+  // Route label: "Route" (dairy) or "Center" (coffee) (DB: rdesc)
   rdesc: string;
-  // Stable reading: 1 = wait for stable scale reading before capture
+  // Stable reading: 1 = wait for stable scale reading before capture (DB: stableOpt)
   stableopt: number;
-  // Session print: 1 = print Z-reports only after successful sync
+  // Session print: 1 = print Z-reports only after successful sync (DB: sessPrint)
   sessprint: number;
-  // Auto weight: 1 = restrict weight entry to digital scale only
+  // Auto weight: 1 = restrict weight entry to digital scale only (DB: AutoW)
   autow: number;
-  // Online mode: 1 = offline-first, 0 = background sync
+  // Online mode: 1 = offline-first, 0 = background sync (DB: onlinemode)
   online: number;
-  // Organization type: "D" = dairy, "C" = coffee
+  // Organization type: "D" = dairy, "C" = coffee (DB: orgtype)
   orgtype: string;
-  // Print cumulative: 1 = show monthly cumulative on slips
+  // Print cumulative: 1 = show monthly cumulative on slips (DB: printcumm)
   printcumm: number;
-  // Zero option: 1 = require scale to return to zero before new capture
+  // Zero option: 1 = require scale to return to zero before new capture (DB: zeroopt)
   zeroOpt: number;
-  // Company name
+  // Company name (DB: cname)
   company_name: string | null;
-  // Cumulative frequency status (legacy)
+  // Company address (DB: caddress)
+  caddress: string | null;
+  // Company telephone (DB: tel)
+  tel: string | null;
+  // Company email (DB: email)
+  email: string | null;
+  // Cumulative frequency status (DB: cumulative_frequency_status)
   cumulative_frequency_status: number;
 }
 
@@ -43,6 +51,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   printcumm: 0,
   zeroOpt: 0,
   company_name: null,
+  caddress: null,
+  tel: null,
+  email: null,
   cumulative_frequency_status: 0
 };
 
@@ -155,6 +166,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             printcumm: deviceData.app_settings?.printcumm ?? DEFAULT_SETTINGS.printcumm,
             zeroOpt: deviceData.app_settings?.zeroOpt ?? DEFAULT_SETTINGS.zeroOpt,
             company_name: deviceData.company_name ?? DEFAULT_SETTINGS.company_name,
+            caddress: deviceData.app_settings?.caddress ?? DEFAULT_SETTINGS.caddress,
+            tel: deviceData.app_settings?.tel ?? DEFAULT_SETTINGS.tel,
+            email: deviceData.app_settings?.email ?? DEFAULT_SETTINGS.email,
             cumulative_frequency_status: deviceData.cumulative_frequency_status ?? DEFAULT_SETTINGS.cumulative_frequency_status
           };
           
