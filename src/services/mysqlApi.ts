@@ -159,6 +159,7 @@ export interface Farmer {
   farmer_id: string;
   name: string;
   route: string;
+  multOpt?: number; // 0 = single delivery per session, 1 = multiple allowed
   created_at?: string;
   updated_at?: string;
 }

@@ -5,6 +5,7 @@ export interface Farmer {
   farmer_id: string;
   name: string;
   route: string;
+  multOpt?: number; // 0 = single delivery per session, 1 = multiple allowed
 }
 
 export interface AppUser {
