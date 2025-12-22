@@ -602,6 +602,47 @@ const server = http.createServer(async (req, res) => {
       const transdate = collectionDate.toISOString().split('T')[0]; // YYYY-MM-DD
       const transtime = collectionDate.toTimeString().split(' ')[0]; // HH:MM:SS
       const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
+      
+      // CHECK multOpt: If member has multOpt = 0, check for existing transaction in this session
+      const cleanFarmerId = (body.farmer_id || '').replace(/^#/, '').trim();
+      const cleanSession = (body.session || '').trim();
+      
+      // Get member's multOpt setting
+      const [memberRows] = await pool.query(
+        'SELECT multOpt FROM cm_members WHERE mcode = ? AND ccode = ?',
+        [cleanFarmerId, ccode]
+      );
+      
+      // Default to allowing multiple if member not found or multOpt not set
+      const multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null 
+        ? parseInt(memberRows[0].multOpt) 
+        : 1;
+      
+      console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
+      
+      if (multOpt === 0) {
+        // Check if member already has a produce transaction (Transtype = 'MILK') in this session today
+        const [existingTransRows] = await pool.query(
+          `SELECT transrefno FROM transactions 
+           WHERE memberno = ? AND session = ? AND transdate = ? AND Transtype = 'MILK' AND ccode = ?
+           LIMIT 1`,
+          [cleanFarmerId, cleanSession, transdate, ccode]
+        );
+        
+        if (existingTransRows.length > 0) {
+          const existingRef = existingTransRows[0].transrefno;
+          console.log(`⚠️ Member ${cleanFarmerId} already delivered in ${cleanSession} session today. Existing ref: ${existingRef}`);
+          return sendJSON(res, { 
+            success: false, 
+            error: 'DUPLICATE_SESSION_DELIVERY',
+            message: `Member already delivered in ${cleanSession} session today`,
+            existing_reference: existingRef,
+            farmer_id: cleanFarmerId,
+            session: cleanSession,
+            date: transdate
+          }, 409); // 409 Conflict
+        }
+      }
     
       // Helper function to attempt insert with auto-regeneration on duplicate
       // Infinite retries for production - will keep trying until unique reference is generated
