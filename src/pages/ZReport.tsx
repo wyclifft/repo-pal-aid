@@ -5,17 +5,25 @@ import { mysqlApi, type ZReportData } from '@/services/mysqlApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Download, Printer, Calendar } from 'lucide-react';
+import { ArrowLeft, Download, Printer, Calendar, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useAppSettings } from '@/hooks/useAppSettings';
 
 const ZReport = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  // App settings
+  const { sessionPrintOnly, routeLabel } = useAppSettings();
+  
+  // Sync status tracking for sessprint enforcement
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [isSyncComplete, setIsSyncComplete] = useState(true);
 
   // Check authentication
   useEffect(() => {
@@ -28,7 +36,29 @@ const ZReport = () => {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
   
-  const { saveZReport, getZReport } = useIndexedDB();
+  const { saveZReport, getZReport, getUnsyncedReceipts } = useIndexedDB();
+
+  // Check for pending syncs (for sessprint enforcement)
+  useEffect(() => {
+    const checkPendingSync = async () => {
+      try {
+        const unsynced = await getUnsyncedReceipts();
+        const receiptsOnly = unsynced.filter((r: any) => r.type !== 'sale');
+        setPendingSyncCount(receiptsOnly.length);
+        setIsSyncComplete(receiptsOnly.length === 0);
+      } catch (err) {
+        console.error('Failed to check pending sync:', err);
+      }
+    };
+    
+    checkPendingSync();
+    
+    // Listen for sync events
+    const handleSyncComplete = () => checkPendingSync();
+    window.addEventListener('syncComplete', handleSyncComplete);
+    
+    return () => window.removeEventListener('syncComplete', handleSyncComplete);
+  }, [getUnsyncedReceipts]);
 
   useEffect(() => {
     const initDevice = async () => {
@@ -109,10 +139,20 @@ const ZReport = () => {
   };
 
   const handlePrint = () => {
+    // Enforce sessprint: only print if sync is complete
+    if (sessionPrintOnly && !isSyncComplete) {
+      toast.error(`Cannot print Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
+      return;
+    }
     window.print();
   };
 
   const handleDownloadPDF = () => {
+    // Enforce sessprint: only download if sync is complete
+    if (sessionPrintOnly && !isSyncComplete) {
+      toast.error(`Cannot download Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
+      return;
+    }
     if (reportData) {
       generateZReportPDF(reportData);
       toast.success('PDF downloaded successfully');
@@ -141,11 +181,21 @@ const ZReport = () => {
             <DeviceAuthStatus />
           </div>
           <div className="flex gap-2">
-            <Button onClick={handlePrint} variant="outline" size="sm">
+          <Button 
+              onClick={handlePrint} 
+              variant="outline" 
+              size="sm"
+              disabled={sessionPrintOnly && !isSyncComplete}
+            >
               <Printer className="mr-2 h-4 w-4" />
               Print
             </Button>
-            <Button onClick={handleDownloadPDF} variant="outline" size="sm">
+            <Button 
+              onClick={handleDownloadPDF} 
+              variant="outline" 
+              size="sm"
+              disabled={sessionPrintOnly && !isSyncComplete}
+            >
               <Download className="mr-2 h-4 w-4" />
               PDF
             </Button>
@@ -154,6 +204,23 @@ const ZReport = () => {
       </header>
 
       <div className="max-w-6xl mx-auto p-4 space-y-4">
+        {/* Sessprint Warning Banner */}
+        {sessionPrintOnly && !isSyncComplete && (
+          <Card className="border-amber-500 bg-amber-50">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-6 w-6 text-amber-600" />
+                <div>
+                  <p className="font-semibold text-amber-800">Z-Report Printing Blocked</p>
+                  <p className="text-sm text-amber-700">
+                    {pendingSyncCount} collection{pendingSyncCount !== 1 ? 's' : ''} pending sync. 
+                    Print/download will be enabled after all data is synced.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
         {/* Thermal Print Layout - Only visible on print */}
         {reportData && (
           <div className="thermal-print">
@@ -285,13 +352,13 @@ const ZReport = () => {
             {/* By Route */}
             <Card>
               <CardHeader>
-                <CardTitle>By Route</CardTitle>
+                <CardTitle>By {routeLabel}</CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Route</TableHead>
+                      <TableHead>{routeLabel}</TableHead>
                       <TableHead className="text-right">AM Entries</TableHead>
                       <TableHead className="text-right">PM Entries</TableHead>
                       <TableHead className="text-right">Total Liters</TableHead>

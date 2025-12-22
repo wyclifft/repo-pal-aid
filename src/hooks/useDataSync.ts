@@ -5,6 +5,20 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
 
+// Get offlineFirstMode from localStorage (cached from useAppSettings)
+const getOfflineFirstMode = (): boolean => {
+  try {
+    const cached = localStorage.getItem('app_settings');
+    if (cached) {
+      const settings = JSON.parse(cached);
+      return settings.online === 1; // online=1 means offline-first mode
+    }
+  } catch (e) {
+    console.warn('Failed to read offline mode setting:', e);
+  }
+  return false; // Default to background sync
+};
+
 export const useDataSync = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
@@ -12,6 +26,8 @@ export const useDataSync = () => {
   // Member sync state for banner display
   const [isSyncingMembers, setIsSyncingMembers] = useState(false);
   const [memberSyncCount, setMemberSyncCount] = useState(0);
+  // Offline-first mode from psettings.online
+  const [offlineFirstMode, setOfflineFirstMode] = useState(getOfflineFirstMode);
   const mountedRef = useRef(true);
   const periodicSyncRef = useRef<NodeJS.Timeout | null>(null);
   
@@ -29,7 +45,21 @@ export const useDataSync = () => {
 
   const { acquireLock, releaseLock, registerOnlineHandler } = useSyncManager();
 
+  // Update offlineFirstMode when settings change
+  useEffect(() => {
+    const checkSettings = () => {
+      setOfflineFirstMode(getOfflineFirstMode());
+    };
+    
+    // Check on mount and when storage changes
+    checkSettings();
+    window.addEventListener('storage', checkSettings);
+    return () => window.removeEventListener('storage', checkSettings);
+  }, []);
+
   // Sync offline receipts TO backend with deduplication
+  // In offline-first mode (online=1), this is only triggered manually or on explicit sync
+  // In background sync mode (online=0), this runs automatically
   const syncOfflineReceipts = useCallback(async (): Promise<{ synced: number; failed: number }> => {
     if (!isReady || !navigator.onLine) {
       console.log('📴 Sync skipped: not ready or offline');
@@ -357,24 +387,37 @@ export const useDataSync = () => {
   }, [isReady]); // Only depend on isReady
 
   // Register centralized online handler
+  // In offline-first mode (online=1), auto-sync is disabled - user must manually trigger
   useEffect(() => {
+    // Skip auto-sync on reconnect in offline-first mode
+    if (offlineFirstMode) {
+      console.log('📴 Offline-first mode: auto-sync on reconnect disabled');
+      return;
+    }
+    
     const unregister = registerOnlineHandler(() => {
       if (mountedRef.current && isReady) {
-        console.log('📡 Online handler triggered');
+        console.log('📡 Online handler triggered (background mode)');
         syncAllData(false, false); // Don't show member banner on auto-reconnect
       }
     });
 
     return unregister;
-  }, [isReady, registerOnlineHandler, syncAllData]);
+  }, [isReady, registerOnlineHandler, syncAllData, offlineFirstMode]);
 
-  // Periodic sync every 5 minutes
+  // Periodic sync every 5 minutes (only in background sync mode, online=0)
   useEffect(() => {
     if (!isReady) return;
+    
+    // Skip periodic sync in offline-first mode
+    if (offlineFirstMode) {
+      console.log('📴 Offline-first mode: periodic sync disabled');
+      return;
+    }
 
     periodicSyncRef.current = setInterval(() => {
       if (navigator.onLine && mountedRef.current) {
-        console.log('🔄 Periodic sync');
+        console.log('🔄 Periodic sync (background mode)');
         syncAllData(true, false); // Don't show member banner on periodic sync
       }
     }, 5 * 60 * 1000);
@@ -384,7 +427,7 @@ export const useDataSync = () => {
         clearInterval(periodicSyncRef.current);
       }
     };
-  }, [isReady]); // Only depend on isReady
+  }, [isReady, offlineFirstMode]); // Only depend on isReady and offlineFirstMode
 
   // Update pending count on mount
   useEffect(() => {
@@ -408,6 +451,8 @@ export const useDataSync = () => {
     updatePendingCount,
     // Member sync state for banner
     isSyncingMembers,
-    memberSyncCount
+    memberSyncCount,
+    // Expose offline-first mode for UI components
+    offlineFirstMode
   };
 };
