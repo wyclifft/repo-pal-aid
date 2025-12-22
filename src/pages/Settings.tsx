@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
-import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2 } from "lucide-react";
+import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2 } from "lucide-react";
+import { useAppSettings } from "@/hooks/useAppSettings";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 const Settings = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const { settings, isLoading: isLoadingSettings, refreshSettings, routeLabel } = useAppSettings();
   const [scaleConnected, setScaleConnected] = useState(false);
 
   // Check authentication
@@ -602,7 +604,78 @@ Date: ${new Date().toLocaleString()}
           </CardContent>
         </Card>
 
-        {/* Platform Info */}
+        {/* App Settings */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Settings2 className="h-5 w-5 text-primary" />
+                <div>
+                  <CardTitle>App Settings</CardTitle>
+                  <CardDescription>Settings synced from psettings table</CardDescription>
+                </div>
+              </div>
+              {isLoadingSettings && (
+                <Badge variant="secondary" className="gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading...
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Route Label (rdesc):</span>
+                <span className="font-medium">{settings.rdesc || '(empty)'}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Computed Route Label:</span>
+                <span className="font-medium">{routeLabel}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Org Type:</span>
+                <span className="font-medium">{settings.orgtype} ({settings.orgtype === 'D' ? 'Dairy' : 'Coffee'})</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Print Copies:</span>
+                <span className="font-medium">{settings.printoptions}</span>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="flex gap-2">
+              <Button
+                onClick={async () => {
+                  await refreshSettings();
+                  toast.success('App settings refreshed');
+                }}
+                disabled={isLoadingSettings || !navigator.onLine}
+                className="flex-1 gap-2"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Refresh Settings
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  localStorage.removeItem('app_settings');
+                  localStorage.removeItem('app_settings_ccode');
+                  window.location.reload();
+                }}
+                className="gap-2"
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear Cache
+              </Button>
+            </div>
+            
+            <p className="text-xs text-muted-foreground text-center">
+              Clear cache forces a complete refresh from the database (psettings table).
+            </p>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader>
             <CardTitle className="text-sm">System Information</CardTitle>
