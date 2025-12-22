@@ -209,7 +209,8 @@ const server = http.createServer(async (req, res) => {
       const routeFilter = parsedUrl.query.route;
       
       // Get farmers for this company, optionally filtered by route
-      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode FROM cm_members WHERE ccode = ?';
+      // Include multOpt to enable client-side duplicate session enforcement
+      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, IFNULL(multOpt, 1) as multOpt FROM cm_members WHERE ccode = ?';
       let params = [ccode];
       
       // Filter by route if specified

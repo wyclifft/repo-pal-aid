@@ -85,6 +85,7 @@ const Index = () => {
   };
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
+  const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null); // Full farmer object with multOpt
   const [route, setRoute] = useState('');
   const [routeName, setRouteName] = useState('');
   const [selectedRouteCode, setSelectedRouteCode] = useState(''); // tcode from fm_tanks
@@ -162,6 +163,7 @@ const Index = () => {
     setFarmerId(cleanFarmerId);
     setFarmerName(farmer.name);
     setRoute(farmer.route);
+    setSelectedFarmer(farmer); // Store full farmer object including multOpt
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
   };
 
@@ -202,6 +204,7 @@ const Index = () => {
   const handleClearFarmer = () => {
     setFarmerId('');
     setFarmerName('');
+    setSelectedFarmer(null);
     setRoute('');
     setSearchValue('');
     setWeight(0);
@@ -216,6 +219,7 @@ const Index = () => {
     setRouteName('');
     setFarmerId('');
     setFarmerName('');
+    setSelectedFarmer(null);
     setRoute('');
     setSearchValue('');
     setWeight(0);
@@ -291,6 +295,80 @@ const Index = () => {
       return;
     }
 
+    // Derive AM/PM from the active session's time_from (hour-based)
+    const timeFrom = typeof activeSession.time_from === 'number' 
+      ? activeSession.time_from 
+      : parseInt(String(activeSession.time_from), 10);
+    const currentSessionType: 'AM' | 'PM' = (timeFrom >= 12) ? 'PM' : 'AM';
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+    // ========== multOpt=0 DUPLICATE SESSION CHECK (works online & offline) ==========
+    // If farmer has multOpt=0, only ONE delivery per session per day is allowed
+    const farmerMultOpt = selectedFarmer?.multOpt ?? 1; // Default to 1 (allow multiple)
+    
+    if (farmerMultOpt === 0) {
+      const cleanFarmerIdCheck = farmerId.replace(/^#/, '').trim();
+      
+      // 1. Check current captured collections (not yet submitted)
+      const alreadyCaptured = capturedCollections.some(
+        c => c.farmer_id === cleanFarmerIdCheck && c.session === currentSessionType
+      );
+      if (alreadyCaptured) {
+        toast.error(
+          `${farmerName} can only deliver ONCE per ${currentSessionType} session. Already captured.`,
+          { duration: 5000 }
+        );
+        return;
+      }
+
+      // 2. Check IndexedDB for unsynced receipts (offline collections)
+      try {
+        const unsyncedReceipts = await getUnsyncedReceipts();
+        const offlineDuplicate = unsyncedReceipts.some((r: MilkCollection) => {
+          const receiptDate = new Date(r.collection_date).toISOString().split('T')[0];
+          return (
+            r.farmer_id === cleanFarmerIdCheck &&
+            r.session === currentSessionType &&
+            receiptDate === today
+          );
+        });
+        if (offlineDuplicate) {
+          toast.error(
+            `${farmerName} can only deliver ONCE per ${currentSessionType} session. Found in pending sync.`,
+            { duration: 5000 }
+          );
+          return;
+        }
+      } catch (e) {
+        console.warn('Could not check IndexedDB for duplicates:', e);
+      }
+
+      // 3. Check online API if connected (most reliable source)
+      if (navigator.onLine) {
+        try {
+          const deviceFingerprint = await generateDeviceFingerprint();
+          const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
+            cleanFarmerIdCheck,
+            currentSessionType,
+            today,
+            today,
+            deviceFingerprint
+          );
+          if (existing) {
+            toast.error(
+              `${farmerName} already delivered in ${currentSessionType} session today. Use Reprint for previous slip.`,
+              { duration: 6000 }
+            );
+            setReprintModalOpen(true);
+            return;
+          }
+        } catch (apiErr) {
+          console.warn('Online duplicate check failed, proceeding:', apiErr);
+        }
+      }
+    }
+    // ========== END multOpt CHECK ==========
+
     // Generate reference number for this capture
     const deviceFingerprint = await generateDeviceFingerprint();
     let referenceNo = '';
@@ -305,25 +383,15 @@ const Index = () => {
     }
 
     // Create local capture record (NOT synced to DB yet)
-    // Clean farmer_id and session values before storing
+    // Clean farmer_id - reuse currentSessionType computed above
     const cleanFarmerId = farmerId.replace(/^#/, '').trim();
-    
-    // Derive AM/PM from the active session's time_from (hour-based)
-    // If time_from is before noon (12), it's AM; otherwise PM
-    let cleanSession: 'AM' | 'PM' = 'AM';
-    if (activeSession) {
-      const timeFrom = typeof activeSession.time_from === 'number' 
-        ? activeSession.time_from 
-        : parseInt(String(activeSession.time_from), 10);
-      cleanSession = (timeFrom >= 12) ? 'PM' : 'AM';
-    }
     
     const captureData: MilkCollection = {
       reference_no: referenceNo,
       farmer_id: cleanFarmerId,
       farmer_name: farmerName.trim(),
       route: route.trim(),
-      session: cleanSession,
+      session: currentSessionType, // Use already-computed session
       weight: parseFloat(Number(weight).toFixed(2)),
       clerk_name: currentUser ? currentUser.user_id : 'unknown',
       collection_date: new Date(),
