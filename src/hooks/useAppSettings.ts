@@ -208,6 +208,26 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         if (data.success && data.data) {
           const deviceData = data.data;
           
+          // CRITICAL: Explicitly check if device is authorized/approved
+          // The API might return 200 with data but approved=0 or authorized=0
+          const isApproved = deviceData.approved === 1 || deviceData.approved === true;
+          const isAuthorizedFlag = deviceData.authorized === 1 || deviceData.authorized === true;
+          
+          if (!isApproved && !isAuthorizedFlag) {
+            // Device exists but NOT authorized - block access
+            console.log('🚫 Device found but not approved/authorized:', {
+              approved: deviceData.approved,
+              authorized: deviceData.authorized
+            });
+            setIsDeviceAuthorized(false);
+            setIsPendingApproval(true); // Already registered, waiting approval
+            localStorage.setItem('device_authorized', 'false');
+            localStorage.removeItem(SETTINGS_STORAGE_KEY);
+            localStorage.removeItem(SETTINGS_CCODE_KEY);
+            setSettings(DEFAULT_SETTINGS);
+            return; // EXIT EARLY - do not proceed
+          }
+          
           // Device is authorized - extract settings from response
           const newSettings: AppSettings = {
             printoptions: deviceData.app_settings?.printoptions ?? DEFAULT_SETTINGS.printoptions,
@@ -234,10 +254,13 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           localStorage.setItem('device_authorized', 'true');
           console.log('✅ App settings synced from authorized device:', newSettings);
         } else {
-          // Response OK but no data - shouldn't happen, treat as unauthorized
+          // Response OK but no data - treat as unauthorized
           setIsDeviceAuthorized(false);
           setIsPendingApproval(false);
           localStorage.setItem('device_authorized', 'false');
+          localStorage.removeItem(SETTINGS_STORAGE_KEY);
+          localStorage.removeItem(SETTINGS_CCODE_KEY);
+          setSettings(DEFAULT_SETTINGS);
           console.log('⚠️ Device response missing data - blocking access');
         }
       } else if (response.status === 404) {
@@ -273,21 +296,39 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         setIsDeviceAuthorized(false);
         setIsPendingApproval(false);
         localStorage.setItem('device_authorized', 'false');
-        console.log('⚠️ Unexpected response - blocking access');
+        localStorage.removeItem(SETTINGS_STORAGE_KEY);
+        localStorage.removeItem(SETTINGS_CCODE_KEY);
+        setSettings(DEFAULT_SETTINGS);
+        console.log('⚠️ Unexpected response status:', response.status, '- blocking access');
       }
     } catch (error) {
-      if ((error as Error).name !== 'AbortError') {
-        console.warn('Settings fetch failed:', error);
-        // Network error - check cached authorization
-        const cachedAuth = localStorage.getItem('device_authorized');
-        if (cachedAuth === 'true') {
-          const cached = loadCachedSettings();
-          setSettings(cached);
-          setIsDeviceAuthorized(true);
-          setIsPendingApproval(false);
-        } else {
-          setIsDeviceAuthorized(false);
-        }
+      const errorName = (error as Error).name;
+      const errorMessage = (error as Error).message;
+      
+      if (errorName === 'AbortError') {
+        // Timeout - treat as network error, check cached auth ONLY if previously authorized
+        console.warn('⏱️ Request timeout - checking cached authorization');
+      } else {
+        console.warn('❌ Settings fetch failed:', errorMessage);
+      }
+      
+      // Network error - ONLY allow cached auth if previously explicitly authorized
+      const cachedAuth = localStorage.getItem('device_authorized');
+      if (cachedAuth === 'true') {
+        const cached = loadCachedSettings();
+        setSettings(cached);
+        setIsDeviceAuthorized(true);
+        setIsPendingApproval(false);
+        console.log('📴 Network error - using cached authorization');
+      } else {
+        // Not authorized or unknown - block access, clear any stale data
+        setIsDeviceAuthorized(false);
+        setIsPendingApproval(false);
+        localStorage.setItem('device_authorized', 'false');
+        localStorage.removeItem(SETTINGS_STORAGE_KEY);
+        localStorage.removeItem(SETTINGS_CCODE_KEY);
+        setSettings(DEFAULT_SETTINGS);
+        console.log('📴 Network error - device not authorized, blocking access');
       }
     } finally {
       setIsLoading(false);
