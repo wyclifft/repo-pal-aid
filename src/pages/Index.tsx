@@ -859,19 +859,19 @@ const Index = () => {
   }
 
   // Collection View - render Buy or Sell screen based on mode
-  // Disable capture/submit for multOpt=0 farmers who are blacklisted (already submitted this session)
+  // For multOpt=0: Allow unlimited weight captures, only disable Submit after first successful submission
   const isSelectedFarmerBlacklisted =
     !!selectedFarmer &&
     (selectedFarmer.multOpt ?? 1) === 0 &&
     !!farmerId &&
     isBlacklisted(farmerId);
   
-  // For multOpt=0: disable capture if already captured OR blacklisted
-  const captureDisabledForSelectedFarmer = isSelectedFarmerBlacklisted;
+  // NEVER disable capture - farmers can always capture weight (multiple buckets)
+  const captureDisabledForSelectedFarmer = false;
   
-  // For multOpt=0: disable submit if blacklisted (already submitted this session)
-  // Note: Submit should still work if farmer has captured but not yet submitted
-  const submitDisabledForSelectedFarmer = isSelectedFarmerBlacklisted && capturedCollections.length === 0;
+  // For multOpt=0: disable Submit only after first successful submission in this session
+  // For multOpt=1: never disable Submit (allow unlimited submissions)
+  const submitDisabledForSelectedFarmer = isSelectedFarmerBlacklisted;
 
   return (
     <>

@@ -209,11 +209,12 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         if (data.success && data.data) {
           const deviceData = data.data;
           
-          // CRITICAL: Explicitly check if device is authorized/approved
-          // The API might return 200 with data but approved=0 or authorized=0
+          // CRITICAL: Check if device is authorized/approved
+          // Device needs to be EITHER approved OR authorized to proceed
           const isApproved = deviceData.approved === 1 || deviceData.approved === true;
           const isAuthorizedFlag = deviceData.authorized === 1 || deviceData.authorized === true;
           
+          // Block access only if device is NEITHER approved NOR authorized
           if (!isApproved && !isAuthorizedFlag) {
             // Device exists but NOT authorized - block access
             console.log('🚫 Device found but not approved/authorized:', {
@@ -228,6 +229,12 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             setSettings(DEFAULT_SETTINGS);
             return; // EXIT EARLY - do not proceed
           }
+          
+          // Device is approved OR authorized - allow access
+          console.log('✅ Device approved/authorized:', {
+            approved: isApproved,
+            authorized: isAuthorizedFlag
+          });
           
           // Device is authorized - extract settings from response
           // CRITICAL: Parse all values as numbers to ensure proper comparison
