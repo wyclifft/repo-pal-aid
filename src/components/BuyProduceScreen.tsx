@@ -25,6 +25,7 @@ interface BuyProduceScreenProps {
   blacklistedFarmerIds?: Set<string>; // Farmers who already delivered (multOpt=0)
   onFarmersLoaded?: (farmers: Farmer[]) => void;
   captureDisabled?: boolean;
+  submitDisabled?: boolean; // Disable submit for multOpt=0 farmers who already submitted
 }
 
 export const BuyProduceScreen = ({
@@ -44,6 +45,7 @@ export const BuyProduceScreen = ({
   blacklistedFarmerIds,
   onFarmersLoaded,
   captureDisabled,
+  submitDisabled,
 }: BuyProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -311,7 +313,8 @@ export const BuyProduceScreen = ({
           </button>
           <button
             onClick={onSubmit}
-            className="flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base"
+            disabled={!!submitDisabled}
+            className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${submitDisabled ? 'opacity-50 pointer-events-none' : ''}`}
           >
             Submit
           </button>

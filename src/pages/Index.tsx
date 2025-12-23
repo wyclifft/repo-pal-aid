@@ -618,6 +618,18 @@ const Index = () => {
       }
     }
 
+    // After successful submission, add multOpt=0 farmers to blacklist
+    // This ensures they cannot submit again in this session
+    if (successCount > 0 || offlineCount > 0) {
+      capturedCollections.forEach(capture => {
+        if (capture.multOpt === 0) {
+          const cleanId = capture.farmer_id.replace(/^#/, '').trim();
+          addToBlacklist(cleanId);
+          console.log(`🚫 Added ${cleanId} to blacklist after successful submission (multOpt=0)`);
+        }
+      });
+    }
+
     // Open receipt modal for printing
     setReceiptModalOpen(true);
     
@@ -847,11 +859,19 @@ const Index = () => {
   }
 
   // Collection View - render Buy or Sell screen based on mode
-  const captureDisabledForSelectedFarmer =
+  // Disable capture/submit for multOpt=0 farmers who are blacklisted (already submitted this session)
+  const isSelectedFarmerBlacklisted =
     !!selectedFarmer &&
     (selectedFarmer.multOpt ?? 1) === 0 &&
     !!farmerId &&
     isBlacklisted(farmerId);
+  
+  // For multOpt=0: disable capture if already captured OR blacklisted
+  const captureDisabledForSelectedFarmer = isSelectedFarmerBlacklisted;
+  
+  // For multOpt=0: disable submit if blacklisted (already submitted this session)
+  // Note: Submit should still work if farmer has captured but not yet submitted
+  const submitDisabledForSelectedFarmer = isSelectedFarmerBlacklisted && capturedCollections.length === 0;
 
   return (
     <>
@@ -876,6 +896,7 @@ const Index = () => {
           blacklistedFarmerIds={blacklistedFarmerIds}
           onFarmersLoaded={handleFarmersLoaded}
           captureDisabled={captureDisabledForSelectedFarmer}
+          submitDisabled={submitDisabledForSelectedFarmer}
         />
       ) : (
         <SellProduceScreen
@@ -896,6 +917,7 @@ const Index = () => {
             setEntryType('manual');
           }}
           captureDisabled={captureDisabledForSelectedFarmer}
+          submitDisabled={submitDisabledForSelectedFarmer}
         />
       )}
 
