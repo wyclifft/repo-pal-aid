@@ -60,7 +60,7 @@ const Settings = () => {
     setStoredPrinter(printerInfo);
   }, []);
 
-  // Force refresh company name from server
+  // Force refresh company name and settings from server
   const handleRefreshCompany = useCallback(async () => {
     if (!navigator.onLine) {
       toast.error('Cannot refresh while offline');
@@ -71,77 +71,22 @@ const Settings = () => {
     toast.info('Refreshing company data...');
     
     try {
-      const fingerprint = await generateDeviceFingerprint();
-      const apiUrl = 'https://backend.maddasystems.co.ke';
-      
-      // First get device info to get ccode
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-      
-      const deviceResponse = await fetch(
-        `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
-        { signal: controller.signal }
-      );
-      
-      clearTimeout(timeoutId);
-      
-      if (!deviceResponse.ok) {
-        throw new Error('Failed to fetch device info');
-      }
-      
-      const deviceData = await deviceResponse.json();
-      
-      if (!deviceData.success || !deviceData.data) {
-        throw new Error('Device not found');
-      }
-      
-      const ccode = deviceData.data.ccode;
-      const deviceCompanyName = deviceData.data.company_name;
-      
       // Clear cached company name to force fresh fetch
       localStorage.removeItem('device_company_name');
       
-      // Update ccode in storage
-      if (ccode) {
-        localStorage.setItem('device_ccode', ccode);
-      }
+      // Refresh app settings which includes company info from psettings
+      await refreshSettings();
       
-      // Try to fetch company name from psettings
-      let finalCompanyName = deviceCompanyName || 'DAIRY COLLECTION';
+      // Update local state with company name from settings
+      const updatedCompanyName = settings.company_name || localStorage.getItem('device_company_name') || 'DAIRY COLLECTION';
+      setCompanyName(updatedCompanyName);
+      localStorage.setItem('device_company_name', updatedCompanyName);
       
-      if (ccode && navigator.onLine) {
-        try {
-          const psettingsController = new AbortController();
-          const psettingsTimeoutId = setTimeout(() => psettingsController.abort(), 5000);
-          
-          const companyResponse = await fetch(
-            `${apiUrl}/api/psettings?ccode=${encodeURIComponent(ccode)}`,
-            { signal: psettingsController.signal }
-          );
-          
-          clearTimeout(psettingsTimeoutId);
-          
-          if (companyResponse.ok) {
-            const companyData = await companyResponse.json();
-            if (companyData.success && companyData.data?.company_name) {
-              finalCompanyName = companyData.data.company_name;
-            }
-          }
-          // If 404 or other error, we fall back to deviceCompanyName (already set)
-        } catch (psettingsErr) {
-          // Silently ignore psettings errors - use device company name
-          console.log('psettings fetch skipped, using device company name');
-        }
-      }
-      
-      // Update state and storage with final company name
-      setCompanyName(finalCompanyName);
-      localStorage.setItem('device_company_name', finalCompanyName);
-      toast.success(`Company: ${finalCompanyName}`);
+      toast.success(`Company data refreshed: ${updatedCompanyName}`);
       
       // Dispatch event to notify other components
       window.dispatchEvent(new CustomEvent('companyNameUpdated', { 
-        detail: { companyName: finalCompanyName } 
+        detail: { companyName: updatedCompanyName } 
       }));
       
     } catch (error) {
@@ -157,7 +102,7 @@ const Settings = () => {
     } finally {
       setIsRefreshingCompany(false);
     }
-  }, []);
+  }, [refreshSettings, settings.company_name]);
 
   const handleQuickReconnect = async () => {
     if (!storedDevice) return;
@@ -547,15 +492,15 @@ Date: ${new Date().toLocaleString()}
           </CardContent>
         </Card>
 
-        {/* Company Settings */}
+        {/* Company Status - Full Details from psettings */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Building2 className="h-5 w-5 text-primary" />
                 <div>
-                  <CardTitle>Company Settings</CardTitle>
-                  <CardDescription>Refresh company data from server</CardDescription>
+                  <CardTitle>Company Status</CardTitle>
+                  <CardDescription>Company details from assigned ccode</CardDescription>
                 </div>
               </div>
               {isRefreshingCompany && (
@@ -567,14 +512,26 @@ Date: ${new Date().toLocaleString()}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Current Company:</span>
-                <span className="font-medium">{companyName || 'Not set'}</span>
-              </div>
+            <div className="space-y-3">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Company Code:</span>
-                <span className="font-medium">{localStorage.getItem('device_ccode') || 'Not set'}</span>
+                <span className="font-medium">{localStorage.getItem('device_ccode') || 'Not assigned'}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">Company Name (cname):</span>
+                <span className="font-semibold text-lg">{settings.company_name || companyName || 'Not set'}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">Address (caddress):</span>
+                <span className="font-medium">{settings.caddress || 'Not set'}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Telephone (tel):</span>
+                <span className="font-medium">{settings.tel || 'Not set'}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Email:</span>
+                <span className="font-medium">{settings.email || 'Not set'}</span>
               </div>
             </div>
 
@@ -599,7 +556,7 @@ Date: ${new Date().toLocaleString()}
             </Button>
             
             <p className="text-xs text-muted-foreground text-center">
-              Force fetch the latest company name from the server. Useful when company code has been updated in the database.
+              Fetches latest company details from psettings table based on assigned ccode.
             </p>
           </CardContent>
         </Card>

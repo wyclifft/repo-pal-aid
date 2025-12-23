@@ -1328,31 +1328,51 @@ const server = http.createServer(async (req, res) => {
         const ccode = devRows.length > 0 ? devRows[0].ccode : null;
         let deviceRef = devRows.length > 0 ? devRows[0].device_ref : null;
 
-        // Ensure every device gets a slot-based device_ref:
-        // Device 1 => AE10000001, AE10000002 ... (slot=1, sequence=7 digits)
-        // Device 2 => AE20000001, AE20000002 ... (slot=2, sequence=7 digits)
+        // Ensure every device gets a unique slot-based device_ref:
+        // Device 1 => AE10000001, Device 2 => AE20000001, etc.
+        // Use transaction + retry to handle race conditions
         if (!deviceRef) {
-          const [maxSlotRows] = await pool.query(
-            `SELECT MAX(CAST(SUBSTRING(device_ref, 3, 1) AS UNSIGNED)) as max_slot
-             FROM devsettings
-             WHERE device_ref IS NOT NULL AND device_ref LIKE 'AE%'`
-          );
-
-          const nextSlot = maxSlotRows?.[0]?.max_slot ? Number(maxSlotRows[0].max_slot) + 1 : 1;
-          deviceRef = `AE${nextSlot}${String(1).padStart(7, '0')}`; // e.g. AE10000001
-
-          if (devRows.length > 0) {
-            // Update existing devsettings record
-            await pool.query(
-              'UPDATE devsettings SET device_ref = ? WHERE uniquedevcode = ?',
-              [deviceRef, body.device_fingerprint]
+          const connection = await pool.getConnection();
+          try {
+            await connection.beginTransaction();
+            
+            // Find the next available slot with lock to prevent duplicates
+            const [maxSlotRows] = await connection.query(
+              `SELECT MAX(CAST(SUBSTRING(device_ref, 3, 1) AS UNSIGNED)) as max_slot
+               FROM devsettings
+               WHERE device_ref IS NOT NULL AND device_ref LIKE 'AE%'
+               FOR UPDATE`
             );
-          } else {
-            // Create minimal devsettings record so the device_ref exists immediately
-            await pool.query(
-              'INSERT INTO devsettings (uniquedevcode, device, authorized, device_ref) VALUES (?, ?, 0, ?)',
-              [body.device_fingerprint, body.device_info || null, deviceRef]
-            );
+
+            const nextSlot = maxSlotRows?.[0]?.max_slot ? Number(maxSlotRows[0].max_slot) + 1 : 1;
+            deviceRef = `AE${nextSlot}${String(1).padStart(7, '0')}`; // e.g. AE10000001
+            
+            console.log('📱 Generating device_ref:', deviceRef, 'for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
+
+            if (devRows.length > 0) {
+              // Update existing devsettings record
+              await connection.query(
+                'UPDATE devsettings SET device_ref = ? WHERE uniquedevcode = ?',
+                [deviceRef, body.device_fingerprint]
+              );
+            } else {
+              // Create minimal devsettings record so the device_ref exists immediately
+              await connection.query(
+                'INSERT INTO devsettings (uniquedevcode, device, authorized, device_ref) VALUES (?, ?, 0, ?)',
+                [body.device_fingerprint, body.device_info || null, deviceRef]
+              );
+            }
+            
+            await connection.commit();
+            connection.release();
+          } catch (devRefError) {
+            await connection.rollback();
+            connection.release();
+            console.error('❌ Failed to generate device_ref:', devRefError);
+            return sendJSON(res, { 
+              success: false, 
+              error: 'Failed to generate device reference: ' + (devRefError.message || 'Unknown error')
+            }, 500);
           }
         }
 
