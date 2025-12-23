@@ -1529,23 +1529,29 @@ const server = http.createServer(async (req, res) => {
     }
 
     // psettings endpoint - Get company settings (ALL behavior switches)
-    // Supports both ccode and uniquedevcode query params
+    // REQUIRES device to be authorized in devsettings table
     if (path === '/api/psettings' && method === 'GET') {
       const ccode = parsedUrl.query.ccode;
       const uniquedevcode = parsedUrl.query.uniquedevcode;
       
       let targetCcode = ccode;
       
-      // If uniquedevcode provided, look up the ccode from devsettings
+      // If uniquedevcode provided, verify device is authorized first
       if (!targetCcode && uniquedevcode) {
         const [deviceRows] = await pool.query(
-          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
           [uniquedevcode]
         );
         
-        if (deviceRows.length > 0 && deviceRows[0].ccode) {
-          targetCcode = deviceRows[0].ccode;
+        if (deviceRows.length === 0) {
+          return sendJSON(res, { success: false, error: 'Device not found' }, 404);
         }
+        
+        if (!deviceRows[0].authorized || deviceRows[0].authorized !== 1) {
+          return sendJSON(res, { success: false, message: 'Device not authorized' }, 401);
+        }
+        
+        targetCcode = deviceRows[0].ccode;
       }
       
       if (!targetCcode) {
