@@ -743,7 +743,9 @@ const server = http.createServer(async (req, res) => {
                 }
                 
                 const deviceRef = devRefRows[0].device_ref;
-                const devicePrefix = deviceRef.slice(0, 3); // e.g., "AE1"
+                // New format: AE + 2-digit slot + 6-digit sequence = 10 chars total
+                // Prefix is 4 characters (e.g., "AE01")
+                const devicePrefix = deviceRef.slice(0, 4);
                 
                 // Get the highest transaction number with row lock
                 const [lastTransRows] = await connection.query(
@@ -754,13 +756,14 @@ const server = http.createServer(async (req, res) => {
                 let nextNumber = 1;
                 if (lastTransRows.length > 0) {
                   const lastRef = lastTransRows[0].transrefno;
-                  const lastNumber = parseInt(lastRef.substring(3));
+                  // Extract sequence part (last 6 digits)
+                  const lastNumber = parseInt(lastRef.substring(4));
                   if (!isNaN(lastNumber)) {
                     nextNumber = lastNumber + 1;
                   }
                 }
                 
-                attemptTransrefno = `${devicePrefix}${String(nextNumber).padStart(7, '0')}`;
+                attemptTransrefno = `${devicePrefix}${String(nextNumber).padStart(6, '0')}`;
                 await connection.commit();
                 connection.release();
                 
@@ -1266,9 +1269,10 @@ const server = http.createServer(async (req, res) => {
       deviceData.app_settings = appSettings;
       
       // Get last used sequence for this device_ref prefix for counter sync
+      // New format: AE + 2-digit slot + 6-digit sequence = 10 chars
       let lastSequence = null;
       if (deviceData.device_ref) {
-        const prefix = deviceData.device_ref.slice(0, 3); // e.g., "AE1"
+        const prefix = deviceData.device_ref.slice(0, 4); // e.g., "AE01"
         const [lastRefRows] = await pool.query(
           `SELECT transrefno FROM transactions 
            WHERE transrefno LIKE ? 
@@ -1276,9 +1280,9 @@ const server = http.createServer(async (req, res) => {
           [`${prefix}%`]
         );
         if (lastRefRows.length > 0 && lastRefRows[0].transrefno) {
-          // Extract the sequence number from the last reference
+          // Extract the sequence number from the last reference (last 6 digits)
           const lastRef = lastRefRows[0].transrefno;
-          const seqPart = lastRef.slice(3); // Remove prefix to get sequence
+          const seqPart = lastRef.slice(4); // Remove prefix to get sequence
           lastSequence = parseInt(seqPart, 10) || 0;
         }
       }
@@ -1328,50 +1332,78 @@ const server = http.createServer(async (req, res) => {
         const ccode = devRows.length > 0 ? devRows[0].ccode : null;
         let deviceRef = devRows.length > 0 ? devRows[0].device_ref : null;
 
-        // Ensure every device gets a unique slot-based device_ref:
-        // Device 1 => AE10000001, Device 2 => AE20000001, etc.
+        // Ensure every device gets a unique sequential device_ref:
+        // Format: AE<2-digit-slot><6-digit-sequence> = 10 chars total
+        // Device 1 => AE01000001, Device 2 => AE02000001, etc.
         // Use transaction + retry to handle race conditions
         if (!deviceRef) {
           const connection = await pool.getConnection();
-          try {
-            await connection.beginTransaction();
-            
-            // Find the next available slot with lock to prevent duplicates
-            const [maxSlotRows] = await connection.query(
-              `SELECT MAX(CAST(SUBSTRING(device_ref, 3, 1) AS UNSIGNED)) as max_slot
-               FROM devsettings
-               WHERE device_ref IS NOT NULL AND device_ref LIKE 'AE%'
-               FOR UPDATE`
-            );
-
-            const nextSlot = maxSlotRows?.[0]?.max_slot ? Number(maxSlotRows[0].max_slot) + 1 : 1;
-            deviceRef = `AE${nextSlot}${String(1).padStart(7, '0')}`; // e.g. AE10000001
-            
-            console.log('📱 Generating device_ref:', deviceRef, 'for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
-
-            if (devRows.length > 0) {
-              // Update existing devsettings record
-              await connection.query(
-                'UPDATE devsettings SET device_ref = ? WHERE uniquedevcode = ?',
-                [deviceRef, body.device_fingerprint]
+          let retryCount = 0;
+          const maxRetries = 5;
+          
+          while (retryCount < maxRetries) {
+            try {
+              await connection.beginTransaction();
+              
+              // Count existing devices to determine next slot number
+              const [countRows] = await connection.query(
+                `SELECT COUNT(*) as device_count FROM devsettings 
+                 WHERE device_ref IS NOT NULL AND device_ref LIKE 'AE%'
+                 FOR UPDATE`
               );
-            } else {
-              // Create minimal devsettings record so the device_ref exists immediately
-              await connection.query(
-                'INSERT INTO devsettings (uniquedevcode, device, authorized, device_ref) VALUES (?, ?, 0, ?)',
-                [body.device_fingerprint, body.device_info || null, deviceRef]
-              );
+
+              const nextSlot = (countRows?.[0]?.device_count || 0) + 1;
+              
+              // Format: AE + 2-digit slot + 6-digit sequence starting at 000001
+              // This gives us 99 devices with 999999 transactions each
+              deviceRef = `AE${String(nextSlot).padStart(2, '0')}${String(1).padStart(6, '0')}`; // e.g. AE01000001
+              
+              console.log('📱 Generating device_ref:', deviceRef, 'for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
+
+              if (devRows.length > 0) {
+                // Update existing devsettings record
+                await connection.query(
+                  'UPDATE devsettings SET device_ref = ? WHERE uniquedevcode = ?',
+                  [deviceRef, body.device_fingerprint]
+                );
+              } else {
+                // Create minimal devsettings record so the device_ref exists immediately
+                await connection.query(
+                  'INSERT INTO devsettings (uniquedevcode, device, authorized, device_ref) VALUES (?, ?, 0, ?)',
+                  [body.device_fingerprint, body.device_info || null, deviceRef]
+                );
+              }
+              
+              await connection.commit();
+              connection.release();
+              break; // Success - exit retry loop
+              
+            } catch (devRefError) {
+              await connection.rollback();
+              
+              // Check if duplicate key error - retry with next slot
+              if (devRefError.code === 'ER_DUP_ENTRY' && retryCount < maxRetries - 1) {
+                retryCount++;
+                console.log(`⚠️ Device ref collision, retry ${retryCount}/${maxRetries}`);
+                await new Promise(resolve => setTimeout(resolve, 100 * retryCount)); // Backoff
+                continue;
+              }
+              
+              connection.release();
+              console.error('❌ Failed to generate device_ref:', devRefError);
+              return sendJSON(res, { 
+                success: false, 
+                error: 'Failed to generate device reference: ' + (devRefError.message || 'Unknown error')
+              }, 500);
             }
-            
-            await connection.commit();
+          }
+          
+          // If we exhausted retries
+          if (retryCount >= maxRetries) {
             connection.release();
-          } catch (devRefError) {
-            await connection.rollback();
-            connection.release();
-            console.error('❌ Failed to generate device_ref:', devRefError);
             return sendJSON(res, { 
               success: false, 
-              error: 'Failed to generate device reference: ' + (devRefError.message || 'Unknown error')
+              error: 'Failed to generate unique device reference after multiple attempts'
             }, 500);
           }
         }
