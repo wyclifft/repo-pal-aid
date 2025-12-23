@@ -18,9 +18,10 @@ interface ReprintModalProps {
   receipts: PrintedReceipt[];
   companyName: string;
   printCopies?: number;
+  routeLabel?: string; // Dynamic label from psettings.rdesc
 }
 
-export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies = 1 }: ReprintModalProps) => {
+export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies = 1, routeLabel = 'Route' }: ReprintModalProps) => {
   const handleReprint = async (receipt: PrintedReceipt) => {
     if (receipt.collections.length === 0) return;
 
@@ -40,6 +41,7 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
       farmerName: firstReceipt.farmer_name,
       farmerId: firstReceipt.farmer_id,
       route: firstReceipt.route,
+      routeLabel: routeLabel, // Dynamic label from psettings.rdesc
       session: firstReceipt.session,
       referenceNo: firstReceipt.reference_no,
       collectorName: firstReceipt.clerk_name,

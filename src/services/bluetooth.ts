@@ -895,6 +895,7 @@ export const printReceipt = async (data: {
   farmerName: string;
   farmerId: string;
   route?: string;
+  routeLabel?: string; // Dynamic label from psettings.rdesc
   session?: string;
   referenceNo?: string;
   collectorName: string;
@@ -930,7 +931,7 @@ export const printReceipt = async (data: {
 ${separator}
 Farmer: ${data.farmerId}
 ${data.farmerName}
-${data.route ? `Route: ${data.route}` : ''}${data.session ? ` | ${data.session}` : ''}
+${data.route ? `${data.routeLabel || 'Route'}: ${data.route}` : ''}${data.session ? ` | ${data.session}` : ''}
 Collector: ${data.collectorName}
 Date: ${currentDate}
 ${data.referenceNo ? `Ref: ${data.referenceNo}` : ''}

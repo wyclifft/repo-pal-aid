@@ -911,6 +911,7 @@ const Index = () => {
         onPrint={handleSavePrintedReceipt}
         showCumulativeFrequency={showCumulative}
         printCopies={printCopies}
+        routeLabel={routeLabel}
       />
 
       {/* Reprint Modal */}
@@ -920,6 +921,7 @@ const Index = () => {
         receipts={printedReceipts}
         companyName={companyName}
         printCopies={printCopies}
+        routeLabel={routeLabel}
       />
     </>
   );
