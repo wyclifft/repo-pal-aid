@@ -3,49 +3,103 @@
  * Generate unique device fingerprints and parse device information
  */
 
+import { Capacitor } from '@capacitor/core';
+
 const DEVICE_ID_KEY = 'device_id';
 
 /**
- * Generate a unique device fingerprint using SHA-256 hash
+ * Simple hash function fallback for environments without crypto.subtle
+ */
+const simpleHash = (str: string): string => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  // Convert to hex and pad to ensure consistent length
+  const hex = Math.abs(hash).toString(16);
+  // Create a longer hash by combining multiple parts
+  const part1 = hex.padStart(8, '0');
+  const part2 = Math.abs(hash * 31).toString(16).padStart(8, '0');
+  const part3 = Math.abs(hash * 37).toString(16).padStart(8, '0');
+  const part4 = Math.abs(hash * 41).toString(16).padStart(8, '0');
+  const part5 = Math.abs(hash * 43).toString(16).padStart(8, '0');
+  const part6 = Math.abs(hash * 47).toString(16).padStart(8, '0');
+  const part7 = Math.abs(hash * 53).toString(16).padStart(8, '0');
+  const part8 = Math.abs(hash * 59).toString(16).padStart(8, '0');
+  return (part1 + part2 + part3 + part4 + part5 + part6 + part7 + part8).substring(0, 64);
+};
+
+/**
+ * Generate a unique device fingerprint
+ * Uses SHA-256 when available, falls back to simple hash for Capacitor/WebView
  * IMPORTANT: Always returns the same fingerprint for a device by using localStorage
  */
 export const generateDeviceFingerprint = async (): Promise<string> => {
   // ALWAYS check stored ID first for consistency
   const storedId = localStorage.getItem(DEVICE_ID_KEY);
   if (storedId) {
+    console.log('📱 Using stored device fingerprint:', storedId.substring(0, 16) + '...');
     return storedId;
   }
   
+  const isNative = Capacitor.isNativePlatform();
+  const platform = Capacitor.getPlatform();
+  
+  console.log('📱 Generating new device fingerprint, platform:', platform, 'isNative:', isNative);
+  
   // Generate new fingerprint only if no stored ID exists
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  
-  if (ctx) {
-    ctx.textBaseline = 'top';
-    ctx.font = '14px Arial';
-    ctx.fillText('Device fingerprint', 2, 2);
+  let canvasData = '';
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    if (ctx) {
+      ctx.textBaseline = 'top';
+      ctx.font = '14px Arial';
+      ctx.fillText('Device fingerprint', 2, 2);
+    }
+    
+    canvasData = canvas.toDataURL();
+  } catch (e) {
+    console.warn('Canvas fingerprint failed:', e);
+    canvasData = 'canvas-not-available';
   }
-  
-  const canvasData = canvas.toDataURL();
   
   const fingerprint = {
     userAgent: navigator.userAgent,
     language: navigator.language,
-    platform: navigator.platform,
+    platform: navigator.platform || platform,
     screenResolution: `${screen.width}x${screen.height}`,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     canvasFingerprint: canvasData,
+    isNative: isNative,
+    nativePlatform: platform,
     // Add random component for truly unique ID
-    randomSeed: Math.random().toString(36).substring(2, 15),
+    randomSeed: Math.random().toString(36).substring(2, 15) + Date.now().toString(36),
   };
   
-  // Convert fingerprint to string and hash it
   const fingerprintString = JSON.stringify(fingerprint);
-  const encoder = new TextEncoder();
-  const data = encoder.encode(fingerprintString);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  let hashHex: string;
+  
+  // Try to use crypto.subtle, fall back to simple hash
+  try {
+    if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function') {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(fingerprintString);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      console.log('🔐 Used crypto.subtle for fingerprint');
+    } else {
+      throw new Error('crypto.subtle not available');
+    }
+  } catch (e) {
+    console.warn('crypto.subtle not available, using fallback hash:', e);
+    hashHex = simpleHash(fingerprintString);
+    console.log('🔐 Used fallback hash for fingerprint');
+  }
   
   // Store immediately for consistency
   localStorage.setItem(DEVICE_ID_KEY, hashHex);
