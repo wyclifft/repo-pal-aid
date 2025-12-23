@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { useDataSync } from '@/hooks/useDataSync';
@@ -10,26 +11,32 @@ export interface SessionCloseState {
   pendingSyncCount: number;
   isSyncComplete: boolean;
   closeButtonLabel: string;
+  showZReportModal: boolean;
   closeSession: () => Promise<boolean>;
+  confirmZReportPrinted: () => void;
+  cancelZReportModal: () => void;
 }
 
 /**
  * Hook to manage session closing behavior based on psettings.sessPrint
  * 
  * sessPrint = 0: Allow session to close without printing Z-report
- * sessPrint = 1: Require all transactions synced before close, then auto-print Z-report
+ * sessPrint = 1: Require all transactions synced before close, show Z-report, then close after user confirms print
  */
 export const useSessionClose = (
   onCloseSuccess: () => void,
   selectedDate?: string
 ): SessionCloseState => {
+  const navigate = useNavigate();
   const { sessionPrintOnly } = useAppSettings();
-  const { syncAllData, syncOfflineReceipts, isSyncing, pendingCount } = useDataSync();
+  const { syncOfflineReceipts, isSyncing, pendingCount } = useDataSync();
   const { getUnsyncedReceipts, isReady } = useIndexedDB();
   
   const [isClosing, setIsClosing] = useState(false);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isSyncComplete, setIsSyncComplete] = useState(true);
+  const [showZReportModal, setShowZReportModal] = useState(false);
+  const [pendingCloseAfterPrint, setPendingCloseAfterPrint] = useState(false);
   const mountedRef = useRef(true);
 
   // Update pending sync count
@@ -94,6 +101,24 @@ export const useSessionClose = (
     return 'Close Session';
   };
 
+  // Called when user confirms they've printed/viewed the Z-report
+  const confirmZReportPrinted = useCallback(() => {
+    console.log('✅ Z-report confirmed, completing session close');
+    setShowZReportModal(false);
+    setPendingCloseAfterPrint(false);
+    setIsClosing(false);
+    onCloseSuccess();
+    toast.success('Session closed successfully');
+  }, [onCloseSuccess]);
+
+  // Called when user cancels Z-report modal
+  const cancelZReportModal = useCallback(() => {
+    console.log('❌ Z-report modal cancelled');
+    setShowZReportModal(false);
+    setPendingCloseAfterPrint(false);
+    setIsClosing(false);
+  }, []);
+
   // Close session handler
   const closeSession = useCallback(async (): Promise<boolean> => {
     // Refresh sync status first
@@ -103,10 +128,11 @@ export const useSessionClose = (
     if (!sessionPrintOnly) {
       console.log('📝 sessPrint=0: Closing session without Z-report');
       onCloseSuccess();
+      toast.success('Session closed');
       return true;
     }
     
-    // sessPrint = 1: Require sync completion
+    // sessPrint = 1: Require sync completion and Z-report view/print
     setIsClosing(true);
     
     try {
@@ -116,7 +142,7 @@ export const useSessionClose = (
         toast.info('Syncing pending transactions...');
         
         // Attempt to sync
-        const syncResult = await syncOfflineReceipts();
+        await syncOfflineReceipts();
         
         // Re-check sync status after sync
         await updateSyncStatus();
@@ -129,40 +155,35 @@ export const useSessionClose = (
           if (mountedRef.current) {
             setPendingSyncCount(stillPending.length);
             setIsSyncComplete(false);
+            setIsClosing(false);
           }
           toast.error(`Cannot close: ${stillPending.length} transaction(s) still pending sync`);
           return false;
         }
       }
       
-      // All synced - now trigger Z-report print
-      console.log('✅ sessPrint=1: All transactions synced, triggering Z-report print...');
-      toast.success('All transactions synced! Printing Z-report...');
+      // All synced - show Z-report for viewing/printing
+      console.log('✅ sessPrint=1: All transactions synced, showing Z-report...');
+      toast.success('All transactions synced! View/print Z-report to complete');
       
-      // Trigger print by navigating to Z-report with print param
-      // The Z-report page will auto-print
+      // Navigate to Z-report page with session close mode
+      // The user will need to confirm they've viewed/printed before session closes
       const today = selectedDate || new Date().toISOString().split('T')[0];
+      setPendingCloseAfterPrint(true);
+      setShowZReportModal(true);
       
-      // Use window.open to print Z-report in background or trigger print dialog
-      const printWindow = window.open(`/z-report?date=${today}&autoprint=true`, '_blank');
+      // Navigate to Z-report page
+      navigate(`/z-report?date=${today}&sessionclose=true`);
       
-      if (!printWindow) {
-        // Fallback: just navigate to Z-report
-        window.location.href = `/z-report?date=${today}&autoprint=true`;
-      }
-      
-      // Close the session
-      onCloseSuccess();
       return true;
       
     } catch (err) {
       console.error('Session close error:', err);
       toast.error('Failed to close session. Please try again.');
-      return false;
-    } finally {
       if (mountedRef.current) {
         setIsClosing(false);
       }
+      return false;
     }
   }, [
     sessionPrintOnly, 
@@ -171,7 +192,8 @@ export const useSessionClose = (
     getUnsyncedReceipts, 
     updateSyncStatus, 
     onCloseSuccess,
-    selectedDate
+    selectedDate,
+    navigate
   ]);
 
   return {
@@ -180,6 +202,9 @@ export const useSessionClose = (
     pendingSyncCount,
     isSyncComplete,
     closeButtonLabel: getButtonLabel(),
-    closeSession
+    showZReportModal,
+    closeSession,
+    confirmZReportPrinted,
+    cancelZReportModal
   };
 };
