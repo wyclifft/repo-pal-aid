@@ -3,18 +3,106 @@
  * Initializes Capacitor plugins and native platform features
  */
 import { Capacitor } from '@capacitor/core';
+import { generateDeviceFingerprint, getDeviceName, getDeviceInfo } from './deviceFingerprint';
+import { API_CONFIG } from '@/config/api';
+
+/**
+ * Register device with backend for approval
+ * This is critical for first-time app launches
+ */
+const registerDeviceForApproval = async (fingerprint: string): Promise<boolean> => {
+  try {
+    const deviceName = getDeviceName();
+    const deviceInfo = getDeviceInfo();
+    const platform = Capacitor.getPlatform();
+    const deviceInfoString = `${deviceName} | ${deviceInfo.os} | ${deviceInfo.browser} | ${deviceInfo.screenResolution} | ${platform}`;
+    
+    const requestBody = {
+      device_fingerprint: fingerprint,
+      user_id: 'pending',
+      device_info: deviceInfoString,
+      approved: false
+    };
+    
+    console.log('📱 [Native] Registering device:', fingerprint.substring(0, 16) + '...');
+    console.log('📱 [Native] Device info:', deviceInfoString);
+    
+    const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
+    
+    const data = await response.json();
+    console.log('📱 [Native] Registration response:', response.status, data.success ? 'SUCCESS' : 'FAILED');
+    return data.success;
+  } catch (error) {
+    console.error('❌ [Native] Device registration failed:', error);
+    return false;
+  }
+};
+
+/**
+ * Check if device exists in backend and register if not
+ */
+const ensureDeviceRegistered = async (): Promise<void> => {
+  try {
+    // Generate or retrieve fingerprint
+    const fingerprint = await generateDeviceFingerprint();
+    console.log('📱 [Native] Device fingerprint:', fingerprint.substring(0, 16) + '...');
+    
+    // Check if device exists in backend
+    const response = await fetch(
+      `${API_CONFIG.MYSQL_API_URL}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
+      { method: 'GET' }
+    );
+    
+    if (response.status === 404) {
+      // Device not found - register it
+      console.log('📱 [Native] Device not found, registering...');
+      const registered = await registerDeviceForApproval(fingerprint);
+      
+      if (registered) {
+        console.log('✅ [Native] Device registered successfully - waiting for admin approval');
+      } else {
+        console.log('❌ [Native] Device registration failed - will retry on next launch');
+      }
+    } else if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.data) {
+        const isApproved = data.data.approved === 1 || data.data.approved === true;
+        const isAuthorized = data.data.authorized === 1 || data.data.authorized === true;
+        console.log('📱 [Native] Device status - approved:', isApproved, 'authorized:', isAuthorized);
+        
+        if (!isApproved && !isAuthorized) {
+          console.log('⏳ [Native] Device pending approval');
+        }
+      }
+    } else {
+      console.log('⚠️ [Native] Device check returned status:', response.status);
+    }
+  } catch (error) {
+    console.error('❌ [Native] Device registration check failed:', error);
+    // Don't throw - allow app to continue and retry later
+  }
+};
 
 /**
  * Initialize native platform features
  * Call this early in app startup
  */
 export const initializeNativePlatform = async (): Promise<void> => {
-  if (!Capacitor.isNativePlatform()) {
+  const isNativePlatform = Capacitor.isNativePlatform();
+  const platform = Capacitor.getPlatform();
+  
+  console.log('📱 Platform detection - isNative:', isNativePlatform, 'platform:', platform);
+  
+  if (!isNativePlatform) {
     console.log('📱 Running in web mode');
     return;
   }
 
-  console.log('📱 Initializing native platform:', Capacitor.getPlatform());
+  console.log('📱 Initializing native platform:', platform);
 
   try {
     // Initialize Status Bar
@@ -28,6 +116,11 @@ export const initializeNativePlatform = async (): Promise<void> => {
     
     // Initialize App state listener
     await initAppStateListener();
+    
+    // CRITICAL: Register device with backend on first launch
+    // This ensures the device appears in cpanel for approval
+    console.log('📱 [Native] Checking device registration...');
+    await ensureDeviceRegistered();
     
     console.log('✅ Native platform initialized');
   } catch (error) {

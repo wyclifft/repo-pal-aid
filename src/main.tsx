@@ -3,8 +3,12 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { ServiceWorkerUpdateBanner } from "./components/ServiceWorkerUpdateBanner.tsx";
+import { initializeNativePlatform } from "./utils/nativeInit";
 import "./index.css";
 import "./utils/errorHandler";
+
+// Initialize native platform features FIRST (critical for device registration)
+initializeNativePlatform().catch(console.error);
 
 // Prevent zoom on double tap for native feel
 document.addEventListener('touchstart', (e) => {
