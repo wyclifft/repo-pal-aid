@@ -37,17 +37,21 @@ const simpleHash = (str: string): string => {
  * IMPORTANT: Always returns the same fingerprint for a device by using localStorage
  */
 export const generateDeviceFingerprint = async (): Promise<string> => {
-  // ALWAYS check stored ID first for consistency
-  const storedId = localStorage.getItem(DEVICE_ID_KEY);
-  if (storedId) {
-    console.log('📱 Using stored device fingerprint:', storedId.substring(0, 16) + '...');
-    return storedId;
-  }
-  
   const isNative = Capacitor.isNativePlatform();
   const platform = Capacitor.getPlatform();
   
-  console.log('📱 Generating new device fingerprint, platform:', platform, 'isNative:', isNative);
+  // ALWAYS check stored ID first for consistency
+  try {
+    const storedId = localStorage.getItem(DEVICE_ID_KEY);
+    if (storedId && storedId.length >= 32) {
+      console.log('📱 Using stored device fingerprint:', storedId.substring(0, 16) + '...');
+      return storedId;
+    }
+  } catch (e) {
+    console.warn('📱 localStorage read failed:', e);
+  }
+  
+  console.log('📱 Generating NEW device fingerprint - platform:', platform, 'isNative:', isNative);
   
   // Generate new fingerprint only if no stored ID exists
   let canvasData = '';
@@ -67,6 +71,7 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
     canvasData = 'canvas-not-available';
   }
   
+  // For native apps, include more device-specific info
   const fingerprint = {
     userAgent: navigator.userAgent,
     language: navigator.language,
@@ -78,6 +83,10 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
     nativePlatform: platform,
     // Add random component for truly unique ID
     randomSeed: Math.random().toString(36).substring(2, 15) + Date.now().toString(36),
+    // Native-specific: add extra entropy
+    timestamp: Date.now(),
+    colorDepth: screen.colorDepth,
+    pixelRatio: window.devicePixelRatio || 1,
   };
   
   const fingerprintString = JSON.stringify(fingerprint);
@@ -101,9 +110,23 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
     console.log('🔐 Used fallback hash for fingerprint');
   }
   
-  // Store immediately for consistency
-  localStorage.setItem(DEVICE_ID_KEY, hashHex);
-  console.log('🔑 Generated and stored new device fingerprint:', hashHex.substring(0, 16) + '...');
+  // Store immediately for consistency - with retry for native platforms
+  try {
+    localStorage.setItem(DEVICE_ID_KEY, hashHex);
+    console.log('🔑 Generated and stored new device fingerprint:', hashHex.substring(0, 16) + '...');
+    
+    // Verify storage on native platforms
+    if (isNative) {
+      const verified = localStorage.getItem(DEVICE_ID_KEY);
+      if (verified !== hashHex) {
+        console.warn('⚠️ localStorage verification failed - fingerprint may not persist');
+      } else {
+        console.log('✅ [Native] Fingerprint storage verified');
+      }
+    }
+  } catch (e) {
+    console.error('❌ Failed to store fingerprint:', e);
+  }
   
   return hashHex;
 };

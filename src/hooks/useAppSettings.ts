@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, createContext, useContext } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { generateDeviceFingerprint, getDeviceName, getDeviceInfo } from '@/utils/deviceFingerprint';
 import { API_CONFIG } from '@/config/api';
 
@@ -124,12 +125,17 @@ export const useAppSettings = (): AppSettingsContextType => {
   return useAppSettingsStandalone();
 };
 
-// Auto-register device in approved_devices table
-const registerDevice = async (fingerprint: string): Promise<boolean> => {
+// Auto-register device in approved_devices table with retry for native platforms
+const registerDevice = async (fingerprint: string, retryCount = 0): Promise<boolean> => {
+  const isNative = Capacitor.isNativePlatform();
+  const platform = Capacitor.getPlatform();
+  const maxRetries = isNative ? 3 : 1;
+  
   try {
     const deviceName = getDeviceName();
     const deviceInfo = getDeviceInfo();
-    const deviceInfoString = `${deviceName} | ${deviceInfo.os} | ${deviceInfo.browser} | ${deviceInfo.screenResolution}`;
+    // Include platform info for native apps
+    const deviceInfoString = `${deviceName} | ${deviceInfo.os} | ${deviceInfo.browser} | ${deviceInfo.screenResolution}${isNative ? ` | ${platform}` : ''}`;
     
     const requestBody = {
       device_fingerprint: fingerprint,
@@ -138,9 +144,9 @@ const registerDevice = async (fingerprint: string): Promise<boolean> => {
       approved: false // Always false for new devices
     };
     
-    console.log('📱 Registering device with fingerprint:', fingerprint.substring(0, 16) + '...');
+    console.log(`📱 Registering device (attempt ${retryCount + 1}/${maxRetries}):`, fingerprint.substring(0, 16) + '...');
     console.log('📱 Device info:', deviceInfoString);
-    console.log('📱 Full request body:', JSON.stringify(requestBody));
+    console.log('📱 Platform:', platform, 'isNative:', isNative);
     
     const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
       method: 'POST',
@@ -149,11 +155,30 @@ const registerDevice = async (fingerprint: string): Promise<boolean> => {
     });
     
     const data = await response.json();
-    console.log('📱 Device registration response status:', response.status);
-    console.log('📱 Device registration response:', data);
+    console.log('📱 Device registration response:', response.status, data.success ? 'SUCCESS' : 'FAILED');
+    
+    if (data.success) {
+      return true;
+    }
+    
+    // Retry on failure for native platforms
+    if (!data.success && retryCount < maxRetries - 1) {
+      console.log(`⏳ Retrying registration in ${(retryCount + 1) * 2}s...`);
+      await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 2000));
+      return registerDevice(fingerprint, retryCount + 1);
+    }
+    
     return data.success;
   } catch (error) {
     console.error('❌ Failed to register device:', error);
+    
+    // Retry on network error for native platforms
+    if (retryCount < maxRetries - 1) {
+      console.log(`⏳ Network error, retrying in ${(retryCount + 1) * 2}s...`);
+      await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 2000));
+      return registerDevice(fingerprint, retryCount + 1);
+    }
+    
     return false;
   }
 };
