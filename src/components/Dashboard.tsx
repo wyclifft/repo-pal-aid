@@ -1,12 +1,14 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Store, Info, MoreVertical, Cpu, BarChart3 } from 'lucide-react';
+import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2 } from 'lucide-react';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
 import { MemberSyncBanner } from '@/components/MemberSyncBanner';
 
 import { type Route, type Session } from '@/services/mysqlApi';
 import { useDataSync } from '@/hooks/useDataSync';
+import { useSessionClose } from '@/hooks/useSessionClose';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { 
   quickReconnect, 
   quickReconnectPrinter, 
@@ -77,6 +79,24 @@ export const Dashboard = ({
   });
   const [isReconnecting, setIsReconnecting] = useState(false);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
+  const { sessionPrintOnly } = useAppSettings();
+  
+  // Session close handler that respects sessPrint setting
+  const handleSessionCloseSuccess = useCallback(() => {
+    setSessionActive(false);
+    setSelectedRoute(null);
+    setSelectedSession(null);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  }, []);
+  
+  const {
+    canClose,
+    isClosing,
+    pendingSyncCount: sessionPendingCount,
+    isSyncComplete,
+    closeButtonLabel,
+    closeSession
+  } = useSessionClose(handleSessionCloseSuccess);
 
   // Memoize date to prevent recalculation on every render
   const currentDate = useMemo(() => {
@@ -112,11 +132,9 @@ export const Dashboard = ({
     }
   };
 
+  // Legacy handler removed - now using useSessionClose hook
   const handleCloseSession = () => {
-    setSessionActive(false);
-    setSelectedRoute(null);
-    setSelectedSession(null);
-    localStorage.removeItem(SESSION_STORAGE_KEY);
+    closeSession();
   };
 
   const handleBuyProduce = () => {
@@ -307,14 +325,32 @@ export const Dashboard = ({
         <div className="flex-1 flex flex-col justify-center">
           {sessionActive ? (
             <div className="space-y-3">
+              {/* Sync Warning Banner when sessPrint=1 and sync incomplete */}
+              {sessionPrintOnly && !isSyncComplete && (
+                <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 flex items-center gap-3">
+                  <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-amber-800 font-semibold text-sm">Sync Required</p>
+                    <p className="text-amber-700 text-xs">
+                      {sessionPendingCount} transaction{sessionPendingCount !== 1 ? 's' : ''} pending sync. 
+                      Session close will sync and print Z-report.
+                    </p>
+                  </div>
+                </div>
+              )}
+              
               {/* Close Session */}
               <div className="flex justify-center">
                 <button
                   onClick={handleCloseSession}
-                  className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem]"
+                  disabled={!canClose}
+                  className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
-                  Close Session
+                  {(isClosing || isSyncing) && (
+                    <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />
+                  )}
+                  {closeButtonLabel}
                 </button>
               </div>
 

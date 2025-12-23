@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type ZReportData } from '@/services/mysqlApi';
 import { Button } from '@/components/ui/button';
@@ -15,8 +15,14 @@ import { useAppSettings } from '@/hooks/useAppSettings';
 
 const ZReport = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { isAuthenticated } = useAuth();
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Get date from URL or use today
+  const dateFromUrl = searchParams.get('date');
+  const autoPrint = searchParams.get('autoprint') === 'true';
+  const [selectedDate, setSelectedDate] = useState(dateFromUrl || new Date().toISOString().split('T')[0]);
+  const autoPrintTriggeredRef = useRef(false);
   
   // App settings
   const { sessionPrintOnly, routeLabel, produceLabel } = useAppSettings();
@@ -137,6 +143,20 @@ const ZReport = () => {
     
     setLoading(false);
   };
+
+  // Auto-print when autoprint param is true (triggered by session close with sessPrint=1)
+  useEffect(() => {
+    if (autoPrint && reportData && !loading && !autoPrintTriggeredRef.current) {
+      autoPrintTriggeredRef.current = true;
+      console.log('🖨️ Auto-printing Z-report (sessPrint session close)');
+      toast.success('Z-report ready - printing...');
+      
+      // Small delay to ensure UI is rendered
+      setTimeout(() => {
+        window.print();
+      }, 500);
+    }
+  }, [autoPrint, reportData, loading]);
 
   const handlePrint = () => {
     // Enforce sessprint: only print if sync is complete
