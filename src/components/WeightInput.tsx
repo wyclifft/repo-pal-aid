@@ -32,7 +32,14 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
   const stableReadingsRef = useRef<number[]>([]);
   const stableTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  const { requireStableReading, autoWeightOnly, produceLabel } = useAppSettings();
+  // Get psettings - these values update automatically when psettings change
+  const appSettings = useAppSettings();
+  const { requireStableReading, autoWeightOnly, produceLabel } = appSettings;
+  
+  // Log when settings change for debugging
+  useEffect(() => {
+    console.log('📱 WeightInput - autoWeightOnly:', autoWeightOnly, 'requireStableReading:', requireStableReading);
+  }, [autoWeightOnly, requireStableReading]);
 
   // Check if readings are stable (within threshold)
   const areReadingsStable = useCallback((readings: number[]): boolean => {

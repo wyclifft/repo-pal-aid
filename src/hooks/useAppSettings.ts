@@ -160,11 +160,12 @@ const registerDevice = async (fingerprint: string): Promise<boolean> => {
 
 // Standalone hook (can be used without context provider)
 export const useAppSettingsStandalone = (): AppSettingsContextType => {
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<AppSettings>(() => loadCachedSettings());
   const [isLoading, setIsLoading] = useState(true);
   const [isDeviceAuthorized, setIsDeviceAuthorized] = useState<boolean | null>(null);
   const [isPendingApproval, setIsPendingApproval] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<number>(0);
 
   const refreshSettings = useCallback(async () => {
     if (!navigator.onLine) {
@@ -229,30 +230,41 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           }
           
           // Device is authorized - extract settings from response
+          // CRITICAL: Parse all values as numbers to ensure proper comparison
           const newSettings: AppSettings = {
-            printoptions: deviceData.app_settings?.printoptions ?? DEFAULT_SETTINGS.printoptions,
-            chkroute: deviceData.app_settings?.chkroute ?? DEFAULT_SETTINGS.chkroute,
+            printoptions: parseInt(String(deviceData.app_settings?.printoptions ?? DEFAULT_SETTINGS.printoptions), 10),
+            chkroute: parseInt(String(deviceData.app_settings?.chkroute ?? DEFAULT_SETTINGS.chkroute), 10),
             rdesc: deviceData.app_settings?.rdesc ?? DEFAULT_SETTINGS.rdesc,
-            stableopt: deviceData.app_settings?.stableopt ?? DEFAULT_SETTINGS.stableopt,
-            sessprint: deviceData.app_settings?.sessprint ?? DEFAULT_SETTINGS.sessprint,
-            autow: deviceData.app_settings?.autow ?? DEFAULT_SETTINGS.autow,
-            online: deviceData.app_settings?.online ?? DEFAULT_SETTINGS.online,
+            stableopt: parseInt(String(deviceData.app_settings?.stableopt ?? DEFAULT_SETTINGS.stableopt), 10),
+            sessprint: parseInt(String(deviceData.app_settings?.sessprint ?? DEFAULT_SETTINGS.sessprint), 10),
+            autow: parseInt(String(deviceData.app_settings?.autow ?? DEFAULT_SETTINGS.autow), 10),
+            online: parseInt(String(deviceData.app_settings?.online ?? DEFAULT_SETTINGS.online), 10),
             orgtype: deviceData.app_settings?.orgtype ?? DEFAULT_SETTINGS.orgtype,
-            printcumm: deviceData.app_settings?.printcumm ?? DEFAULT_SETTINGS.printcumm,
-            zeroOpt: deviceData.app_settings?.zeroOpt ?? DEFAULT_SETTINGS.zeroOpt,
+            printcumm: parseInt(String(deviceData.app_settings?.printcumm ?? DEFAULT_SETTINGS.printcumm), 10),
+            zeroOpt: parseInt(String(deviceData.app_settings?.zeroOpt ?? DEFAULT_SETTINGS.zeroOpt), 10),
             company_name: deviceData.company_name ?? DEFAULT_SETTINGS.company_name,
             caddress: deviceData.app_settings?.caddress ?? DEFAULT_SETTINGS.caddress,
             tel: deviceData.app_settings?.tel ?? DEFAULT_SETTINGS.tel,
             email: deviceData.app_settings?.email ?? DEFAULT_SETTINGS.email,
-            cumulative_frequency_status: deviceData.cumulative_frequency_status ?? DEFAULT_SETTINGS.cumulative_frequency_status
+            cumulative_frequency_status: parseInt(String(deviceData.cumulative_frequency_status ?? DEFAULT_SETTINGS.cumulative_frequency_status), 10)
           };
+          
+          // Log settings changes for debugging
+          console.log('🔄 Settings refreshed from server:', {
+            autow: newSettings.autow,
+            stableopt: newSettings.stableopt,
+            sessprint: newSettings.sessprint
+          });
           
           setSettings(newSettings);
           saveCachedSettings(newSettings, deviceData.ccode);
           setIsDeviceAuthorized(true);
           setIsPendingApproval(false);
           localStorage.setItem('device_authorized', 'true');
-          console.log('✅ App settings synced from authorized device:', newSettings);
+          setLastRefresh(Date.now());
+          
+          // Dispatch event to notify other components of settings update
+          window.dispatchEvent(new CustomEvent('psettingsUpdated', { detail: newSettings }));
         } else {
           // Response OK but no data - treat as unauthorized
           setIsDeviceAuthorized(false);
@@ -334,19 +346,64 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
       setIsLoading(false);
     }
   }, []);
+
   // Fetch settings on mount
   useEffect(() => {
     refreshSettings();
   }, [refreshSettings]);
 
-  // Refresh on online
+  // Refresh on online event
   useEffect(() => {
-    const handleOnline = () => refreshSettings();
+    const handleOnline = () => {
+      console.log('🌐 Network online - refreshing psettings');
+      refreshSettings();
+    };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
   }, [refreshSettings]);
 
-  // Derived helper values
+  // Refresh when app becomes visible (foreground)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        // Only refresh if last refresh was more than 30 seconds ago
+        const now = Date.now();
+        if (now - lastRefresh > 30000) {
+          console.log('👁️ App visible - refreshing psettings');
+          refreshSettings();
+        }
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [refreshSettings, lastRefresh]);
+
+  // Listen for manual settings refresh request
+  useEffect(() => {
+    const handleForceRefresh = () => {
+      console.log('🔄 Force refresh psettings requested');
+      refreshSettings();
+    };
+    
+    window.addEventListener('refreshPsettings', handleForceRefresh);
+    return () => window.removeEventListener('refreshPsettings', handleForceRefresh);
+  }, [refreshSettings]);
+
+  // Periodic refresh every 60 seconds when online (for live settings updates)
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      if (navigator.onLine && isDeviceAuthorized) {
+        console.log('⏰ Periodic psettings refresh');
+        refreshSettings();
+      }
+    }, 60000); // 60 seconds
+
+    return () => clearInterval(intervalId);
+  }, [refreshSettings, isDeviceAuthorized]);
+
+  // Derived helper values - computed from current settings state
+  // These will automatically update when settings state changes
   const isDairy = settings.orgtype === 'D';
   const isCoffee = settings.orgtype === 'C';
   // Trim rdesc since DB column may have trailing whitespace
@@ -354,6 +411,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const routeLabel = trimmedRdesc || (isDairy ? 'Route' : 'Center');
   const centerLabel = isCoffee ? 'Center' : 'Route';
   const produceLabel = isDairy ? 'Milk' : 'Coffee';
+  // CRITICAL: Use strict equality with number 1 for boolean conversion
   const requireStableReading = settings.stableopt === 1;
   const requireZeroScale = settings.zeroOpt === 1;
   const autoWeightOnly = settings.autow === 1;

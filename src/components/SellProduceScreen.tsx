@@ -47,10 +47,16 @@ export const SellProduceScreen = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const { getFarmers } = useIndexedDB();
   
-  // Get psettings for produce labeling
-  const { produceLabel } = useAppSettings();
+  // Get psettings for produce labeling - updates automatically when psettings change
+  const appSettings = useAppSettings();
+  const { produceLabel, autoWeightOnly } = appSettings;
 
   const today = new Date().toISOString().split('T')[0];
+  
+  // Log when settings change for debugging
+  useEffect(() => {
+    console.log('📱 SellProduceScreen - autoWeightOnly:', autoWeightOnly);
+  }, [autoWeightOnly]);
 
   // Load cached farmers
   useEffect(() => {
@@ -164,19 +170,38 @@ export const SellProduceScreen = ({
           </div>
         </div>
 
-        {/* Manual Weight Entry */}
-        <div className="flex gap-2 items-center">
-          <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">Manual:</span>
+        {/* Manual Weight Entry - enforces AutoW (autow=1 disables manual entry) */}
+        <div className={`flex gap-2 items-center ${autoWeightOnly ? 'opacity-50' : ''}`}>
+          <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
+            Manual:
+            {autoWeightOnly && <span className="text-red-500 ml-1">(Disabled)</span>}
+          </span>
           <input
             type="number"
             inputMode="decimal"
             step="0.1"
             min="0"
-            placeholder="Enter weight"
-            onChange={(e) => onManualWeightChange?.(parseFloat(e.target.value) || 0)}
-            className="flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 border-gray-300 rounded-lg text-base sm:text-lg min-h-[44px]"
+            placeholder={autoWeightOnly ? "Use scale only" : "Enter weight"}
+            disabled={autoWeightOnly}
+            onChange={(e) => {
+              if (autoWeightOnly) {
+                toast.error('Manual weight entry is disabled. Please use the digital scale.');
+                return;
+              }
+              onManualWeightChange?.(parseFloat(e.target.value) || 0);
+            }}
+            className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 rounded-lg text-base sm:text-lg min-h-[44px] ${
+              autoWeightOnly 
+                ? 'border-gray-200 bg-gray-100 cursor-not-allowed' 
+                : 'border-gray-300'
+            }`}
           />
         </div>
+        {autoWeightOnly && (
+          <p className="text-xs text-red-500 -mt-2 mb-2 px-1">
+            Manual entry is disabled. Use the digital scale.
+          </p>
+        )}
 
         {/* Member Search */}
         <div className="flex gap-1.5 sm:gap-2">
