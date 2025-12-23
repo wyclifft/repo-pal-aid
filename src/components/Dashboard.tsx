@@ -95,8 +95,31 @@ export const Dashboard = ({
     pendingSyncCount: sessionPendingCount,
     isSyncComplete,
     closeButtonLabel,
-    closeSession
+    closeSession,
+    confirmZReportPrinted,
+    cancelZReportModal
   } = useSessionClose(handleSessionCloseSuccess);
+
+  // Listen for session close events from Z-report page
+  useEffect(() => {
+    const handleSessionCloseComplete = () => {
+      console.log('📝 Session close complete event received');
+      handleSessionCloseSuccess();
+    };
+    
+    const handleSessionCloseCancelled = () => {
+      console.log('📝 Session close cancelled event received');
+      cancelZReportModal();
+    };
+    
+    window.addEventListener('sessionCloseComplete', handleSessionCloseComplete);
+    window.addEventListener('sessionCloseCancelled', handleSessionCloseCancelled);
+    
+    return () => {
+      window.removeEventListener('sessionCloseComplete', handleSessionCloseComplete);
+      window.removeEventListener('sessionCloseCancelled', handleSessionCloseCancelled);
+    };
+  }, [handleSessionCloseSuccess, cancelZReportModal]);
 
   // Memoize date to prevent recalculation on every render
   const currentDate = useMemo(() => {

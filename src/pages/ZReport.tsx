@@ -21,8 +21,10 @@ const ZReport = () => {
   // Get date from URL or use today
   const dateFromUrl = searchParams.get('date');
   const autoPrint = searchParams.get('autoprint') === 'true';
+  const isSessionClose = searchParams.get('sessionclose') === 'true';
   const [selectedDate, setSelectedDate] = useState(dateFromUrl || new Date().toISOString().split('T')[0]);
   const autoPrintTriggeredRef = useRef(false);
+  const [hasPrinted, setHasPrinted] = useState(false);
   
   // App settings
   const { sessionPrintOnly, routeLabel, produceLabel } = useAppSettings();
@@ -31,12 +33,12 @@ const ZReport = () => {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isSyncComplete, setIsSyncComplete] = useState(true);
 
-  // Check authentication
+  // Check authentication - but don't redirect during session close flow
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated && !isSessionClose) {
       navigate('/', { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, isSessionClose]);
   const [reportData, setReportData] = useState<ZReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
@@ -154,9 +156,35 @@ const ZReport = () => {
       // Small delay to ensure UI is rendered
       setTimeout(() => {
         window.print();
+        setHasPrinted(true);
       }, 500);
     }
   }, [autoPrint, reportData, loading]);
+
+  // Handle print button click
+  const handlePrintClick = () => {
+    handlePrint();
+    setHasPrinted(true);
+  };
+
+  // Handle session close completion
+  const handleCompleteSessionClose = () => {
+    console.log('✅ Session close confirmed from Z-report page');
+    // Clear session storage
+    localStorage.removeItem('active_session_data');
+    // Dispatch event to notify Dashboard
+    window.dispatchEvent(new CustomEvent('sessionCloseComplete'));
+    toast.success('Session closed successfully');
+    navigate('/', { replace: true });
+  };
+
+  // Handle cancel session close
+  const handleCancelSessionClose = () => {
+    console.log('❌ Session close cancelled from Z-report page');
+    // Dispatch event to notify Dashboard
+    window.dispatchEvent(new CustomEvent('sessionCloseCancelled'));
+    navigate('/', { replace: true });
+  };
 
   const handlePrint = () => {
     // Enforce sessprint: only print if sync is complete
@@ -165,6 +193,7 @@ const ZReport = () => {
       return;
     }
     window.print();
+    setHasPrinted(true);
   };
 
   const handleDownloadPDF = () => {
@@ -189,20 +218,35 @@ const ZReport = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2] print:bg-white">
+      {/* Session Close Banner - Show when closing session */}
+      {isSessionClose && (
+        <div className="bg-amber-500 text-white px-4 py-3 text-center print:hidden">
+          <p className="font-semibold">Session Close Mode</p>
+          <p className="text-sm">Print or view the Z-report, then complete session close below</p>
+        </div>
+      )}
+      
       {/* Header - Hide on print */}
       <header className="bg-white shadow-md sticky top-0 z-50 print:hidden">
         <div className="flex items-center justify-between px-4 py-3">
-          <Button onClick={() => navigate('/')} variant="ghost" size="sm">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back
-          </Button>
+          {isSessionClose ? (
+            <Button onClick={handleCancelSessionClose} variant="ghost" size="sm">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Cancel
+            </Button>
+          ) : (
+            <Button onClick={() => navigate('/')} variant="ghost" size="sm">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back
+            </Button>
+          )}
           <div className="flex flex-col items-center gap-1">
             <h1 className="text-xl font-bold text-[#667eea]">Z Report</h1>
             <DeviceAuthStatus />
           </div>
           <div className="flex gap-2">
-          <Button 
-              onClick={handlePrint} 
+            <Button 
+              onClick={handlePrintClick} 
               variant="outline" 
               size="sm"
               disabled={sessionPrintOnly && !isSyncComplete}
@@ -221,6 +265,25 @@ const ZReport = () => {
             </Button>
           </div>
         </div>
+        
+        {/* Session Close Actions */}
+        {isSessionClose && (
+          <div className="flex gap-3 px-4 py-3 bg-gray-50 border-t">
+            <Button 
+              onClick={handleCompleteSessionClose}
+              className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+            >
+              {hasPrinted ? '✓ Complete Session Close' : 'Complete Session Close'}
+            </Button>
+            <Button 
+              onClick={handleCancelSessionClose}
+              variant="outline"
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+          </div>
+        )}
       </header>
 
       <div className="max-w-6xl mx-auto p-4 space-y-4">
