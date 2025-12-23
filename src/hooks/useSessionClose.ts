@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 export interface SessionCloseState {
   canClose: boolean;
   isClosing: boolean;
+  isSyncingForClose: boolean;
   pendingSyncCount: number;
   isSyncComplete: boolean;
   closeButtonLabel: string;
@@ -33,6 +34,7 @@ export const useSessionClose = (
   const { getUnsyncedReceipts, isReady } = useIndexedDB();
   
   const [isClosing, setIsClosing] = useState(false);
+  const [isSyncingForClose, setIsSyncingForClose] = useState(false);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isSyncComplete, setIsSyncComplete] = useState(true);
   const [showZReportModal, setShowZReportModal] = useState(false);
@@ -139,10 +141,12 @@ export const useSessionClose = (
       // If there are pending syncs, try to sync them first
       if (!isSyncComplete) {
         console.log('📤 sessPrint=1: Syncing pending transactions before close...');
-        toast.info('Syncing pending transactions...');
+        setIsSyncingForClose(true);
         
         // Attempt to sync
         await syncOfflineReceipts();
+        
+        setIsSyncingForClose(false);
         
         // Re-check sync status after sync
         await updateSyncStatus();
@@ -182,6 +186,7 @@ export const useSessionClose = (
       toast.error('Failed to close session. Please try again.');
       if (mountedRef.current) {
         setIsClosing(false);
+        setIsSyncingForClose(false);
       }
       return false;
     }
@@ -199,6 +204,7 @@ export const useSessionClose = (
   return {
     canClose,
     isClosing,
+    isSyncingForClose,
     pendingSyncCount,
     isSyncComplete,
     closeButtonLabel: getButtonLabel(),

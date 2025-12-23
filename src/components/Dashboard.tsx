@@ -92,6 +92,7 @@ export const Dashboard = ({
   const {
     canClose,
     isClosing,
+    isSyncingForClose,
     pendingSyncCount: sessionPendingCount,
     isSyncComplete,
     closeButtonLabel,
@@ -217,6 +218,13 @@ export const Dashboard = ({
       <MemberSyncBanner 
         isVisible={isSyncingMembers} 
         syncedCount={memberSyncCount} 
+      />
+      
+      {/* Session Close Sync Banner */}
+      <MemberSyncBanner 
+        isVisible={isSyncingForClose} 
+        syncedCount={sessionPendingCount}
+        message="Syncing Transactions..."
       />
 
       {/* ============ TOP SECTION - TEAL/BLUE CONTEXTUAL INFO ============ */}
