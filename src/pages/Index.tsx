@@ -190,12 +190,12 @@ const Index = () => {
     loadPrintedReceipts();
   }, [isReady, getPrintedReceipts, savePrintedReceipts]);
 
-  // Reset lastSavedWeight when scale reads 0 (ready for next collection)
+  // Reset lastSavedWeight when weight is 0 (ready for next collection) - applies to both scale and manual entry
   useEffect(() => {
-    if (entryType === 'scale' && weight === 0 && lastSavedWeight > 0) {
+    if (weight === 0 && lastSavedWeight > 0) {
       setLastSavedWeight(0);
     }
-  }, [weight, entryType, lastSavedWeight]);
+  }, [weight, lastSavedWeight]);
 
   const handleLogin = (user: AppUser, offline: boolean, password?: string) => {
     login(user, offline, password);
