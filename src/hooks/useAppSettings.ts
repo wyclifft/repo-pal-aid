@@ -38,11 +38,11 @@ export interface AppSettings {
   cumulative_frequency_status: number;
 }
 
-// Default settings
+// Default settings - rdesc is empty to force use of dynamic DB value
 export const DEFAULT_SETTINGS: AppSettings = {
   printoptions: 1,
   chkroute: 1,
-  rdesc: 'Route',
+  rdesc: '', // Empty - will be populated from DB; routeLabel computed dynamically
   stableopt: 0,
   sessprint: 0,
   autow: 0,

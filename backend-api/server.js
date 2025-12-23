@@ -1206,7 +1206,7 @@ const server = http.createServer(async (req, res) => {
       let appSettings = {
         printoptions: 1,
         chkroute: 1,
-        rdesc: 'Route',
+        rdesc: '', // Empty - will be populated from DB; frontend handles label logic
         stableopt: 0,
         sessprint: 0,
         autow: 0,
@@ -1226,7 +1226,7 @@ const server = http.createServer(async (req, res) => {
             cumulative_frequency_status,
             IFNULL(printOptions, 1) as printOptions,
             IFNULL(chkRoute, 1) as chkRoute,
-            IFNULL(rdesc, 'Route') as rdesc,
+            IFNULL(rdesc, '') as rdesc,
             IFNULL(stableOpt, 0) as stableOpt,
             IFNULL(sessPrint, 0) as sessPrint,
             IFNULL(AutoW, 0) as AutoW,

@@ -13,6 +13,7 @@ interface ReceiptModalProps {
   cumulativeFrequency?: number;
   showCumulativeFrequency?: boolean;
   printCopies?: number; // Number of copies to print (from psettings.printoptions)
+  routeLabel?: string; // Dynamic label from psettings.rdesc
 }
 
 export const ReceiptModal = ({ 
@@ -23,7 +24,8 @@ export const ReceiptModal = ({
   onPrint,
   cumulativeFrequency,
   showCumulativeFrequency = false,
-  printCopies = 1
+  printCopies = 1,
+  routeLabel = 'Route'
 }: ReceiptModalProps) => {
   const handlePrint = async () => {
     if (receipts.length === 0) return;
@@ -46,6 +48,7 @@ export const ReceiptModal = ({
         farmerName: firstReceipt.farmer_name,
         farmerId: firstReceipt.farmer_id,
         route: firstReceipt.route,
+        routeLabel: routeLabel, // Dynamic label from psettings.rdesc
         session: firstReceipt.session,
         referenceNo: firstReceipt.reference_no,
         collectorName: firstReceipt.clerk_name,
@@ -102,7 +105,7 @@ export const ReceiptModal = ({
             </div>
             <div className="font-medium">{firstReceipt.farmer_name}</div>
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{firstReceipt.route}</span>
+              <span>{routeLabel}: {firstReceipt.route}</span>
               <span>{firstReceipt.session}</span>
             </div>
             <div className="flex justify-between text-xs text-muted-foreground mt-1">
