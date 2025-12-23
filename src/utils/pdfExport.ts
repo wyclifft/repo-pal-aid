@@ -1,8 +1,25 @@
 import type { ZReportData } from '@/services/mysqlApi';
 
-export const printThermalZReport = (reportData: ZReportData) => {
+// Helper to get produce label from localStorage settings (for non-React contexts)
+const getProduceLabelFromCache = (): string => {
+  try {
+    const cached = localStorage.getItem('app_settings');
+    if (cached) {
+      const settings = JSON.parse(cached);
+      return settings.orgtype === 'C' ? 'COFFEE' : 'MILK';
+    }
+  } catch (e) {
+    console.warn('Failed to read produce label from cache:', e);
+  }
+  return 'MILK'; // Default to dairy
+};
+
+export const printThermalZReport = (reportData: ZReportData, produceLabel?: string) => {
   const printWindow = window.open('', '', 'width=300,height=600');
   if (!printWindow) return;
+
+  // Use provided label or get from cache
+  const label = produceLabel?.toUpperCase() || getProduceLabelFromCache();
 
   const content = `
     <!DOCTYPE html>
@@ -33,7 +50,7 @@ export const printThermalZReport = (reportData: ZReportData) => {
       </style>
     </head>
     <body>
-      <div class="center title">MILK COLLECTION Z REPORT</div>
+      <div class="center title">${label} COLLECTION Z REPORT</div>
       <div class="line"></div>
       <div class="section">
         <div>DATE: ${new Date(reportData.date).toLocaleDateString()}</div>
@@ -80,9 +97,12 @@ export const printThermalZReport = (reportData: ZReportData) => {
   }, 250);
 };
 
-export const generateZReportPDF = (reportData: ZReportData) => {
+export const generateZReportPDF = (reportData: ZReportData, produceLabel?: string) => {
+  // Use provided label or get from cache
+  const label = produceLabel?.toUpperCase() || getProduceLabelFromCache();
+  
   // Create a formatted text version of the report
-  let content = `MILK COLLECTION Z REPORT\n`;
+  let content = `${label} COLLECTION Z REPORT\n`;
   content += `Date: ${new Date(reportData.date).toLocaleDateString()}\n`;
   content += `Generated: ${new Date().toLocaleString()}\n`;
   content += `\n${'='.repeat(60)}\n\n`;

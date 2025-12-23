@@ -19,7 +19,7 @@ const ZReport = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   
   // App settings
-  const { sessionPrintOnly, routeLabel } = useAppSettings();
+  const { sessionPrintOnly, routeLabel, produceLabel } = useAppSettings();
   
   // Sync status tracking for sessprint enforcement
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
@@ -224,7 +224,7 @@ const ZReport = () => {
         {/* Thermal Print Layout - Only visible on print */}
         {reportData && (
           <div className="thermal-print">
-            <div className="thermal-header">MILK COLLECTION Z REPORT</div>
+            <div className="thermal-header">{produceLabel.toUpperCase()} COLLECTION Z REPORT</div>
             <div className="thermal-divider">--------------------------------</div>
             <div className="thermal-line">DATE: {new Date(reportData.date).toLocaleDateString()}</div>
             <div className="thermal-line">TIME: {new Date().toLocaleTimeString()}</div>

@@ -4,6 +4,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
 import { type Route, type Session } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { FarmerSearchModal } from './FarmerSearchModal';
 import { toast } from 'sonner';
 
@@ -49,6 +50,9 @@ export const BuyProduceScreen = ({
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const { getFarmers } = useIndexedDB();
+  
+  // Get psettings for AutoW enforcement and produce labeling
+  const { autoWeightOnly, produceLabel, routeLabel } = useAppSettings();
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -164,9 +168,9 @@ export const BuyProduceScreen = ({
         </h1>
       </header>
 
-      {/* Produce Buying Banner */}
+      {/* Produce Buying Banner - uses orgtype to switch wording */}
       <div className="bg-teal-500 text-white text-center py-2 font-semibold text-sm sm:text-base">
-        Produce Buying
+        {produceLabel} Buying
       </div>
 
       {/* Main Content */}
@@ -183,19 +187,38 @@ export const BuyProduceScreen = ({
           </div>
         </div>
 
-        {/* Manual Weight Entry */}
-        <div className="flex gap-2 items-center">
-          <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">Manual:</span>
+        {/* Manual Weight Entry - enforces AutoW (autow=1 disables manual entry) */}
+        <div className={`flex gap-2 items-center ${autoWeightOnly ? 'opacity-50' : ''}`}>
+          <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
+            Manual:
+            {autoWeightOnly && <span className="text-red-500 ml-1">(Disabled)</span>}
+          </span>
           <input
             type="number"
             inputMode="decimal"
             step="0.1"
             min="0"
-            placeholder="Enter weight"
-            onChange={(e) => onManualWeightChange?.(parseFloat(e.target.value) || 0)}
-            className="flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 border-gray-300 rounded-lg text-base sm:text-lg min-h-[44px]"
+            placeholder={autoWeightOnly ? "Use scale only" : "Enter weight"}
+            disabled={autoWeightOnly}
+            onChange={(e) => {
+              if (autoWeightOnly) {
+                toast.error('Manual weight entry is disabled. Please use the digital scale.');
+                return;
+              }
+              onManualWeightChange?.(parseFloat(e.target.value) || 0);
+            }}
+            className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 rounded-lg text-base sm:text-lg min-h-[44px] ${
+              autoWeightOnly 
+                ? 'border-gray-200 bg-gray-100 cursor-not-allowed' 
+                : 'border-gray-300'
+            }`}
           />
         </div>
+        {autoWeightOnly && (
+          <p className="text-xs text-red-500 -mt-2 mb-2 px-1">
+            Manual entry is disabled. Use the digital scale.
+          </p>
+        )}
 
         {/* Member Search */}
         <div className="flex gap-1.5 sm:gap-2">
