@@ -131,22 +131,29 @@ const registerDevice = async (fingerprint: string): Promise<boolean> => {
     const deviceInfo = getDeviceInfo();
     const deviceInfoString = `${deviceName} | ${deviceInfo.os} | ${deviceInfo.browser} | ${deviceInfo.screenResolution}`;
     
+    const requestBody = {
+      device_fingerprint: fingerprint,
+      user_id: 'pending', // Will be updated when user logs in
+      device_info: deviceInfoString,
+      approved: false // Always false for new devices
+    };
+    
+    console.log('📱 Registering device with fingerprint:', fingerprint.substring(0, 16) + '...');
+    console.log('📱 Device info:', deviceInfoString);
+    console.log('📱 Full request body:', JSON.stringify(requestBody));
+    
     const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        device_fingerprint: fingerprint,
-        user_id: 'pending', // Will be updated when user logs in
-        device_info: deviceInfoString,
-        approved: false // Always false for new devices
-      })
+      body: JSON.stringify(requestBody)
     });
     
     const data = await response.json();
+    console.log('📱 Device registration response status:', response.status);
     console.log('📱 Device registration response:', data);
     return data.success;
   } catch (error) {
-    console.error('Failed to register device:', error);
+    console.error('❌ Failed to register device:', error);
     return false;
   }
 };
