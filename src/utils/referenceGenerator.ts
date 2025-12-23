@@ -237,9 +237,10 @@ const getNextSequential = async (): Promise<number> => {
 
 /**
  * Generate reference using device_ref from backend
- * Format: device_ref (e.g., AE10000001) - increments based on device slot
+ * Format: device_ref (e.g., AE01000001) - increments based on device slot
  * 
- * Device slots: Device 1 = AE1xxxxxxx, Device 2 = AE2xxxxxxx, etc.
+ * New format: AE + 2-digit slot + 6-digit sequence = 10 chars total
+ * Device slots: Device 1 = AE01xxxxxx, Device 2 = AE02xxxxxx, etc.
  * Each device increments sequentially within its slot.
  */
 export const generateOfflineReference = async (): Promise<string | null> => {
@@ -247,8 +248,8 @@ export const generateOfflineReference = async (): Promise<string | null> => {
   const deviceRef = localStorage.getItem('device_ref');
   
   if (deviceRef) {
-    // device_ref format: AE + slot(1 digit) + sequence(7 digits) = AE10000001
-    const prefix = deviceRef.slice(0, 3); // "AE1", "AE2", etc.
+    // New format: AE + 2-digit slot + 6-digit sequence = AE01000001
+    const prefix = deviceRef.slice(0, 4); // "AE01", "AE02", etc.
     
     // Get synced last sequence from config (this is the actual last used number)
     const config = await getDeviceConfig();
@@ -260,8 +261,8 @@ export const generateOfflineReference = async (): Promise<string | null> => {
     // Update for next call
     await updateConfig({ lastOfflineSequential: nextSequence });
     
-    // Generate reference: prefix + 7-digit sequential padded
-    const reference = `${prefix}${String(nextSequence).padStart(7, '0')}`;
+    // Generate reference: prefix + 6-digit sequential padded (10 chars total)
+    const reference = `${prefix}${String(nextSequence).padStart(6, '0')}`;
     
     console.log(`⚡ Reference: ${reference} (last: ${lastUsed}, next: ${nextSequence})`);
     return reference;
@@ -307,7 +308,8 @@ export const syncOfflineCounter = async (deviceRef: string, lastBackendSequence?
     console.log(`🔄 Synced counter to ${lastBackendSequence} (will generate from ${lastBackendSequence + 1})`);
   } else {
     // No backend data - check if device_ref has a base sequence
-    const baseSequence = parseInt(deviceRef.slice(3), 10) || 0;
+    // New format: AE + 2-digit slot + 6-digit sequence
+    const baseSequence = parseInt(deviceRef.slice(4), 10) || 0;
     if (baseSequence > 0) {
       // Use device_ref base - 1 as starting point (first generation will be baseSequence)
       await updateConfig({ lastOfflineSequential: baseSequence - 1 });
