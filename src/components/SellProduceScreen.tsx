@@ -4,6 +4,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
 import { type Route, type Session } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { FarmerSearchModal } from './FarmerSearchModal';
 import { toast } from 'sonner';
 
@@ -45,6 +46,9 @@ export const SellProduceScreen = ({
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const { getFarmers } = useIndexedDB();
+  
+  // Get psettings for produce labeling
+  const { produceLabel } = useAppSettings();
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -141,9 +145,9 @@ export const SellProduceScreen = ({
         </h1>
       </header>
 
-      {/* Milk Selling Portal Banner */}
+      {/* Produce Selling Portal Banner - uses orgtype to switch wording */}
       <div className="bg-teal-500 text-white text-center py-2 font-semibold text-sm sm:text-base">
-        Milk Selling Portal
+        {produceLabel} Selling Portal
       </div>
 
       {/* Main Content */}

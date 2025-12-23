@@ -598,6 +598,26 @@ const server = http.createServer(async (req, res) => {
       const ccode = deviceRows[0].ccode;
       console.log('🏢 Company Code:', ccode);
       
+      // BACKEND VALIDATION: Enforce psettings rules
+      // Fetch psettings for this company to validate business rules
+      const [psettingsRows] = await pool.query(
+        'SELECT IFNULL(AutoW, 0) as AutoW, IFNULL(zeroopt, 0) as zeroopt FROM psettings WHERE ccode = ?',
+        [ccode]
+      );
+      
+      const psettings = psettingsRows.length > 0 ? psettingsRows[0] : { AutoW: 0, zeroopt: 0 };
+      
+      // ENFORCE AutoW: If autow=1, reject manual entry_type
+      const entryType = (body.entry_type || 'manual').toLowerCase();
+      if (psettings.AutoW === 1 && entryType === 'manual') {
+        console.log('❌ AutoW enforcement: Manual entry rejected for company', ccode);
+        return sendJSON(res, { 
+          success: false, 
+          error: 'MANUAL_ENTRY_DISABLED',
+          message: 'Manual weight entry is disabled. Please use the digital scale.' 
+        }, 400);
+      }
+      
       // Parse date and time
       const collectionDate = new Date(body.collection_date);
       const transdate = collectionDate.toISOString().split('T')[0]; // YYYY-MM-DD
