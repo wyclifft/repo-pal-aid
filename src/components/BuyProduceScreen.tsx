@@ -52,9 +52,16 @@ export const BuyProduceScreen = ({
   const { getFarmers } = useIndexedDB();
   
   // Get psettings for AutoW enforcement and produce labeling
-  const { autoWeightOnly, produceLabel, routeLabel } = useAppSettings();
+  // These values update automatically when psettings change in the database
+  const appSettings = useAppSettings();
+  const { autoWeightOnly, produceLabel, routeLabel } = appSettings;
 
   const today = new Date().toISOString().split('T')[0];
+  
+  // Log when autoWeightOnly changes for debugging
+  useEffect(() => {
+    console.log('📱 BuyProduceScreen - autoWeightOnly:', autoWeightOnly);
+  }, [autoWeightOnly]);
 
   // Load cached farmers
   useEffect(() => {
