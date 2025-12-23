@@ -89,6 +89,7 @@ const saveCachedSettings = (settings: AppSettings, ccode?: string) => {
 interface AppSettingsContextType {
   settings: AppSettings;
   isLoading: boolean;
+  isDeviceAuthorized: boolean | null; // null = unknown/checking, false = not authorized, true = authorized
   refreshSettings: () => Promise<void>;
   // Helper getters
   isDairy: boolean;
@@ -123,12 +124,26 @@ export const useAppSettings = (): AppSettingsContextType => {
 
 // Standalone hook (can be used without context provider)
 export const useAppSettingsStandalone = (): AppSettingsContextType => {
-  const [settings, setSettings] = useState<AppSettings>(loadCachedSettings);
-  const [isLoading, setIsLoading] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isDeviceAuthorized, setIsDeviceAuthorized] = useState<boolean | null>(null);
 
   const refreshSettings = useCallback(async () => {
     if (!navigator.onLine) {
-      console.log('📴 Offline - using cached settings');
+      // Offline - check if we have cached authorization
+      const cachedAuth = localStorage.getItem('device_authorized');
+      if (cachedAuth === 'true') {
+        // Device was previously authorized, allow cached settings
+        const cached = loadCachedSettings();
+        setSettings(cached);
+        setIsDeviceAuthorized(true);
+        console.log('📴 Offline - using cached settings (device was authorized)');
+      } else {
+        // Not authorized or unknown - block access
+        setIsDeviceAuthorized(false);
+        console.log('📴 Offline - device not authorized, blocking access');
+      }
+      setIsLoading(false);
       return;
     }
 
@@ -153,7 +168,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         if (data.success && data.data) {
           const deviceData = data.data;
           
-          // Extract settings from response
+          // Device is authorized - extract settings from response
           const newSettings: AppSettings = {
             printoptions: deviceData.app_settings?.printoptions ?? DEFAULT_SETTINGS.printoptions,
             chkroute: deviceData.app_settings?.chkroute ?? DEFAULT_SETTINGS.chkroute,
@@ -174,15 +189,42 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           
           setSettings(newSettings);
           saveCachedSettings(newSettings, deviceData.ccode);
-          console.log('✅ App settings synced from device:', newSettings);
+          setIsDeviceAuthorized(true);
+          localStorage.setItem('device_authorized', 'true');
+          console.log('✅ App settings synced from authorized device:', newSettings);
+        } else {
+          // Response OK but no data - shouldn't happen, treat as unauthorized
+          setIsDeviceAuthorized(false);
+          localStorage.setItem('device_authorized', 'false');
+          console.log('⚠️ Device response missing data - blocking access');
         }
+      } else if (response.status === 404 || response.status === 401) {
+        // Device not found or not authorized - BLOCK access completely
+        setIsDeviceAuthorized(false);
+        localStorage.setItem('device_authorized', 'false');
+        // Clear any cached settings - unauthorized devices get nothing
+        localStorage.removeItem(SETTINGS_STORAGE_KEY);
+        localStorage.removeItem(SETTINGS_CCODE_KEY);
+        setSettings(DEFAULT_SETTINGS);
+        console.log('🚫 Device not authorized - blocking access, no cached/default settings');
       } else {
-        // Device not authorized - use cached settings only, don't bypass authorization
-        console.log('⚠️ Device not authorized - using cached/default settings only');
+        // Other error - treat as unauthorized for safety
+        setIsDeviceAuthorized(false);
+        localStorage.setItem('device_authorized', 'false');
+        console.log('⚠️ Unexpected response - blocking access');
       }
     } catch (error) {
       if ((error as Error).name !== 'AbortError') {
-        console.warn('Settings fetch failed, using cached:', error);
+        console.warn('Settings fetch failed:', error);
+        // Network error - check cached authorization
+        const cachedAuth = localStorage.getItem('device_authorized');
+        if (cachedAuth === 'true') {
+          const cached = loadCachedSettings();
+          setSettings(cached);
+          setIsDeviceAuthorized(true);
+        } else {
+          setIsDeviceAuthorized(false);
+        }
       }
     } finally {
       setIsLoading(false);
@@ -221,6 +263,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   return {
     settings,
     isLoading,
+    isDeviceAuthorized,
     refreshSettings,
     isDairy,
     isCoffee,

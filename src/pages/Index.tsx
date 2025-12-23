@@ -6,7 +6,7 @@ import { BuyProduceScreen } from '@/components/BuyProduceScreen';
 import { SellProduceScreen } from '@/components/SellProduceScreen';
 import { ReceiptModal } from '@/components/ReceiptModal';
 import { ReprintModal } from '@/components/ReprintModal';
-import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
+
 import { useAuth } from '@/contexts/AuthContext';
 import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
 import { type Route, type Session } from '@/services/mysqlApi';
@@ -26,13 +26,9 @@ const Index = () => {
   const [showCollection, setShowCollection] = useState(false); // Controls dashboard vs collection view
   const [collectionMode, setCollectionMode] = useState<'buy' | 'sell'>('buy'); // Buy or Sell mode
 
-  // Company name and authorization status from device
+  // Company name from device
   const [companyName, setCompanyName] = useState<string>(() => {
     return localStorage.getItem('device_company_name') || 'DAIRY COLLECTION';
-  });
-  const [isDeviceAuthorized, setIsDeviceAuthorized] = useState<boolean>(() => {
-    const cached = localStorage.getItem('device_authorized');
-    return cached ? JSON.parse(cached) : false;
   });
 
   // Reprint receipts state
@@ -115,6 +111,8 @@ const Index = () => {
   // App-wide settings from psettings
   const { 
     settings: appSettings, 
+    isLoading: settingsLoading,
+    isDeviceAuthorized,
     requireZeroScale, 
     autoWeightOnly, 
     showCumulative,
@@ -234,10 +232,6 @@ const Index = () => {
     }
   };
 
-  const handleAuthorizationChange = (authorized: boolean) => {
-    setIsDeviceAuthorized(authorized);
-    localStorage.setItem('device_authorized', JSON.stringify(authorized));
-  };
 
   const handleSessionChange = (selectedSession: Session | null) => {
     if (selectedSession) {
@@ -704,6 +698,46 @@ const Index = () => {
 
   if (!isAuthenticated) {
     return <Login onLogin={handleLogin} />;
+  }
+
+  // Block unauthorized devices completely - no access to any features
+  if (settingsLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Checking device authorization...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isDeviceAuthorized === false) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-card rounded-lg shadow-lg p-8 text-center border border-destructive/20">
+          <div className="w-16 h-16 bg-destructive/10 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-destructive" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-foreground mb-2">Device Not Authorized</h2>
+          <p className="text-muted-foreground mb-6">
+            This device is not registered or has not been approved by an administrator. 
+            Please contact your system administrator to authorize this device.
+          </p>
+          <button
+            onClick={() => {
+              logout();
+              window.location.reload();
+            }}
+            className="bg-primary text-primary-foreground px-6 py-2 rounded-lg hover:bg-primary/90 transition-colors"
+          >
+            Logout and Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // Show Dashboard first
