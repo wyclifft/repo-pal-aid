@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, createContext, useContext } from 'react';
-import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { generateDeviceFingerprint, getDeviceName, getDeviceInfo } from '@/utils/deviceFingerprint';
 import { API_CONFIG } from '@/config/api';
 
 // App settings interface based on psettings table
@@ -90,6 +90,8 @@ interface AppSettingsContextType {
   settings: AppSettings;
   isLoading: boolean;
   isDeviceAuthorized: boolean | null; // null = unknown/checking, false = not authorized, true = authorized
+  isPendingApproval: boolean; // Device registered but not yet approved
+  deviceFingerprint: string | null; // Device fingerprint for display
   refreshSettings: () => Promise<void>;
   // Helper getters
   isDairy: boolean;
@@ -122,11 +124,40 @@ export const useAppSettings = (): AppSettingsContextType => {
   return useAppSettingsStandalone();
 };
 
+// Auto-register device in approved_devices table
+const registerDevice = async (fingerprint: string): Promise<boolean> => {
+  try {
+    const deviceName = getDeviceName();
+    const deviceInfo = getDeviceInfo();
+    const deviceInfoString = `${deviceName} | ${deviceInfo.os} | ${deviceInfo.browser} | ${deviceInfo.screenResolution}`;
+    
+    const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_fingerprint: fingerprint,
+        user_id: 'pending', // Will be updated when user logs in
+        device_info: deviceInfoString,
+        approved: false // Always false for new devices
+      })
+    });
+    
+    const data = await response.json();
+    console.log('📱 Device registration response:', data);
+    return data.success;
+  } catch (error) {
+    console.error('Failed to register device:', error);
+    return false;
+  }
+};
+
 // Standalone hook (can be used without context provider)
 export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeviceAuthorized, setIsDeviceAuthorized] = useState<boolean | null>(null);
+  const [isPendingApproval, setIsPendingApproval] = useState(false);
+  const [deviceFingerprint, setDeviceFingerprint] = useState<string | null>(null);
 
   const refreshSettings = useCallback(async () => {
     if (!navigator.onLine) {
@@ -137,6 +168,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         const cached = loadCachedSettings();
         setSettings(cached);
         setIsDeviceAuthorized(true);
+        setIsPendingApproval(false);
         console.log('📴 Offline - using cached settings (device was authorized)');
       } else {
         // Not authorized or unknown - block access
@@ -149,7 +181,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
 
     setIsLoading(true);
     try {
-      const deviceFingerprint = await generateDeviceFingerprint();
+      const fingerprint = await generateDeviceFingerprint();
+      setDeviceFingerprint(fingerprint);
       const apiUrl = API_CONFIG.MYSQL_API_URL;
       
       // Fetch device info which includes app_settings
@@ -157,7 +190,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
       const timeoutId = setTimeout(() => controller.abort(), 8000);
       
       const response = await fetch(
-        `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(deviceFingerprint)}`,
+        `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
         { signal: controller.signal }
       );
       
@@ -190,26 +223,48 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           setSettings(newSettings);
           saveCachedSettings(newSettings, deviceData.ccode);
           setIsDeviceAuthorized(true);
+          setIsPendingApproval(false);
           localStorage.setItem('device_authorized', 'true');
           console.log('✅ App settings synced from authorized device:', newSettings);
         } else {
           // Response OK but no data - shouldn't happen, treat as unauthorized
           setIsDeviceAuthorized(false);
+          setIsPendingApproval(false);
           localStorage.setItem('device_authorized', 'false');
           console.log('⚠️ Device response missing data - blocking access');
         }
-      } else if (response.status === 404 || response.status === 401) {
-        // Device not found or not authorized - BLOCK access completely
+      } else if (response.status === 404) {
+        // Device not found - AUTO-REGISTER it for admin approval
+        console.log('🆕 Device not found, auto-registering for admin approval...');
+        const registered = await registerDevice(fingerprint);
+        
+        if (registered) {
+          console.log('✅ Device registered successfully, waiting for admin approval');
+          setIsPendingApproval(true);
+        } else {
+          console.log('❌ Device registration failed');
+          setIsPendingApproval(false);
+        }
+        
+        // Block access - device needs admin approval
         setIsDeviceAuthorized(false);
         localStorage.setItem('device_authorized', 'false');
-        // Clear any cached settings - unauthorized devices get nothing
         localStorage.removeItem(SETTINGS_STORAGE_KEY);
         localStorage.removeItem(SETTINGS_CCODE_KEY);
         setSettings(DEFAULT_SETTINGS);
-        console.log('🚫 Device not authorized - blocking access, no cached/default settings');
+      } else if (response.status === 401) {
+        // Device found but not authorized (exists in devsettings but authorized=0)
+        console.log('🚫 Device exists but not authorized');
+        setIsDeviceAuthorized(false);
+        setIsPendingApproval(true); // Already registered, waiting approval
+        localStorage.setItem('device_authorized', 'false');
+        localStorage.removeItem(SETTINGS_STORAGE_KEY);
+        localStorage.removeItem(SETTINGS_CCODE_KEY);
+        setSettings(DEFAULT_SETTINGS);
       } else {
         // Other error - treat as unauthorized for safety
         setIsDeviceAuthorized(false);
+        setIsPendingApproval(false);
         localStorage.setItem('device_authorized', 'false');
         console.log('⚠️ Unexpected response - blocking access');
       }
@@ -222,6 +277,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           const cached = loadCachedSettings();
           setSettings(cached);
           setIsDeviceAuthorized(true);
+          setIsPendingApproval(false);
         } else {
           setIsDeviceAuthorized(false);
         }
@@ -230,7 +286,6 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
       setIsLoading(false);
     }
   }, []);
-
   // Fetch settings on mount
   useEffect(() => {
     refreshSettings();
@@ -264,6 +319,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     settings,
     isLoading,
     isDeviceAuthorized,
+    isPendingApproval,
+    deviceFingerprint,
     refreshSettings,
     isDairy,
     isCoffee,
