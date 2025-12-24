@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { printReceipt } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -18,16 +19,23 @@ interface ReprintModalProps {
   receipts: PrintedReceipt[];
   companyName: string;
   printCopies?: number;
-  routeLabel?: string; // Dynamic label from psettings.rdesc
+  routeLabel?: string;
 }
 
+const ITEMS_PER_PAGE = 5;
+
 export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies = 1, routeLabel = 'Route' }: ReprintModalProps) => {
+  const [currentPage, setCurrentPage] = useState(1);
+  
+  const totalPages = Math.ceil(receipts.length / ITEMS_PER_PAGE);
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const paginatedReceipts = receipts.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
   const handleReprint = async (receipt: PrintedReceipt) => {
     if (receipt.collections.length === 0) return;
 
     const firstReceipt = receipt.collections[0];
     
-    // Format collections for printing
     const collections = receipt.collections.map(r => ({
       time: new Date(r.collection_date).toLocaleTimeString('en-GB', { 
         hour: '2-digit', 
@@ -41,7 +49,7 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
       farmerName: firstReceipt.farmer_name,
       farmerId: firstReceipt.farmer_id,
       route: firstReceipt.route,
-      routeLabel: routeLabel, // Dynamic label from psettings.rdesc
+      routeLabel: routeLabel,
       session: firstReceipt.session,
       referenceNo: firstReceipt.reference_no,
       collectorName: firstReceipt.clerk_name,
@@ -64,22 +72,33 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
     return collections.reduce((sum, r) => sum + r.weight, 0);
   };
 
+  const goToPage = (page: number) => {
+    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+  };
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md">
         <DialogHeader className="pb-2">
-          <DialogTitle className="text-lg font-semibold">Recent Receipts</DialogTitle>
+          <DialogTitle className="text-lg font-semibold flex items-center justify-between">
+            <span>Recent Receipts</span>
+            {receipts.length > 0 && (
+              <span className="text-sm font-normal text-muted-foreground">
+                {receipts.length} total
+              </span>
+            )}
+          </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+        <div className="space-y-3 max-h-[50vh] overflow-y-auto">
           {receipts.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               No recent receipts to display
             </div>
           ) : (
-            receipts.map((receipt, index) => (
+            paginatedReceipts.map((receipt, index) => (
               <div
-                key={index}
+                key={startIndex + index}
                 className="border rounded-lg p-3 space-y-2 hover:bg-accent/50 transition-colors"
               >
                 <div className="flex justify-between items-start">
@@ -109,6 +128,43 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
             ))
           )}
         </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between pt-2 border-t">
+            <button
+              onClick={() => goToPage(currentPage - 1)}
+              disabled={currentPage === 1}
+              className="p-2 rounded-md hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            
+            <div className="flex items-center gap-1">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                <button
+                  key={page}
+                  onClick={() => goToPage(page)}
+                  className={`w-8 h-8 rounded-md text-sm font-medium transition-colors ${
+                    page === currentPage
+                      ? 'bg-primary text-primary-foreground'
+                      : 'hover:bg-accent'
+                  }`}
+                >
+                  {page}
+                </button>
+              ))}
+            </div>
+            
+            <button
+              onClick={() => goToPage(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className="p-2 rounded-md hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        )}
 
         <div className="flex justify-end pt-2">
           <button
