@@ -386,19 +386,11 @@ const Index = () => {
     if (farmerMultOpt === 0) {
       const cleanFarmerIdCheck = farmerId.replace(/^#/, '').trim();
       
-      // 1. Check current captured collections (not yet submitted)
-      const alreadyCaptured = capturedCollections.some(
-        c => c.farmer_id === cleanFarmerIdCheck && c.session === currentSessionType
-      );
-      if (alreadyCaptured) {
-        toast.error(
-          `${farmerName} can only deliver ONCE per ${currentSessionType} session. Already captured.`,
-          { duration: 5000 }
-        );
-        return;
-      }
-
-      // 2. Check IndexedDB for unsynced receipts (offline collections)
+      // NOTE: We NO LONGER block duplicate captures here.
+      // Multiple captures are allowed (e.g., farmer brings 3 buckets = 3 captures).
+      // Blocking only happens at SUBMIT time (once per session).
+      
+      // 1. Check IndexedDB for unsynced receipts (already SUBMITTED offline)
       try {
         const unsyncedReceipts = await getUnsyncedReceipts();
         const offlineDuplicate = unsyncedReceipts.some((r: MilkCollection) => {
@@ -411,7 +403,7 @@ const Index = () => {
         });
         if (offlineDuplicate) {
           toast.error(
-            `${farmerName} can only deliver ONCE per ${currentSessionType} session. Found in pending sync.`,
+            `${farmerName} already submitted in ${currentSessionType} session. Found in pending sync.`,
             { duration: 5000 }
           );
           return;
@@ -420,7 +412,7 @@ const Index = () => {
         console.warn('Could not check IndexedDB for duplicates:', e);
       }
 
-      // 3. Check online API if connected (most reliable source)
+      // 2. Check online API if connected (already SUBMITTED online)
       if (navigator.onLine) {
         try {
           const deviceFingerprint = await generateDeviceFingerprint();
