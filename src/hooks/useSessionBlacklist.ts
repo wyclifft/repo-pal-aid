@@ -34,9 +34,10 @@ export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
     return getCurrentSessionType();
   }, [activeSessionTimeFrom]);
 
-  // Build blacklist from local captures, IndexedDB, and online API
+  // Build blacklist from IndexedDB (unsynced submissions) and online API (synced submissions)
+  // NOTE: We do NOT check capturedCollections - blacklisting only applies AFTER successful submission
   const refreshBlacklist = useCallback(async (
-    capturedCollections: MilkCollection[],
+    _capturedCollections: MilkCollection[], // Ignored - kept for backwards compatibility
     farmersWithMultOptZero: Set<string>
   ) => {
     if (farmersWithMultOptZero.size === 0) {
@@ -50,19 +51,7 @@ export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
     const sessionType = getSessionType();
 
     try {
-      // 1. Check current captured collections (not yet submitted)
-      capturedCollections.forEach(c => {
-        const cleanId = c.farmer_id.replace(/^#/, '').trim();
-        if (
-          farmersWithMultOptZero.has(cleanId) &&
-          c.session === sessionType &&
-          new Date(c.collection_date).toISOString().split('T')[0] === today
-        ) {
-          blacklist.add(cleanId);
-        }
-      });
-
-      // 2. Check IndexedDB for unsynced receipts (offline collections)
+      // 1. Check IndexedDB for unsynced receipts (offline submissions that were submitted but not synced)
       try {
         const unsyncedReceipts = await getUnsyncedReceipts();
         unsyncedReceipts.forEach((r: MilkCollection) => {
@@ -80,7 +69,7 @@ export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
         console.warn('Could not check IndexedDB for blacklist:', e);
       }
 
-      // 3. Check online API if connected
+      // 2. Check online API if connected (synced submissions)
       if (navigator.onLine) {
         try {
           const deviceFingerprint = await generateDeviceFingerprint();
@@ -118,7 +107,7 @@ export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
     }
   }, [getSessionType, getUnsyncedReceipts]);
 
-  // Add a farmer to the blacklist (called after successful capture)
+  // Add a farmer to the blacklist (called after successful submission, not capture)
   const addToBlacklist = useCallback((farmerId: string) => {
     const cleanId = farmerId.replace(/^#/, '').trim();
     setBlacklistedFarmerIds(prev => new Set([...prev, cleanId]));
