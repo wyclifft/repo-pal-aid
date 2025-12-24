@@ -748,19 +748,9 @@ const Index = () => {
     return <Login onLogin={handleLogin} />;
   }
 
-  // Block unauthorized devices completely - no access to any features
-  if (settingsLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Checking device authorization...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (isDeviceAuthorized === false) {
+  // Authorization check happens in background - don't block the UI
+  // Only block if we've confirmed the device is NOT authorized (not during loading)
+  if (isDeviceAuthorized === false && !settingsLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-card rounded-lg shadow-lg p-8 text-center border border-amber-500/30">
