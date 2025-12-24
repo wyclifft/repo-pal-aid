@@ -147,12 +147,14 @@ const Index = () => {
     setLoadedFarmers(farmers);
   }, []);
 
-  // Refresh blacklist when session changes, farmers load, or captures change
+  // Refresh blacklist when session changes or farmers load
+  // NOTE: We don't include capturedCollections because blacklisting happens AFTER submission, not capture
   useEffect(() => {
     if (activeSession && loadedFarmers.length > 0) {
-      refreshBlacklist(capturedCollections, farmersWithMultOptZero());
+      // Pass empty array for capturedCollections - we only check submitted records, not captures
+      refreshBlacklist([], farmersWithMultOptZero());
     }
-  }, [activeSession, loadedFarmers, capturedCollections, refreshBlacklist, farmersWithMultOptZero]);
+  }, [activeSession, loadedFarmers, refreshBlacklist, farmersWithMultOptZero]);
 
   // Clear blacklist when session changes
   useEffect(() => {
@@ -459,10 +461,9 @@ const Index = () => {
     // Add to captured collections for display
     setCapturedCollections(prev => [...prev, captureData]);
     
-    // If farmer has multOpt=0, add to blacklist so they can't be selected again this session
-    if (farmerMultOpt === 0) {
-      addToBlacklist(cleanFarmerId);
-    }
+    // NOTE: For multOpt=0 farmers, we do NOT add to blacklist on capture.
+    // Blacklisting happens ONLY after successful submission in handleSubmit.
+    // This allows unlimited weight captures (multiple buckets) but only one submission per session.
     
     // Store the saved weight for next collection check
     setLastSavedWeight(weight);
