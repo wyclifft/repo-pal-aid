@@ -126,10 +126,15 @@ const Index = () => {
 
   // Session blacklist for farmers with multOpt=0
   const [loadedFarmers, setLoadedFarmers] = useState<Farmer[]>([]);
+  const [lastSessionType, setLastSessionType] = useState<'AM' | 'PM' | null>(null);
   const activeSessionTimeFrom = activeSession ? 
     (typeof activeSession.time_from === 'number' ? activeSession.time_from : parseInt(String(activeSession.time_from), 10)) 
     : undefined;
-  const { blacklistedFarmerIds, isBlacklisted, addToBlacklist, refreshBlacklist, clearBlacklist } = useSessionBlacklist(activeSessionTimeFrom);
+  const { blacklistedFarmerIds, isBlacklisted, addToBlacklist, refreshBlacklist, clearBlacklist, getSessionType } = useSessionBlacklist(activeSessionTimeFrom);
+  
+  // Local session-scoped set to track submitted farmers (extra safeguard for edge cases)
+  // This covers scenarios where IndexedDB might not have the record yet
+  const [sessionSubmittedFarmers, setSessionSubmittedFarmers] = useState<Set<string>>(new Set());
   
   // Get set of farmer IDs with multOpt=0
   const farmersWithMultOptZero = useCallback(() => {
@@ -156,9 +161,28 @@ const Index = () => {
     }
   }, [activeSession, loadedFarmers, refreshBlacklist, farmersWithMultOptZero]);
 
-  // Clear blacklist when session changes
+  // Clear blacklist when session TYPE changes (AM → PM or PM → AM)
+  // This ensures Submit button re-enables correctly when session rolls over
   useEffect(() => {
-    clearBlacklist();
+    if (!activeSession) return;
+    
+    const currentSessionType = getSessionType();
+    
+    if (lastSessionType !== null && lastSessionType !== currentSessionType) {
+      console.log(`🔄 Session rolled over from ${lastSessionType} to ${currentSessionType} - clearing blacklist and session submitted farmers`);
+      clearBlacklist();
+      setSessionSubmittedFarmers(new Set()); // Clear local tracking on session change
+    }
+    
+    setLastSessionType(currentSessionType);
+  }, [activeSession, getSessionType, lastSessionType, clearBlacklist]);
+
+  // Also clear when session description changes (user manually switches session)
+  useEffect(() => {
+    if (activeSession?.descript) {
+      clearBlacklist();
+      setSessionSubmittedFarmers(new Set()); // Clear local tracking on session change
+    }
   }, [activeSession?.descript, clearBlacklist]);
 
   // Load printed receipts from IndexedDB on mount and filter out old ones
@@ -619,16 +643,24 @@ const Index = () => {
       }
     }
 
-    // After successful submission, add multOpt=0 farmers to blacklist
+    // After successful submission, add multOpt=0 farmers to blacklist and local tracking
     // This ensures they cannot submit again in this session
     if (successCount > 0 || offlineCount > 0) {
+      const newlySubmittedFarmers = new Set<string>();
+      
       capturedCollections.forEach(capture => {
         if (capture.multOpt === 0) {
           const cleanId = capture.farmer_id.replace(/^#/, '').trim();
           addToBlacklist(cleanId);
+          newlySubmittedFarmers.add(cleanId);
           console.log(`🚫 Added ${cleanId} to blacklist after successful submission (multOpt=0)`);
         }
       });
+      
+      // Also add to local session tracking (extra safeguard for edge cases)
+      if (newlySubmittedFarmers.size > 0) {
+        setSessionSubmittedFarmers(prev => new Set([...prev, ...newlySubmittedFarmers]));
+      }
     }
 
     // Open receipt modal for printing
@@ -861,16 +893,19 @@ const Index = () => {
 
   // Collection View - render Buy or Sell screen based on mode
   // For multOpt=0: Allow unlimited weight captures, only disable Submit after first successful submission
+  const cleanFarmerIdForCheck = farmerId?.replace(/^#/, '').trim() || '';
+  
   const isSelectedFarmerBlacklisted =
     !!selectedFarmer &&
     (selectedFarmer.multOpt ?? 1) === 0 &&
     !!farmerId &&
-    isBlacklisted(farmerId);
+    (isBlacklisted(farmerId) || sessionSubmittedFarmers.has(cleanFarmerIdForCheck));
   
   // NEVER disable capture - farmers can always capture weight (multiple buckets)
   const captureDisabledForSelectedFarmer = false;
   
   // For multOpt=0: disable Submit only after first successful submission in this session
+  // Check both: hook blacklist (persistent) AND local session tracking (edge case coverage)
   // For multOpt=1: never disable Submit (allow unlimited submissions)
   const submitDisabledForSelectedFarmer = isSelectedFarmerBlacklisted;
 
