@@ -62,21 +62,14 @@ const Index = () => {
       printedAt: new Date()
     };
     
-    // Filter out receipts older than 1 day and keep new ones
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recentReceipts = printedReceipts.filter(r => {
-      const printedAt = new Date(r.printedAt);
-      return printedAt > oneDayAgo;
-    });
-    
-    // Add new receipt and keep all receipts from the last 24 hours (no count limit)
-    const updatedReceipts = [newPrintedReceipt, ...recentReceipts];
+    // Keep ALL receipts permanently - no time limit for reprinting
+    const updatedReceipts = [newPrintedReceipt, ...printedReceipts];
     setPrintedReceipts(updatedReceipts);
     
     // Persist to IndexedDB for offline access
     try {
       await savePrintedReceipts(updatedReceipts);
-      console.log('✅ Printed receipt saved to IndexedDB');
+      console.log('✅ Printed receipt saved to IndexedDB (total:', updatedReceipts.length, ')');
     } catch (error) {
       console.error('Failed to save printed receipt:', error);
     }
@@ -193,20 +186,9 @@ const Index = () => {
       try {
         const cached = await getPrintedReceipts();
         if (cached && cached.length > 0) {
-          // Filter out receipts older than 1 day
-          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-          const recentReceipts = cached.filter((r: any) => {
-            const printedAt = new Date(r.printedAt);
-            return printedAt > oneDayAgo;
-          });
-          
-          setPrintedReceipts(recentReceipts);
-          console.log(`📦 Loaded ${recentReceipts.length} recent receipts from cache (${cached.length - recentReceipts.length} expired)`);
-          
-          // Update cache if we removed old receipts
-          if (recentReceipts.length !== cached.length) {
-            await savePrintedReceipts(recentReceipts);
-          }
+          // Load ALL receipts - no time limit, keep them all for reprinting
+          setPrintedReceipts(cached);
+          console.log(`📦 Loaded ${cached.length} receipts from cache for reprinting`);
         }
       } catch (error) {
         console.error('Failed to load printed receipts:', error);
@@ -214,7 +196,7 @@ const Index = () => {
     };
     
     loadPrintedReceipts();
-  }, [isReady, getPrintedReceipts, savePrintedReceipts]);
+  }, [isReady, getPrintedReceipts]);
 
   // Reset lastSavedWeight when weight is 0 (ready for next collection) - applies to both scale and manual entry
   useEffect(() => {
