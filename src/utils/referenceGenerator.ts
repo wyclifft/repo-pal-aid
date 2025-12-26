@@ -1,22 +1,24 @@
 /**
- * Simplified Reference Number Generator
- * Generates unique transaction reference numbers
- * Format: CompanyCode (2 chars) + DeviceCode (5 chars) + SequentialNumber
- * Example: AC0800021433
+ * Transaction Reference Generator
+ * Generates unique transaction reference numbers using devcode + trnid
+ * Format: devcode (e.g., AG05) + trnid (8-digit padded) = AG0500000001
  * 
  * APPROACH: 
- * - Online: Always fetch from backend API
- * - Offline: Generate timestamp-based reference for uniqueness
+ * - Uses devcode as prefix for all transactions
+ * - trnid is incremented for each new transaction
+ * - Works consistently for offline and online modes
  * 
- * FIRST-INSTALL HANDLING:
- * - Uses localStorage as backup when IndexedDB isn't ready
- * - Gracefully handles missing config with fallback generation
+ * STORAGE:
+ * - devcode: Device code from devSettings (e.g., AG05)
+ * - lastTrnId: Last used transaction ID for this device
  */
 
 interface DeviceConfig {
-  companyCode: string;
-  deviceCode: string;
-  lastOfflineSequential: number;
+  devcode: string;        // Device code prefix (e.g., AG05)
+  lastTrnId: number;      // Last used transaction ID
+  companyCode?: string;   // Legacy - kept for compatibility
+  deviceCode?: string;    // Legacy - kept for compatibility
+  lastOfflineSequential?: number; // Legacy - mapped to lastTrnId
 }
 
 const DB_NAME = 'milkCollectionDB';
@@ -90,17 +92,24 @@ const getFromLocalStorage = (): DeviceConfig | null => {
 };
 
 /**
- * Store device configuration in both IndexedDB and localStorage
+ * Store device configuration using devcode
  */
-export const storeDeviceConfig = async (companyName: string, deviceCode: string): Promise<void> => {
+export const storeDeviceConfig = async (companyName: string, devcode: string): Promise<void> => {
+  // devcode is the primary identifier (e.g., AG05)
   const config: DeviceConfig = {
+    devcode: devcode,
+    lastTrnId: 0,
+    // Legacy fields for backwards compatibility
     companyCode: companyName.substring(0, 2).toUpperCase(),
-    deviceCode: String(deviceCode).padStart(5, '0'),
+    deviceCode: devcode,
     lastOfflineSequential: 0,
   };
   
   // Always save to localStorage first (reliable backup)
   saveToLocalStorage(config);
+  
+  // Also save devcode directly for quick access
+  localStorage.setItem('devcode', devcode);
   
   try {
     const db = await getDB();
@@ -189,7 +198,15 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
   // Update localStorage first
   const currentLs = getFromLocalStorage();
   if (currentLs) {
-    saveToLocalStorage({ ...currentLs, ...updates });
+    const updated = { ...currentLs, ...updates };
+    // Keep lastTrnId and lastOfflineSequential in sync
+    if (updates.lastTrnId !== undefined) {
+      updated.lastOfflineSequential = updates.lastTrnId;
+    }
+    if (updates.lastOfflineSequential !== undefined) {
+      updated.lastTrnId = updates.lastOfflineSequential;
+    }
+    saveToLocalStorage(updated);
   }
   
   try {
@@ -205,6 +222,13 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
           const current = getRequest.result;
           if (current) {
             const updated = { ...current, ...updates };
+            // Keep lastTrnId and lastOfflineSequential in sync
+            if (updates.lastTrnId !== undefined) {
+              updated.lastOfflineSequential = updates.lastTrnId;
+            }
+            if (updates.lastOfflineSequential !== undefined) {
+              updated.lastTrnId = updates.lastOfflineSequential;
+            }
             const putRequest = store.put(updated);
             putRequest.onsuccess = () => resolve();
             putRequest.onerror = () => resolve(); // localStorage has update
@@ -224,69 +248,59 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
 };
 
 /**
- * Get next offline sequential number atomically
+ * Get next transaction ID atomically
  */
-const getNextSequential = async (): Promise<number> => {
+const getNextTrnId = async (): Promise<number> => {
   const config = await getDeviceConfig();
-  const nextSeq = (config?.lastOfflineSequential || 0) + 1;
+  const nextId = (config?.lastTrnId || config?.lastOfflineSequential || 0) + 1;
   
-  await updateConfig({ lastOfflineSequential: nextSeq });
+  await updateConfig({ lastTrnId: nextId, lastOfflineSequential: nextId });
   
-  return nextSeq;
+  return nextId;
 };
 
 /**
- * Generate reference using device_ref from backend
- * Format: device_ref (e.g., AE01000001) - increments based on device slot
+ * Generate transaction reference using devcode + trnid
+ * Format: devcode (e.g., AG05) + trnid (8-digit padded) = AG0500000001 (12 chars)
  * 
- * New format: AE + 2-digit slot + 6-digit sequence = 10 chars total
- * Device slots: Device 1 = AE01xxxxxx, Device 2 = AE02xxxxxx, etc.
- * Each device increments sequentially within its slot.
+ * This is the SINGLE SOURCE OF TRUTH for transaction identification
+ * Works consistently for milk, store, and AI transactions
  */
 export const generateOfflineReference = async (): Promise<string | null> => {
-  // First, try to use device_ref from backend (stored in localStorage)
-  const deviceRef = localStorage.getItem('device_ref');
+  // Get devcode from localStorage (set during device authorization)
+  const devcode = localStorage.getItem('devcode');
   
-  if (deviceRef) {
-    // New format: AE + 2-digit slot + 6-digit sequence = AE01000001
-    const prefix = deviceRef.slice(0, 4); // "AE01", "AE02", etc.
-    
-    // Get synced last sequence from config (this is the actual last used number)
+  if (devcode) {
+    // Get the last used trnId and increment
     const config = await getDeviceConfig();
-    const lastUsed = config?.lastOfflineSequential || 0;
+    const lastUsed = config?.lastTrnId || config?.lastOfflineSequential || 0;
     
     // Generate next sequential number
-    const nextSequence = lastUsed + 1;
+    const nextTrnId = lastUsed + 1;
     
     // Update for next call
-    await updateConfig({ lastOfflineSequential: nextSequence });
+    await updateConfig({ lastTrnId: nextTrnId, lastOfflineSequential: nextTrnId });
     
-    // Generate reference: prefix + 6-digit sequential padded (10 chars total)
-    const reference = `${prefix}${String(nextSequence).padStart(6, '0')}`;
+    // Generate reference: devcode + 8-digit trnid padded
+    const reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
     
-    console.log(`⚡ Reference: ${reference} (last: ${lastUsed}, next: ${nextSequence})`);
+    console.log(`⚡ Reference: ${reference} (devcode: ${devcode}, trnid: ${nextTrnId})`);
     return reference;
   }
   
-  // Fallback to old format if device_ref not available
+  // Fallback: try to get devcode from config
   const config = await getDeviceConfig();
-  const companyCode = config?.companyCode || 'XX';
-  const deviceCode = config?.deviceCode || '00000';
+  if (config?.devcode) {
+    const nextTrnId = (config.lastTrnId || config.lastOfflineSequential || 0) + 1;
+    await updateConfig({ lastTrnId: nextTrnId, lastOfflineSequential: nextTrnId });
+    
+    const reference = `${config.devcode}${String(nextTrnId).padStart(8, '0')}`;
+    console.log(`⚡ Reference (from config): ${reference}`);
+    return reference;
+  }
   
-  console.warn('⚠️ device_ref not available, using fallback codes');
-
-  // Use timestamp + incremental counter for uniqueness
-  const timestamp = Date.now();
-  const nextSequential = await getNextSequential();
-  
-  // Generate reference: CompanyCode + DeviceCode + Timestamp(last 8 digits) + Counter(3 digits)
-  const timestampPart = String(timestamp).slice(-8);
-  const counterPart = String(nextSequential).padStart(3, '0');
-  const reference = `${companyCode}${deviceCode}${timestampPart}${counterPart}`;
-  
-  console.log(`⚡ Fallback reference generated: ${reference}`);
-  
-  return reference;
+  console.warn('⚠️ devcode not available - cannot generate reference');
+  return null;
 };
 
 /**
@@ -294,30 +308,33 @@ export const generateOfflineReference = async (): Promise<string | null> => {
  */
 export const hasDeviceConfig = async (): Promise<boolean> => {
   const config = await getDeviceConfig();
-  return config !== null && config.companyCode !== undefined;
+  const devcode = localStorage.getItem('devcode');
+  return (config !== null && config.devcode !== undefined) || devcode !== null;
 };
 
 /**
- * Sync local counter with backend's last used sequence
- * This stores the actual last used sequence number directly
+ * Sync local counter with backend's last used trnid
+ * Called when device authorization is checked
  */
-export const syncOfflineCounter = async (deviceRef: string, lastBackendSequence?: number): Promise<void> => {
-  if (lastBackendSequence !== undefined && lastBackendSequence > 0) {
-    // Store the actual last used sequence number directly
-    await updateConfig({ lastOfflineSequential: lastBackendSequence });
-    console.log(`🔄 Synced counter to ${lastBackendSequence} (will generate from ${lastBackendSequence + 1})`);
+export const syncOfflineCounter = async (devcode: string, lastBackendTrnId?: number): Promise<void> => {
+  // Store devcode for reference generation
+  localStorage.setItem('devcode', devcode);
+  
+  if (lastBackendTrnId !== undefined && lastBackendTrnId > 0) {
+    // Store the actual last used trnid directly
+    await updateConfig({ 
+      devcode: devcode,
+      lastTrnId: lastBackendTrnId, 
+      lastOfflineSequential: lastBackendTrnId 
+    });
+    console.log(`🔄 Synced trnid counter to ${lastBackendTrnId} for devcode ${devcode} (will generate from ${lastBackendTrnId + 1})`);
   } else {
-    // No backend data - check if device_ref has a base sequence
-    // New format: AE + 2-digit slot + 6-digit sequence
-    const baseSequence = parseInt(deviceRef.slice(4), 10) || 0;
-    if (baseSequence > 0) {
-      // Use device_ref base - 1 as starting point (first generation will be baseSequence)
-      await updateConfig({ lastOfflineSequential: baseSequence - 1 });
-      console.log(`🔄 Initialized counter to ${baseSequence - 1} (will generate from ${baseSequence})`);
-    } else {
-      await updateConfig({ lastOfflineSequential: 0 });
-      console.log('🔄 Reset offline counter to 0');
-    }
+    await updateConfig({ 
+      devcode: devcode,
+      lastTrnId: 0, 
+      lastOfflineSequential: 0 
+    });
+    console.log(`🔄 Initialized trnid counter to 0 for devcode ${devcode}`);
   }
 };
 
@@ -325,7 +342,7 @@ export const syncOfflineCounter = async (deviceRef: string, lastBackendSequence?
  * Reset local offline counter (deprecated - use syncOfflineCounter)
  */
 export const resetOfflineCounter = async (): Promise<void> => {
-  await updateConfig({ lastOfflineSequential: 0 });
+  await updateConfig({ lastTrnId: 0, lastOfflineSequential: 0 });
   console.log('🔄 Reset offline counter to 0');
 };
 
@@ -336,6 +353,7 @@ export const resetDeviceConfig = async (): Promise<void> => {
   // Clear localStorage
   try {
     localStorage.removeItem(LOCALSTORAGE_KEY);
+    localStorage.removeItem('devcode');
     console.log('🗑️ Cleared localStorage config');
   } catch (error) {
     console.error('Failed to clear localStorage:', error);
@@ -351,4 +369,11 @@ export const resetDeviceConfig = async (): Promise<void> => {
   } catch (error) {
     console.error('Failed to reset IndexedDB config:', error);
   }
+};
+
+/**
+ * Initialize device config with devcode (called during device authorization)
+ */
+export const initializeDeviceConfig = async (companyName: string, devcode: string): Promise<void> => {
+  await storeDeviceConfig(companyName, devcode);
 };

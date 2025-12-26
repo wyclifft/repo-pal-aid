@@ -143,16 +143,16 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           // Also save for offline login
           if (authorized) {
             localStorage.setItem('device_approved', 'true');
-            // Store device_ref and sync counter for reference generation
-            if (data.data.device_ref) {
-              localStorage.setItem('device_ref', data.data.device_ref);
-              // Sync counter from backend's last sequence to maintain consistency
-              const lastSequence = data.data.last_sequence ? parseInt(data.data.last_sequence, 10) : undefined;
-              await syncOfflineCounter(data.data.device_ref, lastSequence);
-              console.log('📦 Synced device_ref:', data.data.device_ref, 'last_sequence:', lastSequence);
+            // Store devcode and sync trnid counter for reference generation
+            if (data.data.devcode) {
+              localStorage.setItem('devcode', data.data.devcode);
+              // Sync counter from backend's last trnid to maintain consistency
+              const lastTrnId = data.data.trnid ? parseInt(String(data.data.trnid), 10) : undefined;
+              await syncOfflineCounter(data.data.devcode, lastTrnId);
+              console.log('📦 Synced devcode:', data.data.devcode, 'last_trnid:', lastTrnId);
             }
             const deviceCode = String(data.data.devcode || data.data.uniquedevcode || '00000').slice(-5);
-            await initializeDeviceConfig(fetchedCompanyName, deviceCode);
+            await initializeDeviceConfig(fetchedCompanyName, data.data.devcode || deviceCode);
           }
         }
       }
