@@ -8,15 +8,16 @@ const http = require('http');
 const url = require('url');
 
 // Database connection pool (minimal)
+// IMPORTANT: Do not hardcode credentials in code. Configure via environment variables.
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'localhost',
-  user: process.env.MYSQL_USER || 'maddasys_tesh',
-  password: process.env.MYSQL_PASSWORD || '0741899183Mutee',
-  database: process.env.MYSQL_DATABASE || 'maddasys_milk_collection_pwa',
-  port: process.env.MYSQL_PORT || 3306,
+  user: process.env.MYSQL_USER || 'root',
+  password: process.env.MYSQL_PASSWORD || '',
+  database: process.env.MYSQL_DATABASE || 'milk_collection',
+  port: Number(process.env.MYSQL_PORT || 3306),
   connectionLimit: 2,
   waitForConnections: true,
-  queueLimit: 0
+  queueLimit: 0,
 });
 
 // Helper: Parse JSON body
@@ -48,10 +49,35 @@ const sendJSON = (res, data, status = 200, origin) => {
   const corsHeaders = getCorsHeaders(origin);
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    ...corsHeaders
+    ...corsHeaders,
   });
   res.end(JSON.stringify(data));
 };
+
+const APP_VERSION = process.env.APP_VERSION || `serverjs-${new Date().toISOString()}`;
+
+const errorToPlainObject = (err) => {
+  if (!err) return null;
+  const e = err instanceof Error ? err : new Error(String(err));
+  const anyErr = /** @type {any} */ (err);
+  return {
+    name: e.name,
+    message: e.message,
+    stack: e.stack,
+    code: anyErr.code,
+    errno: anyErr.errno,
+    sqlState: anyErr.sqlState,
+    sqlMessage: anyErr.sqlMessage,
+  };
+};
+
+// Always print fatal errors to stderr (cpanel logs / passenger stderr)
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled Promise Rejection:', errorToPlainObject(reason));
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', errorToPlainObject(err));
+});
 
 // Main server
 const server = http.createServer(async (req, res) => {
@@ -77,7 +103,12 @@ const server = http.createServer(async (req, res) => {
   try {
     // Health check
     if (path === '/api/health') {
-      return sendJSON(res, { success: true, message: 'API running', timestamp: new Date() });
+      return sendJSON(res, { success: true, message: 'API running', timestamp: new Date(), version: APP_VERSION });
+    }
+
+    // Version check (useful to verify cPanel is running the latest server.js)
+    if (path === '/api/version' && method === 'GET') {
+      return sendJSON(res, { success: true, version: APP_VERSION, node: process.version });
     }
 
     // Sessions endpoint - Fetch from sessions table
@@ -1333,10 +1364,23 @@ const server = http.createServer(async (req, res) => {
       
       if (existing.length > 0) {
         // Device exists - update last_sync and return
-        await pool.query(
-          'UPDATE approved_devices SET last_sync = NOW(), updated_at = NOW() WHERE device_fingerprint = ?',
-          [body.device_fingerprint]
-        );
+        try {
+          await pool.query(
+            'UPDATE approved_devices SET last_sync = NOW(), updated_at = NOW() WHERE device_fingerprint = ?',
+            [body.device_fingerprint]
+          );
+        } catch (e) {
+          // Backward compatibility: some databases may not have updated_at
+          if (e && e.code === 'ER_BAD_FIELD_ERROR') {
+            await pool.query(
+              'UPDATE approved_devices SET last_sync = NOW() WHERE device_fingerprint = ?',
+              [body.device_fingerprint]
+            );
+          } else {
+            throw e;
+          }
+        }
+
         const [updated] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
         
         // Get devcode and trnid from devsettings
@@ -1378,10 +1422,24 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Insert new device - ALWAYS set approved to FALSE for new devices
-        const [result] = await pool.query(
-          'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
-          [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
-        );
+        let result;
+        try {
+          // Newer schema
+          [result] = await pool.query(
+            'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
+            [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
+          );
+        } catch (e) {
+          // Backward compatibility: older schema missing columns like ccode/updated_at
+          if (e && e.code === 'ER_BAD_FIELD_ERROR') {
+            [result] = await pool.query(
+              'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, FALSE, ?, NOW())',
+              [body.device_fingerprint, body.user_id, body.device_info || null]
+            );
+          } else {
+            throw e;
+          }
+        }
         const [newDevice] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [result.insertId]);
         
         // Include devcode and trnid in response
@@ -1796,8 +1854,27 @@ const server = http.createServer(async (req, res) => {
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
 
   } catch (error) {
-    console.error('Error:', error.message);
-    sendJSON(res, { success: false, error: error.message }, 500);
+    const requestId = `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+    // Log full details to stderr (this is what you want to see in cPanel/Passenger logs)
+    console.error('[ERROR]', {
+      requestId,
+      method,
+      path,
+      query: parsedUrl.query,
+      error: errorToPlainObject(error),
+    });
+
+    // Keep response safe/minimal for clients (but include requestId to correlate)
+    sendJSON(
+      res,
+      {
+        success: false,
+        error: 'Server error',
+        requestId,
+      },
+      500
+    );
   }
 });
 
