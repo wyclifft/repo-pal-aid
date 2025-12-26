@@ -375,9 +375,9 @@ const server = http.createServer(async (req, res) => {
         // Start transaction
         await connection.beginTransaction();
         
-        // Get device_ref from devsettings (slot-based reference, e.g., AE10000001)
+        // Get devcode from devsettings for reference generation
         const [deviceRows] = await connection.query(
-          'SELECT ccode, device_ref FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
           [deviceserial]
         );
         
@@ -390,39 +390,42 @@ const server = http.createServer(async (req, res) => {
           }, 404);
         }
         
-        const deviceRef = deviceRows[0].device_ref;
+        const devcode = deviceRows[0].devcode;
         
-        if (!deviceRef) {
+        if (!devcode) {
           await connection.rollback();
           connection.release();
           return sendJSON(res, { 
             success: false, 
-            error: 'Device has no assigned device_ref. Please re-register the device.' 
+            error: 'Device has no assigned devcode. Please re-register the device.' 
           }, 400);
         }
         
-        // Extract prefix from device_ref (e.g., "AE1" from "AE10000001")
-        const devicePrefix = deviceRef.slice(0, 3);
-        
-        // Get the last transaction number for THIS DEVICE SLOT with row lock
+        // Get the last transaction number for THIS DEVICE with row lock
         const [lastTransRows] = await connection.query(
           'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
-          [`${devicePrefix}%`]
+          [`${devcode}%`]
         );
         
-        let nextNumber = 1; // Starting number for this device slot
+        let nextTrnId = 1; // Starting number for this device
         
         if (lastTransRows.length > 0) {
           const lastRef = lastTransRows[0].transrefno;
-          // Extract the sequential number (everything after the 3-char prefix "AE1")
-          const lastNumber = parseInt(lastRef.substring(3));
+          // Extract the trnid (everything after the devcode prefix)
+          const lastNumber = parseInt(lastRef.substring(devcode.length));
           if (!isNaN(lastNumber)) {
-            nextNumber = lastNumber + 1;
+            nextTrnId = lastNumber + 1;
           }
         }
         
-        // Generate reference: Prefix (AE1) + 7-digit sequential number
-        const transrefno = `${devicePrefix}${String(nextNumber).padStart(7, '0')}`;
+        // Generate reference: devcode + 8-digit trnid padded
+        const transrefno = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
+        
+        // Update trnid in devsettings
+        await connection.query(
+          'UPDATE devsettings SET trnid = ? WHERE uniquedevcode = ?',
+          [nextTrnId, deviceserial]
+        );
         
         // Commit transaction
         await connection.commit();
@@ -462,9 +465,9 @@ const server = http.createServer(async (req, res) => {
       try {
         await connection.beginTransaction();
         
-        // Get device_ref from devsettings (slot-based reference)
+        // Get devcode from devsettings
         const [deviceRows] = await connection.query(
-          'SELECT ccode, device_ref FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
           [deviceserial]
         );
         
@@ -478,31 +481,28 @@ const server = http.createServer(async (req, res) => {
         }
         
         const ccode = deviceRows[0].ccode;
-        const deviceRef = deviceRows[0].device_ref;
+        const devcode = deviceRows[0].devcode;
         
-        if (!deviceRef) {
+        if (!devcode) {
           await connection.rollback();
           connection.release();
           return sendJSON(res, { 
             success: false, 
-            error: 'Device has no assigned device_ref' 
+            error: 'Device has no assigned devcode' 
           }, 400);
         }
-        
-        // Extract prefix from device_ref (e.g., "AE1" from "AE10000001")
-        const devicePrefix = deviceRef.slice(0, 3);
         
         // CRITICAL: Get the highest transaction number with row lock to prevent duplicates
         const [lastTransRows] = await connection.query(
           'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
-          [`${devicePrefix}%`]
+          [`${devcode}%`]
         );
         
         let startNumber = 1;
         
         if (lastTransRows.length > 0) {
           const lastRef = lastTransRows[0].transrefno;
-          const lastNumber = parseInt(lastRef.substring(3));
+          const lastNumber = parseInt(lastRef.substring(devcode.length));
           if (!isNaN(lastNumber)) {
             startNumber = lastNumber + 1;
           }
@@ -511,8 +511,8 @@ const server = http.createServer(async (req, res) => {
         const endNumber = startNumber + batchSize;
         
         // DUPLICATE PREVENTION: Insert a placeholder record at the end of the batch
-        // Format: AE1 + 7-digit padded number
-        const placeholderRefNo = `${devicePrefix}${String(endNumber - 1).padStart(7, '0')}`;
+        // Format: devcode + 8-digit padded trnid
+        const placeholderRefNo = `${devcode}${String(endNumber - 1).padStart(8, '0')}`;
         
         await connection.query(
           `INSERT INTO transactions (
@@ -535,6 +535,12 @@ const server = http.createServer(async (req, res) => {
             'RESERVATION',
             'reservation'
           ]
+        );
+        
+        // Update trnid in devsettings to end of batch
+        await connection.query(
+          'UPDATE devsettings SET trnid = ? WHERE uniquedevcode = ?',
+          [endNumber - 1, deviceserial]
         );
         
         await connection.commit();
@@ -725,45 +731,48 @@ const server = http.createServer(async (req, res) => {
                 await new Promise(resolve => setTimeout(resolve, delay));
               }
               
-              // Regenerate a new reference number using device_ref format
+              // Regenerate a new reference number using devcode + trnid format
               const connection = await pool.getConnection();
               try {
                 await connection.beginTransaction();
                 
-                // Get device_ref from devsettings
-                const [devRefRows] = await connection.query(
-                  'SELECT device_ref FROM devsettings WHERE uniquedevcode = ?',
+                // Get devcode from devsettings
+                const [devRows] = await connection.query(
+                  'SELECT devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
                   [deviceserial]
                 );
                 
-                if (devRefRows.length === 0 || !devRefRows[0].device_ref) {
+                if (devRows.length === 0 || !devRows[0].devcode) {
                   await connection.rollback();
                   connection.release();
-                  throw new Error('Device ref not found');
+                  throw new Error('Devcode not found');
                 }
                 
-                const deviceRef = devRefRows[0].device_ref;
-                // New format: AE + 2-digit slot + 6-digit sequence = 10 chars total
-                // Prefix is 4 characters (e.g., "AE01")
-                const devicePrefix = deviceRef.slice(0, 4);
+                const devcode = devRows[0].devcode;
                 
                 // Get the highest transaction number with row lock
                 const [lastTransRows] = await connection.query(
                   'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
-                  [`${devicePrefix}%`]
+                  [`${devcode}%`]
                 );
                 
                 let nextNumber = 1;
                 if (lastTransRows.length > 0) {
                   const lastRef = lastTransRows[0].transrefno;
-                  // Extract sequence part (last 6 digits)
-                  const lastNumber = parseInt(lastRef.substring(4));
+                  const lastNumber = parseInt(lastRef.substring(devcode.length));
                   if (!isNaN(lastNumber)) {
                     nextNumber = lastNumber + 1;
                   }
                 }
                 
-                attemptTransrefno = `${devicePrefix}${String(nextNumber).padStart(6, '0')}`;
+                attemptTransrefno = `${devcode}${String(nextNumber).padStart(8, '0')}`;
+                
+                // Update trnid in devsettings
+                await connection.query(
+                  'UPDATE devsettings SET trnid = ? WHERE uniquedevcode = ?',
+                  [nextNumber, deviceserial]
+                );
+                
                 await connection.commit();
                 connection.release();
                 
@@ -1186,7 +1195,7 @@ const server = http.createServer(async (req, res) => {
       
       // Then check devsettings for authorization, company info, and device code
       const [devRows] = await pool.query(
-        'SELECT uniquedevcode, ccode, devcode, device_ref, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT uniquedevcode, ccode, devcode, trnid, authorized FROM devsettings WHERE uniquedevcode = ?',
         [fingerprint]
       );
       
@@ -1200,7 +1209,7 @@ const server = http.createServer(async (req, res) => {
         authorized: devRows.length > 0 ? devRows[0].authorized : 0,
         ccode: devRows.length > 0 && devRows[0].ccode ? devRows[0].ccode : (approvedRows[0]?.ccode || null),
         devcode: devRows.length > 0 ? devRows[0].devcode : null,
-        device_ref: devRows.length > 0 ? devRows[0].device_ref : null
+        trnid: devRows.length > 0 ? devRows[0].trnid : 0
       };
       
       // Get company name and ALL settings from psettings if ccode exists
@@ -1268,25 +1277,23 @@ const server = http.createServer(async (req, res) => {
       deviceData.cumulative_frequency_status = cumulativeFrequencyStatus;
       deviceData.app_settings = appSettings;
       
-      // Get last used sequence for this device_ref prefix for counter sync
-      // New format: AE + 2-digit slot + 6-digit sequence = 10 chars
-      let lastSequence = null;
-      if (deviceData.device_ref) {
-        const prefix = deviceData.device_ref.slice(0, 4); // e.g., "AE01"
+      // Get last used trnid for this devcode for counter sync
+      let lastTrnId = deviceData.trnid || 0;
+      if (deviceData.devcode && !lastTrnId) {
+        // Fallback: query transactions table if trnid not in devsettings
         const [lastRefRows] = await pool.query(
           `SELECT transrefno FROM transactions 
            WHERE transrefno LIKE ? 
            ORDER BY transrefno DESC LIMIT 1`,
-          [`${prefix}%`]
+          [`${deviceData.devcode}%`]
         );
         if (lastRefRows.length > 0 && lastRefRows[0].transrefno) {
-          // Extract the sequence number from the last reference (last 6 digits)
           const lastRef = lastRefRows[0].transrefno;
-          const seqPart = lastRef.slice(4); // Remove prefix to get sequence
-          lastSequence = parseInt(seqPart, 10) || 0;
+          const seqPart = lastRef.slice(deviceData.devcode.length);
+          lastTrnId = parseInt(seqPart, 10) || 0;
         }
       }
-      deviceData.last_sequence = lastSequence;
+      deviceData.trnid = lastTrnId;
       
       return sendJSON(res, { success: true, data: deviceData });
     }

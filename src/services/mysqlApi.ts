@@ -387,7 +387,8 @@ export interface ApprovedDevice {
   ccode?: string;
   uniquedevcode?: string;
   company_name?: string;
-  device_ref?: string; // Unique device reference number (e.g., AE10000001)
+  devcode?: string; // Device code prefix for transaction references (e.g., AG05)
+  trnid?: number;   // Last used transaction ID for this device
 }
 
 export const devicesApi = {

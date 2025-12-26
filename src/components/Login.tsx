@@ -94,12 +94,13 @@ export const Login = memo(({ onLogin }: LoginProps) => {
             if (deviceData.company_name && deviceData.devcode) {
               storeDeviceConfig(deviceData.company_name, deviceData.devcode);
             }
-            if (deviceData.device_ref) {
-              localStorage.setItem('device_ref', deviceData.device_ref);
-              // Sync counter from backend's last sequence to maintain consistency
-              const lastSequence = deviceData.last_sequence ? parseInt(deviceData.last_sequence, 10) : undefined;
-              syncOfflineCounter(deviceData.device_ref, lastSequence).catch(e => console.warn('Sync counter failed:', e));
-              console.log('📦 Stored device_ref:', deviceData.device_ref, 'last_sequence:', lastSequence);
+            // Store devcode and sync trnid counter for reference generation
+            if (deviceData.devcode) {
+              localStorage.setItem('devcode', deviceData.devcode);
+              // Sync counter from backend's last trnid to maintain consistency
+              const lastTrnId = deviceData.trnid ? parseInt(String(deviceData.trnid), 10) : undefined;
+              syncOfflineCounter(deviceData.devcode, lastTrnId).catch(e => console.warn('Sync counter failed:', e));
+              console.log('📦 Stored devcode:', deviceData.devcode, 'last_trnid:', lastTrnId);
             }
             
             // Update last sync timestamp (fire and forget)
