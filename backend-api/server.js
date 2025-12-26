@@ -689,12 +689,13 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Helper function to attempt insert with auto-regeneration on duplicate
-      // Infinite retries for production - will keep trying until unique reference is generated
+      // trnid is ONLY updated after successful insert to prevent duplicates
       const attemptInsert = async (attemptTransrefno) => {
         let attempt = 0;
         while (true) {
           attempt++;
           try {
+            // Attempt the insert with current reference
             await pool.query(
               `INSERT INTO transactions 
                 (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
@@ -718,6 +719,25 @@ const server = http.createServer(async (req, res) => {
               ]
             );
 
+            // SUCCESS: Now atomically update trnid AFTER successful insert
+            // Extract trnid from the reference that was just inserted
+            const [devRows] = await pool.query(
+              'SELECT devcode FROM devsettings WHERE uniquedevcode = ?',
+              [deviceserial]
+            );
+            if (devRows.length > 0 && devRows[0].devcode) {
+              const devcode = devRows[0].devcode;
+              const insertedTrnId = parseInt(attemptTransrefno.substring(devcode.length));
+              if (!isNaN(insertedTrnId)) {
+                // Only update if this trnid is higher than current
+                await pool.query(
+                  'UPDATE devsettings SET trnid = GREATEST(IFNULL(trnid, 0), ?) WHERE uniquedevcode = ?',
+                  [insertedTrnId, deviceserial]
+                );
+                console.log(`✅ Updated trnid to ${insertedTrnId} for device after successful insert`);
+              }
+            }
+
             console.log('✅ BACKEND: NEW record INSERTED successfully with reference:', attemptTransrefno);
             return { success: true, reference_no: attemptTransrefno };
           } catch (error) {
@@ -732,13 +752,14 @@ const server = http.createServer(async (req, res) => {
               }
               
               // Regenerate a new reference number using devcode + trnid format
+              // DO NOT update trnid here - only after successful insert
               const connection = await pool.getConnection();
               try {
                 await connection.beginTransaction();
                 
                 // Get devcode from devsettings
                 const [devRows] = await connection.query(
-                  'SELECT devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
+                  'SELECT devcode FROM devsettings WHERE uniquedevcode = ?',
                   [deviceserial]
                 );
                 
@@ -767,11 +788,7 @@ const server = http.createServer(async (req, res) => {
                 
                 attemptTransrefno = `${devcode}${String(nextNumber).padStart(8, '0')}`;
                 
-                // Update trnid in devsettings
-                await connection.query(
-                  'UPDATE devsettings SET trnid = ? WHERE uniquedevcode = ?',
-                  [nextNumber, deviceserial]
-                );
+                // DO NOT update trnid here - will be updated after successful insert
                 
                 await connection.commit();
                 connection.release();
@@ -1322,96 +1339,41 @@ const server = http.createServer(async (req, res) => {
         );
         const [updated] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
         
-        // Also get device_ref from devsettings
+        // Get devcode and trnid from devsettings
         const [devRows] = await pool.query(
-          'SELECT device_ref FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
           [body.device_fingerprint]
         );
-        const deviceData = { ...updated[0], device_ref: devRows.length > 0 ? devRows[0].device_ref : null };
+        const deviceData = { 
+          ...updated[0], 
+          devcode: devRows.length > 0 ? devRows[0].devcode : null,
+          trnid: devRows.length > 0 ? devRows[0].trnid : 0
+        };
         
         return sendJSON(res, { success: true, data: deviceData, message: 'Device already registered' });
       } else {
-        // Check if device exists in devsettings to get ccode and device_ref
+        // Check if device exists in devsettings to get ccode and devcode
         const [devRows] = await pool.query(
-          'SELECT ccode, device_ref FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
           [body.device_fingerprint]
         );
         const ccode = devRows.length > 0 ? devRows[0].ccode : null;
-        let deviceRef = devRows.length > 0 ? devRows[0].device_ref : null;
+        const devcode = devRows.length > 0 ? devRows[0].devcode : null;
+        const trnid = devRows.length > 0 ? devRows[0].trnid : 0;
 
-        // Ensure every device gets a unique sequential device_ref:
-        // Format: AE<2-digit-slot><6-digit-sequence> = 10 chars total
-        // Device 1 => AE01000001, Device 2 => AE02000001, etc.
-        // Use transaction + retry to handle race conditions
-        if (!deviceRef) {
-          const connection = await pool.getConnection();
-          let retryCount = 0;
-          const maxRetries = 5;
-          
-          while (retryCount < maxRetries) {
-            try {
-              await connection.beginTransaction();
-              
-              // Count existing devices to determine next slot number
-              const [countRows] = await connection.query(
-                `SELECT COUNT(*) as device_count FROM devsettings 
-                 WHERE device_ref IS NOT NULL AND device_ref LIKE 'AE%'
-                 FOR UPDATE`
-              );
-
-              const nextSlot = (countRows?.[0]?.device_count || 0) + 1;
-              
-              // Format: AE + 2-digit slot + 6-digit sequence starting at 000001
-              // This gives us 99 devices with 999999 transactions each
-              deviceRef = `AE${String(nextSlot).padStart(2, '0')}${String(1).padStart(6, '0')}`; // e.g. AE01000001
-              
-              console.log('📱 Generating device_ref:', deviceRef, 'for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
-
-              if (devRows.length > 0) {
-                // Update existing devsettings record
-                await connection.query(
-                  'UPDATE devsettings SET device_ref = ? WHERE uniquedevcode = ?',
-                  [deviceRef, body.device_fingerprint]
-                );
-              } else {
-                // Create minimal devsettings record so the device_ref exists immediately
-                await connection.query(
-                  'INSERT INTO devsettings (uniquedevcode, device, authorized, device_ref) VALUES (?, ?, 0, ?)',
-                  [body.device_fingerprint, body.device_info || null, deviceRef]
-                );
-              }
-              
-              await connection.commit();
-              connection.release();
-              break; // Success - exit retry loop
-              
-            } catch (devRefError) {
-              await connection.rollback();
-              
-              // Check if duplicate key error - retry with next slot
-              if (devRefError.code === 'ER_DUP_ENTRY' && retryCount < maxRetries - 1) {
-                retryCount++;
-                console.log(`⚠️ Device ref collision, retry ${retryCount}/${maxRetries}`);
-                await new Promise(resolve => setTimeout(resolve, 100 * retryCount)); // Backoff
-                continue;
-              }
-              
-              connection.release();
-              console.error('❌ Failed to generate device_ref:', devRefError);
-              return sendJSON(res, { 
-                success: false, 
-                error: 'Failed to generate device reference: ' + (devRefError.message || 'Unknown error')
-              }, 500);
+        // If device not in devsettings, create a minimal record
+        if (devRows.length === 0) {
+          try {
+            await pool.query(
+              'INSERT INTO devsettings (uniquedevcode, device, authorized, trnid) VALUES (?, ?, 0, 0)',
+              [body.device_fingerprint, body.device_info || null]
+            );
+            console.log('📱 Created devsettings record for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
+          } catch (insertError) {
+            // Ignore duplicate key errors - device might have been added by another process
+            if (insertError.code !== 'ER_DUP_ENTRY') {
+              console.error('❌ Failed to create devsettings record:', insertError);
             }
-          }
-          
-          // If we exhausted retries
-          if (retryCount >= maxRetries) {
-            connection.release();
-            return sendJSON(res, { 
-              success: false, 
-              error: 'Failed to generate unique device reference after multiple attempts'
-            }, 500);
           }
         }
 
@@ -1422,8 +1384,8 @@ const server = http.createServer(async (req, res) => {
         );
         const [newDevice] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [result.insertId]);
         
-        // Include device_ref in response
-        const deviceData = { ...newDevice[0], device_ref: deviceRef };
+        // Include devcode and trnid in response
+        const deviceData = { ...newDevice[0], devcode: devcode, trnid: trnid };
         
         return sendJSON(res, { success: true, data: deviceData, message: 'Device registered' }, 201);
       }
