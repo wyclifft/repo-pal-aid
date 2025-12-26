@@ -335,6 +335,26 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         localStorage.removeItem(SETTINGS_STORAGE_KEY);
         localStorage.removeItem(SETTINGS_CCODE_KEY);
         setSettings(DEFAULT_SETTINGS);
+      } else if (response.status === 500) {
+        // Server error - could be database issue or stale code
+        // Try to register the device anyway as it might not exist
+        console.log('⚠️ Server error (500), attempting device registration...');
+        const registered = await registerDevice(fingerprint);
+        
+        if (registered) {
+          console.log('✅ Device registered successfully despite server error');
+          setIsPendingApproval(true);
+        } else {
+          console.log('❌ Device registration also failed');
+          setIsPendingApproval(false);
+        }
+        
+        // Block access until backend is fixed and device is approved
+        setIsDeviceAuthorized(false);
+        localStorage.setItem('device_authorized', 'false');
+        localStorage.removeItem(SETTINGS_STORAGE_KEY);
+        localStorage.removeItem(SETTINGS_CCODE_KEY);
+        setSettings(DEFAULT_SETTINGS);
       } else {
         // Other error - treat as unauthorized for safety
         setIsDeviceAuthorized(false);

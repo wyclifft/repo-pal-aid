@@ -78,6 +78,13 @@ const ensureDeviceRegistered = async (): Promise<void> => {
           console.log('⏳ [Native] Device pending approval');
         }
       }
+    } else if (response.status === 500) {
+      // Server error - try to register anyway as device might not exist yet
+      console.log('⚠️ [Native] Server error (500), attempting registration anyway...');
+      const registered = await registerDeviceForApproval(fingerprint);
+      if (registered) {
+        console.log('✅ [Native] Device registered despite server error');
+      }
     } else {
       console.log('⚠️ [Native] Device check returned status:', response.status);
     }
