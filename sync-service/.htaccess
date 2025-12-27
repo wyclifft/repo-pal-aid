@@ -1,17 +1,19 @@
 # ============================================================================
 # Milk Collection Sync Service - cPanel Configuration
+# Domain: 2backend.maddasystems.co.ke
+# Directory: /public_html/2backend/
 # ============================================================================
 # IMPORTANT: Replace YOUR_CPANEL_USERNAME with your actual cPanel username!
 # ============================================================================
 
 # Enable Passenger for Node.js
 PassengerEnabled on
-PassengerAppRoot /home/YOUR_CPANEL_USERNAME/public_html/sync-service
+PassengerAppRoot /home/YOUR_CPANEL_USERNAME/public_html/2backend
 PassengerAppType node
 PassengerStartupFile server.js
 
 # Node.js Environment
-PassengerNodejs /home/YOUR_CPANEL_USERNAME/nodevenv/sync-service/18/bin/node
+PassengerNodejs /home/YOUR_CPANEL_USERNAME/nodevenv/2backend/18/bin/node
 
 # ============================================================================
 # Environment Variables - EDIT THESE VALUES
