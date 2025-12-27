@@ -8,12 +8,11 @@ const http = require('http');
 const url = require('url');
 
 // Database connection pool (minimal)
-// IMPORTANT: Do not hardcode credentials in code. Configure via environment variables.
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'localhost',
-  user: process.env.MYSQL_USER || 'root',
-  password: process.env.MYSQL_PASSWORD || '',
-  database: process.env.MYSQL_DATABASE || 'milk_collection',
+  user: process.env.MYSQL_USER || 'maddasys_wycliff',
+  password: process.env.MYSQL_PASSWORD || '0741899183Mutee',
+  database: process.env.MYSQL_DATABASE || 'maddasys_milk_collection_pwa',
   port: Number(process.env.MYSQL_PORT || 3306),
   connectionLimit: 2,
   waitForConnections: true,
