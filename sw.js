@@ -193,7 +193,7 @@ self.addEventListener('fetch', (event) => {
     }
 
     // Network-first for MySQL backend API
-    if (url.hostname.includes('backend.maddasystems.co.ke')) {
+    if (url.hostname.includes('2backend.maddasystems.co.ke')) {
       event.respondWith(
         networkFirstStrategy(request, CACHE_NAMES.API, CACHE_EXPIRATION.API)
           .catch(() => {

@@ -3,6 +3,7 @@ import { Shield, ShieldAlert, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { storeDeviceConfig, hasDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
+import { API_CONFIG } from '@/config/api';
 
 interface DeviceAuthStatusProps {
   onCompanyNameChange?: (companyName: string) => void;
@@ -39,7 +40,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
     if (!ccode || !navigator.onLine) return null;
     
     try {
-      const apiUrl = 'https://backend.maddasystems.co.ke';
+      const apiUrl = API_CONFIG.MYSQL_API_URL;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
       
@@ -81,7 +82,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
     
     try {
       const fingerprint = await generateDeviceFingerprint();
-      const apiUrl = 'https://backend.maddasystems.co.ke';
+      const apiUrl = API_CONFIG.MYSQL_API_URL;
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout (faster)
