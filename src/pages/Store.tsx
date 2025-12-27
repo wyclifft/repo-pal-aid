@@ -14,6 +14,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { API_CONFIG } from '@/config/api';
 const Store = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
@@ -83,7 +84,7 @@ const Store = () => {
       // Try to fetch routes first to check if ccode has any
       if (navigator.onLine) {
         try {
-          const apiUrl = 'https://backend.maddasystems.co.ke';
+          const apiUrl = API_CONFIG.MYSQL_API_URL;
           const response = await fetch(
             `${apiUrl}/api/routes?uniquedevcode=${encodeURIComponent(deviceFingerprint)}`,
             { signal: AbortSignal.timeout(5000) } // 5 second timeout

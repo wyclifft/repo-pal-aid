@@ -190,7 +190,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   // API calls - network first with cache fallback
-  if (url.hostname.includes('supabase.co') || url.hostname.includes('backend.maddasystems.co.ke')) {
+  if (url.hostname.includes('supabase.co') || url.hostname.includes('2backend.maddasystems.co.ke')) {
     event.respondWith(
       networkFirst(request, CACHE_NAMES.API, CACHE_EXPIRATION.API)
         .catch(() => new Response(
