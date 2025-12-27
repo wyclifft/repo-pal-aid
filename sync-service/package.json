@@ -1,0 +1,24 @@
+{
+  "name": "milk-collection-sync-service",
+  "version": "1.0.0",
+  "description": "Data sync service for milk collection system - cPanel compatible",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node -e \"console.log('Sync service ready')\""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "mysql2": "^3.6.0"
+  },
+  "keywords": [
+    "sync",
+    "mysql",
+    "milk-collection",
+    "cpanel"
+  ],
+  "author": "Madda Systems",
+  "license": "MIT"
+}
