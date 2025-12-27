@@ -1,0 +1,51 @@
+# ============================================================================
+# Milk Collection Sync Service - cPanel Configuration
+# ============================================================================
+# IMPORTANT: Replace YOUR_CPANEL_USERNAME with your actual cPanel username!
+# ============================================================================
+
+# Enable Passenger for Node.js
+PassengerEnabled on
+PassengerAppRoot /home/YOUR_CPANEL_USERNAME/public_html/sync-service
+PassengerAppType node
+PassengerStartupFile server.js
+
+# Node.js Environment
+PassengerNodejs /home/YOUR_CPANEL_USERNAME/nodevenv/sync-service/18/bin/node
+
+# ============================================================================
+# Environment Variables - EDIT THESE VALUES
+# ============================================================================
+
+# Database Configuration
+SetEnv DB_HOST localhost
+SetEnv DB_USER maddasys_milk_user
+SetEnv DB_PASSWORD YOUR_DB_PASSWORD_HERE
+SetEnv DB_NAME maddasys_milk_collection_pwa
+
+# Server Configuration
+SetEnv PORT 3001
+
+# Remote API Configuration (optional - for syncing to external systems)
+# SetEnv REMOTE_API_URL https://api.example.com
+# SetEnv REMOTE_API_KEY your_api_key_here
+
+# Sync Configuration
+SetEnv SYNC_BATCH_SIZE 100
+SetEnv SYNC_INTERVAL_MS 300000
+
+# ============================================================================
+# Security Settings
+# ============================================================================
+
+# Block direct access to sensitive files
+<FilesMatch "^(server\.js|package\.json|package-lock\.json|\.env|node_modules)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Prevent directory listing
+Options -Indexes
+
+# Disable server signature
+ServerSignature Off
