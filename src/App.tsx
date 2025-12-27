@@ -17,7 +17,6 @@ const ZReport = lazy(() => import("./pages/ZReport"));
 const Store = lazy(() => import("./pages/Store"));
 const PeriodicReport = lazy(() => import("./pages/PeriodicReport"));
 const Settings = lazy(() => import("./pages/Settings"));
-const BackendStatus = lazy(() => import("./pages/BackendStatus"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 // Configure QueryClient with aggressive caching
@@ -139,7 +138,6 @@ const AppContent = () => {
           <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
           <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
           <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
-          <Route path="/backend-status" element={<PageWrapper><BackendStatus /></PageWrapper>} />
           <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
           <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
         </Routes>
