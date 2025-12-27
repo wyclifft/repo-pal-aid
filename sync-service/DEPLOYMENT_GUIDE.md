@@ -1,6 +1,8 @@
 # Sync Service Deployment Guide for cPanel
 
-This guide covers deploying the Milk Collection Sync Service on cPanel hosting.
+**Domain**: `2backend.maddasystems.co.ke`
+
+This guide covers deploying the Milk Collection Sync Service on cPanel hosting in a **separate directory** from existing applications.
 
 ## Overview
 
@@ -23,22 +25,24 @@ sync-service/
 
 ## Step-by-Step Deployment
 
-### Step 1: Create Subdomain (Optional)
+### Step 1: Create Subdomain
 
 1. Log in to cPanel
-2. Go to **Domains** → **Subdomains**
-3. Create subdomain: `sync.yourdomain.com`
-4. Set document root: `/public_html/sync-service`
+2. Go to **Domains** → **Subdomains** (or **Domains** → **Create A New Domain**)
+3. Create subdomain: `2backend.maddasystems.co.ke`
+4. **IMPORTANT**: Set document root to a NEW directory: `/public_html/2backend`
+   - This keeps it separate from existing `/public_html/api/` applications
 
 ### Step 2: Create Directory Structure
 
 1. Go to **File Manager**
 2. Navigate to `/public_html/`
-3. Create folder: `sync-service`
+3. Create folder: `2backend` (if not auto-created)
+4. The final path should be: `/public_html/2backend/`
 
 ### Step 3: Upload Files
 
-Upload these files to `/public_html/sync-service/`:
+Upload these files to `/public_html/2backend/`:
 - `server.js`
 - `package.json`
 - `.htaccess`
@@ -46,13 +50,13 @@ Upload these files to `/public_html/sync-service/`:
 ### Step 4: Configure .htaccess (CRITICAL!)
 
 Edit `.htaccess` and replace:
-1. `YOUR_CPANEL_USERNAME` → Your actual cPanel username
+1. `YOUR_CPANEL_USERNAME` → Your actual cPanel username (e.g., `maddasys`)
 2. `YOUR_DB_PASSWORD_HERE` → Your database password
 
 Example:
 ```apache
-PassengerAppRoot /home/maddasys/public_html/sync-service
-PassengerNodejs /home/maddasys/nodevenv/sync-service/18/bin/node
+PassengerAppRoot /home/maddasys/public_html/2backend
+PassengerNodejs /home/maddasys/nodevenv/2backend/18/bin/node
 
 SetEnv DB_HOST localhost
 SetEnv DB_USER maddasys_milk_user
@@ -67,8 +71,8 @@ SetEnv DB_NAME maddasys_milk_collection_pwa
 3. Configure:
    - **Node.js version**: 18.x or higher
    - **Application mode**: Production
-   - **Application root**: `/public_html/sync-service`
-   - **Application URL**: `sync.yourdomain.com` or `/sync-service`
+   - **Application root**: `/public_html/2backend`
+   - **Application URL**: `2backend.maddasystems.co.ke`
    - **Application startup file**: `server.js`
 4. Click **Create**
 
@@ -78,8 +82,8 @@ SetEnv DB_NAME maddasys_milk_collection_pwa
    
    Or via Terminal/SSH:
    ```bash
-   cd ~/public_html/sync-service
-   source ~/nodevenv/sync-service/18/bin/activate
+   cd ~/public_html/2backend
+   source ~/nodevenv/2backend/18/bin/activate
    npm install --production
    ```
 
@@ -92,13 +96,13 @@ SetEnv DB_NAME maddasys_milk_collection_pwa
 
 ```bash
 # Health check
-curl https://sync.yourdomain.com/api/health
+curl https://2backend.maddasystems.co.ke/api/health
 
 # Version info
-curl https://sync.yourdomain.com/api/version
+curl https://2backend.maddasystems.co.ke/api/version
 
 # Get stats
-curl https://sync.yourdomain.com/api/stats
+curl https://2backend.maddasystems.co.ke/api/stats
 ```
 
 ---
@@ -236,22 +240,34 @@ curl -X POST https://sync.yourdomain.com/api/import/farmers \
 
 ## Quick Reference
 
+**Domain:** `2backend.maddasystems.co.ke`
+**Directory:** `/public_html/2backend/`
+
 **URLs:**
-- Service: `https://sync.yourdomain.com/`
-- Health: `https://sync.yourdomain.com/api/health`
-- Status: `https://sync.yourdomain.com/api/sync/status`
+- Service: `https://2backend.maddasystems.co.ke/`
+- Health: `https://2backend.maddasystems.co.ke/api/health`
+- Status: `https://2backend.maddasystems.co.ke/api/sync/status`
 
 **Commands:**
 ```bash
 # Trigger sync
-curl -X POST https://sync.yourdomain.com/api/sync/run
+curl -X POST https://2backend.maddasystems.co.ke/api/sync/run
 
 # Check status
-curl https://sync.yourdomain.com/api/sync/status
+curl https://2backend.maddasystems.co.ke/api/sync/status
 
 # View history
-curl https://sync.yourdomain.com/api/sync/history
+curl https://2backend.maddasystems.co.ke/api/sync/history
 ```
+
+---
+
+## Directory Structure Comparison
+
+| Application | Domain | Directory |
+|-------------|--------|-----------|
+| Main Backend API | `backend.maddasystems.co.ke` | `/public_html/api/milk-collection-api/` |
+| Sync Service | `2backend.maddasystems.co.ke` | `/public_html/2backend/` |
 
 ---
 
