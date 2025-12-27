@@ -3,29 +3,19 @@
 # Domain: 2backend.maddasystems.co.ke
 # Directory: /public_html/2backend/
 # ============================================================================
-# IMPORTANT: Replace YOUR_CPANEL_USERNAME with your actual cPanel username!
-# ============================================================================
 
-# Enable Passenger for Node.js
 PassengerEnabled on
-PassengerAppRoot /home/YOUR_CPANEL_USERNAME/public_html/2backend
+PassengerAppRoot /home/maddasys/public_html/2backend
 PassengerAppType node
 PassengerStartupFile server.js
+PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node
 
-# Node.js Environment
-PassengerNodejs /home/YOUR_CPANEL_USERNAME/nodevenv/2backend/18/bin/node
-
-# ============================================================================
-# Environment Variables - EDIT THESE VALUES
-# ============================================================================
-
-# Database Configuration
-SetEnv DB_HOST localhost
-SetEnv DB_USER maddasys_milk_user
-SetEnv DB_PASSWORD YOUR_DB_PASSWORD_HERE
-SetEnv DB_NAME maddasys_milk_collection_pwa
-
-# Server Configuration
+SetEnv NODE_ENV production
+SetEnv MYSQL_HOST localhost
+SetEnv MYSQL_DATABASE maddasys_milk_collection_pwa
+SetEnv MYSQL_USER maddasys_tesh
+SetEnv MYSQL_PASSWORD 0741899183Mutee
+SetEnv MYSQL_PORT 3306
 SetEnv PORT 3001
 
 # Remote API Configuration (optional - for syncing to external systems)
@@ -36,9 +26,20 @@ SetEnv PORT 3001
 SetEnv SYNC_BATCH_SIZE 100
 SetEnv SYNC_INTERVAL_MS 300000
 
-# ============================================================================
-# Security Settings
-# ============================================================================
+# ENABLE HEADERS MODULE
+<IfModule mod_headers.c>
+  Header always set Access-Control-Allow-Origin "*"
+  Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+  Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
+  Header always set Access-Control-Max-Age "86400"
+</IfModule>
+
+# HANDLE OPTIONS PRE-FLIGHT CORRECTLY
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{REQUEST_METHOD} OPTIONS
+  RewriteRule ^(.*)$ - [L]
+</IfModule>
 
 # Block direct access to sensitive files
 <FilesMatch "^(server\.js|package\.json|package-lock\.json|\.env|node_modules)$">
