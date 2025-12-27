@@ -1,5 +1,7 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const config: CapacitorConfig = {
   appId: 'app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e',
   appName: 'Milk Collection',
@@ -8,11 +10,16 @@ const config: CapacitorConfig = {
   // Android configuration
   android: {
     minWebViewVersion: 55,
-    allowMixedContent: true,
+    allowMixedContent: false, // Disabled for production security
     captureInput: true,
     backgroundColor: '#1a1a2e',
-    // Enable WebView debugging in development
-    webContentsDebuggingEnabled: true,
+    // Disable WebView debugging in production
+    webContentsDebuggingEnabled: !isProduction,
+    // Build type for optimizations
+    buildOptions: {
+      keystorePath: undefined,
+      keystoreAlias: undefined,
+    },
   },
   
   // iOS configuration
@@ -21,18 +28,18 @@ const config: CapacitorConfig = {
     contentInset: 'automatic',
     allowsLinkPreview: false,
     scrollEnabled: true,
+    limitsNavigationsToAppBoundDomains: true,
+    preferredContentMode: 'mobile',
   },
   
-  // Server configuration for development hot-reload
+  // Server configuration - production settings
   server: {
-    // Uncomment for development with hot-reload:
-    // url: 'https://a468e475-ee6a-4fda-9a7e-5e39ba8c375e.lovableproject.com?forceHideBadge=true',
-    // cleartext: true,
-    
-    // Production settings
+    // Production settings - serve from bundled assets
     androidScheme: 'https',
     iosScheme: 'capacitor',
     hostname: 'app',
+    // Error handling
+    errorPath: '/offline.html',
   },
   
   // Plugin configurations
@@ -48,12 +55,15 @@ const config: CapacitorConfig = {
       androidScaleType: 'CENTER_CROP',
       splashFullScreen: true,
       splashImmersive: true,
+      layoutName: 'launch_screen',
+      useDialog: true,
     },
     
     // Status bar
     StatusBar: {
       style: 'DARK',
       backgroundColor: '#1a1a2e',
+      overlaysWebView: false,
     },
     
     // App state management
@@ -76,10 +86,15 @@ const config: CapacitorConfig = {
         noDeviceFound: 'No device found',
       },
     },
+    
+    // Preferences for secure storage
+    Preferences: {
+      // Use encrypted storage on Android
+    },
   },
   
-  // Logging in production
-  loggingBehavior: 'production',
+  // Production logging behavior
+  loggingBehavior: isProduction ? 'none' : 'debug',
 };
 
 export default config;

@@ -1,16 +1,38 @@
 /**
  * Native Platform Initialization
  * Initializes Capacitor plugins and native platform features
+ * Production-ready with timeout handling and retry logic
  */
 import { Capacitor } from '@capacitor/core';
 import { generateDeviceFingerprint, getDeviceName, getDeviceInfo } from './deviceFingerprint';
 import { API_CONFIG } from '@/config/api';
 
+// Initialization timeout (10 seconds)
+const INIT_TIMEOUT = 10000;
+// Device registration retry settings
+const MAX_REGISTRATION_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
+
 /**
- * Register device with backend for approval
- * This is critical for first-time app launches
+ * Wrap async operations with timeout
  */
-// Check if error indicates stale backend
+const withTimeout = <T>(promise: Promise<T>, ms: number, operation: string): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => 
+      setTimeout(() => reject(new Error(`${operation} timed out after ${ms}ms`)), ms)
+    )
+  ]);
+};
+
+/**
+ * Sleep utility for retry delays
+ */
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Check if error indicates stale backend
+ */
 const isStaleBackendError = (errorText: string | undefined): boolean => {
   if (!errorText) return false;
   return errorText.includes("Unknown column") || 
@@ -18,7 +40,9 @@ const isStaleBackendError = (errorText: string | undefined): boolean => {
          errorText.includes("ER_BAD_FIELD_ERROR");
 };
 
-// Store pending registration for retry
+/**
+ * Store pending registration for retry
+ */
 const storePendingNativeRegistration = (fingerprint: string, deviceInfo: string) => {
   try {
     const pending = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
@@ -39,7 +63,10 @@ const storePendingNativeRegistration = (fingerprint: string, deviceInfo: string)
   }
 };
 
-const registerDeviceForApproval = async (fingerprint: string): Promise<boolean> => {
+/**
+ * Register device with backend for approval with retry logic
+ */
+const registerDeviceForApproval = async (fingerprint: string, attempt = 1): Promise<boolean> => {
   try {
     const deviceName = getDeviceName();
     const deviceInfo = getDeviceInfo();
@@ -53,14 +80,19 @@ const registerDeviceForApproval = async (fingerprint: string): Promise<boolean> 
       approved: false
     };
     
-    console.log('📱 [Native] Registering device:', fingerprint.substring(0, 16) + '...');
-    console.log('📱 [Native] Request payload:', JSON.stringify(requestBody));
+    console.log(`📱 [Native] Registering device (attempt ${attempt}/${MAX_REGISTRATION_RETRIES}):`, fingerprint.substring(0, 16) + '...');
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     
     const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
     
     const responseText = await response.text();
     let data: { success?: boolean; error?: string };
@@ -71,11 +103,10 @@ const registerDeviceForApproval = async (fingerprint: string): Promise<boolean> 
     }
     
     console.log('📱 [Native] Registration response:', response.status, data.success ? 'SUCCESS' : 'FAILED');
-    console.log('📱 [Native] Response body:', responseText.substring(0, 200));
     
     // Check for stale backend
     if (response.status === 500 && isStaleBackendError(data.error || responseText)) {
-      console.error('🚨 [Native] BACKEND OUTDATED: Server has stale column references. Contact admin.');
+      console.error('🚨 [Native] BACKEND OUTDATED: Server has stale column references.');
       storePendingNativeRegistration(fingerprint, deviceInfoString);
       window.dispatchEvent(new CustomEvent('backendOutdated', { 
         detail: { message: 'Backend needs update - device_ref column issue' }
@@ -93,11 +124,30 @@ const registerDeviceForApproval = async (fingerprint: string): Promise<boolean> 
       return true;
     }
     
-    // Store for retry
+    // Retry on failure
+    if (attempt < MAX_REGISTRATION_RETRIES) {
+      console.log(`⏳ [Native] Retrying registration in ${RETRY_DELAY_MS}ms...`);
+      await sleep(RETRY_DELAY_MS);
+      return registerDeviceForApproval(fingerprint, attempt + 1);
+    }
+    
+    // Store for later retry
     storePendingNativeRegistration(fingerprint, deviceInfoString);
     return false;
   } catch (error) {
-    console.error('❌ [Native] Device registration failed:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error('❌ [Native] Device registration request timed out');
+    } else {
+      console.error('❌ [Native] Device registration failed:', error);
+    }
+    
+    // Retry on network errors
+    if (attempt < MAX_REGISTRATION_RETRIES) {
+      console.log(`⏳ [Native] Retrying registration in ${RETRY_DELAY_MS}ms...`);
+      await sleep(RETRY_DELAY_MS);
+      return registerDeviceForApproval(fingerprint, attempt + 1);
+    }
+    
     return false;
   }
 };
@@ -107,15 +157,27 @@ const registerDeviceForApproval = async (fingerprint: string): Promise<boolean> 
  */
 const ensureDeviceRegistered = async (): Promise<void> => {
   try {
-    // Generate or retrieve fingerprint
-    const fingerprint = await generateDeviceFingerprint();
+    // Generate or retrieve fingerprint with timeout
+    const fingerprint = await withTimeout(
+      generateDeviceFingerprint(),
+      5000,
+      'Device fingerprint generation'
+    );
     console.log('📱 [Native] Device fingerprint:', fingerprint.substring(0, 16) + '...');
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     
     // Check if device exists in backend
     const response = await fetch(
       `${API_CONFIG.MYSQL_API_URL}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
-      { method: 'GET' }
+      { 
+        method: 'GET',
+        signal: controller.signal
+      }
     );
+    
+    clearTimeout(timeoutId);
     
     if (response.status === 404) {
       // Device not found - register it
@@ -141,15 +203,16 @@ const ensureDeviceRegistered = async (): Promise<void> => {
     } else if (response.status === 500) {
       // Server error - try to register anyway as device might not exist yet
       console.log('⚠️ [Native] Server error (500), attempting registration anyway...');
-      const registered = await registerDeviceForApproval(fingerprint);
-      if (registered) {
-        console.log('✅ [Native] Device registered despite server error');
-      }
+      await registerDeviceForApproval(fingerprint);
     } else {
       console.log('⚠️ [Native] Device check returned status:', response.status);
     }
   } catch (error) {
-    console.error('❌ [Native] Device registration check failed:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error('❌ [Native] Device check request timed out');
+    } else {
+      console.error('❌ [Native] Device registration check failed:', error);
+    }
     // Don't throw - allow app to continue and retry later
   }
 };
@@ -170,28 +233,38 @@ export const initializeNativePlatform = async (): Promise<void> => {
   }
 
   console.log('📱 Initializing native platform:', platform);
+  const startTime = Date.now();
 
   try {
-    // Initialize Status Bar
-    await initStatusBar();
+    // Initialize all plugins with timeout protection
+    await Promise.all([
+      withTimeout(initStatusBar(), INIT_TIMEOUT, 'Status bar init'),
+      withTimeout(initSplashScreen(), INIT_TIMEOUT, 'Splash screen init'),
+      withTimeout(initNetworkListener(), INIT_TIMEOUT, 'Network listener init'),
+      withTimeout(initAppStateListener(), INIT_TIMEOUT, 'App state listener init'),
+    ]).catch(error => {
+      console.warn('⚠️ Some native features failed to initialize:', error);
+    });
     
-    // Initialize Splash Screen
-    await initSplashScreen();
+    // Device registration runs separately - don't block app startup
+    ensureDeviceRegistered().catch(error => {
+      console.warn('⚠️ Device registration failed, will retry later:', error);
+    });
     
-    // Initialize Network listener
-    await initNetworkListener();
+    const elapsed = Date.now() - startTime;
+    console.log(`✅ Native platform initialized in ${elapsed}ms`);
     
-    // Initialize App state listener
-    await initAppStateListener();
+    // Dispatch initialization complete event
+    window.dispatchEvent(new CustomEvent('nativeInitComplete', { 
+      detail: { platform, elapsed } 
+    }));
     
-    // CRITICAL: Register device with backend on first launch
-    // This ensures the device appears in cpanel for approval
-    console.log('📱 [Native] Checking device registration...');
-    await ensureDeviceRegistered();
-    
-    console.log('✅ Native platform initialized');
   } catch (error) {
     console.error('❌ Native initialization error:', error);
+    // Don't throw - app should still work with degraded native features
+    window.dispatchEvent(new CustomEvent('nativeInitError', { 
+      detail: { error: error instanceof Error ? error.message : String(error) } 
+    }));
   }
 };
 
@@ -223,8 +296,7 @@ const initSplashScreen = async (): Promise<void> => {
   try {
     const { SplashScreen } = await import('@capacitor/splash-screen');
     
-    // Auto-hide after app is ready
-    // This is controlled by the app when it's fully loaded
+    // Configure splash screen behavior
     console.log('✅ Splash screen ready');
   } catch (error) {
     console.warn('Splash screen initialization failed:', error);
@@ -355,3 +427,31 @@ export const getSafeAreaInsets = (): { top: number; bottom: number; left: number
     right: parseInt(style.getPropertyValue('--safe-area-inset-right') || '0', 10),
   };
 };
+
+/**
+ * Retry pending device registrations
+ * Call this when network becomes available
+ */
+export const retryPendingRegistrations = async (): Promise<void> => {
+  try {
+    const pending = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
+    if (pending.length === 0) return;
+    
+    console.log(`📱 [Native] Retrying ${pending.length} pending registrations...`);
+    
+    for (const registration of pending) {
+      await registerDeviceForApproval(registration.fingerprint);
+      // Small delay between retries
+      await sleep(1000);
+    }
+  } catch (error) {
+    console.error('Failed to retry pending registrations:', error);
+  }
+};
+
+// Auto-retry pending registrations when network comes online
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    setTimeout(() => retryPendingRegistrations(), 2000);
+  });
+}
