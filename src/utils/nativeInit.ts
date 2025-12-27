@@ -10,6 +10,35 @@ import { API_CONFIG } from '@/config/api';
  * Register device with backend for approval
  * This is critical for first-time app launches
  */
+// Check if error indicates stale backend
+const isStaleBackendError = (errorText: string | undefined): boolean => {
+  if (!errorText) return false;
+  return errorText.includes("Unknown column") || 
+         errorText.includes("device_ref") ||
+         errorText.includes("ER_BAD_FIELD_ERROR");
+};
+
+// Store pending registration for retry
+const storePendingNativeRegistration = (fingerprint: string, deviceInfo: string) => {
+  try {
+    const pending = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
+    const exists = pending.some((p: { fingerprint: string }) => p.fingerprint === fingerprint);
+    if (!exists) {
+      pending.push({ 
+        fingerprint, 
+        deviceInfo, 
+        timestamp: Date.now(),
+        platform: Capacitor.getPlatform(),
+        attempts: 1 
+      });
+      localStorage.setItem('pending_device_registrations', JSON.stringify(pending));
+      console.log('💾 [Native] Stored pending registration:', fingerprint.substring(0, 16) + '...');
+    }
+  } catch (e) {
+    console.warn('[Native] Failed to store pending registration:', e);
+  }
+};
+
 const registerDeviceForApproval = async (fingerprint: string): Promise<boolean> => {
   try {
     const deviceName = getDeviceName();
@@ -25,7 +54,7 @@ const registerDeviceForApproval = async (fingerprint: string): Promise<boolean> 
     };
     
     console.log('📱 [Native] Registering device:', fingerprint.substring(0, 16) + '...');
-    console.log('📱 [Native] Device info:', deviceInfoString);
+    console.log('📱 [Native] Request payload:', JSON.stringify(requestBody));
     
     const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
       method: 'POST',
@@ -33,9 +62,40 @@ const registerDeviceForApproval = async (fingerprint: string): Promise<boolean> 
       body: JSON.stringify(requestBody)
     });
     
-    const data = await response.json();
+    const responseText = await response.text();
+    let data: { success?: boolean; error?: string };
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = { success: false, error: responseText };
+    }
+    
     console.log('📱 [Native] Registration response:', response.status, data.success ? 'SUCCESS' : 'FAILED');
-    return data.success;
+    console.log('📱 [Native] Response body:', responseText.substring(0, 200));
+    
+    // Check for stale backend
+    if (response.status === 500 && isStaleBackendError(data.error || responseText)) {
+      console.error('🚨 [Native] BACKEND OUTDATED: Server has stale column references. Contact admin.');
+      storePendingNativeRegistration(fingerprint, deviceInfoString);
+      window.dispatchEvent(new CustomEvent('backendOutdated', { 
+        detail: { message: 'Backend needs update - device_ref column issue' }
+      }));
+      return false;
+    }
+    
+    if (data.success) {
+      // Clear from pending
+      try {
+        const pending = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
+        const filtered = pending.filter((p: { fingerprint: string }) => p.fingerprint !== fingerprint);
+        localStorage.setItem('pending_device_registrations', JSON.stringify(filtered));
+      } catch { /* ignore */ }
+      return true;
+    }
+    
+    // Store for retry
+    storePendingNativeRegistration(fingerprint, deviceInfoString);
+    return false;
   } catch (error) {
     console.error('❌ [Native] Device registration failed:', error);
     return false;

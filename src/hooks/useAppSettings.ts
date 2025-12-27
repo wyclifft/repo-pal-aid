@@ -125,6 +125,34 @@ export const useAppSettings = (): AppSettingsContextType => {
   return useAppSettingsStandalone();
 };
 
+// Check if error is due to old backend with stale column references
+const isStaleBackendError = (errorText: string | undefined): boolean => {
+  if (!errorText) return false;
+  return errorText.includes("Unknown column") || 
+         errorText.includes("device_ref") ||
+         errorText.includes("ER_BAD_FIELD_ERROR");
+};
+
+// Store pending registration for retry when backend is updated
+const storePendingRegistration = (fingerprint: string, deviceInfo: string) => {
+  try {
+    const pending = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
+    const exists = pending.some((p: { fingerprint: string }) => p.fingerprint === fingerprint);
+    if (!exists) {
+      pending.push({ 
+        fingerprint, 
+        deviceInfo, 
+        timestamp: Date.now(),
+        attempts: 1 
+      });
+      localStorage.setItem('pending_device_registrations', JSON.stringify(pending));
+      console.log('💾 Stored pending registration for retry:', fingerprint.substring(0, 16) + '...');
+    }
+  } catch (e) {
+    console.warn('Failed to store pending registration:', e);
+  }
+};
+
 // Auto-register device in approved_devices table with retry for native platforms
 const registerDevice = async (fingerprint: string, retryCount = 0): Promise<boolean> => {
   const isNative = Capacitor.isNativePlatform();
@@ -145,7 +173,7 @@ const registerDevice = async (fingerprint: string, retryCount = 0): Promise<bool
     };
     
     console.log(`📱 Registering device (attempt ${retryCount + 1}/${maxRetries}):`, fingerprint.substring(0, 16) + '...');
-    console.log('📱 Device info:', deviceInfoString);
+    console.log('📱 Request payload:', JSON.stringify(requestBody));
     console.log('📱 Platform:', platform, 'isNative:', isNative);
     
     const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
@@ -154,10 +182,35 @@ const registerDevice = async (fingerprint: string, retryCount = 0): Promise<bool
       body: JSON.stringify(requestBody)
     });
     
-    const data = await response.json();
+    const responseText = await response.text();
+    let data: { success?: boolean; error?: string; message?: string };
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = { success: false, error: responseText };
+    }
+    
     console.log('📱 Device registration response:', response.status, data.success ? 'SUCCESS' : 'FAILED');
+    console.log('📱 Response body:', responseText.substring(0, 200));
+    
+    // Check for stale backend error
+    if (response.status === 500 && isStaleBackendError(data.error || responseText)) {
+      console.error('🚨 BACKEND OUTDATED: Server has stale column references (device_ref). Contact admin to update server.js');
+      storePendingRegistration(fingerprint, deviceInfoString);
+      // Dispatch event so UI can show warning
+      window.dispatchEvent(new CustomEvent('backendOutdated', { 
+        detail: { message: 'Backend needs update - device_ref column issue' }
+      }));
+      return false;
+    }
     
     if (data.success) {
+      // Clear from pending if it was there
+      try {
+        const pending = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
+        const filtered = pending.filter((p: { fingerprint: string }) => p.fingerprint !== fingerprint);
+        localStorage.setItem('pending_device_registrations', JSON.stringify(filtered));
+      } catch { /* ignore */ }
       return true;
     }
     
@@ -168,7 +221,9 @@ const registerDevice = async (fingerprint: string, retryCount = 0): Promise<bool
       return registerDevice(fingerprint, retryCount + 1);
     }
     
-    return data.success;
+    // Store for retry if all attempts failed
+    storePendingRegistration(fingerprint, deviceInfoString);
+    return false;
   } catch (error) {
     console.error('❌ Failed to register device:', error);
     
