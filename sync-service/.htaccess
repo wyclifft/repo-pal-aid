@@ -1,11 +1,11 @@
 # ============================================================================
 # Milk Collection Sync Service - cPanel Configuration
 # Domain: 2backend.maddasystems.co.ke
-# Directory: /public_html/2backend/
+# Directory: /public_html/sync-service/
 # ============================================================================
 
 PassengerEnabled on
-PassengerAppRoot /home/maddasys/public_html/2backend
+PassengerAppRoot /home/maddasys/public_html/sync-service
 PassengerAppType node
 PassengerStartupFile server.js
 PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node

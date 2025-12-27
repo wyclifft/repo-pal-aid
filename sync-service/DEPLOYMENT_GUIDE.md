@@ -30,48 +30,38 @@ sync-service/
 1. Log in to cPanel
 2. Go to **Domains** → **Subdomains** (or **Domains** → **Create A New Domain**)
 3. Create subdomain: `2backend.maddasystems.co.ke`
-4. **IMPORTANT**: Set document root to a NEW directory: `/public_html/2backend`
+4. **IMPORTANT**: Set document root to a NEW directory: `/public_html/sync-service`
    - This keeps it separate from existing `/public_html/api/` applications
 
 ### Step 2: Create Directory Structure
 
 1. Go to **File Manager**
 2. Navigate to `/public_html/`
-3. Create folder: `2backend` (if not auto-created)
-4. The final path should be: `/public_html/2backend/`
+3. Create folder: `sync-service` (if not auto-created)
+4. The final path should be: `/public_html/sync-service/`
 
 ### Step 3: Upload Files
 
-Upload these files to `/public_html/2backend/`:
+Upload these files to `/public_html/sync-service/`:
 - `server.js`
 - `package.json`
 - `.htaccess`
 
-### Step 4: Configure .htaccess (CRITICAL!)
+### Step 4: Configure .htaccess
 
-Edit `.htaccess` and replace:
-1. `YOUR_CPANEL_USERNAME` → Your actual cPanel username (e.g., `maddasys`)
-2. `YOUR_DB_PASSWORD_HERE` → Your database password
-
-Example:
-```apache
-PassengerAppRoot /home/maddasys/public_html/2backend
-PassengerNodejs /home/maddasys/nodevenv/2backend/18/bin/node
-
-SetEnv DB_HOST localhost
-SetEnv DB_USER maddasys_milk_user
-SetEnv DB_PASSWORD MySecretPassword123
-SetEnv DB_NAME maddasys_milk_collection_pwa
-```
+The `.htaccess` file is pre-configured with:
+- Same MySQL credentials as the main backend
+- Same environment variable format
+- Port 3001 (different from main backend's 3000)
 
 ### Step 5: Setup Node.js Application
 
 1. Go to **Software** → **Setup Node.js App**
 2. Click **Create Application**
 3. Configure:
-   - **Node.js version**: 18.x or higher
+   - **Node.js version**: 14.x (same as main backend)
    - **Application mode**: Production
-   - **Application root**: `/public_html/2backend`
+   - **Application root**: `/public_html/sync-service`
    - **Application URL**: `2backend.maddasystems.co.ke`
    - **Application startup file**: `server.js`
 4. Click **Create**
@@ -82,8 +72,7 @@ SetEnv DB_NAME maddasys_milk_collection_pwa
    
    Or via Terminal/SSH:
    ```bash
-   cd ~/public_html/2backend
-   source ~/nodevenv/2backend/18/bin/activate
+   cd ~/public_html/sync-service
    npm install --production
    ```
 
@@ -139,21 +128,18 @@ curl https://2backend.maddasystems.co.ke/api/stats
 
 ---
 
-## Configuration Options
+## Configuration
 
-### Environment Variables
+Uses same environment variables as main backend:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | 3001 | Server port |
-| `DB_HOST` | localhost | MySQL host |
-| `DB_USER` | root | MySQL username |
-| `DB_PASSWORD` | - | MySQL password |
-| `DB_NAME` | maddasys_milk_collection_pwa | Database name |
-| `REMOTE_API_URL` | - | External API URL for sync |
-| `REMOTE_API_KEY` | - | External API key |
-| `SYNC_BATCH_SIZE` | 100 | Records per sync batch |
-| `SYNC_INTERVAL_MS` | 300000 | Scheduled sync interval (5 min) |
+| Variable | Value |
+|----------|-------|
+| `MYSQL_HOST` | localhost |
+| `MYSQL_DATABASE` | maddasys_milk_collection_pwa |
+| `MYSQL_USER` | maddasys_tesh |
+| `MYSQL_PASSWORD` | 0741899183Mutee |
+| `MYSQL_PORT` | 3306 |
+| `PORT` | 3001 |
 
 ---
 
@@ -163,45 +149,45 @@ curl https://2backend.maddasystems.co.ke/api/stats
 
 Trigger a full sync:
 ```bash
-curl -X POST https://sync.yourdomain.com/api/sync/run
+curl -X POST https://2backend.maddasystems.co.ke/api/sync/run
 ```
 
 Sync specific table:
 ```bash
-curl -X POST https://sync.yourdomain.com/api/sync/farmers
-curl -X POST https://sync.yourdomain.com/api/sync/milk_collection
-curl -X POST https://sync.yourdomain.com/api/sync/devices
+curl -X POST https://2backend.maddasystems.co.ke/api/sync/farmers
+curl -X POST https://2backend.maddasystems.co.ke/api/sync/milk_collection
+curl -X POST https://2backend.maddasystems.co.ke/api/sync/devices
 ```
 
 ### Scheduled Sync
 
 Start automatic sync:
 ```bash
-curl -X POST https://sync.yourdomain.com/api/sync/schedule/start
+curl -X POST https://2backend.maddasystems.co.ke/api/sync/schedule/start
 ```
 
 Stop automatic sync:
 ```bash
-curl -X POST https://sync.yourdomain.com/api/sync/schedule/stop
+curl -X POST https://2backend.maddasystems.co.ke/api/sync/schedule/stop
 ```
 
 ### Export Data
 
 Export farmers:
 ```bash
-curl https://sync.yourdomain.com/api/export/farmers > farmers.json
+curl https://2backend.maddasystems.co.ke/api/export/farmers > farmers.json
 ```
 
 Export milk collection with date filter:
 ```bash
-curl "https://sync.yourdomain.com/api/export/milk_collection?from=2025-01-01&to=2025-01-31&limit=500" > collections.json
+curl "https://2backend.maddasystems.co.ke/api/export/milk_collection?from=2025-01-01&to=2025-01-31&limit=500" > collections.json
 ```
 
 ### Import Data
 
 Import farmers:
 ```bash
-curl -X POST https://sync.yourdomain.com/api/import/farmers \
+curl -X POST https://2backend.maddasystems.co.ke/api/import/farmers \
   -H "Content-Type: application/json" \
   -d '{"farmers": [{"farmer_id": "F001", "farmer_name": "John Doe", "route_name": "Route A"}]}'
 ```
@@ -213,15 +199,15 @@ curl -X POST https://sync.yourdomain.com/api/import/farmers \
 ### Application Not Starting
 
 1. Check Node.js app status in cPanel
-2. View error logs: `~/logs/sync-service/error.log`
+2. View error logs in cPanel
 3. Verify `.htaccess` paths are correct
 4. Ensure database credentials are valid
 
 ### Database Connection Errors
 
-1. Verify DB_HOST, DB_USER, DB_PASSWORD, DB_NAME
+1. Verify MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE
 2. Check MySQL user has proper permissions
-3. Test connection: `mysql -u USER -p -h HOST DATABASE`
+3. Test connection: `mysql -u maddasys_tesh -p maddasys_milk_collection_pwa`
 
 ### 500 Internal Server Error
 
@@ -241,7 +227,7 @@ curl -X POST https://sync.yourdomain.com/api/import/farmers \
 ## Quick Reference
 
 **Domain:** `2backend.maddasystems.co.ke`
-**Directory:** `/public_html/2backend/`
+**Directory:** `/public_html/sync-service/`
 
 **URLs:**
 - Service: `https://2backend.maddasystems.co.ke/`
@@ -264,10 +250,10 @@ curl https://2backend.maddasystems.co.ke/api/sync/history
 
 ## Directory Structure Comparison
 
-| Application | Domain | Directory |
-|-------------|--------|-----------|
-| Main Backend API | `backend.maddasystems.co.ke` | `/public_html/api/milk-collection-api/` |
-| Sync Service | `2backend.maddasystems.co.ke` | `/public_html/2backend/` |
+| Application | Domain | Directory | Port |
+|-------------|--------|-----------|------|
+| Main Backend API | `api.maddasystems.co.ke` | `/public_html/api/milk-collection-api/` | 3000 |
+| Sync Service | `2backend.maddasystems.co.ke` | `/public_html/sync-service/` | 3001 |
 
 ---
 
