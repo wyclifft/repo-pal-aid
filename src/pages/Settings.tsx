@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
-import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2, Server } from "lucide-react";
+import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2 } from "lucide-react";
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -631,28 +631,6 @@ Date: ${new Date().toLocaleString()}
             <p className="text-xs text-muted-foreground text-center">
               Clear cache forces a complete refresh from the database (psettings table).
             </p>
-          </CardContent>
-        </Card>
-        {/* Backend Status Link */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <Server className="h-5 w-5 text-primary" />
-              <div>
-                <CardTitle>Backend Diagnostics</CardTitle>
-                <CardDescription>Check server version and connectivity</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Button
-              onClick={() => navigate('/backend-status')}
-              variant="outline"
-              className="w-full gap-2"
-            >
-              <Server className="h-4 w-4" />
-              Open Backend Status
-            </Button>
           </CardContent>
         </Card>
 
