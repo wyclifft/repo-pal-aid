@@ -17,6 +17,17 @@ interface ApiResponse<T> {
 /**
  * Generic API request handler with error handling
  */
+/**
+ * Check if error is due to old backend with device_ref column issue
+ */
+function isDeviceRefColumnError(error: string | undefined): boolean {
+  return !!error && (
+    error.includes("Unknown column 'device_ref'") ||
+    error.includes("device_ref") ||
+    error.includes("Unknown column")
+  );
+}
+
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -71,6 +82,16 @@ async function apiRequest<T>(
         error: data.error || 'Conflict',
         message: data.message,
         data: data, // Include full response data for existing_reference etc.
+      };
+    }
+
+    // Handle 500 errors that might be due to old backend with device_ref column
+    if (response.status === 500 && isDeviceRefColumnError(data.error)) {
+      console.warn('[BACKEND] Old backend detected with device_ref column issue:', endpoint);
+      return {
+        success: false,
+        error: 'Backend needs update. Please contact administrator.',
+        details: 'The server is running an outdated version that references a removed column.',
       };
     }
 
@@ -400,10 +421,17 @@ export const devicesApi = {
   },
 
   /**
-   * Get device by fingerprint
+   * Get device by fingerprint with fallback for old backend
    */
   getByFingerprint: async (fingerprint: string): Promise<ApprovedDevice | null> => {
     const response = await apiRequest<ApprovedDevice>(`/devices/fingerprint/${encodeURIComponent(fingerprint)}`);
+    
+    // If old backend error, return null and let caller handle with cached data
+    if (!response.success && response.details?.includes('outdated version')) {
+      console.warn('[FALLBACK] Using cached device data due to old backend');
+      return null;
+    }
+    
     return response.data || null;
   },
 
@@ -416,7 +444,8 @@ export const devicesApi = {
   },
 
   /**
-   * Register new device (backend generates ID)
+   * Register new device (backend generates ID) with fallback handling
+   * Returns the device if successful, or a "pending" placeholder if old backend fails
    */
   register: async (device: {
     device_fingerprint: string;
@@ -428,6 +457,31 @@ export const devicesApi = {
       method: 'POST',
       body: JSON.stringify(device),
     });
+    
+    // If old backend error, return a pending placeholder so app can continue
+    if (!response.success && response.details?.includes('outdated version')) {
+      console.warn('[FALLBACK] Device registration failed due to old backend, returning pending state');
+      // Store in localStorage that we attempted registration
+      try {
+        const pendingDevices = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
+        if (!pendingDevices.includes(device.device_fingerprint)) {
+          pendingDevices.push(device.device_fingerprint);
+          localStorage.setItem('pending_device_registrations', JSON.stringify(pendingDevices));
+        }
+      } catch (e) {
+        console.error('Failed to store pending device registration:', e);
+      }
+      
+      // Return a pending device object
+      return {
+        id: 0,
+        device_fingerprint: device.device_fingerprint,
+        user_id: device.user_id,
+        approved: false,
+        device_info: device.device_info,
+      };
+    }
+    
     return response.data || null;
   },
 
@@ -460,6 +514,31 @@ export const devicesApi = {
       method: 'PUT',
       body: JSON.stringify({ approved, approved_at: approvedAt }),
     });
+  },
+  
+  /**
+   * Check if there are pending device registrations that need retry
+   */
+  hasPendingRegistrations: (): boolean => {
+    try {
+      const pending = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
+      return pending.length > 0;
+    } catch {
+      return false;
+    }
+  },
+  
+  /**
+   * Clear pending registration for a fingerprint (call after successful registration)
+   */
+  clearPendingRegistration: (fingerprint: string): void => {
+    try {
+      const pending = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
+      const updated = pending.filter((f: string) => f !== fingerprint);
+      localStorage.setItem('pending_device_registrations', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to clear pending device registration:', e);
+    }
   },
 };
 
