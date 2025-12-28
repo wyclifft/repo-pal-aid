@@ -412,6 +412,9 @@ export interface ApprovedDevice {
   company_name?: string;
   devcode?: string; // Device code prefix for transaction references (e.g., AG05)
   trnid?: number;   // Last used transaction ID for this device
+  milkid?: number;  // Last used milk transaction ID
+  storeid?: number; // Last used store transaction ID
+  aiid?: number;    // Last used AI transaction ID
 }
 
 export const devicesApi = {
