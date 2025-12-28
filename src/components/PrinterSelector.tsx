@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Printer, RefreshCw, Signal, Check, Loader2 } from 'lucide-react';
+import { Printer, RefreshCw, Signal, Check, Loader2, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { 
   scanForPrinters, 
   connectToSpecificPrinter, 
   getStoredPrinterInfo,
+  quickReconnectPrinter,
   DiscoveredPrinter 
 } from '@/services/bluetooth';
 import { Capacitor } from '@capacitor/core';
@@ -22,13 +23,46 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
   const [connecting, setConnecting] = useState<string | null>(null);
   const [printers, setPrinters] = useState<DiscoveredPrinter[]>([]);
   const [lastConnected, setLastConnected] = useState<string | null>(null);
+  const [autoReconnecting, setAutoReconnecting] = useState(false);
+
+  // Auto-reconnect to last printer on native platform
+  const attemptAutoReconnect = useCallback(async () => {
+    const stored = getStoredPrinterInfo();
+    if (!stored || !Capacitor.isNativePlatform()) return;
+
+    setAutoReconnecting(true);
+    console.log(`🔄 Auto-reconnecting to printer: ${stored.deviceName}`);
+    
+    try {
+      const result = await quickReconnectPrinter(stored.deviceId);
+      
+      if (result.success) {
+        console.log(`✅ Auto-reconnected to printer: ${stored.deviceName}`);
+        setLastConnected(stored.deviceName);
+        onPrinterConnected?.(stored.deviceName);
+        toast.success(`Reconnected to ${stored.deviceName}`);
+      } else {
+        console.warn(`⚠️ Auto-reconnect failed: ${result.error}`);
+        // Don't show error toast - printer might just be off
+        setLastConnected(stored.deviceName);
+      }
+    } catch (error) {
+      console.error('Auto-reconnect error:', error);
+    } finally {
+      setAutoReconnecting(false);
+    }
+  }, [onPrinterConnected]);
 
   useEffect(() => {
     const stored = getStoredPrinterInfo();
     if (stored) {
       setLastConnected(stored.deviceName);
-      // Notify parent that printer was previously connected
-      if (!isPrinterConnected) {
+      
+      // On native platform, attempt actual reconnection instead of just reading stored info
+      if (Capacitor.isNativePlatform() && !isPrinterConnected) {
+        attemptAutoReconnect();
+      } else if (!isPrinterConnected) {
+        // Web platform - just notify of stored printer
         onPrinterConnected?.(stored.deviceName);
       }
     }
@@ -92,12 +126,27 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
           variant="outline" 
           size="sm" 
           className="gap-2"
+          disabled={autoReconnecting}
         >
-          <Printer className="h-4 w-4" />
-          {isPrinterConnected ? (
-            <span className="text-green-600 text-xs">Connected</span>
+          {autoReconnecting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-xs">Reconnecting...</span>
+            </>
           ) : (
-            <span className="text-xs">Select Printer</span>
+            <>
+              <Printer className="h-4 w-4" />
+              {isPrinterConnected ? (
+                <span className="text-green-600 text-xs">Connected</span>
+              ) : lastConnected ? (
+                <span className="text-orange-600 text-xs flex items-center gap-1">
+                  <WifiOff className="h-3 w-3" />
+                  {lastConnected}
+                </span>
+              ) : (
+                <span className="text-xs">Select Printer</span>
+              )}
+            </>
           )}
         </Button>
       </DialogTrigger>
@@ -111,9 +160,27 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
         
         <div className="space-y-4">
           {lastConnected && (
-            <div className="p-3 bg-muted rounded-lg">
-              <p className="text-sm text-muted-foreground">Last connected:</p>
-              <p className="font-medium">{lastConnected}</p>
+            <div className="p-3 bg-muted rounded-lg flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Last connected:</p>
+                <p className="font-medium">{lastConnected}</p>
+              </div>
+              {!isPrinterConnected && Capacitor.isNativePlatform() && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={attemptAutoReconnect}
+                  disabled={autoReconnecting}
+                  className="gap-1"
+                >
+                  {autoReconnecting ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3" />
+                  )}
+                  Reconnect
+                </Button>
+              )}
             </div>
           )}
           
