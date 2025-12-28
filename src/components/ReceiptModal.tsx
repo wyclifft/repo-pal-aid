@@ -127,20 +127,18 @@ export const ReceiptModal = ({
             )}
           </div>
 
-          {/* Compact Collections Table - shows transrefno per capture */}
+          {/* Compact Collections Table - shows full transrefno per capture */}
           <div className="border rounded-md overflow-hidden">
-            <div className="bg-muted px-2 py-1 grid grid-cols-4 text-xs font-medium">
-              <span>#</span>
+            <div className="bg-muted px-2 py-1 grid grid-cols-3 text-xs font-medium">
               <span>Trans Ref</span>
               <span>Time</span>
               <span className="text-right">Liters</span>
             </div>
             <div className="max-h-[30vh] overflow-y-auto divide-y">
-              {receipts.map((receipt, index) => (
-                <div key={receipt.reference_no} className="px-2 py-1.5 grid grid-cols-4 text-sm items-center">
-                  <span className="text-muted-foreground">{index + 1}</span>
-                  <span className="text-xs font-mono truncate" title={receipt.reference_no}>
-                    {receipt.reference_no?.slice(-6) || '-'}
+              {receipts.map((receipt) => (
+                <div key={receipt.reference_no} className="px-2 py-1.5 grid grid-cols-3 text-sm items-center">
+                  <span className="text-xs font-mono" title={receipt.reference_no}>
+                    {receipt.reference_no || '-'}
                   </span>
                   <span className="text-xs">
                     {new Date(receipt.collection_date).toLocaleTimeString('en-GB', { 

@@ -514,41 +514,10 @@ const Index = () => {
     // Dispatch sync start event
     window.dispatchEvent(new CustomEvent('syncStart'));
 
-    // Group captures by farmer_id for multOpt=0 handling
-    // For multOpt=0: sum all weights into one submission per farmer
-    // For multOpt=1: submit each capture separately
-    const consolidatedCaptures: typeof capturedCollections = [];
-    
-    const farmerGroups = new Map<string, typeof capturedCollections>();
+    // Each capture is saved separately in the database - no accumulation
+    console.log(`📦 Processing ${capturedCollections.length} captures (each saved separately)`);
+
     for (const capture of capturedCollections) {
-      const key = capture.farmer_id.replace(/^#/, '').trim();
-      if (!farmerGroups.has(key)) {
-        farmerGroups.set(key, []);
-      }
-      farmerGroups.get(key)!.push(capture);
-    }
-
-    for (const [farmerId, captures] of farmerGroups) {
-      const firstCapture = captures[0];
-      
-      if (firstCapture.multOpt === 0 && captures.length > 1) {
-        // multOpt=0: Sum all weights into ONE submission
-        const totalWeight = captures.reduce((sum, c) => sum + c.weight, 0);
-        console.log(`🔢 multOpt=0: Consolidating ${captures.length} captures for ${farmerId} into ${totalWeight} Kg`);
-        
-        consolidatedCaptures.push({
-          ...firstCapture,
-          weight: totalWeight,
-        });
-      } else {
-        // multOpt=1 or single capture: Submit each separately
-        consolidatedCaptures.push(...captures);
-      }
-    }
-
-    console.log(`📦 Processing ${consolidatedCaptures.length} consolidated submissions from ${capturedCollections.length} captures`);
-
-    for (const capture of consolidatedCaptures) {
       if (isOnline) {
         // ONLINE: Submit directly to database
         try {
