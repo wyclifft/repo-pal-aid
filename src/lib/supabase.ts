@@ -24,6 +24,7 @@ export interface AppUser {
 
 export interface MilkCollection {
   reference_no?: string;
+  uploadrefno?: number; // Type-specific ID (milkId) for approval workflows
   farmer_id: string;
   farmer_name: string;
   route: string;

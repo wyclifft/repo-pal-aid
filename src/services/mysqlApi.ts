@@ -262,6 +262,7 @@ export const farmersApi = {
 export interface MilkCollection {
   id?: number;
   reference_no?: string;
+  uploadrefno?: number; // Type-specific ID (milkId) for approval workflows
   farmer_id: string;
   farmer_name: string;
   route: string;
@@ -351,18 +352,20 @@ export const milkCollectionApi = {
    */
   create: async (collection: Omit<MilkCollection, 'id' | 'created_at' | 'updated_at'>): Promise<{ 
     success: boolean; 
-    reference_no?: string; 
+    reference_no?: string;
+    uploadrefno?: number;
     error?: string;
     message?: string;
     existing_reference?: string;
   }> => {
-    const response = await apiRequest<{ reference_no: string; existing_reference?: string }>('/milk-collection', {
+    const response = await apiRequest<{ reference_no: string; uploadrefno?: number; existing_reference?: string }>('/milk-collection', {
       method: 'POST',
       body: JSON.stringify(collection),
     });
     return { 
       success: response.success || false,
       reference_no: response.data?.reference_no || collection.reference_no,
+      uploadrefno: response.data?.uploadrefno || collection.uploadrefno,
       error: response.error,
       message: response.message,
       existing_reference: response.data?.existing_reference

@@ -144,13 +144,16 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           // Also save for offline login
           if (authorized) {
             localStorage.setItem('device_approved', 'true');
-            // Store devcode and sync trnid counter for reference generation
+            // Store devcode and sync all counters for reference generation
             if (data.data.devcode) {
               localStorage.setItem('devcode', data.data.devcode);
-              // Sync counter from backend's last trnid to maintain consistency
+              // Sync all counters from backend to maintain consistency
               const lastTrnId = data.data.trnid ? parseInt(String(data.data.trnid), 10) : undefined;
-              await syncOfflineCounter(data.data.devcode, lastTrnId);
-              console.log('📦 Synced devcode:', data.data.devcode, 'last_trnid:', lastTrnId);
+              const lastMilkId = data.data.milkid ? parseInt(String(data.data.milkid), 10) : undefined;
+              const lastStoreId = data.data.storeid ? parseInt(String(data.data.storeid), 10) : undefined;
+              const lastAiId = data.data.aiid ? parseInt(String(data.data.aiid), 10) : undefined;
+              await syncOfflineCounter(data.data.devcode, lastTrnId, lastMilkId, lastStoreId, lastAiId);
+              console.log('📦 Synced devcode:', data.data.devcode, 'counters: trnid=', lastTrnId, 'milkid=', lastMilkId, 'storeid=', lastStoreId, 'aiid=', lastAiId);
             }
             const deviceCode = String(data.data.devcode || data.data.uniquedevcode || '00000').slice(-5);
             await initializeDeviceConfig(fetchedCompanyName, data.data.devcode || deviceCode);
