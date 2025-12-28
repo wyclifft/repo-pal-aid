@@ -40,39 +40,46 @@ const Index = () => {
     printedAt: Date;
   }>>([]);
 
-  const handleSavePrintedReceipt = async () => {
-    if (capturedCollections.length === 0) return;
+  // Helper function to save receipt for reprinting - used by handleSubmit
+  // Returns true if saved, false if duplicate
+  const saveReceiptForReprinting = async (collections: MilkCollection[]): Promise<boolean> => {
+    if (collections.length === 0) return false;
     
     // Check for duplicate - don't save if same farmer and same collections already exist
     const existingReceipt = printedReceipts.find(r => 
-      r.farmerId === capturedCollections[0].farmer_id &&
-      r.collections.length === capturedCollections.length &&
-      r.collections.every((c, i) => c.reference_no === capturedCollections[i].reference_no)
+      r.farmerId === collections[0].farmer_id &&
+      r.collections.length === collections.length &&
+      r.collections.every((c, i) => c.reference_no === collections[i].reference_no)
     );
     
     if (existingReceipt) {
       console.log('⚠️ Receipt already saved, skipping duplicate');
-      return;
+      return false;
     }
     
     const newPrintedReceipt = {
-      farmerId: capturedCollections[0].farmer_id,
-      farmerName: capturedCollections[0].farmer_name,
-      collections: [...capturedCollections], // Create a copy
+      farmerId: collections[0].farmer_id,
+      farmerName: collections[0].farmer_name,
+      collections: [...collections],
       printedAt: new Date()
     };
     
-    // Keep ALL receipts permanently - no time limit for reprinting
     const updatedReceipts = [newPrintedReceipt, ...printedReceipts];
     setPrintedReceipts(updatedReceipts);
     
-    // Persist to IndexedDB for offline access
     try {
       await savePrintedReceipts(updatedReceipts);
-      console.log('✅ Printed receipt saved to IndexedDB (total:', updatedReceipts.length, ')');
+      console.log('✅ Receipt saved for reprinting (total:', updatedReceipts.length, ')');
+      return true;
     } catch (error) {
-      console.error('Failed to save printed receipt:', error);
+      console.error('Failed to save receipt for reprinting:', error);
+      return false;
     }
+  };
+  
+  // Legacy handler for onPrint callback - now just logs since we save on submit
+  const handleSavePrintedReceipt = async () => {
+    console.log('📄 Print triggered - receipt already saved on submit');
   };
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
@@ -673,6 +680,10 @@ const Index = () => {
       }
     }
 
+    // Save receipt for reprinting IMMEDIATELY after submission (before modal opens)
+    // This ensures receipt is saved even if user closes modal without clicking Print
+    await saveReceiptForReprinting(capturedCollections);
+    
     // Open receipt modal for printing
     setReceiptModalOpen(true);
     
