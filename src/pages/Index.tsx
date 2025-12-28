@@ -16,7 +16,7 @@ import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionBlacklist } from '@/hooks/useSessionBlacklist';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-import { generateOfflineReference } from '@/utils/referenceGenerator';
+import { generateOfflineReference, generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
 
 const Index = () => {
@@ -427,14 +427,17 @@ const Index = () => {
     }
     // ========== END multOpt CHECK ==========
 
-    // Generate reference number for this capture
+    // Generate reference number with uploadrefno for this capture
     const deviceFingerprint = await generateDeviceFingerprint();
     let referenceNo = '';
+    let uploadRefNo: number | undefined;
     
-    // Always generate offline-style reference for captures (will be validated on submit)
-    const offlineRef = await generateOfflineReference();
-    if (offlineRef) {
-      referenceNo = offlineRef;
+    // Generate both transrefno and uploadrefno (milkId) for offline captures
+    const refResult = await generateReferenceWithUploadRef('milk');
+    if (refResult) {
+      referenceNo = refResult.transrefno;
+      uploadRefNo = refResult.uploadrefno;
+      console.log(`⚡ Generated: transrefno=${referenceNo}, uploadrefno=${uploadRefNo} (milk)`);
     } else {
       toast.error('Failed to generate reference number.');
       return;
@@ -446,6 +449,7 @@ const Index = () => {
     
     const captureData: MilkCollection = {
       reference_no: referenceNo,
+      uploadrefno: uploadRefNo, // Type-specific ID for approval workflow
       farmer_id: cleanFarmerId,
       farmer_name: farmerName.trim(),
       route: route.trim(),
@@ -459,7 +463,7 @@ const Index = () => {
     };
 
     console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Local capture only (not submitted)');
-    console.log('📝 Reference:', referenceNo);
+    console.log('📝 Reference:', referenceNo, 'UploadRef:', uploadRefNo);
     console.log('👤 Farmer:', farmerId, farmerName);
     console.log('⚖️ Weight:', captureData.weight, 'Kg');
 
@@ -583,6 +587,7 @@ const Index = () => {
 
           const result = await mysqlApi.milkCollection.create({
             reference_no: referenceNo,
+            uploadrefno: capture.uploadrefno, // Pass milkId for approval workflow
             farmer_id: capture.farmer_id.replace(/^#/, '').trim(),
             farmer_name: capture.farmer_name.trim(),
             route: capture.route.trim(),

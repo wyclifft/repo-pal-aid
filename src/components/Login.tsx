@@ -94,13 +94,16 @@ export const Login = memo(({ onLogin }: LoginProps) => {
             if (deviceData.company_name && deviceData.devcode) {
               storeDeviceConfig(deviceData.company_name, deviceData.devcode);
             }
-            // Store devcode and sync trnid counter for reference generation
+            // Store devcode and sync all counters for reference generation
             if (deviceData.devcode) {
               localStorage.setItem('devcode', deviceData.devcode);
-              // Sync counter from backend's last trnid to maintain consistency
+              // Sync all counters from backend to maintain consistency
               const lastTrnId = deviceData.trnid ? parseInt(String(deviceData.trnid), 10) : undefined;
-              syncOfflineCounter(deviceData.devcode, lastTrnId).catch(e => console.warn('Sync counter failed:', e));
-              console.log('📦 Stored devcode:', deviceData.devcode, 'last_trnid:', lastTrnId);
+              const lastMilkId = deviceData.milkid ? parseInt(String(deviceData.milkid), 10) : undefined;
+              const lastStoreId = deviceData.storeid ? parseInt(String(deviceData.storeid), 10) : undefined;
+              const lastAiId = deviceData.aiid ? parseInt(String(deviceData.aiid), 10) : undefined;
+              syncOfflineCounter(deviceData.devcode, lastTrnId, lastMilkId, lastStoreId, lastAiId).catch(e => console.warn('Sync counter failed:', e));
+              console.log('📦 Stored devcode:', deviceData.devcode, 'counters: trnid=', lastTrnId, 'milkid=', lastMilkId, 'storeid=', lastStoreId, 'aiid=', lastAiId);
             }
             
             // Update last sync timestamp (fire and forget)

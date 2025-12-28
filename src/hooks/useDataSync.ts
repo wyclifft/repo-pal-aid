@@ -135,6 +135,7 @@ export const useDataSync = () => {
 
           const result = await mysqlApi.milkCollection.create({
             reference_no: receipt.reference_no,
+            uploadrefno: receipt.uploadrefno, // Include milkId for approval workflow
             farmer_id: String(receipt.farmer_id || '').replace(/^#/, '').trim(),
             farmer_name: String(receipt.farmer_name || '').trim(),
             route: String(receipt.route || '').trim(),
