@@ -440,6 +440,28 @@ export const getNextTypeId = async (transactionType: TransactionType): Promise<n
 };
 
 /**
+ * Generate formatted uploadrefno string (devcode + 8-digit padded ID)
+ * Example: BA0500000031 for device BA05 with milkId 31
+ */
+export const generateFormattedUploadRef = async (transactionType: TransactionType): Promise<string | null> => {
+  const devcode = localStorage.getItem('devcode');
+  if (!devcode) {
+    const config = await getDeviceConfig();
+    if (!config?.devcode) {
+      console.warn('⚠️ devcode not available - cannot generate uploadrefno');
+      return null;
+    }
+  }
+  
+  const nextId = await getNextTypeId(transactionType);
+  const code = devcode || (await getDeviceConfig())?.devcode || '';
+  const formatted = `${code}${String(nextId).padStart(8, '0')}`;
+  
+  console.log(`⚡ Formatted uploadrefno: ${formatted} (${transactionType}Id: ${nextId})`);
+  return formatted;
+};
+
+/**
  * Get current type-specific ID without incrementing
  * Useful for checking the current state
  */
@@ -460,20 +482,29 @@ export const getCurrentTypeId = async (transactionType: TransactionType): Promis
 
 /**
  * Generate transaction reference with type-specific uploadrefno
- * Returns both transrefno (devcode + trnid) and uploadrefno (type-specific ID)
+ * Returns both transrefno (devcode + trnid) and uploadrefno (formatted string: devcode + typeId)
  */
 export const generateReferenceWithUploadRef = async (transactionType: TransactionType): Promise<{
   transrefno: string;
-  uploadrefno: number;
+  uploadrefno: string;
 } | null> => {
   const transrefno = await generateOfflineReference();
   if (!transrefno) return null;
   
-  const uploadrefno = await getNextTypeId(transactionType);
+  const uploadrefno = await generateFormattedUploadRef(transactionType);
+  if (!uploadrefno) return null;
   
   console.log(`⚡ Generated: transrefno=${transrefno}, uploadrefno=${uploadrefno} (type=${transactionType})`);
   
   return { transrefno, uploadrefno };
+};
+
+/**
+ * Generate ONLY a new transrefno (for additional captures that share an existing uploadrefno)
+ * Used when farmer captures multiple buckets in same session - each gets unique transrefno but shares uploadrefno
+ */
+export const generateTransRefOnly = async (): Promise<string | null> => {
+  return generateOfflineReference();
 };
 
 /**
