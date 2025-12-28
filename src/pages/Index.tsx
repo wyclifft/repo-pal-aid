@@ -77,10 +77,6 @@ const Index = () => {
     }
   };
   
-  // Legacy handler for onPrint callback - now just logs since we save on submit
-  const handleSavePrintedReceipt = async () => {
-    console.log('📄 Print triggered - receipt already saved on submit');
-  };
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null); // Full farmer object with multOpt
@@ -975,7 +971,6 @@ const Index = () => {
           setReceiptModalOpen(false);
           setCapturedCollections([]);
         }}
-        onPrint={handleSavePrintedReceipt}
         showCumulativeFrequency={showCumulative}
         printCopies={printCopies}
         routeLabel={routeLabel}

@@ -30,7 +30,7 @@ export const useCounterSync = () => {
       const devcode = localStorage.getItem('devcode') || config?.devcode || '';
       
       setCounters({
-        trnid: config?.lastTrnId || config?.lastOfflineSequential || 0,
+        trnid: config?.lastTrnId || 0,
         milkId: config?.milkId || 0,
         storeId: config?.storeId || 0,
         aiId: config?.aiId || 0,

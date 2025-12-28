@@ -21,9 +21,6 @@ interface DeviceConfig {
   milkId: number;         // Last used milk transaction ID for uploadrefno
   storeId: number;        // Last used store transaction ID for uploadrefno
   aiId: number;           // Last used AI transaction ID for uploadrefno
-  companyCode?: string;   // Legacy - kept for compatibility
-  deviceCode?: string;    // Legacy - kept for compatibility
-  lastOfflineSequential?: number; // Legacy - mapped to lastTrnId
 }
 
 const DB_NAME = 'milkCollectionDB';
@@ -103,7 +100,7 @@ const getFromLocalStorage = (): DeviceConfig | null => {
 export const storeDeviceConfig = async (companyName: string, devcode: string): Promise<void> => {
   // FIRST: Check if we already have a config with trnid to preserve
   const existingConfig = await getDeviceConfig();
-  const existingLocalTrnId = existingConfig?.lastTrnId || existingConfig?.lastOfflineSequential || 0;
+  const existingLocalTrnId = existingConfig?.lastTrnId || 0;
   const existingMilkId = existingConfig?.milkId || 0;
   const existingStoreId = existingConfig?.storeId || 0;
   const existingAiId = existingConfig?.aiId || 0;
@@ -118,10 +115,6 @@ export const storeDeviceConfig = async (companyName: string, devcode: string): P
     milkId: existingMilkId,
     storeId: existingStoreId,
     aiId: existingAiId,
-    // Legacy fields for backwards compatibility
-    companyCode: companyName.substring(0, 2).toUpperCase(),
-    deviceCode: devcode,
-    lastOfflineSequential: existingLocalTrnId,
   };
   
   // Always save to localStorage first (reliable backup)
@@ -214,32 +207,20 @@ export const getDeviceConfig = async (): Promise<DeviceConfig | null> => {
  * Update device config atomically in IndexedDB and localStorage
  */
 const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
-  // Normalize: keep lastTrnId and lastOfflineSequential in sync
-  const normalizedUpdates = { ...updates };
-  if (updates.lastTrnId !== undefined) {
-    normalizedUpdates.lastOfflineSequential = updates.lastTrnId;
-  }
-  if (updates.lastOfflineSequential !== undefined) {
-    normalizedUpdates.lastTrnId = updates.lastOfflineSequential;
-  }
-  
   // Update localStorage first - CRITICAL: create config if it doesn't exist
   const currentLs = getFromLocalStorage();
   if (currentLs) {
-    const updated = { ...currentLs, ...normalizedUpdates };
+    const updated = { ...currentLs, ...updates };
     saveToLocalStorage(updated);
   } else {
     // No existing config - create one with the updates
-    const devcode = localStorage.getItem('devcode') || normalizedUpdates.devcode || '';
+    const devcode = localStorage.getItem('devcode') || updates.devcode || '';
     const newConfig: DeviceConfig = {
       devcode: devcode,
-      lastTrnId: normalizedUpdates.lastTrnId || 0,
-      milkId: normalizedUpdates.milkId || 0,
-      storeId: normalizedUpdates.storeId || 0,
-      aiId: normalizedUpdates.aiId || 0,
-      lastOfflineSequential: normalizedUpdates.lastOfflineSequential || 0,
-      companyCode: '',
-      deviceCode: devcode,
+      lastTrnId: updates.lastTrnId || 0,
+      milkId: updates.milkId || 0,
+      storeId: updates.storeId || 0,
+      aiId: updates.aiId || 0,
     };
     saveToLocalStorage(newConfig);
     console.log('⚠️ Created new config during updateConfig:', newConfig);
@@ -257,23 +238,20 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
         getRequest.onsuccess = () => {
           const current = getRequest.result;
           if (current) {
-            const updated = { ...current, ...normalizedUpdates };
+            const updated = { ...current, ...updates };
             const putRequest = store.put(updated);
             putRequest.onsuccess = () => resolve();
             putRequest.onerror = () => resolve(); // localStorage has update
           } else {
             // No existing config in IndexedDB - create one
-            const devcode = localStorage.getItem('devcode') || normalizedUpdates.devcode || '';
+            const devcode = localStorage.getItem('devcode') || updates.devcode || '';
             const newConfig = {
               id: 'config',
               devcode: devcode,
-              lastTrnId: normalizedUpdates.lastTrnId || 0,
-              milkId: normalizedUpdates.milkId || 0,
-              storeId: normalizedUpdates.storeId || 0,
-              aiId: normalizedUpdates.aiId || 0,
-              lastOfflineSequential: normalizedUpdates.lastOfflineSequential || 0,
-              companyCode: '',
-              deviceCode: devcode,
+              lastTrnId: updates.lastTrnId || 0,
+              milkId: updates.milkId || 0,
+              storeId: updates.storeId || 0,
+              aiId: updates.aiId || 0,
             };
             const putRequest = store.put(newConfig);
             putRequest.onsuccess = () => {
@@ -299,9 +277,9 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
  */
 const getNextTrnId = async (): Promise<number> => {
   const config = await getDeviceConfig();
-  const nextId = (config?.lastTrnId || config?.lastOfflineSequential || 0) + 1;
+  const nextId = (config?.lastTrnId || 0) + 1;
   
-  await updateConfig({ lastTrnId: nextId, lastOfflineSequential: nextId });
+  await updateConfig({ lastTrnId: nextId });
   
   return nextId;
 };
@@ -320,13 +298,13 @@ export const generateOfflineReference = async (): Promise<string | null> => {
   if (devcode) {
     // Get the last used trnId and increment
     const config = await getDeviceConfig();
-    const lastUsed = config?.lastTrnId || config?.lastOfflineSequential || 0;
+    const lastUsed = config?.lastTrnId || 0;
     
     // Generate next sequential number
     const nextTrnId = lastUsed + 1;
     
     // Update for next call
-    await updateConfig({ lastTrnId: nextTrnId, lastOfflineSequential: nextTrnId });
+    await updateConfig({ lastTrnId: nextTrnId });
     
     // Generate reference: devcode + 8-digit trnid padded
     const reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
@@ -338,8 +316,8 @@ export const generateOfflineReference = async (): Promise<string | null> => {
   // Fallback: try to get devcode from config
   const config = await getDeviceConfig();
   if (config?.devcode) {
-    const nextTrnId = (config.lastTrnId || config.lastOfflineSequential || 0) + 1;
-    await updateConfig({ lastTrnId: nextTrnId, lastOfflineSequential: nextTrnId });
+    const nextTrnId = (config.lastTrnId || 0) + 1;
+    await updateConfig({ lastTrnId: nextTrnId });
     
     const reference = `${config.devcode}${String(nextTrnId).padStart(8, '0')}`;
     console.log(`⚡ Reference (from config): ${reference}`);
@@ -387,7 +365,7 @@ export const syncOfflineCounter = async (
   
   // CRITICAL: Get current local counters to compare
   const currentConfig = await getDeviceConfig();
-  const currentLocalTrnId = currentConfig?.lastTrnId || currentConfig?.lastOfflineSequential || 0;
+  const currentLocalTrnId = currentConfig?.lastTrnId || 0;
   const currentLocalMilkId = currentConfig?.milkId || 0;
   const currentLocalStoreId = currentConfig?.storeId || 0;
   const currentLocalAiId = currentConfig?.aiId || 0;
@@ -412,7 +390,6 @@ export const syncOfflineCounter = async (
   await updateConfig({ 
     devcode: devcode,
     lastTrnId: safeTrnId, 
-    lastOfflineSequential: safeTrnId,
     milkId: safeMilkId,
     storeId: safeStoreId,
     aiId: safeAiId
@@ -500,10 +477,10 @@ export const generateReferenceWithUploadRef = async (transactionType: Transactio
 };
 
 /**
- * Reset local offline counter (deprecated - use syncOfflineCounter)
+ * Reset local offline counter
  */
 export const resetOfflineCounter = async (): Promise<void> => {
-  await updateConfig({ lastTrnId: 0, lastOfflineSequential: 0, milkId: 0, storeId: 0, aiId: 0 });
+  await updateConfig({ lastTrnId: 0, milkId: 0, storeId: 0, aiId: 0 });
   console.log('🔄 Reset all offline counters to 0');
 };
 
