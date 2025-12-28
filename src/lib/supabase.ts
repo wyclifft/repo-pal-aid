@@ -24,7 +24,7 @@ export interface AppUser {
 
 export interface MilkCollection {
   reference_no?: string;
-  uploadrefno?: number; // Type-specific ID (milkId) for approval workflows
+  uploadrefno?: string; // Formatted reference (devcode + milkId) for approval workflows - e.g., BA0500000031
   farmer_id: string;
   farmer_name: string;
   route: string;

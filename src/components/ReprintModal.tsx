@@ -41,7 +41,8 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
         hour: '2-digit', 
         minute: '2-digit' 
       }),
-      weight: r.weight
+      weight: r.weight,
+      transrefno: r.reference_no
     }));
 
     const result = await printReceipt({
@@ -51,7 +52,7 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
       route: firstReceipt.route,
       routeLabel: routeLabel,
       session: firstReceipt.session,
-      referenceNo: firstReceipt.reference_no,
+      uploadRefNo: firstReceipt.uploadrefno || firstReceipt.reference_no,
       collectorName: firstReceipt.clerk_name,
       collections
     });

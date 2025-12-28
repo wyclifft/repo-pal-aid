@@ -32,13 +32,14 @@ export const ReceiptModal = ({
 
     const firstReceipt = receipts[0];
     
-    // Format collections for printing
+    // Format collections for printing - now includes transrefno per capture
     const collections = receipts.map(r => ({
       time: new Date(r.collection_date).toLocaleTimeString('en-GB', { 
         hour: '2-digit', 
         minute: '2-digit' 
       }),
-      weight: r.weight
+      weight: r.weight,
+      transrefno: r.reference_no // Each capture's unique transaction reference
     }));
 
     // Print multiple copies based on printoptions setting
@@ -50,7 +51,7 @@ export const ReceiptModal = ({
         route: firstReceipt.route,
         routeLabel: routeLabel, // Dynamic label from psettings.rdesc
         session: firstReceipt.session,
-        referenceNo: firstReceipt.reference_no,
+        uploadRefNo: firstReceipt.uploadrefno || firstReceipt.reference_no, // Shared milkID for all captures
         collectorName: firstReceipt.clerk_name,
         collections,
         cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined
@@ -112,9 +113,10 @@ export const ReceiptModal = ({
               <span>Collector:</span>
               <span className="font-medium">{firstReceipt.clerk_name}</span>
             </div>
+            {/* Upload Reference (milkID) - shared by all captures for this farmer */}
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Reference:</span>
-              <span className="font-medium">{firstReceipt.reference_no}</span>
+              <span>Ref No:</span>
+              <span className="font-medium">{firstReceipt.uploadrefno || firstReceipt.reference_no}</span>
             </div>
             {/* Cumulative Frequency - only shown when enabled */}
             {showCumulativeFrequency && cumulativeFrequency !== undefined && (
@@ -125,17 +127,21 @@ export const ReceiptModal = ({
             )}
           </div>
 
-          {/* Compact Collections Table */}
+          {/* Compact Collections Table - shows transrefno per capture */}
           <div className="border rounded-md overflow-hidden">
-            <div className="bg-muted px-2 py-1 grid grid-cols-3 text-xs font-medium">
+            <div className="bg-muted px-2 py-1 grid grid-cols-4 text-xs font-medium">
               <span>#</span>
+              <span>Trans Ref</span>
               <span>Time</span>
               <span className="text-right">Liters</span>
             </div>
             <div className="max-h-[30vh] overflow-y-auto divide-y">
               {receipts.map((receipt, index) => (
-                <div key={receipt.reference_no} className="px-2 py-1.5 grid grid-cols-3 text-sm">
+                <div key={receipt.reference_no} className="px-2 py-1.5 grid grid-cols-4 text-sm items-center">
                   <span className="text-muted-foreground">{index + 1}</span>
+                  <span className="text-xs font-mono truncate" title={receipt.reference_no}>
+                    {receipt.reference_no?.slice(-6) || '-'}
+                  </span>
                   <span className="text-xs">
                     {new Date(receipt.collection_date).toLocaleTimeString('en-GB', { 
                       hour: '2-digit', 

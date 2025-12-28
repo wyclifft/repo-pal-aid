@@ -16,7 +16,7 @@ import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionBlacklist } from '@/hooks/useSessionBlacklist';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-import { generateOfflineReference, generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
+import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { toast } from 'sonner';
 
 const Index = () => {
@@ -423,20 +423,35 @@ const Index = () => {
     }
     // ========== END multOpt CHECK ==========
 
-    // Generate reference number with uploadrefno for this capture
+    // Generate reference number for this capture
+    // Rule: Each capture gets unique transrefno, but all captures for same farmer in session share ONE uploadrefno
     const deviceFingerprint = await generateDeviceFingerprint();
     let referenceNo = '';
-    let uploadRefNo: number | undefined;
+    let uploadRefNo: string | undefined;
     
-    // Generate both transrefno and uploadrefno (milkId) for offline captures
-    const refResult = await generateReferenceWithUploadRef('milk');
-    if (refResult) {
-      referenceNo = refResult.transrefno;
-      uploadRefNo = refResult.uploadrefno;
-      console.log(`⚡ Generated: transrefno=${referenceNo}, uploadrefno=${uploadRefNo} (milk)`);
+    // Check if we already have captures for this farmer (same session) - reuse their uploadrefno
+    const existingFarmerCapture = capturedCollections.find(c => c.farmer_id === farmerId.replace(/^#/, '').trim());
+    
+    if (existingFarmerCapture && existingFarmerCapture.uploadrefno) {
+      // Reuse existing uploadrefno, generate only new transrefno
+      uploadRefNo = existingFarmerCapture.uploadrefno;
+      referenceNo = await generateTransRefOnly() || '';
+      if (!referenceNo) {
+        toast.error('Failed to generate reference number.');
+        return;
+      }
+      console.log(`⚡ Reusing uploadrefno=${uploadRefNo}, new transrefno=${referenceNo}`);
     } else {
-      toast.error('Failed to generate reference number.');
-      return;
+      // First capture for this farmer - generate both transrefno and uploadrefno
+      const refResult = await generateReferenceWithUploadRef('milk');
+      if (refResult) {
+        referenceNo = refResult.transrefno;
+        uploadRefNo = refResult.uploadrefno;
+        console.log(`⚡ Generated: transrefno=${referenceNo}, uploadrefno=${uploadRefNo} (milk)`);
+      } else {
+        toast.error('Failed to generate reference number.');
+        return;
+      }
     }
 
     // Create local capture record (NOT synced to DB yet)
