@@ -573,17 +573,10 @@ const Index = () => {
             }
           }
 
-          // Get fresh reference from backend for online submissions
-          let referenceNo = capture.reference_no;
-          try {
-            const refResult = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
-            if (refResult.data?.reference_no) {
-              referenceNo = refResult.data.reference_no;
-              console.log(`🔢 Got fresh reference: ${referenceNo}`);
-            }
-          } catch (refError) {
-            console.warn('Could not get backend reference, using existing:', refError);
-          }
+          // Use the reference number generated during capture
+          // This ensures the receipt reference matches the database reference
+          const referenceNo = capture.reference_no;
+          console.log(`📤 Using capture reference: ${referenceNo}`);
 
           const result = await mysqlApi.milkCollection.create({
             reference_no: referenceNo,
