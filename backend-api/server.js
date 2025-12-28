@@ -608,8 +608,13 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
+      // uploadrefno is the type-specific ID (milkid) for approval workflow
+      // It's generated on frontend and passed in, or backend generates it
+      let uploadrefno = body.uploadrefno || null;
+      
       console.log('🟢 BACKEND: Creating NEW transaction');
       console.log('📝 Reference:', transrefno);
+      console.log('📝 UploadRef (milkId):', uploadrefno);
       console.log('👤 Farmer:', body.farmer_id);
       console.log('⚖️ Weight:', body.weight, 'Kg');
       console.log('📅 Session:', body.session);
@@ -619,7 +624,7 @@ const server = http.createServer(async (req, res) => {
       
       // Fetch ccode from devsettings using uniquedevcode
       const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, authorized, milkid FROM devsettings WHERE uniquedevcode = ?',
         [deviceserial]
       );
       
@@ -632,6 +637,7 @@ const server = http.createServer(async (req, res) => {
       }
       
       const ccode = deviceRows[0].ccode;
+      const currentMilkId = deviceRows[0].milkid || 0;
       console.log('🏢 Company Code:', ccode);
       
       // BACKEND VALIDATION: Enforce psettings rules
@@ -719,8 +725,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Helper function to attempt insert with auto-regeneration on duplicate
-      // trnid is ONLY updated after successful insert to prevent duplicates
-      const attemptInsert = async (attemptTransrefno) => {
+      // trnid and milkid are ONLY updated after successful insert to prevent duplicates
+      const attemptInsert = async (attemptTransrefno, attemptUploadrefno) => {
         let attempt = 0;
         while (true) {
           attempt++;
@@ -728,12 +734,13 @@ const server = http.createServer(async (req, res) => {
             // Attempt the insert with current reference
             await pool.query(
               `INSERT INTO transactions 
-                (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+                (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
                  amount, icode, time, capType, entry_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
               [
                 attemptTransrefno,
+                attemptUploadrefno ? String(attemptUploadrefno) : '',
                 clerk,
                 clerk,
                 deviceserial,
@@ -749,7 +756,7 @@ const server = http.createServer(async (req, res) => {
               ]
             );
 
-            // SUCCESS: Now atomically update trnid AFTER successful insert
+            // SUCCESS: Now atomically update trnid AND milkid AFTER successful insert
             // Extract trnid from the reference that was just inserted
             const [devRows] = await pool.query(
               'SELECT devcode FROM devsettings WHERE uniquedevcode = ?',
@@ -759,17 +766,20 @@ const server = http.createServer(async (req, res) => {
               const devcode = devRows[0].devcode;
               const insertedTrnId = parseInt(attemptTransrefno.substring(devcode.length));
               if (!isNaN(insertedTrnId)) {
-                // Only update if this trnid is higher than current
+                // Update both trnid and milkid - only increase, never decrease
                 await pool.query(
-                  'UPDATE devsettings SET trnid = GREATEST(IFNULL(trnid, 0), ?) WHERE uniquedevcode = ?',
-                  [insertedTrnId, deviceserial]
+                  `UPDATE devsettings SET 
+                    trnid = GREATEST(IFNULL(trnid, 0), ?),
+                    milkid = GREATEST(IFNULL(milkid, 0), ?)
+                   WHERE uniquedevcode = ?`,
+                  [insertedTrnId, attemptUploadrefno || 0, deviceserial]
                 );
-                console.log(`✅ Updated trnid to ${insertedTrnId} for device after successful insert`);
+                console.log(`✅ Updated trnid to ${insertedTrnId}, milkid to ${attemptUploadrefno} for device after successful insert`);
               }
             }
 
-            console.log('✅ BACKEND: NEW record INSERTED successfully with reference:', attemptTransrefno);
-            return { success: true, reference_no: attemptTransrefno };
+            console.log('✅ BACKEND: NEW record INSERTED successfully with reference:', attemptTransrefno, ', uploadrefno:', attemptUploadrefno);
+            return { success: true, reference_no: attemptTransrefno, uploadrefno: attemptUploadrefno };
           } catch (error) {
             // Check if it's a duplicate entry error
             if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
@@ -837,12 +847,19 @@ const server = http.createServer(async (req, res) => {
         }
       };
       
+      // If uploadrefno not provided by frontend, generate from backend
+      if (!uploadrefno) {
+        uploadrefno = currentMilkId + 1;
+        console.log('📝 Backend generated milkId:', uploadrefno);
+      }
+      
       try {
-        const result = await attemptInsert(transrefno);
+        const result = await attemptInsert(transrefno, uploadrefno);
         return sendJSON(res, { 
           success: true, 
           message: 'Collection created', 
-          reference_no: result.reference_no 
+          reference_no: result.reference_no,
+          uploadrefno: result.uploadrefno
         }, 201);
       } catch (error) {
         console.error('❌ BACKEND INSERT ERROR:', error.message);
@@ -1242,7 +1259,7 @@ const server = http.createServer(async (req, res) => {
       
       // Then check devsettings for authorization, company info, and device code
       const [devRows] = await pool.query(
-        'SELECT uniquedevcode, ccode, devcode, trnid, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT uniquedevcode, ccode, devcode, trnid, milkid, storeid, aiid, authorized FROM devsettings WHERE uniquedevcode = ?',
         [fingerprint]
       );
       
@@ -1256,7 +1273,10 @@ const server = http.createServer(async (req, res) => {
         authorized: devRows.length > 0 ? devRows[0].authorized : 0,
         ccode: devRows.length > 0 && devRows[0].ccode ? devRows[0].ccode : (approvedRows[0]?.ccode || null),
         devcode: devRows.length > 0 ? devRows[0].devcode : null,
-        trnid: devRows.length > 0 ? devRows[0].trnid : 0
+        trnid: devRows.length > 0 ? devRows[0].trnid : 0,
+        milkid: devRows.length > 0 ? (devRows[0].milkid || 0) : 0,
+        storeid: devRows.length > 0 ? (devRows[0].storeid || 0) : 0,
+        aiid: devRows.length > 0 ? (devRows[0].aiid || 0) : 0
       };
       
       // Get company name and ALL settings from psettings if ccode exists

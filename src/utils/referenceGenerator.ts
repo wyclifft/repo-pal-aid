@@ -13,9 +13,14 @@
  * - lastTrnId: Last used transaction ID for this device
  */
 
+export type TransactionType = 'milk' | 'store' | 'ai';
+
 interface DeviceConfig {
   devcode: string;        // Device code prefix (e.g., AG05)
-  lastTrnId: number;      // Last used transaction ID
+  lastTrnId: number;      // Last used transaction ID for transrefno
+  milkId: number;         // Last used milk transaction ID for uploadrefno
+  storeId: number;        // Last used store transaction ID for uploadrefno
+  aiId: number;           // Last used AI transaction ID for uploadrefno
   companyCode?: string;   // Legacy - kept for compatibility
   deviceCode?: string;    // Legacy - kept for compatibility
   lastOfflineSequential?: number; // Legacy - mapped to lastTrnId
@@ -99,18 +104,24 @@ export const storeDeviceConfig = async (companyName: string, devcode: string): P
   // FIRST: Check if we already have a config with trnid to preserve
   const existingConfig = await getDeviceConfig();
   const existingLocalTrnId = existingConfig?.lastTrnId || existingConfig?.lastOfflineSequential || 0;
+  const existingMilkId = existingConfig?.milkId || 0;
+  const existingStoreId = existingConfig?.storeId || 0;
+  const existingAiId = existingConfig?.aiId || 0;
   
-  console.log(`📦 storeDeviceConfig called. Existing local trnid: ${existingLocalTrnId}`);
+  console.log(`📦 storeDeviceConfig called. Existing counters: trnid=${existingLocalTrnId}, milkId=${existingMilkId}, storeId=${existingStoreId}, aiId=${existingAiId}`);
   
   // devcode is the primary identifier (e.g., AG05)
-  // IMPORTANT: Preserve the existing lastTrnId instead of resetting to 0
+  // IMPORTANT: Preserve all existing counters instead of resetting to 0
   const config: DeviceConfig = {
     devcode: devcode,
-    lastTrnId: existingLocalTrnId, // Preserve existing counter
+    lastTrnId: existingLocalTrnId,
+    milkId: existingMilkId,
+    storeId: existingStoreId,
+    aiId: existingAiId,
     // Legacy fields for backwards compatibility
     companyCode: companyName.substring(0, 2).toUpperCase(),
     deviceCode: devcode,
-    lastOfflineSequential: existingLocalTrnId, // Preserve existing counter
+    lastOfflineSequential: existingLocalTrnId,
   };
   
   // Always save to localStorage first (reliable backup)
@@ -223,6 +234,9 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
     const newConfig: DeviceConfig = {
       devcode: devcode,
       lastTrnId: normalizedUpdates.lastTrnId || 0,
+      milkId: normalizedUpdates.milkId || 0,
+      storeId: normalizedUpdates.storeId || 0,
+      aiId: normalizedUpdates.aiId || 0,
       lastOfflineSequential: normalizedUpdates.lastOfflineSequential || 0,
       companyCode: '',
       deviceCode: devcode,
@@ -254,6 +268,9 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
               id: 'config',
               devcode: devcode,
               lastTrnId: normalizedUpdates.lastTrnId || 0,
+              milkId: normalizedUpdates.milkId || 0,
+              storeId: normalizedUpdates.storeId || 0,
+              aiId: normalizedUpdates.aiId || 0,
               lastOfflineSequential: normalizedUpdates.lastOfflineSequential || 0,
               companyCode: '',
               deviceCode: devcode,
@@ -343,39 +360,131 @@ export const hasDeviceConfig = async (): Promise<boolean> => {
 };
 
 /**
- * Sync local counter with backend's last used trnid
+ * Sync local counter with backend's last used trnid and type-specific IDs
  * Called when device authorization is checked
  */
-export const syncOfflineCounter = async (devcode: string, lastBackendTrnId?: number): Promise<void> => {
+export const syncOfflineCounter = async (
+  devcode: string, 
+  lastBackendTrnId?: number,
+  lastBackendMilkId?: number,
+  lastBackendStoreId?: number,
+  lastBackendAiId?: number
+): Promise<void> => {
   // Store devcode for reference generation
   localStorage.setItem('devcode', devcode);
   
-  // CRITICAL: Get current local counter to compare
+  // CRITICAL: Get current local counters to compare
   const currentConfig = await getDeviceConfig();
   const currentLocalTrnId = currentConfig?.lastTrnId || currentConfig?.lastOfflineSequential || 0;
+  const currentLocalMilkId = currentConfig?.milkId || 0;
+  const currentLocalStoreId = currentConfig?.storeId || 0;
+  const currentLocalAiId = currentConfig?.aiId || 0;
   
   // Use the MAXIMUM of local and backend to ensure we never go backwards
   // This prevents duplicate references when device goes offline and comes back
-  const backendValue = (lastBackendTrnId !== undefined && lastBackendTrnId > 0) ? lastBackendTrnId : 0;
-  const safeValue = Math.max(currentLocalTrnId, backendValue);
+  const backendTrnId = (lastBackendTrnId !== undefined && lastBackendTrnId > 0) ? lastBackendTrnId : 0;
+  const backendMilkId = (lastBackendMilkId !== undefined && lastBackendMilkId > 0) ? lastBackendMilkId : 0;
+  const backendStoreId = (lastBackendStoreId !== undefined && lastBackendStoreId > 0) ? lastBackendStoreId : 0;
+  const backendAiId = (lastBackendAiId !== undefined && lastBackendAiId > 0) ? lastBackendAiId : 0;
   
-  console.log(`🔄 syncOfflineCounter: local=${currentLocalTrnId}, backend=${backendValue}, using=${safeValue}`);
+  const safeTrnId = Math.max(currentLocalTrnId, backendTrnId);
+  const safeMilkId = Math.max(currentLocalMilkId, backendMilkId);
+  const safeStoreId = Math.max(currentLocalStoreId, backendStoreId);
+  const safeAiId = Math.max(currentLocalAiId, backendAiId);
+  
+  console.log(`🔄 syncOfflineCounter: trnid(local=${currentLocalTrnId}, backend=${backendTrnId}, using=${safeTrnId})`);
+  console.log(`🔄 syncOfflineCounter: milkId(local=${currentLocalMilkId}, backend=${backendMilkId}, using=${safeMilkId})`);
+  console.log(`🔄 syncOfflineCounter: storeId(local=${currentLocalStoreId}, backend=${backendStoreId}, using=${safeStoreId})`);
+  console.log(`🔄 syncOfflineCounter: aiId(local=${currentLocalAiId}, backend=${backendAiId}, using=${safeAiId})`);
   
   await updateConfig({ 
     devcode: devcode,
-    lastTrnId: safeValue, 
-    lastOfflineSequential: safeValue 
+    lastTrnId: safeTrnId, 
+    lastOfflineSequential: safeTrnId,
+    milkId: safeMilkId,
+    storeId: safeStoreId,
+    aiId: safeAiId
   });
   
-  console.log(`🔄 Synced trnid counter to ${safeValue} for devcode ${devcode} (will generate from ${safeValue + 1})`);
+  console.log(`🔄 Synced counters for devcode ${devcode}`);
+};
+
+/**
+ * Get next type-specific ID (milkId, storeId, or aiId)
+ * This ID is used for uploadrefno in the transactions table
+ * Returns the ID and updates local storage atomically
+ */
+export const getNextTypeId = async (transactionType: TransactionType): Promise<number> => {
+  const config = await getDeviceConfig();
+  
+  let currentId = 0;
+  let updateField: Partial<DeviceConfig> = {};
+  
+  switch (transactionType) {
+    case 'milk':
+      currentId = config?.milkId || 0;
+      updateField = { milkId: currentId + 1 };
+      break;
+    case 'store':
+      currentId = config?.storeId || 0;
+      updateField = { storeId: currentId + 1 };
+      break;
+    case 'ai':
+      currentId = config?.aiId || 0;
+      updateField = { aiId: currentId + 1 };
+      break;
+  }
+  
+  const nextId = currentId + 1;
+  await updateConfig(updateField);
+  
+  console.log(`⚡ Next ${transactionType}Id: ${nextId}`);
+  return nextId;
+};
+
+/**
+ * Get current type-specific ID without incrementing
+ * Useful for checking the current state
+ */
+export const getCurrentTypeId = async (transactionType: TransactionType): Promise<number> => {
+  const config = await getDeviceConfig();
+  
+  switch (transactionType) {
+    case 'milk':
+      return config?.milkId || 0;
+    case 'store':
+      return config?.storeId || 0;
+    case 'ai':
+      return config?.aiId || 0;
+    default:
+      return 0;
+  }
+};
+
+/**
+ * Generate transaction reference with type-specific uploadrefno
+ * Returns both transrefno (devcode + trnid) and uploadrefno (type-specific ID)
+ */
+export const generateReferenceWithUploadRef = async (transactionType: TransactionType): Promise<{
+  transrefno: string;
+  uploadrefno: number;
+} | null> => {
+  const transrefno = await generateOfflineReference();
+  if (!transrefno) return null;
+  
+  const uploadrefno = await getNextTypeId(transactionType);
+  
+  console.log(`⚡ Generated: transrefno=${transrefno}, uploadrefno=${uploadrefno} (type=${transactionType})`);
+  
+  return { transrefno, uploadrefno };
 };
 
 /**
  * Reset local offline counter (deprecated - use syncOfflineCounter)
  */
 export const resetOfflineCounter = async (): Promise<void> => {
-  await updateConfig({ lastTrnId: 0, lastOfflineSequential: 0 });
-  console.log('🔄 Reset offline counter to 0');
+  await updateConfig({ lastTrnId: 0, lastOfflineSequential: 0, milkId: 0, storeId: 0, aiId: 0 });
+  console.log('🔄 Reset all offline counters to 0');
 };
 
 /**
