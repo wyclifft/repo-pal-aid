@@ -1044,38 +1044,24 @@ export const printReceipt = async (data: {
   const LINE_WIDTH = 32;
   const separator = '-'.repeat(LINE_WIDTH);
 
-  // Build collections text - show transrefno (last 6 chars) per line if multiple captures
+  // Build collections text - show full transrefno per line
   let collectionsText = '';
-  const showTransRef = data.collections.length > 1 && data.collections.some(c => c.transrefno);
   
-  if (showTransRef) {
-    // Format: # TREF   TIME   LITERS
-    data.collections.forEach((col, index) => {
-      const lineNum = String(index + 1).padEnd(2);
-      const transRef = (col.transrefno?.slice(-6) || '').padEnd(7);
-      const time = col.time.substring(0, 5).padEnd(6);
-      const weight = col.weight.toFixed(1).padStart(5);
-      collectionsText += `${lineNum}${transRef}${time}${weight}\n`;
-    });
-  } else {
-    // Simple format without transref
-    data.collections.forEach((col, index) => {
-      const lineNum = String(index + 1).padEnd(3);
-      const time = col.time.substring(0, 8).padEnd(9);
-      const weight = col.weight.toFixed(1).padStart(6);
-      collectionsText += `${lineNum}${time}${weight}\n`;
-    });
-  }
+  // Always show full transrefno per capture
+  data.collections.forEach((col) => {
+    const transRef = (col.transrefno || '').padEnd(13);
+    const time = col.time.substring(0, 5).padEnd(6);
+    const weight = col.weight.toFixed(1).padStart(5);
+    collectionsText += `${transRef}${time}${weight}\n`;
+  });
 
   // Build cumulative frequency line if provided
   const frequencyLine = data.cumulativeFrequency !== undefined 
     ? `Monthly Freq: ${data.cumulativeFrequency}\n` 
     : '';
 
-  // Header for collections table
-  const collectionsHeader = showTransRef 
-    ? '# TREF   TIME  LITERS' 
-    : '#  TIME     LITERS';
+  // Header for collections table - always show full transrefno
+  const collectionsHeader = 'TRANS REF    TIME LITERS';
 
   const receiptText = `
       ${companyName}
