@@ -72,11 +72,9 @@ export const Dashboard = ({
     return initialDataRef.current?.active === true;
   });
   
+  // Both start as false - actual connection state is determined by reconnect
   const [scaleConnected, setScaleConnected] = useState(false);
-  const [printerConnected, setPrinterConnected] = useState(() => {
-    const stored = getStoredPrinterInfo();
-    return !!stored;
-  });
+  const [printerConnected, setPrinterConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
   const { sessionPrintOnly } = useAppSettings();
@@ -344,7 +342,7 @@ export const Dashboard = ({
         <div className="flex justify-center gap-4 mb-2 flex-wrap">
           <div className="flex items-center gap-1.5">
             <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
-            <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{printerConnected ? 'Initialized' : 'Not Initialized'}</span>
+            <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{printerConnected ? 'Printer connected' : 'Printer disconnected'}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
