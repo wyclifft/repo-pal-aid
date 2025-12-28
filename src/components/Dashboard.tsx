@@ -14,6 +14,8 @@ import {
   quickReconnectPrinter, 
   getStoredDeviceInfo, 
   getStoredPrinterInfo,
+  isScaleConnected,
+  isPrinterConnected,
   type ScaleType 
 } from '@/services/bluetooth';
 import { toast } from 'sonner';
@@ -72,12 +74,30 @@ export const Dashboard = ({
     return initialDataRef.current?.active === true;
   });
   
-  // Both start as false - actual connection state is determined by reconnect
-  const [scaleConnected, setScaleConnected] = useState(false);
-  const [printerConnected, setPrinterConnected] = useState(false);
+  // Initialize connection status from actual bluetooth state
+  const [scaleConnected, setScaleConnected] = useState(() => isScaleConnected());
+  const [printerConnected, setPrinterConnected] = useState(() => isPrinterConnected());
   const [isReconnecting, setIsReconnecting] = useState(false);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
   const { sessionPrintOnly } = useAppSettings();
+  
+  // Listen for connection state changes from Settings or other components
+  useEffect(() => {
+    const handleScaleChange = (e: CustomEvent<{ connected: boolean }>) => {
+      setScaleConnected(e.detail.connected);
+    };
+    const handlePrinterChange = (e: CustomEvent<{ connected: boolean }>) => {
+      setPrinterConnected(e.detail.connected);
+    };
+    
+    window.addEventListener('scaleConnectionChange', handleScaleChange as EventListener);
+    window.addEventListener('printerConnectionChange', handlePrinterChange as EventListener);
+    
+    return () => {
+      window.removeEventListener('scaleConnectionChange', handleScaleChange as EventListener);
+      window.removeEventListener('printerConnectionChange', handlePrinterChange as EventListener);
+    };
+  }, []);
   
   // Session close handler that respects sessPrint setting
   const handleSessionCloseSuccess = useCallback(() => {

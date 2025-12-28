@@ -246,6 +246,9 @@ export const connectBluetoothScale = async (
       // Save device info for quick reconnect
       saveDeviceInfo(device.deviceId, device.name || 'Unknown Scale', scaleType);
       
+      // Broadcast connection state change
+      window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true } }));
+      
       console.log('✅ Scale connection successful');
       return { success: true, type: scaleType };
     } else {
@@ -286,6 +289,10 @@ export const connectBluetoothScale = async (
       await characteristic.startNotifications();
 
       scale = { device, characteristic, type: scaleType };
+      
+      // Broadcast connection state change for web
+      window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true } }));
+      
       return { success: true, type: scaleType };
     }
   } catch (err) {
@@ -315,6 +322,9 @@ export const disconnectBluetoothScale = async (clearSaved: boolean = false): Pro
         }
       }
       scale = { device: null, characteristic: null, type: 'Unknown' };
+      
+      // Broadcast disconnection
+      window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: false } }));
       
       if (clearSaved) {
         clearStoredDevice();
@@ -430,6 +440,9 @@ export const quickReconnect = async (
         const device = { deviceId } as BleDevice;
         scale = { device, characteristic: characteristicUuid, type: scaleType };
         
+        // Broadcast connection state change
+        window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true } }));
+        
         console.log('✅ Reconnected to scale successfully');
         return { success: true, type: scaleType };
       } else if ('bluetooth' in navigator) {
@@ -472,6 +485,10 @@ export const quickReconnect = async (
         });
 
         scale = { device, characteristic: notifyCharacteristic.uuid, type: scaleType };
+        
+        // Broadcast connection state change for web
+        window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true } }));
+        
         return { success: true, type: scaleType };
       } else {
         return { success: false, type: 'Unknown', error: 'Bluetooth not available on this device' };
@@ -503,6 +520,15 @@ export const getCurrentScaleInfo = (): { deviceId: string; type: ScaleType } | n
     deviceId: scale.device.deviceId,
     type: scale.type
   };
+};
+
+// Broadcast connection state change events
+export const broadcastScaleConnectionChange = (connected: boolean) => {
+  window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
+};
+
+export const broadcastPrinterConnectionChange = (connected: boolean) => {
+  window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected } }));
 };
 
 // Printer-specific UUIDs - common thermal printer services
@@ -636,6 +662,9 @@ export const connectToSpecificPrinter = async (deviceId: string, deviceName: str
       };
       savePrinterInfo(deviceId, deviceName);
 
+      // Broadcast printer connection state change
+      window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
+
       return { success: true, deviceName };
     } else {
       return { success: false, error: 'Native platform required for direct connection' };
@@ -692,6 +721,9 @@ export const connectBluetoothPrinter = async (): Promise<{
       };
       savePrinterInfo(device.deviceId, device.name || 'Bluetooth Printer');
 
+      // Broadcast printer connection state change
+      window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
+
       return { success: true, deviceName: device.name || 'Bluetooth Printer' };
     } else if ('bluetooth' in navigator) {
       console.log('🔍 Scanning for Bluetooth printers (Web Bluetooth)...');
@@ -706,6 +738,9 @@ export const connectBluetoothPrinter = async (): Promise<{
       
       printer = { device, characteristic: null };
       savePrinterInfo(device.id, device.name || 'Bluetooth Printer');
+
+      // Broadcast printer connection state change for web
+      window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
 
       return { success: true, deviceName: device.name || 'Bluetooth Printer' };
     } else {
@@ -775,6 +810,9 @@ export const quickReconnectPrinter = async (deviceId: string, retries: number = 
           characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid, charUuid: writeCharUuid } : null 
         };
         
+        // Broadcast printer connection state change
+        window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
+        
         console.log('✅ Reconnected to printer successfully');
         return { success: true };
       } else if ('bluetooth' in navigator) {
@@ -786,6 +824,9 @@ export const quickReconnectPrinter = async (deviceId: string, retries: number = 
 
         const server = await device.gatt.connect();
         printer = { device, characteristic: null };
+        
+        // Broadcast printer connection state change for web
+        window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
         
         return { success: true };
       } else {
@@ -832,6 +873,9 @@ export const disconnectBluetoothPrinter = async (clearSaved: boolean = false): P
         }
       }
       printer = { device: null, characteristic: null };
+      
+      // Broadcast printer disconnection
+      window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: false } }));
       
       if (clearSaved) {
         clearStoredPrinter();
