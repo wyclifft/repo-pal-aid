@@ -93,16 +93,24 @@ const getFromLocalStorage = (): DeviceConfig | null => {
 
 /**
  * Store device configuration using devcode
+ * CRITICAL: Preserves existing lastTrnId to maintain continuity during offline operations
  */
 export const storeDeviceConfig = async (companyName: string, devcode: string): Promise<void> => {
+  // FIRST: Check if we already have a config with trnid to preserve
+  const existingConfig = await getDeviceConfig();
+  const existingLocalTrnId = existingConfig?.lastTrnId || existingConfig?.lastOfflineSequential || 0;
+  
+  console.log(`📦 storeDeviceConfig called. Existing local trnid: ${existingLocalTrnId}`);
+  
   // devcode is the primary identifier (e.g., AG05)
+  // IMPORTANT: Preserve the existing lastTrnId instead of resetting to 0
   const config: DeviceConfig = {
     devcode: devcode,
-    lastTrnId: 0,
+    lastTrnId: existingLocalTrnId, // Preserve existing counter
     // Legacy fields for backwards compatibility
     companyCode: companyName.substring(0, 2).toUpperCase(),
     deviceCode: devcode,
-    lastOfflineSequential: 0,
+    lastOfflineSequential: existingLocalTrnId, // Preserve existing counter
   };
   
   // Always save to localStorage first (reliable backup)
@@ -195,18 +203,32 @@ export const getDeviceConfig = async (): Promise<DeviceConfig | null> => {
  * Update device config atomically in IndexedDB and localStorage
  */
 const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
-  // Update localStorage first
+  // Normalize: keep lastTrnId and lastOfflineSequential in sync
+  const normalizedUpdates = { ...updates };
+  if (updates.lastTrnId !== undefined) {
+    normalizedUpdates.lastOfflineSequential = updates.lastTrnId;
+  }
+  if (updates.lastOfflineSequential !== undefined) {
+    normalizedUpdates.lastTrnId = updates.lastOfflineSequential;
+  }
+  
+  // Update localStorage first - CRITICAL: create config if it doesn't exist
   const currentLs = getFromLocalStorage();
   if (currentLs) {
-    const updated = { ...currentLs, ...updates };
-    // Keep lastTrnId and lastOfflineSequential in sync
-    if (updates.lastTrnId !== undefined) {
-      updated.lastOfflineSequential = updates.lastTrnId;
-    }
-    if (updates.lastOfflineSequential !== undefined) {
-      updated.lastTrnId = updates.lastOfflineSequential;
-    }
+    const updated = { ...currentLs, ...normalizedUpdates };
     saveToLocalStorage(updated);
+  } else {
+    // No existing config - create one with the updates
+    const devcode = localStorage.getItem('devcode') || normalizedUpdates.devcode || '';
+    const newConfig: DeviceConfig = {
+      devcode: devcode,
+      lastTrnId: normalizedUpdates.lastTrnId || 0,
+      lastOfflineSequential: normalizedUpdates.lastOfflineSequential || 0,
+      companyCode: '',
+      deviceCode: devcode,
+    };
+    saveToLocalStorage(newConfig);
+    console.log('⚠️ Created new config during updateConfig:', newConfig);
   }
   
   try {
@@ -221,19 +243,27 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
         getRequest.onsuccess = () => {
           const current = getRequest.result;
           if (current) {
-            const updated = { ...current, ...updates };
-            // Keep lastTrnId and lastOfflineSequential in sync
-            if (updates.lastTrnId !== undefined) {
-              updated.lastOfflineSequential = updates.lastTrnId;
-            }
-            if (updates.lastOfflineSequential !== undefined) {
-              updated.lastTrnId = updates.lastOfflineSequential;
-            }
+            const updated = { ...current, ...normalizedUpdates };
             const putRequest = store.put(updated);
             putRequest.onsuccess = () => resolve();
             putRequest.onerror = () => resolve(); // localStorage has update
           } else {
-            resolve(); // Config not in IndexedDB, localStorage has update
+            // No existing config in IndexedDB - create one
+            const devcode = localStorage.getItem('devcode') || normalizedUpdates.devcode || '';
+            const newConfig = {
+              id: 'config',
+              devcode: devcode,
+              lastTrnId: normalizedUpdates.lastTrnId || 0,
+              lastOfflineSequential: normalizedUpdates.lastOfflineSequential || 0,
+              companyCode: '',
+              deviceCode: devcode,
+            };
+            const putRequest = store.put(newConfig);
+            putRequest.onsuccess = () => {
+              console.log('✅ Created new config in IndexedDB during update:', newConfig);
+              resolve();
+            };
+            putRequest.onerror = () => resolve(); // localStorage has update
           }
         };
         
@@ -320,22 +350,24 @@ export const syncOfflineCounter = async (devcode: string, lastBackendTrnId?: num
   // Store devcode for reference generation
   localStorage.setItem('devcode', devcode);
   
-  if (lastBackendTrnId !== undefined && lastBackendTrnId > 0) {
-    // Store the actual last used trnid directly
-    await updateConfig({ 
-      devcode: devcode,
-      lastTrnId: lastBackendTrnId, 
-      lastOfflineSequential: lastBackendTrnId 
-    });
-    console.log(`🔄 Synced trnid counter to ${lastBackendTrnId} for devcode ${devcode} (will generate from ${lastBackendTrnId + 1})`);
-  } else {
-    await updateConfig({ 
-      devcode: devcode,
-      lastTrnId: 0, 
-      lastOfflineSequential: 0 
-    });
-    console.log(`🔄 Initialized trnid counter to 0 for devcode ${devcode}`);
-  }
+  // CRITICAL: Get current local counter to compare
+  const currentConfig = await getDeviceConfig();
+  const currentLocalTrnId = currentConfig?.lastTrnId || currentConfig?.lastOfflineSequential || 0;
+  
+  // Use the MAXIMUM of local and backend to ensure we never go backwards
+  // This prevents duplicate references when device goes offline and comes back
+  const backendValue = (lastBackendTrnId !== undefined && lastBackendTrnId > 0) ? lastBackendTrnId : 0;
+  const safeValue = Math.max(currentLocalTrnId, backendValue);
+  
+  console.log(`🔄 syncOfflineCounter: local=${currentLocalTrnId}, backend=${backendValue}, using=${safeValue}`);
+  
+  await updateConfig({ 
+    devcode: devcode,
+    lastTrnId: safeValue, 
+    lastOfflineSequential: safeValue 
+  });
+  
+  console.log(`🔄 Synced trnid counter to ${safeValue} for devcode ${devcode} (will generate from ${safeValue + 1})`);
 };
 
 /**
