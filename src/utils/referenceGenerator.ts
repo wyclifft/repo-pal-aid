@@ -360,6 +360,18 @@ export const hasDeviceConfig = async (): Promise<boolean> => {
 };
 
 /**
+ * Dispatch event when counters are updated
+ */
+const dispatchCounterUpdateEvent = (counters: { trnid: number; milkId: number; storeId: number; aiId: number }) => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('counterUpdate', { 
+      detail: counters 
+    }));
+    console.log('📢 Dispatched counterUpdate event:', counters);
+  }
+};
+
+/**
  * Sync local counter with backend's last used trnid and type-specific IDs
  * Called when device authorization is checked
  */
@@ -401,6 +413,14 @@ export const syncOfflineCounter = async (
     devcode: devcode,
     lastTrnId: safeTrnId, 
     lastOfflineSequential: safeTrnId,
+    milkId: safeMilkId,
+    storeId: safeStoreId,
+    aiId: safeAiId
+  });
+  
+  // Dispatch event to notify components of counter changes
+  dispatchCounterUpdateEvent({
+    trnid: safeTrnId,
     milkId: safeMilkId,
     storeId: safeStoreId,
     aiId: safeAiId
