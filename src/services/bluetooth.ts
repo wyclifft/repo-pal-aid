@@ -328,38 +328,139 @@ export const disconnectBluetoothScale = async (clearSaved: boolean = false): Pro
 
 export const quickReconnect = async (
   deviceId: string,
-  onWeightUpdate: (weight: number, scaleType: ScaleType) => void
+  onWeightUpdate: (weight: number, scaleType: ScaleType) => void,
+  retries: number = 3
 ): Promise<{ success: boolean; type: ScaleType; error?: string }> => {
-  try {
-    if (Capacitor.isNativePlatform()) {
-      await BleClient.initialize();
-      await BleClient.connect(deviceId);
-      
-      const storedInfo = getStoredDeviceInfo();
-      if (!storedInfo) {
-        return { success: false, type: 'Unknown', error: 'No stored device info' };
-      }
+  let lastError: any = null;
+  
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await BleClient.initialize();
+        
+        console.log(`🔄 Quick reconnecting to scale: ${deviceId} (attempt ${attempt}/${retries})`);
+        
+        // Try to disconnect first if there's a stale connection
+        try {
+          await BleClient.disconnect(deviceId);
+          console.log('🔌 Disconnected stale scale connection');
+        } catch {
+          // Ignore disconnect errors - device may not be connected
+        }
+        
+        // Small delay before reconnect
+        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        
+        await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+          console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
+          scale = { device: null, characteristic: null, type: 'Unknown' };
+        });
+        
+        const storedInfo = getStoredDeviceInfo();
+        if (!storedInfo) {
+          return { success: false, type: 'Unknown', error: 'No stored device info' };
+        }
 
-      let serviceUuid = '';
-      let characteristicUuid = '';
-      const scaleType = storedInfo.scaleType;
+        let serviceUuid = '';
+        let characteristicUuid = '';
+        const scaleType = storedInfo.scaleType;
 
-      const services = await BleClient.getServices(deviceId);
-      const targetServiceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
-      const service = services.find(s => s.uuid.toLowerCase().includes(targetServiceUuid));
-      
-      if (!service || service.characteristics.length === 0) {
-        return { success: false, type: 'Unknown', error: 'Service not found' };
-      }
+        const services = await BleClient.getServices(deviceId);
+        console.log(`📋 Scale has ${services.length} services`);
+        
+        // Try to find known scale services first
+        const targetServiceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
+        let service = services.find(s => s.uuid.toLowerCase().includes(targetServiceUuid.toLowerCase()));
+        
+        // If not found, try generic discovery
+        if (!service) {
+          console.log('⚠️ Standard service not found, trying generic discovery...');
+          for (const svc of services) {
+            if (svc.uuid.toLowerCase().includes('1800') || 
+                svc.uuid.toLowerCase().includes('1801') ||
+                svc.uuid.toLowerCase().includes('180a')) {
+              continue;
+            }
+            const notifyChar = svc.characteristics.find(c => c.properties.notify);
+            if (notifyChar) {
+              service = svc;
+              break;
+            }
+          }
+        }
+        
+        if (!service || service.characteristics.length === 0) {
+          throw new Error('Compatible scale service not found');
+        }
 
-      serviceUuid = service.uuid;
-      characteristicUuid = service.characteristics[0].uuid;
+        serviceUuid = service.uuid;
+        const notifyChar = service.characteristics.find(c => c.properties.notify);
+        characteristicUuid = notifyChar?.uuid || service.characteristics[0].uuid;
 
-      await BleClient.startNotifications(
-        deviceId,
-        serviceUuid,
-        characteristicUuid,
-        (value) => {
+        await BleClient.startNotifications(
+          deviceId,
+          serviceUuid,
+          characteristicUuid,
+          (value) => {
+            const text = new TextDecoder().decode(value);
+            console.log(`📊 Raw scale data: "${text}"`);
+            
+            // Try multiple parsing strategies
+            let parsed: number | null = null;
+            
+            const decimalMatch = text.match(/(\d+\.\d+)/);
+            if (decimalMatch) {
+              parsed = parseFloat(decimalMatch[1]);
+            }
+            
+            if (!parsed || isNaN(parsed)) {
+              const intMatch = text.match(/(\d+)/);
+              if (intMatch) {
+                const intValue = parseInt(intMatch[1]);
+                parsed = intValue > 1000 ? intValue / 1000 : intValue;
+              }
+            }
+            
+            if (parsed && !isNaN(parsed) && parsed > 0) {
+              onWeightUpdate(parsed, scaleType);
+            }
+          }
+        );
+
+        const device = { deviceId } as BleDevice;
+        scale = { device, characteristic: characteristicUuid, type: scaleType };
+        
+        console.log('✅ Reconnected to scale successfully');
+        return { success: true, type: scaleType };
+      } else if ('bluetooth' in navigator) {
+        // Web Bluetooth API support for PWA on mobile browsers
+        const storedInfo = getStoredDeviceInfo();
+        if (!storedInfo) {
+          return { success: false, type: 'Unknown', error: 'No stored device info' };
+        }
+
+        const scaleType = storedInfo.scaleType;
+        const serviceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
+
+        // Request device with saved ID
+        const device = await (navigator as any).bluetooth.requestDevice({
+          filters: [{ services: [serviceUuid] }],
+        });
+
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(serviceUuid);
+        
+        // Get the first characteristic that supports notifications
+        const characteristics = await service.getCharacteristics();
+        const notifyCharacteristic = characteristics.find((c: any) => c.properties.notify);
+        
+        if (!notifyCharacteristic) {
+          return { success: false, type: 'Unknown', error: 'No notify characteristic found' };
+        }
+
+        await notifyCharacteristic.startNotifications();
+        notifyCharacteristic.addEventListener('characteristicvaluechanged', (event: any) => {
+          const value = event.target.value;
           const text = new TextDecoder().decode(value);
           const match = text.match(/(\d+\.\d+)/);
           if (match) {
@@ -368,61 +469,40 @@ export const quickReconnect = async (
               onWeightUpdate(parsed, scaleType);
             }
           }
-        }
-      );
+        });
 
-      const device = { deviceId } as BleDevice;
-      scale = { device, characteristic: characteristicUuid, type: scaleType };
-      
-      return { success: true, type: scaleType };
-    } else if ('bluetooth' in navigator) {
-      // Web Bluetooth API support for PWA on mobile browsers
-      const storedInfo = getStoredDeviceInfo();
-      if (!storedInfo) {
-        return { success: false, type: 'Unknown', error: 'No stored device info' };
+        scale = { device, characteristic: notifyCharacteristic.uuid, type: scaleType };
+        return { success: true, type: scaleType };
+      } else {
+        return { success: false, type: 'Unknown', error: 'Bluetooth not available on this device' };
       }
-
-      const scaleType = storedInfo.scaleType;
-      const serviceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
-
-      // Request device with saved ID
-      const device = await (navigator as any).bluetooth.requestDevice({
-        filters: [{ services: [serviceUuid] }],
-      });
-
-      const server = await device.gatt.connect();
-      const service = await server.getPrimaryService(serviceUuid);
+    } catch (error: any) {
+      console.error(`❌ Scale reconnect attempt ${attempt} failed:`, error.message);
+      lastError = error;
       
-      // Get the first characteristic that supports notifications
-      const characteristics = await service.getCharacteristics();
-      const notifyCharacteristic = characteristics.find((c: any) => c.properties.notify);
-      
-      if (!notifyCharacteristic) {
-        return { success: false, type: 'Unknown', error: 'No notify characteristic found' };
+      if (attempt < retries) {
+        console.log('⏳ Waiting before retry...');
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
       }
-
-      await notifyCharacteristic.startNotifications();
-      notifyCharacteristic.addEventListener('characteristicvaluechanged', (event: any) => {
-        const value = event.target.value;
-        const text = new TextDecoder().decode(value);
-        const match = text.match(/(\d+\.\d+)/);
-        if (match) {
-          const parsed = parseFloat(match[1]);
-          if (!isNaN(parsed)) {
-            onWeightUpdate(parsed, scaleType);
-          }
-        }
-      });
-
-      scale = { device, characteristic: notifyCharacteristic.uuid, type: scaleType };
-      return { success: true, type: scaleType };
-    } else {
-      return { success: false, type: 'Unknown', error: 'Bluetooth not available on this device' };
     }
-  } catch (error: any) {
-    console.error('Failed to reconnect to scale:', error);
-    return { success: false, type: 'Unknown', error: error.message || 'Failed to reconnect' };
   }
+  
+  console.error('❌ All scale reconnect attempts failed');
+  return { success: false, type: 'Unknown', error: lastError?.message || 'Failed to reconnect after multiple attempts' };
+};
+
+// Check if scale is currently connected
+export const isScaleConnected = (): boolean => {
+  return scale.device !== null;
+};
+
+// Get current scale info
+export const getCurrentScaleInfo = (): { deviceId: string; type: ScaleType } | null => {
+  if (!scale.device) return null;
+  return {
+    deviceId: scale.device.deviceId,
+    type: scale.type
+  };
 };
 
 // Printer-specific UUIDs - common thermal printer services
@@ -637,58 +717,108 @@ export const connectBluetoothPrinter = async (): Promise<{
   }
 };
 
-export const quickReconnectPrinter = async (deviceId: string): Promise<{ 
+export const quickReconnectPrinter = async (deviceId: string, retries: number = 3): Promise<{ 
   success: boolean; 
   error?: string 
 }> => {
-  try {
-    if (Capacitor.isNativePlatform()) {
-      await BleClient.initialize();
-      console.log(`🔄 Quick reconnecting to printer: ${deviceId}`);
-      await BleClient.connect(deviceId);
-      
-      // Get services and find write characteristic
-      const services = await BleClient.getServices(deviceId);
-      let writeServiceUuid: string | null = null;
-      let writeCharUuid: string | null = null;
-      
-      for (const service of services) {
-        for (const char of service.characteristics) {
-          if (char.properties.write || char.properties.writeWithoutResponse) {
-            writeServiceUuid = service.uuid;
-            writeCharUuid = char.uuid;
-            break;
+  let lastError: any = null;
+  
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await BleClient.initialize();
+        console.log(`🔄 Quick reconnecting to printer: ${deviceId} (attempt ${attempt}/${retries})`);
+        
+        // Try to disconnect first if there's a stale connection
+        try {
+          await BleClient.disconnect(deviceId);
+          console.log('🔌 Disconnected stale connection');
+        } catch {
+          // Ignore disconnect errors - device may not be connected
+        }
+        
+        // Small delay before reconnect
+        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        
+        await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+          console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
+          // Clear printer state on unexpected disconnect
+          printer = { device: null, characteristic: null };
+        });
+        
+        // Get services and find write characteristic
+        const services = await BleClient.getServices(deviceId);
+        console.log(`📋 Printer has ${services.length} services`);
+        
+        let writeServiceUuid: string | null = null;
+        let writeCharUuid: string | null = null;
+        
+        for (const service of services) {
+          console.log(`  Service: ${service.uuid}`);
+          for (const char of service.characteristics) {
+            const hasWrite = char.properties.write || char.properties.writeWithoutResponse;
+            console.log(`    Char: ${char.uuid} (write: ${hasWrite})`);
+            if (hasWrite && !writeCharUuid) {
+              writeServiceUuid = service.uuid;
+              writeCharUuid = char.uuid;
+            }
           }
         }
-        if (writeCharUuid) break;
-      }
-      
-      const device = { deviceId } as BleDevice;
-      printer = { 
-        device, 
-        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid, charUuid: writeCharUuid } : null 
-      };
-      
-      console.log('✅ Reconnected to printer');
-      return { success: true };
-    } else if ('bluetooth' in navigator) {
-      // Web Bluetooth API support for PWA on mobile browsers
-      const device = await (navigator as any).bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: COMMON_PRINTER_SERVICES,
-      });
+        
+        if (!writeCharUuid) {
+          console.warn('⚠️ No writable characteristic found on printer');
+        }
+        
+        const device = { deviceId } as BleDevice;
+        printer = { 
+          device, 
+          characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid, charUuid: writeCharUuid } : null 
+        };
+        
+        console.log('✅ Reconnected to printer successfully');
+        return { success: true };
+      } else if ('bluetooth' in navigator) {
+        // Web Bluetooth API support for PWA on mobile browsers
+        const device = await (navigator as any).bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: COMMON_PRINTER_SERVICES,
+        });
 
-      const server = await device.gatt.connect();
-      printer = { device, characteristic: null };
+        const server = await device.gatt.connect();
+        printer = { device, characteristic: null };
+        
+        return { success: true };
+      } else {
+        return { success: false, error: 'Bluetooth not available on this device' };
+      }
+    } catch (error: any) {
+      console.error(`❌ Reconnect attempt ${attempt} failed:`, error.message);
+      lastError = error;
       
-      return { success: true };
-    } else {
-      return { success: false, error: 'Bluetooth not available on this device' };
+      // Only retry if we have attempts left
+      if (attempt < retries) {
+        console.log(`⏳ Waiting before retry...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
     }
-  } catch (error: any) {
-    console.error('Failed to reconnect to printer:', error);
-    return { success: false, error: error.message || 'Failed to reconnect' };
   }
+  
+  console.error('❌ All reconnect attempts failed');
+  return { success: false, error: lastError?.message || 'Failed to reconnect after multiple attempts' };
+};
+
+// Check if printer is currently connected
+export const isPrinterConnected = (): boolean => {
+  return printer.device !== null && printer.characteristic !== null;
+};
+
+// Get current printer info
+export const getCurrentPrinterInfo = (): { deviceId: string; hasWriteChar: boolean } | null => {
+  if (!printer.device) return null;
+  return {
+    deviceId: printer.device.deviceId,
+    hasWriteChar: printer.characteristic !== null
+  };
 };
 
 export const disconnectBluetoothPrinter = async (clearSaved: boolean = false): Promise<void> => {
