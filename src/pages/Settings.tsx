@@ -19,6 +19,8 @@ import {
   quickReconnectPrinter,
   getStoredPrinterInfo,
   printToBluetoothPrinter,
+  isScaleConnected,
+  isPrinterConnected,
   ScaleType 
 } from "@/services/bluetooth";
 import { runBluetoothDiagnostics, logConnectionTips } from "@/utils/bluetoothDiagnostics";
@@ -28,7 +30,9 @@ const Settings = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
   const { settings, isLoading: isLoadingSettings, refreshSettings, routeLabel } = useAppSettings();
-  const [scaleConnected, setScaleConnected] = useState(false);
+  
+  // Initialize from actual bluetooth state
+  const [scaleConnected, setScaleConnected] = useState(() => isScaleConnected());
 
   // Check authentication
   useEffect(() => {
@@ -36,12 +40,14 @@ const Settings = () => {
       navigate('/', { replace: true });
     }
   }, [isAuthenticated, navigate]);
+  
   const [scaleType, setScaleType] = useState<ScaleType>("Unknown");
   const [isConnectingScale, setIsConnectingScale] = useState(false);
   const [lastWeight, setLastWeight] = useState<number | null>(null);
   const [storedDevice, setStoredDevice] = useState<ReturnType<typeof getStoredDeviceInfo>>(null);
   
-  const [printerConnected, setPrinterConnected] = useState(false);
+  // Initialize printer connected from actual bluetooth state
+  const [printerConnected, setPrinterConnected] = useState(() => isPrinterConnected());
   const [printerName, setPrinterName] = useState<string>("");
   const [isConnectingPrinter, setIsConnectingPrinter] = useState(false);
   const [storedPrinter, setStoredPrinter] = useState<ReturnType<typeof getStoredPrinterInfo>>(null);
@@ -58,6 +64,24 @@ const Settings = () => {
     
     const printerInfo = getStoredPrinterInfo();
     setStoredPrinter(printerInfo);
+  }, []);
+  
+  // Listen for connection state changes
+  useEffect(() => {
+    const handleScaleChange = (e: CustomEvent<{ connected: boolean }>) => {
+      setScaleConnected(e.detail.connected);
+    };
+    const handlePrinterChange = (e: CustomEvent<{ connected: boolean }>) => {
+      setPrinterConnected(e.detail.connected);
+    };
+    
+    window.addEventListener('scaleConnectionChange', handleScaleChange as EventListener);
+    window.addEventListener('printerConnectionChange', handlePrinterChange as EventListener);
+    
+    return () => {
+      window.removeEventListener('scaleConnectionChange', handleScaleChange as EventListener);
+      window.removeEventListener('printerConnectionChange', handlePrinterChange as EventListener);
+    };
   }, []);
 
   // Force refresh company name and settings from server
