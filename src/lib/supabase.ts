@@ -14,13 +14,46 @@ export interface AppUser {
   email?: string;
   ccode?: string;
   admin?: boolean;
-  supervisor?: boolean;
+  /**
+   * Supervisor mode controlling milk capture and Z-report:
+   * 0 = digital capture + print Z
+   * 1 = manual capture + print Z
+   * 2 = digital capture only (no Z)
+   * 3 = manual capture only (no Z)
+   * 4 = manual or digital capture + print Z
+   */
+  supervisor?: number;
   dcode?: string;
   groupid?: string;
   depart?: string;
   password?: string; // For offline caching only
   role?: string; // Kept for backward compatibility
 }
+
+/**
+ * Helper to determine capture mode from supervisor value
+ */
+export const getCaptureMode = (supervisor?: number): {
+  allowDigital: boolean;
+  allowManual: boolean;
+  allowZReport: boolean;
+} => {
+  const mode = supervisor ?? 0;
+  switch (mode) {
+    case 0: // digital capture + print Z
+      return { allowDigital: true, allowManual: false, allowZReport: true };
+    case 1: // manual capture + print Z
+      return { allowDigital: false, allowManual: true, allowZReport: true };
+    case 2: // digital capture only (no Z)
+      return { allowDigital: true, allowManual: false, allowZReport: false };
+    case 3: // manual capture only (no Z)
+      return { allowDigital: false, allowManual: true, allowZReport: false };
+    case 4: // manual or digital capture + print Z
+      return { allowDigital: true, allowManual: true, allowZReport: true };
+    default:
+      return { allowDigital: true, allowManual: true, allowZReport: true };
+  }
+};
 
 export interface MilkCollection {
   reference_no?: string;

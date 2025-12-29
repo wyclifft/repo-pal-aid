@@ -26,6 +26,9 @@ interface BuyProduceScreenProps {
   onFarmersLoaded?: (farmers: Farmer[]) => void;
   captureDisabled?: boolean;
   submitDisabled?: boolean; // Disable submit for multOpt=0 farmers who already submitted
+  // Supervisor mode capture restrictions
+  allowDigital?: boolean;
+  allowManual?: boolean;
 }
 
 export const BuyProduceScreen = ({
@@ -46,6 +49,8 @@ export const BuyProduceScreen = ({
   onFarmersLoaded,
   captureDisabled,
   submitDisabled,
+  allowDigital = true,
+  allowManual = true,
 }: BuyProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -56,14 +61,21 @@ export const BuyProduceScreen = ({
   // Get psettings for AutoW enforcement and produce labeling
   // These values update automatically when psettings change in the database
   const appSettings = useAppSettings();
-  const { autoWeightOnly, produceLabel, routeLabel, useRouteFilter } = appSettings;
+  const { autoWeightOnly: psettingsAutoWeightOnly, produceLabel, routeLabel, useRouteFilter } = appSettings;
+  
+  // Supervisor mode overrides psettings for capture mode:
+  // - If supervisor restricts to digital only (!allowManual), manual is disabled
+  // - If supervisor restricts to manual only (!allowDigital), digital is disabled
+  // - psettings autoWeightOnly (autow=1) further restricts manual if allowed
+  const manualDisabled = !allowManual || psettingsAutoWeightOnly;
+  const digitalDisabled = !allowDigital;
 
   const today = new Date().toISOString().split('T')[0];
   
-  // Log when autoWeightOnly changes for debugging
+  // Log when capture mode changes for debugging
   useEffect(() => {
-    console.log('📱 BuyProduceScreen - autoWeightOnly:', autoWeightOnly);
-  }, [autoWeightOnly]);
+    console.log('📱 BuyProduceScreen - manualDisabled:', manualDisabled, 'digitalDisabled:', digitalDisabled, 'psettingsAutoWeightOnly:', psettingsAutoWeightOnly);
+  }, [manualDisabled, digitalDisabled, psettingsAutoWeightOnly]);
 
   // Load cached farmers with chkroute logic
   // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
@@ -208,34 +220,34 @@ export const BuyProduceScreen = ({
           </div>
         </div>
 
-        {/* Manual Weight Entry - enforces AutoW (autow=1 disables manual entry) */}
-        <div className={`flex gap-2 items-center ${autoWeightOnly ? 'opacity-50' : ''}`}>
+        {/* Manual Weight Entry - enforces supervisor mode and psettings AutoW */}
+        <div className={`flex gap-2 items-center ${manualDisabled ? 'opacity-50' : ''}`}>
           <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
             Manual:
-            {autoWeightOnly && <span className="text-red-500 ml-1">(Disabled)</span>}
+            {manualDisabled && <span className="text-red-500 ml-1">(Disabled)</span>}
           </span>
           <input
             type="number"
             inputMode="decimal"
             step="0.1"
             min="0"
-            placeholder={autoWeightOnly ? "Use scale only" : "Enter weight"}
-            disabled={autoWeightOnly}
+            placeholder={manualDisabled ? "Use scale only" : "Enter weight"}
+            disabled={manualDisabled}
             onChange={(e) => {
-              if (autoWeightOnly) {
+              if (manualDisabled) {
                 toast.error('Manual weight entry is disabled. Please use the digital scale.');
                 return;
               }
               onManualWeightChange?.(parseFloat(e.target.value) || 0);
             }}
             className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 rounded-lg text-base sm:text-lg min-h-[44px] ${
-              autoWeightOnly 
+              manualDisabled 
                 ? 'border-gray-200 bg-gray-100 cursor-not-allowed' 
                 : 'border-gray-300'
             }`}
           />
         </div>
-        {autoWeightOnly && (
+        {manualDisabled && (
           <p className="text-xs text-red-500 -mt-2 mb-2 px-1">
             Manual entry is disabled. Use the digital scale.
           </p>
