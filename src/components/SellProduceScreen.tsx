@@ -51,7 +51,7 @@ export const SellProduceScreen = ({
   
   // Get psettings for produce labeling - updates automatically when psettings change
   const appSettings = useAppSettings();
-  const { produceLabel, autoWeightOnly } = appSettings;
+  const { produceLabel, autoWeightOnly, useRouteFilter } = appSettings;
 
   const today = new Date().toISOString().split('T')[0];
   
@@ -60,21 +60,33 @@ export const SellProduceScreen = ({
     console.log('📱 SellProduceScreen - autoWeightOnly:', autoWeightOnly);
   }, [autoWeightOnly]);
 
-  // Load cached farmers
+  // Load cached farmers with chkroute logic
+  // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
   useEffect(() => {
     const loadFarmers = async () => {
       try {
         const farmers = await getFarmers();
-        const filtered = route?.tcode 
-          ? farmers.filter(f => f.route === route.tcode)
-          : farmers;
+        let filtered: Farmer[];
+        
+        if (useRouteFilter && route?.tcode) {
+          // chkroute=1: Filter by exact route match
+          filtered = farmers.filter(f => f.route === route.tcode);
+        } else if (!useRouteFilter && route?.mprefix) {
+          // chkroute=0: Filter by mprefix (farmer_id starts with mprefix)
+          filtered = farmers.filter(f => 
+            f.farmer_id && f.farmer_id.startsWith(route.mprefix!)
+          );
+        } else {
+          filtered = farmers;
+        }
+        
         setCachedFarmers(filtered);
       } catch (err) {
         console.error('Failed to load farmers:', err);
       }
     };
     loadFarmers();
-  }, [getFarmers, route?.tcode]);
+  }, [getFarmers, route?.tcode, route?.mprefix, useRouteFilter]);
 
   // Resolve numeric input to full farmer ID
   const resolveFarmerId = (input: string): Farmer | null => {

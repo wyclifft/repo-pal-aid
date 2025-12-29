@@ -216,6 +216,7 @@ const server = http.createServer(async (req, res) => {
     // Farmers endpoints - Fetch from cm_members table
     
     // NEW: Device-based farmer filtering endpoint
+    // Supports: route (exact match for chkroute=1) OR mprefix (prefix match for chkroute=0)
     if (path.startsWith('/api/farmers/by-device/') && method === 'GET') {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
       const search = parsedUrl.query.search;
@@ -235,18 +236,25 @@ const server = http.createServer(async (req, res) => {
       
       const ccode = deviceRows[0].ccode;
       
-      // Get route filter from query params
+      // Get route filter from query params (chkroute=1: filter by exact route)
       const routeFilter = parsedUrl.query.route;
+      // Get mprefix filter from query params (chkroute=0: filter by mprefix from fm_tanks)
+      const mprefixFilter = parsedUrl.query.mprefix;
       
-      // Get farmers for this company, optionally filtered by route
+      // Get farmers for this company, optionally filtered by route or mprefix
       // Include multOpt to enable client-side duplicate session enforcement
       let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, IFNULL(multOpt, 1) as multOpt FROM cm_members WHERE ccode = ?';
       let params = [ccode];
       
-      // Filter by route if specified
+      // Filter by exact route if specified (chkroute=1)
       if (routeFilter) {
         query += ' AND route = ?';
         params.push(routeFilter);
+      }
+      // Filter by mprefix (farmer_id starts with mprefix) if specified (chkroute=0)
+      else if (mprefixFilter) {
+        query += ' AND mcode LIKE ?';
+        params.push(`${mprefixFilter}%`);
       }
       
       if (search) {
