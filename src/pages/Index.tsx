@@ -8,7 +8,7 @@ import { ReceiptModal } from '@/components/ReceiptModal';
 import { ReprintModal } from '@/components/ReprintModal';
 
 import { useAuth } from '@/contexts/AuthContext';
-import { type AppUser, type Farmer, type MilkCollection } from '@/lib/supabase';
+import { type AppUser, type Farmer, type MilkCollection, getCaptureMode } from '@/lib/supabase';
 import { type Route, type Session } from '@/services/mysqlApi';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -862,18 +862,22 @@ const Index = () => {
 
   // Show Dashboard first
   if (!showCollection) {
-    return (
-      <>
-        <Dashboard
-          userName={currentUser?.user_id || 'User'}
-          companyName={companyName}
-          isOnline={navigator.onLine}
-          pendingCount={pendingCount}
-          onStartCollection={handleStartCollection}
-          onStartSelling={handleStartSelling}
-          onLogout={handleLogout}
-          onOpenRecentReceipts={() => setReprintModalOpen(true)}
-        />
+  // Get capture mode from user's supervisor setting
+  const captureMode = getCaptureMode(currentUser?.supervisor);
+  
+  return (
+    <>
+      <Dashboard
+        userName={currentUser?.user_id || 'User'}
+        companyName={companyName}
+        isOnline={navigator.onLine}
+        pendingCount={pendingCount}
+        onStartCollection={handleStartCollection}
+        onStartSelling={handleStartSelling}
+        onLogout={handleLogout}
+        onOpenRecentReceipts={() => setReprintModalOpen(true)}
+        allowZReport={captureMode.allowZReport}
+      />
         
         {/* Reprint Modal - accessible from Dashboard */}
         <ReprintModal
@@ -928,6 +932,8 @@ const Index = () => {
           onFarmersLoaded={handleFarmersLoaded}
           captureDisabled={captureDisabledForSelectedFarmer}
           submitDisabled={submitDisabledForSelectedFarmer}
+          allowDigital={captureMode.allowDigital}
+          allowManual={captureMode.allowManual}
         />
       ) : (
         <SellProduceScreen
@@ -949,6 +955,31 @@ const Index = () => {
           }}
           captureDisabled={captureDisabledForSelectedFarmer}
           submitDisabled={submitDisabledForSelectedFarmer}
+          allowDigital={captureMode.allowDigital}
+          allowManual={captureMode.allowManual}
+        />
+      ) : (
+        <SellProduceScreen
+          route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
+          session={activeSession!}
+          userName={currentUser?.user_id || 'User'}
+          weight={weight}
+          capturedCollections={capturedCollections}
+          onBack={handleBackToDashboard}
+          onCapture={handleCapture}
+          onSubmit={handleSubmit}
+          onSelectFarmer={handleSelectFarmer}
+          onClearFarmer={handleClearFarmer}
+          selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
+          todayWeight={0}
+          onManualWeightChange={(w) => {
+            setWeight(w);
+            setEntryType('manual');
+          }}
+          captureDisabled={captureDisabledForSelectedFarmer}
+          submitDisabled={submitDisabledForSelectedFarmer}
+          allowDigital={captureMode.allowDigital}
+          allowManual={captureMode.allowManual}
         />
       )}
 

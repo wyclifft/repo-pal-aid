@@ -166,22 +166,24 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           }
         }
 
-        // Explicitly convert admin and supervisor to boolean for role assignment
+        // Explicitly convert admin to boolean for role assignment
+        // supervisor is now a number (0-4) controlling capture mode
         const isAdmin = Boolean(userData.admin);
-        const isSupervisor = Boolean(userData.supervisor);
+        const supervisorMode = typeof userData.supervisor === 'number' ? userData.supervisor : 0;
         
-        console.log('👤 Role assignment - admin:', userData.admin, 'isAdmin:', isAdmin, 'supervisor:', userData.supervisor, 'isSupervisor:', isSupervisor);
+        console.log('👤 Role assignment - admin:', userData.admin, 'isAdmin:', isAdmin, 'supervisor mode:', supervisorMode);
         
         const userWithPassword: AppUser = { 
           ...userData, 
+          supervisor: supervisorMode,
           password,
-          role: isAdmin ? 'admin' : (isSupervisor ? 'supervisor' : 'user')
+          role: isAdmin ? 'admin' : 'user'
         };
         
         console.log('👤 Login successful - User data:', {
           user_id: userData.user_id,
           admin: userData.admin,
-          supervisor: userData.supervisor,
+          supervisor: supervisorMode,
           role: userWithPassword.role
         });
         

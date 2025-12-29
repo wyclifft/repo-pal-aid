@@ -1860,7 +1860,22 @@ const server = http.createServer(async (req, res) => {
         return Boolean(value);
       };
       
+      // Helper to parse supervisor mode as integer (0-4)
+      const toSupervisorMode = (value) => {
+        if (value === null || value === undefined) return 0;
+        if (typeof value === 'number') return value;
+        if (Buffer.isBuffer(value)) return value[0];
+        if (typeof value === 'string') return parseInt(value, 10) || 0;
+        return 0;
+      };
+      
       // Return user data (excluding sensitive password field)
+      // supervisor is now a number (0-4) controlling capture mode:
+      // 0 = digital capture + print Z
+      // 1 = manual capture + print Z
+      // 2 = digital capture only (no Z)
+      // 3 = manual capture only (no Z)
+      // 4 = manual or digital capture + print Z
       return sendJSON(res, { 
         success: true, 
         data: {
@@ -1869,7 +1884,7 @@ const server = http.createServer(async (req, res) => {
           email: user.email,
           ccode: user.ccode,
           admin: toBool(user.admin),
-          supervisor: toBool(user.supervisor),
+          supervisor: toSupervisorMode(user.supervisor),
           dcode: user.dcode,
           groupid: user.groupid,
           depart: user.depart

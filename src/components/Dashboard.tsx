@@ -45,6 +45,7 @@ interface DashboardProps {
   onStartSelling: (route: Route, session: Session) => void;
   onLogout: () => void;
   onOpenRecentReceipts?: () => void;
+  allowZReport?: boolean; // From supervisor mode - controls Z report visibility
 }
 
 export const Dashboard = ({
@@ -56,6 +57,7 @@ export const Dashboard = ({
   onStartSelling,
   onLogout,
   onOpenRecentReceipts,
+  allowZReport = true,
 }: DashboardProps) => {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -266,9 +268,13 @@ export const Dashboard = ({
                   <button onClick={() => { navigate('/settings'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Settings</button>
                   <hr className="my-0.5 border-gray-200" />
                   <button onClick={async () => { setMenuOpen(false); await syncAllData(false, true); }} disabled={isSyncing} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100 disabled:opacity-50">{isSyncing ? 'Syncing...' : 'Sync Data'}</button>
-                  <button onClick={() => { navigate('/z-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Z Report</button>
-                  <button onClick={() => { navigate('/z-report?generate=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Generate Z Report</button>
-                  <button onClick={() => { navigate('/z-report?reprint=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Reprint Z Report</button>
+                  {allowZReport && (
+                    <>
+                      <button onClick={() => { navigate('/z-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Z Report</button>
+                      <button onClick={() => { navigate('/z-report?generate=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Generate Z Report</button>
+                      <button onClick={() => { navigate('/z-report?reprint=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Reprint Z Report</button>
+                    </>
+                  )}
                   <hr className="my-0.5 border-gray-200" />
                   <button onClick={() => { navigate('/periodic-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Periodic Report</button>
                   <button onClick={() => { navigate('/periodic-report?sync=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Sync Periodic Report</button>
