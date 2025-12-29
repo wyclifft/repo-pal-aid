@@ -1064,6 +1064,20 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
   }
 };
 
+// Helper to center text within a given width
+const centerText = (text: string, width: number): string => {
+  if (text.length >= width) return text.substring(0, width);
+  const padding = Math.floor((width - text.length) / 2);
+  return ' '.repeat(padding) + text;
+};
+
+// Helper to format label:value with proper alignment
+const formatLine = (label: string, value: string, width: number): string => {
+  const maxValueLen = width - label.length - 1;
+  const truncatedValue = value.length > maxValueLen ? value.substring(0, maxValueLen) : value;
+  return label + truncatedValue.padStart(width - label.length);
+};
+
 export const printReceipt = async (data: {
   companyName?: string;
   farmerName: string;
@@ -1095,46 +1109,56 @@ export const printReceipt = async (data: {
   });
 
   // 58mm thermal paper = 32 characters per line
-  const LINE_WIDTH = 32;
-  const separator = '-'.repeat(LINE_WIDTH);
+  const W = 32;
+  const sep = '-'.repeat(W);
 
-  // Build collections text - numbered list with transrefno and weight
+  // Build collections text - format: "1: REF12345    0.1"
   let collectionsText = '';
   data.collections.forEach((col) => {
-    const line = `${col.index}: ${col.transrefno || '-'}`;
+    const prefix = `${col.index}: ${col.transrefno || '-'}`;
     const weight = col.weight.toFixed(1);
-    collectionsText += `${line.padEnd(LINE_WIDTH - weight.length - 1)} ${weight}\n`;
+    const spaces = W - prefix.length - weight.length;
+    collectionsText += prefix + ' '.repeat(Math.max(1, spaces)) + weight + '\n';
   });
 
-  // Build footer info
-  let footerText = '';
+  // Build receipt with proper 32-char alignment
+  let receipt = '';
+  
+  // Header - centered
+  receipt += centerText(companyName, W) + '\n';
+  receipt += centerText('CUSTOMER DELIVERY RECEIPT', W) + '\n';
+  receipt += '\n';
+  
+  // Member info - left aligned labels, right aligned values
+  receipt += formatLine('Member NO     ', '#' + data.farmerId, W) + '\n';
+  receipt += formatLine('Member Name   ', data.farmerName, W) + '\n';
+  receipt += formatLine('Reference NO  ', data.uploadRefNo || '', W) + '\n';
+  receipt += formatLine('Date          ', formattedDate + ' ' + formattedTime, W) + '\n';
+  receipt += '\n';
+  
+  // Collections list
+  receipt += collectionsText;
+  receipt += '\n';
+  
+  // Total
+  const totalStr = totalWeight.toFixed(2);
+  receipt += formatLine('Total Weight[Kgs]', totalStr, W) + '\n';
+  receipt += sep + '\n';
+  
+  // Footer info
   if (data.cumulativeFrequency !== undefined) {
-    footerText += `Cumulative:   ${data.cumulativeFrequency}\n`;
+    receipt += formatLine('Cumulative    ', String(data.cumulativeFrequency), W) + '\n';
   }
   if (data.locationCode) {
-    footerText += `Location      ${data.locationCode}\n`;
+    receipt += formatLine('Location      ', data.locationCode, W) + '\n';
   }
   if (data.locationName) {
-    footerText += `Location Name ${data.locationName}\n`;
+    receipt += formatLine('Location Name ', data.locationName, W) + '\n';
   }
-  footerText += `Member Region ${data.route || ''}\n`;
-  footerText += `Clerk Name    ${data.collectorName}\n`;
-  footerText += `Session       ${data.session || ''}\n`;
-  footerText += `${formattedDate} at ${formattedTime}\n`;
+  receipt += formatLine('Member Region ', data.route || '', W) + '\n';
+  receipt += formatLine('Clerk Name    ', data.collectorName, W) + '\n';
+  receipt += formatLine('Session       ', data.session || '', W) + '\n';
+  receipt += formatLine('', formattedDate + ' ' + formattedTime, W) + '\n';
 
-  const receiptText = `
-    ${companyName}
- CUSTOMER DELIVERY RECEIPT
-
-Member NO       #${data.farmerId}
-Member Name     ${data.farmerName}
-Reference NO    ${data.uploadRefNo || ''}
-Date            ${formattedDate} ${formattedTime}
-
-${collectionsText}
-Total Weight [Kgs]   ${totalWeight.toFixed(2)}
-${separator}
-${footerText}`;
-
-  return printToBluetoothPrinter(receiptText);
+  return printToBluetoothPrinter(receipt);
 };
