@@ -891,6 +891,9 @@ const Index = () => {
   }
 
   // Collection View - render Buy or Sell screen based on mode
+  // Get capture mode from supervisor setting
+  const captureMode = getCaptureMode(currentUser?.supervisor);
+  
   // For multOpt=0: Allow unlimited weight captures, only disable Submit after first successful submission
   const cleanFarmerIdForCheck = farmerId?.replace(/^#/, '').trim() || '';
   
@@ -930,29 +933,6 @@ const Index = () => {
           }}
           blacklistedFarmerIds={blacklistedFarmerIds}
           onFarmersLoaded={handleFarmersLoaded}
-          captureDisabled={captureDisabledForSelectedFarmer}
-          submitDisabled={submitDisabledForSelectedFarmer}
-          allowDigital={captureMode.allowDigital}
-          allowManual={captureMode.allowManual}
-        />
-      ) : (
-        <SellProduceScreen
-          route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
-          session={activeSession!}
-          userName={currentUser?.user_id || 'User'}
-          weight={weight}
-          capturedCollections={capturedCollections}
-          onBack={handleBackToDashboard}
-          onCapture={handleCapture}
-          onSubmit={handleSubmit}
-          onSelectFarmer={handleSelectFarmer}
-          onClearFarmer={handleClearFarmer}
-          selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
-          todayWeight={0}
-          onManualWeightChange={(w) => {
-            setWeight(w);
-            setEntryType('manual');
-          }}
           captureDisabled={captureDisabledForSelectedFarmer}
           submitDisabled={submitDisabledForSelectedFarmer}
           allowDigital={captureMode.allowDigital}
