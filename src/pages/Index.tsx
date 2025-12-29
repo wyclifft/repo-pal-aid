@@ -958,6 +958,8 @@ const Index = () => {
         showCumulativeFrequency={showCumulative}
         printCopies={printCopies}
         routeLabel={routeLabel}
+        locationCode={selectedRouteCode}
+        locationName={routeName}
       />
 
       {/* Reprint Modal */}
@@ -968,6 +970,7 @@ const Index = () => {
         companyName={companyName}
         printCopies={printCopies}
         routeLabel={routeLabel}
+        locationName={routeName}
       />
     </>
   );

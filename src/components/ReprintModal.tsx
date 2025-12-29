@@ -20,11 +20,12 @@ interface ReprintModalProps {
   companyName: string;
   printCopies?: number;
   routeLabel?: string;
+  locationName?: string;
 }
 
 const ITEMS_PER_PAGE = 5;
 
-export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies = 1, routeLabel = 'Route' }: ReprintModalProps) => {
+export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies = 1, routeLabel = 'Route', locationName }: ReprintModalProps) => {
   const [currentPage, setCurrentPage] = useState(1);
   
   const totalPages = Math.ceil(receipts.length / ITEMS_PER_PAGE);
@@ -53,6 +54,7 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
       uploadRefNo: firstReceipt.uploadrefno || firstReceipt.reference_no,
       collectorName: firstReceipt.clerk_name,
       collections,
+      locationName: locationName || firstReceipt.route,
       collectionDate: collectionDateTime
     });
 
