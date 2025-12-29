@@ -357,8 +357,22 @@ const Index = () => {
       return;
     }
     
-    // Enforce autow: restrict to digital scale only when enabled
-    if (autoWeightOnly && entryType === 'manual') {
+    // Get supervisor mode capture restrictions
+    const supervisorMode = getCaptureMode(currentUser?.supervisor);
+    
+    // Enforce supervisor mode restrictions
+    if (entryType === 'manual' && !supervisorMode.allowManual) {
+      toast.error('Manual weight entry is disabled by supervisor settings. Please use the digital scale.');
+      return;
+    }
+    if (entryType === 'scale' && !supervisorMode.allowDigital) {
+      toast.error('Digital scale is disabled by supervisor settings. Please enter weight manually.');
+      return;
+    }
+    
+    // Enforce autow (psettings): restrict to digital scale only when enabled
+    // This only applies if supervisor allows digital capture
+    if (autoWeightOnly && entryType === 'manual' && supervisorMode.allowDigital) {
       toast.error('Manual weight entry is disabled. Please use the digital scale.');
       return;
     }
@@ -865,6 +879,9 @@ const Index = () => {
   // Get capture mode from user's supervisor setting
   const captureMode = getCaptureMode(currentUser?.supervisor);
   
+  // Debug logging for supervisor mode
+  console.log('📋 Dashboard - User supervisor value:', currentUser?.supervisor, '| Capture mode:', captureMode);
+  
   return (
     <>
       <Dashboard
@@ -893,6 +910,9 @@ const Index = () => {
   // Collection View - render Buy or Sell screen based on mode
   // Get capture mode from supervisor setting
   const captureMode = getCaptureMode(currentUser?.supervisor);
+  
+  // Debug logging for supervisor mode in collection view
+  console.log('📋 Collection View - User supervisor value:', currentUser?.supervisor, '| Capture mode:', captureMode);
   
   // For multOpt=0: Allow unlimited weight captures, only disable Submit after first successful submission
   const cleanFarmerIdForCheck = farmerId?.replace(/^#/, '').trim() || '';

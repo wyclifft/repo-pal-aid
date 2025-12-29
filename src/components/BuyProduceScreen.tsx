@@ -74,8 +74,8 @@ export const BuyProduceScreen = ({
   
   // Log when capture mode changes for debugging
   useEffect(() => {
-    console.log('📱 BuyProduceScreen - manualDisabled:', manualDisabled, 'digitalDisabled:', digitalDisabled, 'psettingsAutoWeightOnly:', psettingsAutoWeightOnly);
-  }, [manualDisabled, digitalDisabled, psettingsAutoWeightOnly]);
+    console.log('📱 BuyProduceScreen - Supervisor mode:', { allowDigital, allowManual }, '| manualDisabled:', manualDisabled, 'digitalDisabled:', digitalDisabled, 'psettingsAutoWeightOnly:', psettingsAutoWeightOnly);
+  }, [allowDigital, allowManual, manualDisabled, digitalDisabled, psettingsAutoWeightOnly]);
 
   // Load cached farmers with chkroute logic
   // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
