@@ -1069,62 +1069,72 @@ export const printReceipt = async (data: {
   farmerName: string;
   farmerId: string;
   route?: string;
-  routeLabel?: string; // Dynamic label from psettings.rdesc
+  routeLabel?: string;
   session?: string;
-  uploadRefNo?: string; // Shared reference for all captures (milkID) - displayed in header
+  uploadRefNo?: string;
   collectorName: string;
   collections: Array<{
-    time: string;
+    index: number;
     weight: number;
-    transrefno?: string; // Unique transaction reference per capture
+    transrefno?: string;
   }>;
-  cumulativeFrequency?: number; // Monthly cumulative frequency (if enabled)
+  cumulativeFrequency?: number;
+  locationCode?: string;
+  locationName?: string;
+  collectionDate?: Date;
 }): Promise<{ success: boolean; error?: string }> => {
   const companyName = data.companyName || 'DAIRY COLLECTION';
   const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
-  const currentDate = new Date().toLocaleDateString('en-GB');
+  
+  const dateObj = data.collectionDate || new Date();
+  const formattedDate = dateObj.toLocaleDateString('en-CA'); // YYYY-MM-DD
+  const formattedTime = dateObj.toLocaleTimeString('en-GB', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    second: '2-digit'
+  });
 
   // 58mm thermal paper = 32 characters per line
   const LINE_WIDTH = 32;
   const separator = '-'.repeat(LINE_WIDTH);
 
-  // Build collections text - show full transrefno per line
+  // Build collections text - numbered list with transrefno and weight
   let collectionsText = '';
-  
-  // Always show full transrefno per capture
   data.collections.forEach((col) => {
-    const transRef = (col.transrefno || '').padEnd(13);
-    const time = col.time.substring(0, 5).padEnd(6);
-    const weight = col.weight.toFixed(1).padStart(5);
-    collectionsText += `${transRef}${time}${weight}\n`;
+    const line = `${col.index}: ${col.transrefno || '-'}`;
+    const weight = col.weight.toFixed(1);
+    collectionsText += `${line.padEnd(LINE_WIDTH - weight.length - 1)} ${weight}\n`;
   });
 
-  // Build cumulative frequency line if provided
-  const frequencyLine = data.cumulativeFrequency !== undefined 
-    ? `Monthly Freq: ${data.cumulativeFrequency}\n` 
-    : '';
-
-  // Header for collections table - always show full transrefno
-  const collectionsHeader = 'TRANS REF    TIME LITERS';
+  // Build footer info
+  let footerText = '';
+  if (data.cumulativeFrequency !== undefined) {
+    footerText += `Cumulative:   ${data.cumulativeFrequency}\n`;
+  }
+  if (data.locationCode) {
+    footerText += `Location      ${data.locationCode}\n`;
+  }
+  if (data.locationName) {
+    footerText += `Location Name ${data.locationName}\n`;
+  }
+  footerText += `Member Region ${data.route || ''}\n`;
+  footerText += `Clerk Name    ${data.collectorName}\n`;
+  footerText += `Session       ${data.session || ''}\n`;
+  footerText += `${formattedDate} at ${formattedTime}\n`;
 
   const receiptText = `
-      ${companyName}
+    ${companyName}
+ CUSTOMER DELIVERY RECEIPT
+
+Member NO       #${data.farmerId}
+Member Name     ${data.farmerName}
+Reference NO    ${data.uploadRefNo || ''}
+Date            ${formattedDate} ${formattedTime}
+
+${collectionsText}
+Total Weight [Kgs]   ${totalWeight.toFixed(2)}
 ${separator}
-Farmer: ${data.farmerId}
-${data.farmerName}
-${data.route ? `${data.routeLabel || 'Route'}: ${data.route}` : ''}${data.session ? ` | ${data.session}` : ''}
-Collector: ${data.collectorName}
-Date: ${currentDate}
-${data.uploadRefNo ? `Ref: ${data.uploadRefNo}` : ''}
-${frequencyLine}${separator}
-${collectionsHeader}
-${separator}
-${collectionsText}${separator}
-TOTAL: ${totalWeight.toFixed(1)} L
-${separator}
-Thank you!
-${separator}
-`;
+${footerText}`;
 
   return printToBluetoothPrinter(receiptText);
 };

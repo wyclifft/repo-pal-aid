@@ -1,6 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { MilkCollection } from '@/lib/supabase';
-import { FileText, Printer, X } from 'lucide-react';
+import { Printer, X } from 'lucide-react';
 import { printReceipt } from '@/services/bluetooth';
 import { toast } from 'sonner';
 
@@ -12,8 +12,10 @@ interface ReceiptModalProps {
   onPrint?: () => void;
   cumulativeFrequency?: number;
   showCumulativeFrequency?: boolean;
-  printCopies?: number; // Number of copies to print (from psettings.printoptions)
-  routeLabel?: string; // Dynamic label from psettings.rdesc
+  printCopies?: number;
+  routeLabel?: string;
+  locationCode?: string;
+  locationName?: string;
 }
 
 export const ReceiptModal = ({ 
@@ -25,21 +27,21 @@ export const ReceiptModal = ({
   cumulativeFrequency,
   showCumulativeFrequency = false,
   printCopies = 1,
-  routeLabel = 'Route'
+  routeLabel = 'Route',
+  locationCode,
+  locationName
 }: ReceiptModalProps) => {
   const handlePrint = async () => {
     if (receipts.length === 0) return;
 
     const firstReceipt = receipts[0];
+    const collectionDateTime = new Date(firstReceipt.collection_date);
     
-    // Format collections for printing - now includes transrefno per capture
-    const collections = receipts.map(r => ({
-      time: new Date(r.collection_date).toLocaleTimeString('en-GB', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      }),
+    // Format collections for printing
+    const collections = receipts.map((r, index) => ({
+      index: index + 1,
       weight: r.weight,
-      transrefno: r.reference_no // Each capture's unique transaction reference
+      transrefno: r.reference_no
     }));
 
     // Print multiple copies based on printoptions setting
@@ -49,19 +51,22 @@ export const ReceiptModal = ({
         farmerName: firstReceipt.farmer_name,
         farmerId: firstReceipt.farmer_id,
         route: firstReceipt.route,
-        routeLabel: routeLabel, // Dynamic label from psettings.rdesc
+        routeLabel: routeLabel,
         session: firstReceipt.session,
-        uploadRefNo: firstReceipt.uploadrefno || firstReceipt.reference_no, // Shared milkID for all captures
+        uploadRefNo: firstReceipt.uploadrefno || firstReceipt.reference_no,
         collectorName: firstReceipt.clerk_name,
         collections,
-        cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined
+        cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined,
+        locationCode: locationCode,
+        locationName: locationName,
+        collectionDate: collectionDateTime
       });
 
       if (!result.success) {
         if (result.error?.includes('No printer connected')) {
           toast.info('No Bluetooth printer connected. Opening browser print...');
           window.print();
-          break; // Browser print handles copies itself
+          break;
         } else {
           toast.error(result.error || 'Failed to print receipt');
           break;
@@ -70,13 +75,11 @@ export const ReceiptModal = ({
         toast.success(`Receipt printed (${printCopies} ${printCopies === 1 ? 'copy' : 'copies'})`);
       }
       
-      // Small delay between copies
       if (copy < printCopies - 1) {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
     
-    // Always save receipt for reprinting
     onPrint?.();
   };
 
@@ -84,78 +87,101 @@ export const ReceiptModal = ({
   
   const firstReceipt = receipts[0];
   const totalWeight = receipts.reduce((sum, r) => sum + r.weight, 0);
+  const collectionDateTime = new Date(firstReceipt.collection_date);
+  const formattedDate = collectionDateTime.toLocaleDateString('en-CA'); // YYYY-MM-DD
+  const formattedTime = collectionDateTime.toLocaleTimeString('en-GB', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    second: '2-digit'
+  });
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader className="pb-2">
-          <DialogTitle className="text-lg font-semibold">Receipt</DialogTitle>
+      <DialogContent className="max-w-sm font-mono text-sm">
+        <DialogHeader className="pb-0">
+          <DialogTitle className="sr-only">Receipt</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3">
-          {/* Company Name Header */}
-          <div className="text-center border-b pb-2">
+        <div className="space-y-2">
+          {/* Header */}
+          <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base">{companyName}</h3>
+            <p className="text-xs text-muted-foreground">CUSTOMER DELIVERY RECEIPT</p>
           </div>
 
-          {/* Compact Farmer Info */}
-          <div className="text-sm space-y-1">
+          {/* Member Info */}
+          <div className="space-y-0.5 text-xs">
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Farmer:</span>
-              <span className="font-semibold">{firstReceipt.farmer_id}</span>
+              <span className="text-muted-foreground">Member NO</span>
+              <span className="font-semibold">#{firstReceipt.farmer_id}</span>
             </div>
-            <div className="font-medium">{firstReceipt.farmer_name}</div>
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{routeLabel}: {firstReceipt.route}</span>
-              <span>{firstReceipt.session}</span>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Member Name</span>
+              <span className="font-medium">{firstReceipt.farmer_name}</span>
             </div>
-            <div className="flex justify-between text-xs text-muted-foreground mt-1">
-              <span>Collector:</span>
-              <span className="font-medium">{firstReceipt.clerk_name}</span>
-            </div>
-            {/* Upload Reference (milkID) - shared by all captures for this farmer */}
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Ref No:</span>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Reference NO</span>
               <span className="font-medium">{firstReceipt.uploadrefno || firstReceipt.reference_no}</span>
             </div>
-            {/* Cumulative Frequency - only shown when enabled */}
-            {showCumulativeFrequency && cumulativeFrequency !== undefined && (
-              <div className="flex justify-between text-xs text-muted-foreground border-t pt-1 mt-1">
-                <span>Monthly Frequency:</span>
-                <span className="font-medium text-primary">{cumulativeFrequency}</span>
-              </div>
-            )}
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Date</span>
+              <span className="font-medium">{formattedDate} {formattedTime}</span>
+            </div>
           </div>
 
-          {/* Compact Collections Table - shows full transrefno per capture */}
-          <div className="border rounded-md overflow-hidden">
-            <div className="bg-muted px-2 py-1 grid grid-cols-3 text-xs font-medium">
-              <span>Trans Ref</span>
-              <span>Time</span>
-              <span className="text-right">Liters</span>
-            </div>
-            <div className="max-h-[30vh] overflow-y-auto divide-y">
-              {receipts.map((receipt) => (
-                <div key={receipt.reference_no} className="px-2 py-1.5 grid grid-cols-3 text-sm items-center">
-                  <span className="text-xs font-mono" title={receipt.reference_no}>
-                    {receipt.reference_no || '-'}
-                  </span>
-                  <span className="text-xs">
-                    {new Date(receipt.collection_date).toLocaleTimeString('en-GB', { 
-                      hour: '2-digit', 
-                      minute: '2-digit' 
-                    })}
-                  </span>
-                  <span className="text-right font-medium">{receipt.weight}</span>
-                </div>
-              ))}
-            </div>
+          {/* Collections List */}
+          <div className="border-t border-b border-dashed py-2 space-y-1">
+            {receipts.map((receipt, index) => (
+              <div key={receipt.reference_no} className="flex justify-between text-xs">
+                <span>{index + 1}: {receipt.reference_no}</span>
+                <span className="font-medium">{receipt.weight.toFixed(1)}</span>
+              </div>
+            ))}
           </div>
           
-          {/* Compact Total */}
-          <div className="bg-primary/10 rounded-md px-3 py-2 flex justify-between items-center">
-            <span className="font-semibold">Total:</span>
-            <span className="text-xl font-bold">{totalWeight.toFixed(1)} Kg</span>
+          {/* Total Weight */}
+          <div className="border-b border-dashed pb-2">
+            <div className="flex justify-between text-sm font-bold">
+              <span>Total Weight [Kgs]</span>
+              <span>{totalWeight.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* Footer Info */}
+          <div className="space-y-0.5 text-xs">
+            {showCumulativeFrequency && cumulativeFrequency !== undefined && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Cumulative:</span>
+                <span className="font-medium">{cumulativeFrequency}</span>
+              </div>
+            )}
+            {locationCode && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Location</span>
+                <span className="font-medium">{locationCode}</span>
+              </div>
+            )}
+            {locationName && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Location Name</span>
+                <span className="font-medium">{locationName}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Member Region</span>
+              <span className="font-medium">{firstReceipt.route}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Clerk Name</span>
+              <span className="font-medium">{firstReceipt.clerk_name}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Session</span>
+              <span className="font-medium">{firstReceipt.session}</span>
+            </div>
+            <div className="text-center text-muted-foreground pt-1 border-t border-dashed mt-2">
+              {formattedDate} at {formattedTime}
+            </div>
           </div>
         </div>
 
