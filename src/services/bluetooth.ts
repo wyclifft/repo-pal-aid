@@ -1,4 +1,4 @@
-import { BleClient, BleDevice, numbersToDataView, numberToUUID } from '@capacitor-community/bluetooth-le';
+import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetooth-le';
 import { Capacitor } from '@capacitor/core';
 import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
 
@@ -11,24 +11,34 @@ if (typeof window !== 'undefined') {
 
 interface BluetoothScale {
   device: BleDevice | any | null;
+  deviceId: string | null;
+  serviceUuid: string | null;
   characteristic: string | any | null;
   type: ScaleType;
+  isConnected: boolean;
 }
 
 let scale: BluetoothScale = {
   device: null,
+  deviceId: null,
+  serviceUuid: null,
   characteristic: null,
   type: 'Unknown',
+  isConnected: false,
 };
 
 interface BluetoothPrinter {
   device: BleDevice | any | null;
-  characteristic: string | any | null;
+  deviceId: string | null;
+  characteristic: { serviceUuid: string; charUuid: string } | null;
+  isConnected: boolean;
 }
 
 let printer: BluetoothPrinter = {
   device: null,
+  deviceId: null,
   characteristic: null,
+  isConnected: false,
 };
 
 // Store device info for quick reconnect
@@ -97,21 +107,116 @@ export const clearStoredPrinter = () => {
 
 const SERVICE_UUID_HC05 = numberToUUID(0xffe0);
 const SERVICE_UUID_HM10 = numberToUUID(0xfee7);
-// Additional common scale service UUIDs
+
 const GENERIC_SCALE_SERVICES = [
-  numberToUUID(0xffe0), // HC-05
-  numberToUUID(0xfee7), // HM-10
-  numberToUUID(0x1800), // Generic Access
-  numberToUUID(0x180a), // Device Information
-  '0000fff0-0000-1000-8000-00805f9b34fb', // Common custom service
-  '49535343-fe7d-4ae5-8fa9-9fafd205e455', // Microchip Transparent UART
+  numberToUUID(0xffe0),
+  numberToUUID(0xfee7),
+  numberToUUID(0x1800),
+  numberToUUID(0x180a),
+  '0000fff0-0000-1000-8000-00805f9b34fb',
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455',
 ];
+
+// Clear scale state and broadcast disconnection
+const clearScaleState = () => {
+  scale = {
+    device: null,
+    deviceId: null,
+    serviceUuid: null,
+    characteristic: null,
+    type: 'Unknown',
+    isConnected: false,
+  };
+  broadcastScaleConnectionChange(false);
+};
+
+// Clear printer state and broadcast disconnection
+const clearPrinterState = () => {
+  printer = {
+    device: null,
+    deviceId: null,
+    characteristic: null,
+    isConnected: false,
+  };
+  broadcastPrinterConnectionChange(false);
+};
+
+// Broadcast connection state change events
+export const broadcastScaleConnectionChange = (connected: boolean) => {
+  console.log(`📡 Broadcasting scale connection: ${connected}`);
+  window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
+};
+
+export const broadcastPrinterConnectionChange = (connected: boolean) => {
+  console.log(`📡 Broadcasting printer connection: ${connected}`);
+  window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected } }));
+};
+
+// Verify if scale is actually connected by checking BLE state
+export const verifyScaleConnection = async (): Promise<boolean> => {
+  if (!scale.deviceId || !scale.isConnected) {
+    return false;
+  }
+  
+  if (Capacitor.isNativePlatform()) {
+    try {
+      // Try to get services - this will fail if disconnected
+      await BleClient.getServices(scale.deviceId);
+      return true;
+    } catch (error) {
+      console.warn('⚠️ Scale connection verification failed:', error);
+      clearScaleState();
+      return false;
+    }
+  }
+  
+  // For web, check gatt connection
+  if (scale.device?.gatt?.connected) {
+    return true;
+  }
+  
+  clearScaleState();
+  return false;
+};
+
+// Verify if printer is actually connected
+export const verifyPrinterConnection = async (): Promise<boolean> => {
+  if (!printer.deviceId || !printer.isConnected) {
+    return false;
+  }
+  
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await BleClient.getServices(printer.deviceId);
+      return true;
+    } catch (error) {
+      console.warn('⚠️ Printer connection verification failed:', error);
+      clearPrinterState();
+      return false;
+    }
+  }
+  
+  if (printer.device?.gatt?.connected) {
+    return true;
+  }
+  
+  clearPrinterState();
+  return false;
+};
 
 export const connectBluetoothScale = async (
   onWeightUpdate: (weight: number, scaleType: ScaleType) => void
 ): Promise<{ success: boolean; type: ScaleType; error?: string }> => {
   try {
-    // Use native Capacitor Bluetooth on mobile, Web Bluetooth on web
+    // Disconnect existing connection first
+    if (scale.isConnected && scale.deviceId) {
+      try {
+        await disconnectBluetoothScale(false);
+      } catch (e) {
+        console.warn('Failed to disconnect existing scale:', e);
+      }
+    }
+
     if (Capacitor.isNativePlatform()) {
       await BleClient.initialize();
       
@@ -123,24 +228,19 @@ export const connectBluetoothScale = async (
 
       console.log(`📱 Device selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
       
-      await BleClient.connect(device.deviceId);
+      // Connect with disconnect callback
+      await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
+        console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
+        clearScaleState();
+      });
       console.log('✅ Connected to device');
 
       let scaleType: ScaleType = 'Unknown';
       let serviceUuid = '';
       let characteristicUuid = '';
 
-      // Get all services and log them for diagnostics
       const services = await BleClient.getServices(device.deviceId);
-      console.log(`📋 Found ${services.length} services:`);
-      services.forEach((service, index) => {
-        console.log(`  Service ${index + 1}: ${service.uuid}`);
-        console.log(`    Characteristics: ${service.characteristics.length}`);
-        service.characteristics.forEach((char, charIndex) => {
-          console.log(`      Char ${charIndex + 1}: ${char.uuid}`);
-          console.log(`        Properties: read=${char.properties.read}, write=${char.properties.write}, notify=${char.properties.notify}`);
-        });
-      });
+      console.log(`📋 Found ${services.length} services`);
 
       // Try HC-05 first
       const hc05Service = services.find(s => 
@@ -174,11 +274,10 @@ export const connectBluetoothScale = async (
         }
       }
 
-      // Try any service with notify characteristic (for generic scales like ACS-SB1)
+      // Try generic discovery
       if (!serviceUuid) {
         console.log('⚠️ Standard services not found, trying generic discovery...');
         for (const service of services) {
-          // Skip standard Bluetooth services
           if (service.uuid.toLowerCase().includes('1800') || 
               service.uuid.toLowerCase().includes('1801') ||
               service.uuid.toLowerCase().includes('180a')) {
@@ -191,7 +290,6 @@ export const connectBluetoothScale = async (
             characteristicUuid = notifyChar.uuid;
             scaleType = 'Unknown';
             console.log(`✅ Found generic scale service: ${service.uuid}`);
-            console.log(`   Using characteristic: ${characteristicUuid}`);
             break;
           }
         }
@@ -199,8 +297,8 @@ export const connectBluetoothScale = async (
 
       if (!serviceUuid || !characteristicUuid) {
         console.error('❌ Could not find any compatible scale service');
-        console.error('Available services:', services.map(s => s.uuid).join(', '));
-        throw new Error('Could not find compatible Bluetooth scale service. Check console for available services.');
+        await BleClient.disconnect(device.deviceId);
+        throw new Error('Could not find compatible Bluetooth scale service.');
       }
 
       console.log(`📡 Starting notifications on ${serviceUuid}/${characteristicUuid}`);
@@ -211,23 +309,19 @@ export const connectBluetoothScale = async (
         characteristicUuid,
         (value) => {
           const text = new TextDecoder().decode(value);
-          console.log(`📊 Raw scale data: "${text}" (${value.byteLength} bytes)`);
+          console.log(`📊 Raw scale data: "${text}"`);
           
-          // Try multiple parsing strategies
           let parsed: number | null = null;
           
-          // Strategy 1: Look for decimal number (e.g., "12.34")
           const decimalMatch = text.match(/(\d+\.\d+)/);
           if (decimalMatch) {
             parsed = parseFloat(decimalMatch[1]);
           }
           
-          // Strategy 2: Look for integer number (e.g., "1234" -> 12.34)
           if (!parsed || isNaN(parsed)) {
             const intMatch = text.match(/(\d+)/);
             if (intMatch) {
               const intValue = parseInt(intMatch[1]);
-              // Many scales send weight in grams, convert to kg
               parsed = intValue > 1000 ? intValue / 1000 : intValue;
             }
           }
@@ -235,24 +329,27 @@ export const connectBluetoothScale = async (
           if (parsed && !isNaN(parsed) && parsed > 0) {
             console.log(`✅ Parsed weight: ${parsed} kg`);
             onWeightUpdate(parsed, scaleType);
-          } else {
-            console.warn(`⚠️ Could not parse weight from: "${text}"`);
           }
         }
       );
 
-      scale = { device, characteristic: characteristicUuid, type: scaleType };
+      // Update scale state
+      scale = { 
+        device, 
+        deviceId: device.deviceId,
+        serviceUuid,
+        characteristic: characteristicUuid, 
+        type: scaleType,
+        isConnected: true,
+      };
       
-      // Save device info for quick reconnect
       saveDeviceInfo(device.deviceId, device.name || 'Unknown Scale', scaleType);
-      
-      // Broadcast connection state change
-      window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true } }));
+      broadcastScaleConnectionChange(true);
       
       console.log('✅ Scale connection successful');
       return { success: true, type: scaleType };
     } else {
-      // Web Bluetooth fallback for browser
+      // Web Bluetooth fallback
       const device = await (navigator as any).bluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices: [0xffe0, 0xfee7],
@@ -273,7 +370,7 @@ export const connectBluetoothScale = async (
       const characteristics = await service.getCharacteristics();
       const characteristic = characteristics[0];
 
-      const handleScaleData = (event: Event) => {
+      characteristic.addEventListener('characteristicvaluechanged', (event: Event) => {
         const target = event.target as any;
         const text = new TextDecoder().decode(target.value);
         const match = text.match(/(\d+\.\d+)/);
@@ -283,26 +380,30 @@ export const connectBluetoothScale = async (
             onWeightUpdate(parsed, scaleType);
           }
         }
-      };
-
-      characteristic.addEventListener('characteristicvaluechanged', handleScaleData);
+      });
       await characteristic.startNotifications();
 
-      scale = { device, characteristic, type: scaleType };
+      // Handle disconnect for web
+      device.addEventListener('gattserverdisconnected', () => {
+        console.log('⚠️ Scale disconnected (Web Bluetooth)');
+        clearScaleState();
+      });
+
+      scale = { 
+        device, 
+        deviceId: device.id,
+        serviceUuid: null,
+        characteristic, 
+        type: scaleType,
+        isConnected: true,
+      };
       
-      // Broadcast connection state change for web
-      window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true } }));
-      
+      broadcastScaleConnectionChange(true);
       return { success: true, type: scaleType };
     }
   } catch (err) {
     console.error('❌ Bluetooth connection error:', err);
-    console.error('Error details:', {
-      name: err instanceof Error ? err.name : 'Unknown',
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined
-    });
-    
+    clearScaleState();
     return {
       success: false,
       type: 'Unknown',
@@ -313,25 +414,35 @@ export const connectBluetoothScale = async (
 
 export const disconnectBluetoothScale = async (clearSaved: boolean = false): Promise<void> => {
   try {
-    if (scale.device) {
+    if (scale.deviceId) {
       if (Capacitor.isNativePlatform()) {
-        await BleClient.disconnect(scale.device.deviceId);
-      } else if ('bluetooth' in navigator) {
-        if (scale.device.gatt?.connected) {
-          scale.device.gatt.disconnect();
+        try {
+          // Stop notifications first
+          if (scale.serviceUuid && scale.characteristic) {
+            await BleClient.stopNotifications(scale.deviceId, scale.serviceUuid, scale.characteristic);
+          }
+        } catch (e) {
+          console.warn('Failed to stop scale notifications:', e);
         }
+        
+        try {
+          await BleClient.disconnect(scale.deviceId);
+        } catch (e) {
+          console.warn('Failed to disconnect scale:', e);
+        }
+      } else if ('bluetooth' in navigator && scale.device?.gatt?.connected) {
+        scale.device.gatt.disconnect();
       }
-      scale = { device: null, characteristic: null, type: 'Unknown' };
-      
-      // Broadcast disconnection
-      window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: false } }));
-      
-      if (clearSaved) {
-        clearStoredDevice();
-      }
+    }
+    
+    clearScaleState();
+    
+    if (clearSaved) {
+      clearStoredDevice();
     }
   } catch (error) {
     console.error('Failed to disconnect from scale:', error);
+    clearScaleState();
     throw error;
   }
 };
@@ -350,20 +461,19 @@ export const quickReconnect = async (
         
         console.log(`🔄 Quick reconnecting to scale: ${deviceId} (attempt ${attempt}/${retries})`);
         
-        // Try to disconnect first if there's a stale connection
+        // Disconnect any stale connection
         try {
           await BleClient.disconnect(deviceId);
           console.log('🔌 Disconnected stale scale connection');
         } catch {
-          // Ignore disconnect errors - device may not be connected
+          // Ignore - device may not be connected
         }
         
-        // Small delay before reconnect
-        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        await new Promise(resolve => setTimeout(resolve, 300 * attempt));
         
         await BleClient.connect(deviceId, (disconnectedDeviceId) => {
           console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
-          scale = { device: null, characteristic: null, type: 'Unknown' };
+          clearScaleState();
         });
         
         const storedInfo = getStoredDeviceInfo();
@@ -378,13 +488,10 @@ export const quickReconnect = async (
         const services = await BleClient.getServices(deviceId);
         console.log(`📋 Scale has ${services.length} services`);
         
-        // Try to find known scale services first
         const targetServiceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
         let service = services.find(s => s.uuid.toLowerCase().includes(targetServiceUuid.toLowerCase()));
         
-        // If not found, try generic discovery
         if (!service) {
-          console.log('⚠️ Standard service not found, trying generic discovery...');
           for (const svc of services) {
             if (svc.uuid.toLowerCase().includes('1800') || 
                 svc.uuid.toLowerCase().includes('1801') ||
@@ -413,9 +520,6 @@ export const quickReconnect = async (
           characteristicUuid,
           (value) => {
             const text = new TextDecoder().decode(value);
-            console.log(`📊 Raw scale data: "${text}"`);
-            
-            // Try multiple parsing strategies
             let parsed: number | null = null;
             
             const decimalMatch = text.match(/(\d+\.\d+)/);
@@ -437,16 +541,19 @@ export const quickReconnect = async (
           }
         );
 
-        const device = { deviceId } as BleDevice;
-        scale = { device, characteristic: characteristicUuid, type: scaleType };
+        scale = { 
+          device: { deviceId } as BleDevice, 
+          deviceId,
+          serviceUuid,
+          characteristic: characteristicUuid, 
+          type: scaleType,
+          isConnected: true,
+        };
         
-        // Broadcast connection state change
-        window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true } }));
-        
+        broadcastScaleConnectionChange(true);
         console.log('✅ Reconnected to scale successfully');
         return { success: true, type: scaleType };
       } else if ('bluetooth' in navigator) {
-        // Web Bluetooth API support for PWA on mobile browsers
         const storedInfo = getStoredDeviceInfo();
         if (!storedInfo) {
           return { success: false, type: 'Unknown', error: 'No stored device info' };
@@ -455,15 +562,12 @@ export const quickReconnect = async (
         const scaleType = storedInfo.scaleType;
         const serviceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
 
-        // Request device with saved ID
         const device = await (navigator as any).bluetooth.requestDevice({
           filters: [{ services: [serviceUuid] }],
         });
 
         const server = await device.gatt.connect();
         const service = await server.getPrimaryService(serviceUuid);
-        
-        // Get the first characteristic that supports notifications
         const characteristics = await service.getCharacteristics();
         const notifyCharacteristic = characteristics.find((c: any) => c.properties.notify);
         
@@ -484,11 +588,21 @@ export const quickReconnect = async (
           }
         });
 
-        scale = { device, characteristic: notifyCharacteristic.uuid, type: scaleType };
+        device.addEventListener('gattserverdisconnected', () => {
+          console.log('⚠️ Scale disconnected (Web Bluetooth)');
+          clearScaleState();
+        });
+
+        scale = { 
+          device, 
+          deviceId: device.id,
+          serviceUuid: null,
+          characteristic: notifyCharacteristic.uuid, 
+          type: scaleType,
+          isConnected: true,
+        };
         
-        // Broadcast connection state change for web
-        window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true } }));
-        
+        broadcastScaleConnectionChange(true);
         return { success: true, type: scaleType };
       } else {
         return { success: false, type: 'Unknown', error: 'Bluetooth not available on this device' };
@@ -498,63 +612,48 @@ export const quickReconnect = async (
       lastError = error;
       
       if (attempt < retries) {
-        console.log('⏳ Waiting before retry...');
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        await new Promise(resolve => setTimeout(resolve, 800 * attempt));
       }
     }
   }
   
+  clearScaleState();
   console.error('❌ All scale reconnect attempts failed');
   return { success: false, type: 'Unknown', error: lastError?.message || 'Failed to reconnect after multiple attempts' };
 };
 
 // Check if scale is currently connected
 export const isScaleConnected = (): boolean => {
-  return scale.device !== null;
+  return scale.isConnected && scale.deviceId !== null;
 };
 
 // Get current scale info
 export const getCurrentScaleInfo = (): { deviceId: string; type: ScaleType } | null => {
-  if (!scale.device) return null;
+  if (!scale.deviceId || !scale.isConnected) return null;
   return {
-    deviceId: scale.device.deviceId,
+    deviceId: scale.deviceId,
     type: scale.type
   };
 };
 
-// Broadcast connection state change events
-export const broadcastScaleConnectionChange = (connected: boolean) => {
-  window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
-};
-
-export const broadcastPrinterConnectionChange = (connected: boolean) => {
-  window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected } }));
-};
-
-// Printer-specific UUIDs - common thermal printer services
-const PRINTER_SERVICE_UUID = numberToUUID(0x18f0);
-const PRINTER_WRITE_CHARACTERISTIC_UUID = numberToUUID(0x2af1);
-
-// Common printer service UUIDs for various manufacturers
+// Common printer service UUIDs
 const COMMON_PRINTER_SERVICES = [
-  numberToUUID(0x18f0),                               // Standard printer service
-  '49535343-fe7d-4ae5-8fa9-9fafd205e455',            // Microchip Transparent UART
-  '0000ff00-0000-1000-8000-00805f9b34fb',            // Generic custom
-  '0000ffe0-0000-1000-8000-00805f9b34fb',            // Common Chinese printers
-  'e7810a71-73ae-499d-8c15-faa9aef0c3f2',            // Serial Port Profile
-  '000018f0-0000-1000-8000-00805f9b34fb',            // Print service
-  '0000fee7-0000-1000-8000-00805f9b34fb',            // HM-10 based
-  '38eb4a80-c570-11e3-9507-0002a5d5c51b',            // Goojprt/similar
+  numberToUUID(0x18f0),
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+  '0000ff00-0000-1000-8000-00805f9b34fb',
+  '0000ffe0-0000-1000-8000-00805f9b34fb',
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+  '000018f0-0000-1000-8000-00805f9b34fb',
+  '0000fee7-0000-1000-8000-00805f9b34fb',
+  '38eb4a80-c570-11e3-9507-0002a5d5c51b',
 ];
 
-// Interface for discovered printers
 export interface DiscoveredPrinter {
   deviceId: string;
   name: string;
   rssi?: number;
 }
 
-// Scan for available Bluetooth printers
 export const scanForPrinters = async (scanDuration: number = 5000): Promise<{
   success: boolean;
   printers: DiscoveredPrinter[];
@@ -568,27 +667,18 @@ export const scanForPrinters = async (scanDuration: number = 5000): Promise<{
       
       console.log('🔍 Scanning for Bluetooth printers...');
       
-      // Start scanning
       await BleClient.requestLEScan(
         { allowDuplicates: false },
         (result) => {
-          // Filter for likely printers (devices with names containing print-related keywords)
           const deviceName = result.device.name || '';
           const isPrinter = deviceName.toLowerCase().includes('print') ||
                            deviceName.toLowerCase().includes('pos') ||
-                           deviceName.toLowerCase().includes('esc') ||
-                           deviceName.toLowerCase().includes('bt') ||
                            deviceName.toLowerCase().includes('thermal') ||
                            deviceName.toLowerCase().includes('receipt') ||
-                           deviceName.toLowerCase().includes('gprinter') ||
-                           deviceName.toLowerCase().includes('xprinter') ||
-                           deviceName.toLowerCase().includes('mpt') ||
-                           deviceName.toLowerCase().includes('hm-') ||
-                           deviceName.toLowerCase().includes('spp') ||
-                           deviceName.length > 0; // Include any named device
+                           deviceName.length > 0;
           
           if (isPrinter && !discoveredPrinters.find(p => p.deviceId === result.device.deviceId)) {
-            console.log(`📱 Found device: ${deviceName || 'Unknown'} (${result.device.deviceId})`);
+            console.log(`📱 Found device: ${deviceName || 'Unknown'}`);
             discoveredPrinters.push({
               deviceId: result.device.deviceId,
               name: deviceName || `Unknown Device (${result.device.deviceId.slice(-6)})`,
@@ -598,72 +688,76 @@ export const scanForPrinters = async (scanDuration: number = 5000): Promise<{
         }
       );
       
-      // Wait for scan duration
       await new Promise(resolve => setTimeout(resolve, scanDuration));
-      
-      // Stop scanning
       await BleClient.stopLEScan();
       
       console.log(`✅ Scan complete. Found ${discoveredPrinters.length} devices.`);
       return { success: true, printers: discoveredPrinters };
     } else {
-      // Web Bluetooth doesn't support background scanning
       return { 
         success: false, 
         printers: [], 
-        error: 'Printer scanning requires native app. Use "Connect Printer" to select manually.' 
+        error: 'Printer scanning requires native app.' 
       };
     }
   } catch (error: any) {
     console.error('❌ Printer scan failed:', error);
-    await BleClient.stopLEScan().catch(() => {});
+    try { await BleClient.stopLEScan(); } catch {}
     return { success: false, printers: discoveredPrinters, error: error.message || 'Scan failed' };
   }
 };
 
-// Connect to a specific printer by device ID
 export const connectToSpecificPrinter = async (deviceId: string, deviceName: string): Promise<{
   success: boolean;
   deviceName?: string;
   error?: string;
 }> => {
   try {
+    // Disconnect existing printer first
+    if (printer.isConnected && printer.deviceId) {
+      try {
+        await disconnectBluetoothPrinter(false);
+      } catch (e) {
+        console.warn('Failed to disconnect existing printer:', e);
+      }
+    }
+
     if (Capacitor.isNativePlatform()) {
       await BleClient.initialize();
       
       console.log(`🔗 Connecting to printer: ${deviceName} (${deviceId})`);
       
-      await BleClient.connect(deviceId);
+      await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+        console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
+        clearPrinterState();
+      });
       console.log('✅ Connected to printer');
 
-      // Get services and find write characteristic
       const services = await BleClient.getServices(deviceId);
-      console.log(`📋 Found ${services.length} services:`);
       
       let writeServiceUuid: string | null = null;
       let writeCharUuid: string | null = null;
       
       for (const service of services) {
-        console.log(`  Service: ${service.uuid}`);
         for (const char of service.characteristics) {
-          console.log(`    Char: ${char.uuid} - write=${char.properties.write}, writeNoResp=${char.properties.writeWithoutResponse}`);
           if (char.properties.write || char.properties.writeWithoutResponse) {
             writeServiceUuid = service.uuid;
             writeCharUuid = char.uuid;
             console.log(`✅ Found writable characteristic: ${char.uuid}`);
+            break;
           }
         }
+        if (writeCharUuid) break;
       }
       
-      // Store the write characteristic for later use
       printer = { 
-        device: { deviceId } as BleDevice, 
-        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid, charUuid: writeCharUuid } : null 
+        device: { deviceId } as BleDevice,
+        deviceId,
+        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid!, charUuid: writeCharUuid } : null,
+        isConnected: true,
       };
       savePrinterInfo(deviceId, deviceName);
-
-      // Broadcast printer connection state change
-      window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
+      broadcastPrinterConnectionChange(true);
 
       return { success: true, deviceName };
     } else {
@@ -671,6 +765,7 @@ export const connectToSpecificPrinter = async (deviceId: string, deviceName: str
     }
   } catch (error: any) {
     console.error('❌ Failed to connect to printer:', error);
+    clearPrinterState();
     return { success: false, error: error.message || 'Connection failed' };
   }
 };
@@ -681,6 +776,15 @@ export const connectBluetoothPrinter = async (): Promise<{
   error?: string 
 }> => {
   try {
+    // Disconnect existing printer first
+    if (printer.isConnected && printer.deviceId) {
+      try {
+        await disconnectBluetoothPrinter(false);
+      } catch (e) {
+        console.warn('Failed to disconnect existing printer:', e);
+      }
+    }
+
     if (Capacitor.isNativePlatform()) {
       await BleClient.initialize();
 
@@ -692,37 +796,37 @@ export const connectBluetoothPrinter = async (): Promise<{
 
       console.log(`📱 Printer selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
       
-      await BleClient.connect(device.deviceId);
+      await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
+        console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
+        clearPrinterState();
+      });
       console.log('✅ Connected to printer');
 
-      // Get services and find write characteristic
       const services = await BleClient.getServices(device.deviceId);
-      console.log(`📋 Found ${services.length} services:`);
       
       let writeServiceUuid: string | null = null;
       let writeCharUuid: string | null = null;
       
       for (const service of services) {
-        console.log(`  Service: ${service.uuid}`);
         for (const char of service.characteristics) {
-          console.log(`    Char: ${char.uuid} - write=${char.properties.write}, writeNoResp=${char.properties.writeWithoutResponse}`);
           if (char.properties.write || char.properties.writeWithoutResponse) {
             writeServiceUuid = service.uuid;
             writeCharUuid = char.uuid;
             console.log(`✅ Found writable characteristic: ${char.uuid}`);
+            break;
           }
         }
+        if (writeCharUuid) break;
       }
       
-      // Store the write characteristic for later use
       printer = { 
-        device, 
-        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid, charUuid: writeCharUuid } : null 
+        device,
+        deviceId: device.deviceId,
+        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid!, charUuid: writeCharUuid } : null,
+        isConnected: true,
       };
       savePrinterInfo(device.deviceId, device.name || 'Bluetooth Printer');
-
-      // Broadcast printer connection state change
-      window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
+      broadcastPrinterConnectionChange(true);
 
       return { success: true, deviceName: device.name || 'Bluetooth Printer' };
     } else if ('bluetooth' in navigator) {
@@ -736,11 +840,19 @@ export const connectBluetoothPrinter = async (): Promise<{
       const server = await device.gatt.connect();
       console.log('✅ Connected to printer via Web Bluetooth');
       
-      printer = { device, characteristic: null };
-      savePrinterInfo(device.id, device.name || 'Bluetooth Printer');
+      device.addEventListener('gattserverdisconnected', () => {
+        console.log('⚠️ Printer disconnected (Web Bluetooth)');
+        clearPrinterState();
+      });
 
-      // Broadcast printer connection state change for web
-      window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
+      printer = { 
+        device, 
+        deviceId: device.id,
+        characteristic: null,
+        isConnected: true,
+      };
+      savePrinterInfo(device.id, device.name || 'Bluetooth Printer');
+      broadcastPrinterConnectionChange(true);
 
       return { success: true, deviceName: device.name || 'Bluetooth Printer' };
     } else {
@@ -748,6 +860,7 @@ export const connectBluetoothPrinter = async (): Promise<{
     }
   } catch (error: any) {
     console.error('Failed to connect to printer:', error);
+    clearPrinterState();
     return { success: false, error: error.message || 'Failed to connect' };
   }
 };
@@ -764,70 +877,68 @@ export const quickReconnectPrinter = async (deviceId: string, retries: number = 
         await BleClient.initialize();
         console.log(`🔄 Quick reconnecting to printer: ${deviceId} (attempt ${attempt}/${retries})`);
         
-        // Try to disconnect first if there's a stale connection
+        // Disconnect stale connection
         try {
           await BleClient.disconnect(deviceId);
           console.log('🔌 Disconnected stale connection');
         } catch {
-          // Ignore disconnect errors - device may not be connected
+          // Ignore
         }
         
-        // Small delay before reconnect
-        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        await new Promise(resolve => setTimeout(resolve, 300 * attempt));
         
         await BleClient.connect(deviceId, (disconnectedDeviceId) => {
           console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
-          // Clear printer state on unexpected disconnect
-          printer = { device: null, characteristic: null };
+          clearPrinterState();
         });
         
-        // Get services and find write characteristic
         const services = await BleClient.getServices(deviceId);
-        console.log(`📋 Printer has ${services.length} services`);
         
         let writeServiceUuid: string | null = null;
         let writeCharUuid: string | null = null;
         
         for (const service of services) {
-          console.log(`  Service: ${service.uuid}`);
           for (const char of service.characteristics) {
-            const hasWrite = char.properties.write || char.properties.writeWithoutResponse;
-            console.log(`    Char: ${char.uuid} (write: ${hasWrite})`);
-            if (hasWrite && !writeCharUuid) {
+            if (char.properties.write || char.properties.writeWithoutResponse) {
               writeServiceUuid = service.uuid;
               writeCharUuid = char.uuid;
+              break;
             }
           }
+          if (writeCharUuid) break;
         }
         
-        if (!writeCharUuid) {
-          console.warn('⚠️ No writable characteristic found on printer');
-        }
-        
-        const device = { deviceId } as BleDevice;
         printer = { 
-          device, 
-          characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid, charUuid: writeCharUuid } : null 
+          device: { deviceId } as BleDevice,
+          deviceId,
+          characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid!, charUuid: writeCharUuid } : null,
+          isConnected: true,
         };
         
-        // Broadcast printer connection state change
-        window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
-        
+        broadcastPrinterConnectionChange(true);
         console.log('✅ Reconnected to printer successfully');
         return { success: true };
       } else if ('bluetooth' in navigator) {
-        // Web Bluetooth API support for PWA on mobile browsers
         const device = await (navigator as any).bluetooth.requestDevice({
           acceptAllDevices: true,
           optionalServices: COMMON_PRINTER_SERVICES,
         });
 
         const server = await device.gatt.connect();
-        printer = { device, characteristic: null };
         
-        // Broadcast printer connection state change for web
-        window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true } }));
+        device.addEventListener('gattserverdisconnected', () => {
+          console.log('⚠️ Printer disconnected (Web Bluetooth)');
+          clearPrinterState();
+        });
+
+        printer = { 
+          device, 
+          deviceId: device.id,
+          characteristic: null,
+          isConnected: true,
+        };
         
+        broadcastPrinterConnectionChange(true);
         return { success: true };
       } else {
         return { success: false, error: 'Bluetooth not available on this device' };
@@ -836,53 +947,53 @@ export const quickReconnectPrinter = async (deviceId: string, retries: number = 
       console.error(`❌ Reconnect attempt ${attempt} failed:`, error.message);
       lastError = error;
       
-      // Only retry if we have attempts left
       if (attempt < retries) {
-        console.log(`⏳ Waiting before retry...`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        await new Promise(resolve => setTimeout(resolve, 800 * attempt));
       }
     }
   }
   
+  clearPrinterState();
   console.error('❌ All reconnect attempts failed');
   return { success: false, error: lastError?.message || 'Failed to reconnect after multiple attempts' };
 };
 
 // Check if printer is currently connected
 export const isPrinterConnected = (): boolean => {
-  return printer.device !== null && printer.characteristic !== null;
+  return printer.isConnected && printer.deviceId !== null;
 };
 
 // Get current printer info
 export const getCurrentPrinterInfo = (): { deviceId: string; hasWriteChar: boolean } | null => {
-  if (!printer.device) return null;
+  if (!printer.deviceId || !printer.isConnected) return null;
   return {
-    deviceId: printer.device.deviceId,
+    deviceId: printer.deviceId,
     hasWriteChar: printer.characteristic !== null
   };
 };
 
 export const disconnectBluetoothPrinter = async (clearSaved: boolean = false): Promise<void> => {
   try {
-    if (printer.device) {
+    if (printer.deviceId) {
       if (Capacitor.isNativePlatform()) {
-        await BleClient.disconnect(printer.device.deviceId);
-      } else if ('bluetooth' in navigator) {
-        if (printer.device.gatt?.connected) {
-          printer.device.gatt.disconnect();
+        try {
+          await BleClient.disconnect(printer.deviceId);
+        } catch (e) {
+          console.warn('Failed to disconnect printer:', e);
         }
+      } else if ('bluetooth' in navigator && printer.device?.gatt?.connected) {
+        printer.device.gatt.disconnect();
       }
-      printer = { device: null, characteristic: null };
-      
-      // Broadcast printer disconnection
-      window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: false } }));
-      
-      if (clearSaved) {
-        clearStoredPrinter();
-      }
+    }
+    
+    clearPrinterState();
+    
+    if (clearSaved) {
+      clearStoredPrinter();
     }
   } catch (error) {
     console.error('Failed to disconnect from printer:', error);
+    clearPrinterState();
     throw error;
   }
 };
@@ -892,17 +1003,16 @@ const ESC = 0x1B;
 const GS = 0x1D;
 
 const COMMANDS = {
-  INIT: [ESC, 0x40], // Initialize printer
-  LINE_FEED: [0x0A], // Line feed
-  CUT_PAPER: [GS, 0x56, 0x00], // Cut paper
-  BOLD_ON: [ESC, 0x45, 0x01], // Bold on
-  BOLD_OFF: [ESC, 0x45, 0x00], // Bold off
-  ALIGN_LEFT: [ESC, 0x61, 0x00], // Align left
-  ALIGN_CENTER: [ESC, 0x61, 0x01], // Align center
-  ALIGN_RIGHT: [ESC, 0x61, 0x02], // Align right
+  INIT: [ESC, 0x40],
+  LINE_FEED: [0x0A],
+  CUT_PAPER: [GS, 0x56, 0x00],
+  BOLD_ON: [ESC, 0x45, 0x01],
+  BOLD_OFF: [ESC, 0x45, 0x00],
+  ALIGN_LEFT: [ESC, 0x61, 0x00],
+  ALIGN_CENTER: [ESC, 0x61, 0x01],
+  ALIGN_RIGHT: [ESC, 0x61, 0x02],
 };
 
-// Convert string to byte array
 const stringToBytes = (str: string): number[] => {
   const bytes: number[] = [];
   for (let i = 0; i < str.length; i++) {
@@ -913,13 +1023,18 @@ const stringToBytes = (str: string): number[] => {
 
 export const printToBluetoothPrinter = async (content: string): Promise<{ success: boolean; error?: string }> => {
   try {
-    if (!printer.device) {
+    if (!printer.isConnected || !printer.deviceId) {
       return { success: false, error: 'No printer connected' };
+    }
+
+    // Verify connection before printing
+    const isConnected = await verifyPrinterConnection();
+    if (!isConnected) {
+      return { success: false, error: 'Printer connection lost. Please reconnect.' };
     }
 
     console.log('🖨️ Starting print job...');
 
-    // Build the print data with ESC/POS commands
     const printData: number[] = [
       ...COMMANDS.INIT,
       ...COMMANDS.ALIGN_CENTER,
@@ -936,25 +1051,19 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
     console.log(`📄 Print data size: ${dataView.length} bytes`);
 
     if (Capacitor.isNativePlatform()) {
-      const deviceId = printer.device.deviceId;
-      
-      // Use cached characteristic if available
       let serviceUuid: string | null = null;
       let writeCharUuid: string | null = null;
       
-      if (printer.characteristic && typeof printer.characteristic === 'object') {
+      if (printer.characteristic) {
         serviceUuid = printer.characteristic.serviceUuid;
         writeCharUuid = printer.characteristic.charUuid;
-        console.log(`📌 Using cached write characteristic: ${writeCharUuid}`);
       }
       
-      // If not cached, find the write characteristic
       if (!writeCharUuid) {
         console.log('🔍 Discovering printer services...');
-        const services = await BleClient.getServices(deviceId);
+        const services = await BleClient.getServices(printer.deviceId);
         
         for (const service of services) {
-          // Skip standard Bluetooth services
           if (service.uuid.toLowerCase().includes('1800') || 
               service.uuid.toLowerCase().includes('1801') ||
               service.uuid.toLowerCase().includes('180a')) {
@@ -965,7 +1074,6 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
             if (char.properties.write || char.properties.writeWithoutResponse) {
               serviceUuid = service.uuid;
               writeCharUuid = char.uuid;
-              console.log(`✅ Found writable characteristic: ${char.uuid} in service ${service.uuid}`);
               break;
             }
           }
@@ -974,12 +1082,10 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
       }
 
       if (!serviceUuid || !writeCharUuid) {
-        console.error('❌ No writable characteristic found on printer');
         return { success: false, error: 'No writable characteristic found. Printer may not be compatible.' };
       }
 
-      // Write data in chunks - use larger chunk size for faster printing
-      const chunkSize = 100; // Increased from 20 for better performance
+      const chunkSize = 100;
       console.log(`📤 Sending ${Math.ceil(dataView.length / chunkSize)} chunks...`);
       
       for (let i = 0; i < dataView.length; i += chunkSize) {
@@ -988,17 +1094,15 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
         
         try {
           await BleClient.write(
-            deviceId,
+            printer.deviceId,
             serviceUuid,
             writeCharUuid,
             dataViewChunk
           );
         } catch (writeError) {
-          console.error(`❌ Write error at chunk ${Math.floor(i/chunkSize)}:`, writeError);
-          // Try write without response as fallback
           try {
             await BleClient.writeWithoutResponse(
-              deviceId,
+              printer.deviceId,
               serviceUuid,
               writeCharUuid,
               dataViewChunk
@@ -1008,7 +1112,6 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
           }
         }
         
-        // Small delay between chunks to prevent buffer overflow
         if (i + chunkSize < dataView.length) {
           await new Promise(resolve => setTimeout(resolve, 10));
         }
@@ -1016,8 +1119,7 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
 
       console.log('✅ Print job completed successfully');
       return { success: true };
-    } else if ('bluetooth' in navigator && printer.device.gatt?.connected) {
-      // For web Bluetooth - try multiple services
+    } else if ('bluetooth' in navigator && printer.device?.gatt?.connected) {
       let writeChar: any = null;
       
       for (const serviceUuid of COMMON_PRINTER_SERVICES) {
@@ -1028,13 +1130,11 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
           for (const char of characteristics) {
             if (char.properties.write || char.properties.writeWithoutResponse) {
               writeChar = char;
-              console.log(`✅ Found writable characteristic via Web Bluetooth`);
               break;
             }
           }
           if (writeChar) break;
-        } catch (e) {
-          // Service not available, try next
+        } catch {
           continue;
         }
       }
@@ -1043,7 +1143,6 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
         return { success: false, error: 'No writable characteristic found' };
       }
 
-      // Write data in chunks
       const chunkSize = 100;
       for (let i = 0; i < dataView.length; i += chunkSize) {
         const chunk = dataView.slice(i, Math.min(i + chunkSize, dataView.length));
@@ -1060,6 +1159,8 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
     }
   } catch (error: any) {
     console.error('❌ Print failed:', error);
+    // Mark printer as disconnected on error
+    clearPrinterState();
     return { success: false, error: error.message || 'Failed to print' };
   }
 };
@@ -1101,7 +1202,7 @@ export const printReceipt = async (data: {
   const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
   
   const dateObj = data.collectionDate || new Date();
-  const formattedDate = dateObj.toLocaleDateString('en-CA'); // YYYY-MM-DD
+  const formattedDate = dateObj.toLocaleDateString('en-CA');
   const formattedTime = dateObj.toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
     minute: '2-digit',
@@ -1112,7 +1213,7 @@ export const printReceipt = async (data: {
   const W = 32;
   const sep = '-'.repeat(W);
 
-  // Build collections text - format: "1: REF12345    0.1"
+  // Build collections text
   let collectionsText = '';
   data.collections.forEach((col) => {
     const prefix = `${col.index}: ${col.transrefno || '-'}`;
@@ -1121,31 +1222,25 @@ export const printReceipt = async (data: {
     collectionsText += prefix + ' '.repeat(Math.max(1, spaces)) + weight + '\n';
   });
 
-  // Build receipt with proper 32-char alignment
   let receipt = '';
   
-  // Header - centered
   receipt += centerText(companyName, W) + '\n';
   receipt += centerText('CUSTOMER DELIVERY RECEIPT', W) + '\n';
   receipt += '\n';
   
-  // Member info - left aligned labels, right aligned values
   receipt += formatLine('Member NO     ', '#' + data.farmerId, W) + '\n';
   receipt += formatLine('Member Name   ', data.farmerName, W) + '\n';
   receipt += formatLine('Reference NO  ', data.uploadRefNo || '', W) + '\n';
   receipt += formatLine('Date          ', formattedDate + ' ' + formattedTime, W) + '\n';
   receipt += '\n';
   
-  // Collections list
   receipt += collectionsText;
   receipt += '\n';
   
-  // Total
   const totalStr = totalWeight.toFixed(2);
   receipt += formatLine('Total Weight[Kgs]', totalStr, W) + '\n';
   receipt += sep + '\n';
   
-  // Footer info
   if (data.cumulativeFrequency !== undefined) {
     receipt += formatLine('Cumulative    ', String(data.cumulativeFrequency), W) + '\n';
   }
