@@ -30,7 +30,7 @@ let scale: BluetoothScale = {
 interface BluetoothPrinter {
   device: BleDevice | any | null;
   deviceId: string | null;
-  characteristic: { serviceUuid: string; charUuid: string } | null;
+  characteristic: { serviceUuid: string; charUuid: string; writeWithoutResponse: boolean } | null;
   isConnected: boolean;
 }
 
@@ -648,6 +648,45 @@ const COMMON_PRINTER_SERVICES = [
   '38eb4a80-c570-11e3-9507-0002a5d5c51b',
 ];
 
+const GENERIC_GATT_SERVICES = ['1800', '1801', '180a'];
+
+const isGenericGattService = (uuid: string) =>
+  GENERIC_GATT_SERVICES.some((g) => uuid.toLowerCase().includes(g));
+
+const selectPrinterWriteCharacteristic = (
+  services: Array<{ uuid: string; characteristics: Array<{ uuid: string; properties: any }> }>
+): { serviceUuid: string; charUuid: string; writeWithoutResponse: boolean } | null => {
+  const pickFromService = (service: any) => {
+    const chars = service.characteristics || [];
+
+    // Prefer writeWithoutResponse for many thermal printers
+    const wnr = chars.find((c: any) => c.properties?.writeWithoutResponse);
+    if (wnr) return { serviceUuid: service.uuid, charUuid: wnr.uuid, writeWithoutResponse: true };
+
+    const w = chars.find((c: any) => c.properties?.write);
+    if (w) return { serviceUuid: service.uuid, charUuid: w.uuid, writeWithoutResponse: false };
+
+    return null;
+  };
+
+  // 1) Prefer known printer services (in the order listed)
+  for (const preferred of COMMON_PRINTER_SERVICES.map((s) => s.toLowerCase())) {
+    const svc = services.find((s: any) => s.uuid?.toLowerCase() === preferred);
+    if (!svc) continue;
+    const picked = pickFromService(svc);
+    if (picked) return picked;
+  }
+
+  // 2) Fallback: any non-generic service with a writable characteristic
+  for (const svc of services) {
+    if (!svc?.uuid || isGenericGattService(svc.uuid)) continue;
+    const picked = pickFromService(svc as any);
+    if (picked) return picked;
+  }
+
+  return null;
+};
+
 export interface DiscoveredPrinter {
   deviceId: string;
   name: string;
@@ -734,26 +773,13 @@ export const connectToSpecificPrinter = async (deviceId: string, deviceName: str
       console.log('✅ Connected to printer');
 
       const services = await BleClient.getServices(deviceId);
-      
-      let writeServiceUuid: string | null = null;
-      let writeCharUuid: string | null = null;
-      
-      for (const service of services) {
-        for (const char of service.characteristics) {
-          if (char.properties.write || char.properties.writeWithoutResponse) {
-            writeServiceUuid = service.uuid;
-            writeCharUuid = char.uuid;
-            console.log(`✅ Found writable characteristic: ${char.uuid}`);
-            break;
-          }
-        }
-        if (writeCharUuid) break;
-      }
-      
-      printer = { 
+
+      const selected = selectPrinterWriteCharacteristic(services as any);
+
+      printer = {
         device: { deviceId } as BleDevice,
         deviceId,
-        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid!, charUuid: writeCharUuid } : null,
+        characteristic: selected,
         isConnected: true,
       };
       savePrinterInfo(deviceId, deviceName);
@@ -803,26 +829,13 @@ export const connectBluetoothPrinter = async (): Promise<{
       console.log('✅ Connected to printer');
 
       const services = await BleClient.getServices(device.deviceId);
-      
-      let writeServiceUuid: string | null = null;
-      let writeCharUuid: string | null = null;
-      
-      for (const service of services) {
-        for (const char of service.characteristics) {
-          if (char.properties.write || char.properties.writeWithoutResponse) {
-            writeServiceUuid = service.uuid;
-            writeCharUuid = char.uuid;
-            console.log(`✅ Found writable characteristic: ${char.uuid}`);
-            break;
-          }
-        }
-        if (writeCharUuid) break;
-      }
-      
-      printer = { 
+
+      const selected = selectPrinterWriteCharacteristic(services as any);
+
+      printer = {
         device,
         deviceId: device.deviceId,
-        characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid!, charUuid: writeCharUuid } : null,
+        characteristic: selected,
         isConnected: true,
       };
       savePrinterInfo(device.deviceId, device.name || 'Bluetooth Printer');
@@ -893,28 +906,16 @@ export const quickReconnectPrinter = async (deviceId: string, retries: number = 
         });
         
         const services = await BleClient.getServices(deviceId);
-        
-        let writeServiceUuid: string | null = null;
-        let writeCharUuid: string | null = null;
-        
-        for (const service of services) {
-          for (const char of service.characteristics) {
-            if (char.properties.write || char.properties.writeWithoutResponse) {
-              writeServiceUuid = service.uuid;
-              writeCharUuid = char.uuid;
-              break;
-            }
-          }
-          if (writeCharUuid) break;
-        }
-        
-        printer = { 
+
+        const selected = selectPrinterWriteCharacteristic(services as any);
+
+        printer = {
           device: { deviceId } as BleDevice,
           deviceId,
-          characteristic: writeCharUuid ? { serviceUuid: writeServiceUuid!, charUuid: writeCharUuid } : null,
+          characteristic: selected,
           isConnected: true,
         };
-        
+
         broadcastPrinterConnectionChange(true);
         console.log('✅ Reconnected to printer successfully');
         return { success: true };
@@ -1053,31 +1054,24 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
     if (Capacitor.isNativePlatform()) {
       let serviceUuid: string | null = null;
       let writeCharUuid: string | null = null;
-      
+      let preferWriteWithoutResponse = false;
+
       if (printer.characteristic) {
         serviceUuid = printer.characteristic.serviceUuid;
         writeCharUuid = printer.characteristic.charUuid;
+        preferWriteWithoutResponse = printer.characteristic.writeWithoutResponse;
       }
-      
-      if (!writeCharUuid) {
+
+      if (!serviceUuid || !writeCharUuid) {
         console.log('🔍 Discovering printer services...');
         const services = await BleClient.getServices(printer.deviceId);
-        
-        for (const service of services) {
-          if (service.uuid.toLowerCase().includes('1800') || 
-              service.uuid.toLowerCase().includes('1801') ||
-              service.uuid.toLowerCase().includes('180a')) {
-            continue;
-          }
-          
-          for (const char of service.characteristics) {
-            if (char.properties.write || char.properties.writeWithoutResponse) {
-              serviceUuid = service.uuid;
-              writeCharUuid = char.uuid;
-              break;
-            }
-          }
-          if (writeCharUuid) break;
+        const selected = selectPrinterWriteCharacteristic(services as any);
+        if (selected) {
+          serviceUuid = selected.serviceUuid;
+          writeCharUuid = selected.charUuid;
+          preferWriteWithoutResponse = selected.writeWithoutResponse;
+          // cache for next print
+          printer = { ...printer, characteristic: selected };
         }
       }
 
@@ -1085,35 +1079,33 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
         return { success: false, error: 'No writable characteristic found. Printer may not be compatible.' };
       }
 
-      const chunkSize = 100;
-      console.log(`📤 Sending ${Math.ceil(dataView.length / chunkSize)} chunks...`);
-      
+      // Many 58mm printers have tiny BLE buffers; 20 bytes is the safest default.
+      const chunkSize = preferWriteWithoutResponse ? 20 : 60;
+      const delayMs = preferWriteWithoutResponse ? 30 : 15;
+
+      console.log(`📤 Sending ${Math.ceil(dataView.length / chunkSize)} chunks (chunkSize=${chunkSize})...`);
+
       for (let i = 0; i < dataView.length; i += chunkSize) {
         const chunk = dataView.slice(i, Math.min(i + chunkSize, dataView.length));
         const dataViewChunk = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-        
+
         try {
-          await BleClient.write(
-            printer.deviceId,
-            serviceUuid,
-            writeCharUuid,
-            dataViewChunk
-          );
+          if (preferWriteWithoutResponse) {
+            await BleClient.writeWithoutResponse(printer.deviceId, serviceUuid, writeCharUuid, dataViewChunk);
+          } else {
+            await BleClient.write(printer.deviceId, serviceUuid, writeCharUuid, dataViewChunk);
+          }
         } catch (writeError) {
+          // Fallback: try the other mode
           try {
-            await BleClient.writeWithoutResponse(
-              printer.deviceId,
-              serviceUuid,
-              writeCharUuid,
-              dataViewChunk
-            );
-          } catch (retryError) {
-            throw retryError;
+            await BleClient.writeWithoutResponse(printer.deviceId, serviceUuid, writeCharUuid, dataViewChunk);
+          } catch {
+            await BleClient.write(printer.deviceId, serviceUuid, writeCharUuid, dataViewChunk);
           }
         }
-        
+
         if (i + chunkSize < dataView.length) {
-          await new Promise(resolve => setTimeout(resolve, 10));
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
       }
 
