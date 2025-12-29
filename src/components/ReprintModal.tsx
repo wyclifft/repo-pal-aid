@@ -35,12 +35,10 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
     if (receipt.collections.length === 0) return;
 
     const firstReceipt = receipt.collections[0];
+    const collectionDateTime = new Date(firstReceipt.collection_date);
     
-    const collections = receipt.collections.map(r => ({
-      time: new Date(r.collection_date).toLocaleTimeString('en-GB', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-      }),
+    const collections = receipt.collections.map((r, index) => ({
+      index: index + 1,
       weight: r.weight,
       transrefno: r.reference_no
     }));
@@ -54,7 +52,8 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
       session: firstReceipt.session,
       uploadRefNo: firstReceipt.uploadrefno || firstReceipt.reference_no,
       collectorName: firstReceipt.clerk_name,
-      collections
+      collections,
+      collectionDate: collectionDateTime
     });
 
     if (result.success) {
