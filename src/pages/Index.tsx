@@ -83,6 +83,7 @@ const Index = () => {
   const [route, setRoute] = useState('');
   const [routeName, setRouteName] = useState('');
   const [selectedRouteCode, setSelectedRouteCode] = useState(''); // tcode from fm_tanks
+  const [selectedRouteMprefix, setSelectedRouteMprefix] = useState(''); // mprefix from fm_tanks for chkroute=0
   const [session, setSession] = useState(''); // Session description from sessions table
   const [activeSession, setActiveSession] = useState<Session | null>(null); // Currently active session object
   const [searchValue, setSearchValue] = useState('');
@@ -230,6 +231,7 @@ const Index = () => {
   const handleRouteChange = (selectedRoute: Route | null) => {
     if (selectedRoute) {
       setSelectedRouteCode(selectedRoute.tcode);
+      setSelectedRouteMprefix(selectedRoute.mprefix || '');
       setRouteName(selectedRoute.descript);
       // Clear farmer when route changes
       setFarmerId('');
@@ -238,6 +240,7 @@ const Index = () => {
       setSearchValue('');
     } else {
       setSelectedRouteCode('');
+      setSelectedRouteMprefix('');
       setRouteName('');
       setFarmerId('');
       setFarmerName('');
@@ -272,6 +275,7 @@ const Index = () => {
 
   const handleClearRoute = () => {
     setSelectedRouteCode('');
+    setSelectedRouteMprefix('');
     setRouteName('');
     setFarmerId('');
     setFarmerName('');
@@ -287,6 +291,7 @@ const Index = () => {
   // Handle starting collection from Dashboard (Buy Produce)
   const handleStartCollection = (route: Route, session: Session) => {
     setSelectedRouteCode(route.tcode);
+    setSelectedRouteMprefix(route.mprefix || '');
     setRouteName(route.descript);
     setSession(session.descript);
     setActiveSession(session);
@@ -297,6 +302,7 @@ const Index = () => {
   // Handle starting selling from Dashboard (Sell Produce)
   const handleStartSelling = (route: Route, session: Session) => {
     setSelectedRouteCode(route.tcode);
+    setSelectedRouteMprefix(route.mprefix || '');
     setRouteName(route.descript);
     setSession(session.descript);
     setActiveSession(session);
@@ -902,7 +908,7 @@ const Index = () => {
     <>
       {collectionMode === 'buy' ? (
         <BuyProduceScreen
-          route={{ tcode: selectedRouteCode, descript: routeName } as Route}
+          route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
           session={activeSession!}
           userName={currentUser?.user_id || 'User'}
           weight={weight}
@@ -925,7 +931,7 @@ const Index = () => {
         />
       ) : (
         <SellProduceScreen
-          route={{ tcode: selectedRouteCode, descript: routeName } as Route}
+          route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
           session={activeSession!}
           userName={currentUser?.user_id || 'User'}
           weight={weight}

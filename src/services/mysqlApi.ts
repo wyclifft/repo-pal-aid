@@ -190,12 +190,21 @@ export interface Farmer {
 export const farmersApi = {
   /**
    * Get farmers filtered by device company (secure device-based filtering)
-   * Optionally filter by route
+   * @param uniquedevcode - Device fingerprint for authorization
+   * @param route - Exact route code filter (for chkroute=1)
+   * @param mprefix - Member prefix filter from fm_tanks (for chkroute=0)
    */
-  getByDevice: async (uniquedevcode: string, route?: string): Promise<ApiResponse<Farmer[]>> => {
+  getByDevice: async (uniquedevcode: string, route?: string, mprefix?: string): Promise<ApiResponse<Farmer[]>> => {
     let url = `/farmers/by-device/${encodeURIComponent(uniquedevcode)}`;
+    const params: string[] = [];
     if (route) {
-      url += `?route=${encodeURIComponent(route)}`;
+      params.push(`route=${encodeURIComponent(route)}`);
+    }
+    if (mprefix) {
+      params.push(`mprefix=${encodeURIComponent(mprefix)}`);
+    }
+    if (params.length > 0) {
+      url += `?${params.join('&')}`;
     }
     return apiRequest<Farmer[]>(url);
   },

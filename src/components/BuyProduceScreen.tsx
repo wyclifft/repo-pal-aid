@@ -56,7 +56,7 @@ export const BuyProduceScreen = ({
   // Get psettings for AutoW enforcement and produce labeling
   // These values update automatically when psettings change in the database
   const appSettings = useAppSettings();
-  const { autoWeightOnly, produceLabel, routeLabel } = appSettings;
+  const { autoWeightOnly, produceLabel, routeLabel, useRouteFilter } = appSettings;
 
   const today = new Date().toISOString().split('T')[0];
   
@@ -65,14 +65,26 @@ export const BuyProduceScreen = ({
     console.log('📱 BuyProduceScreen - autoWeightOnly:', autoWeightOnly);
   }, [autoWeightOnly]);
 
-  // Load cached farmers
+  // Load cached farmers with chkroute logic
+  // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
   useEffect(() => {
     const loadFarmers = async () => {
       try {
         const farmers = await getFarmers();
-        const filtered = route?.tcode 
-          ? farmers.filter(f => f.route === route.tcode)
-          : farmers;
+        let filtered: Farmer[];
+        
+        if (useRouteFilter && route?.tcode) {
+          // chkroute=1: Filter by exact route match
+          filtered = farmers.filter(f => f.route === route.tcode);
+        } else if (!useRouteFilter && route?.mprefix) {
+          // chkroute=0: Filter by mprefix (farmer_id starts with mprefix)
+          filtered = farmers.filter(f => 
+            f.farmer_id && f.farmer_id.startsWith(route.mprefix!)
+          );
+        } else {
+          filtered = farmers;
+        }
+        
         setCachedFarmers(filtered);
         // Notify parent of loaded farmers
         if (onFarmersLoaded) {
@@ -83,7 +95,7 @@ export const BuyProduceScreen = ({
       }
     };
     loadFarmers();
-  }, [getFarmers, route?.tcode, onFarmersLoaded]);
+  }, [getFarmers, route?.tcode, route?.mprefix, onFarmersLoaded, useRouteFilter]);
 
   // Filter out blacklisted farmers for display
   const availableFarmers = blacklistedFarmerIds && blacklistedFarmerIds.size > 0

@@ -10,12 +10,13 @@ interface FarmerSearchProps {
   onSelectFarmer: (farmer: Farmer) => void;
   value: string;
   selectedRoute?: string; // Route tcode to filter farmers
+  selectedMprefix?: string; // Member prefix from fm_tanks for chkroute=0 filtering
   disabled?: boolean;
   blacklistedFarmerIds?: Set<string>; // Farmers who already delivered (multOpt=0)
   onFarmersLoaded?: (farmers: Farmer[]) => void; // Callback when farmers are loaded
 }
 
-export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, blacklistedFarmerIds, onFarmersLoaded }: FarmerSearchProps) => {
+export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, selectedMprefix, disabled, blacklistedFarmerIds, onFarmersLoaded }: FarmerSearchProps) => {
   const { useRouteFilter } = useAppSettings();
   const [searchQuery, setSearchQuery] = useState(value);
   const [suggestions, setSuggestions] = useState<Farmer[]>([]);
@@ -33,15 +34,25 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
   }, [value]);
 
   // Load cached farmers immediately on mount and when route changes
-  // chkroute: 0 = filter by tank prefix only (no route filter), 1 = filter by selected route
+  // chkroute: 0 = filter by mprefix from fm_tanks, 1 = filter by selected route
   useEffect(() => {
     const loadCached = async () => {
       try {
         const farmers = await getFarmers();
-        // Filter by route only if useRouteFilter (chkroute=1) is enabled
-        const filtered = (useRouteFilter && selectedRoute)
-          ? farmers.filter(f => f.route === selectedRoute)
-          : farmers;
+        let filtered: Farmer[];
+        
+        if (useRouteFilter && selectedRoute) {
+          // chkroute=1: Filter by exact route match
+          filtered = farmers.filter(f => f.route === selectedRoute);
+        } else if (!useRouteFilter && selectedMprefix) {
+          // chkroute=0: Filter by mprefix (farmer_id starts with mprefix)
+          filtered = farmers.filter(f => 
+            f.farmer_id && f.farmer_id.startsWith(selectedMprefix)
+          );
+        } else {
+          filtered = farmers;
+        }
+        
         setCachedFarmers(filtered);
         // Notify parent of loaded farmers
         if (onFarmersLoaded) {
@@ -52,7 +63,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
       }
     };
     loadCached();
-  }, [getFarmers, selectedRoute, onFarmersLoaded, useRouteFilter]);
+  }, [getFarmers, selectedRoute, selectedMprefix, onFarmersLoaded, useRouteFilter]);
 
   const searchFarmers = useCallback((query: string, farmers: Farmer[]) => {
     // Filter out blacklisted farmers (multOpt=0 who already delivered this session)
@@ -81,7 +92,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
   }, [searchQuery, cachedFarmers, searchFarmers]);
 
   // Sync farmers from MySQL API (device-filtered) on mount, route change, and when online
-  // chkroute: 0 = no route filter (tank prefix only), 1 = filter by selected route
+  // chkroute: 0 = filter by mprefix from fm_tanks, 1 = filter by selected route
   useEffect(() => {
     const syncFarmers = async () => {
       if (navigator.onLine) {
@@ -97,25 +108,31 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
           const deviceFingerprint = await generateDeviceFingerprint();
           
           setSyncProgress(40);
-          // Pass route filter to API only if useRouteFilter (chkroute=1) is enabled
+          
+          // Determine filter parameters based on chkroute setting
+          // chkroute=1: use route filter, chkroute=0: use mprefix filter
           const routeParam = useRouteFilter ? (selectedRoute || undefined) : undefined;
-          const response = await mysqlApi.farmers.getByDevice(deviceFingerprint, routeParam);
+          const mprefixParam = !useRouteFilter ? (selectedMprefix || undefined) : undefined;
+          
+          const response = await mysqlApi.farmers.getByDevice(deviceFingerprint, routeParam, mprefixParam);
           setSyncProgress(70);
           
           if (response.success && response.data && response.data.length > 0) {
             setFarmerCount(response.data.length);
             setSyncProgress(90);
-            // Only save all farmers if no route filter or chkroute=0 (to keep full cache)
-            if (!useRouteFilter || !selectedRoute) {
-              await saveFarmers(response.data);
-            }
+            // Save all farmers to cache for offline use
+            await saveFarmers(response.data);
             setCachedFarmers(response.data);
             // Notify parent of loaded farmers
             if (onFarmersLoaded) {
               onFarmersLoaded(response.data);
             }
             setSyncProgress(100);
-            console.log(`✅ Synced ${response.data.length} farmers${useRouteFilter && selectedRoute ? ` for route ${selectedRoute}` : ''} from MySQL`);
+            
+            const filterInfo = useRouteFilter 
+              ? (selectedRoute ? ` for route ${selectedRoute}` : '')
+              : (selectedMprefix ? ` with prefix ${selectedMprefix}` : '');
+            console.log(`✅ Synced ${response.data.length} farmers${filterInfo} from MySQL`);
             
             // Keep success state visible for a moment
             setTimeout(() => {
@@ -132,7 +149,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
             setIsSyncing(false);
             setSyncProgress(0);
           } else {
-            // No farmers found for this route
+            // No farmers found for this route/prefix
             setCachedFarmers([]);
             setIsSyncing(false);
           }
@@ -147,7 +164,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, disabled, b
     syncFarmers();
     window.addEventListener('online', syncFarmers);
     return () => window.removeEventListener('online', syncFarmers);
-  }, [saveFarmers, selectedRoute, useRouteFilter]);
+  }, [saveFarmers, selectedRoute, selectedMprefix, useRouteFilter, onFarmersLoaded]);
 
   // Poll for farmers updates every 5 minutes when online (device-filtered)
   useEffect(() => {
