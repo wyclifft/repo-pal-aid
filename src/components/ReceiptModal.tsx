@@ -151,8 +151,8 @@ export const ReceiptModal = ({
           <div className="space-y-0.5 text-xs">
             {showCumulativeFrequency && cumulativeFrequency !== undefined && (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Cumulative:</span>
-                <span className="font-medium">{cumulativeFrequency}</span>
+                <span className="text-muted-foreground">Monthly Total:</span>
+                <span className="font-medium">{cumulativeFrequency} collections</span>
               </div>
             )}
             {locationCode && (
