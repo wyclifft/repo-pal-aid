@@ -183,6 +183,7 @@ export interface Farmer {
   name: string;
   route: string;
   multOpt?: number; // 0 = single delivery per session, 1 = multiple allowed
+  currqty?: number; // 0 = hide monthly cumulative on receipt, 1 = show monthly cumulative
   created_at?: string;
   updated_at?: string;
 }

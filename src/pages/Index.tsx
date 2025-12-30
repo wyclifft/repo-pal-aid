@@ -97,6 +97,9 @@ const Index = () => {
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   
+  // Cumulative frequency for current farmer (monthly collection count)
+  const [cumulativeFrequency, setCumulativeFrequency] = useState<number | undefined>(undefined);
+  
   // Captured collections for batch printing
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
 
@@ -682,6 +685,26 @@ const Index = () => {
     // This ensures receipt is saved even if user closes modal without clicking Print
     await saveReceiptForReprinting(capturedCollections);
     
+    // Fetch cumulative frequency if farmer has currqty=1 and global showCumulative is enabled
+    if (showCumulative && selectedFarmer?.currqty === 1 && deviceFingerprint) {
+      try {
+        const freqResult = await mysqlApi.farmerFrequency.getMonthlyFrequency(
+          selectedFarmer.farmer_id.replace(/^#/, '').trim(),
+          deviceFingerprint
+        );
+        if (freqResult.success && freqResult.data) {
+          setCumulativeFrequency(freqResult.data.frequency);
+        } else {
+          setCumulativeFrequency(undefined);
+        }
+      } catch (error) {
+        console.warn('Failed to fetch cumulative frequency:', error);
+        setCumulativeFrequency(undefined);
+      }
+    } else {
+      setCumulativeFrequency(undefined);
+    }
+    
     // Open receipt modal for printing
     setReceiptModalOpen(true);
     
@@ -991,8 +1014,10 @@ const Index = () => {
         onClose={() => {
           setReceiptModalOpen(false);
           setCapturedCollections([]);
+          setCumulativeFrequency(undefined);
         }}
-        showCumulativeFrequency={showCumulative}
+        cumulativeFrequency={cumulativeFrequency}
+        showCumulativeFrequency={showCumulative && selectedFarmer?.currqty === 1}
         printCopies={printCopies}
         routeLabel={routeLabel}
         locationCode={selectedRouteCode}
