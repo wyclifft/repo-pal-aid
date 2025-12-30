@@ -1786,22 +1786,22 @@ const server = http.createServer(async (req, res) => {
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
       const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
       
-      // Count collections for this farmer in the current month
-      const [countRows] = await pool.query(
-        `SELECT COUNT(*) as frequency 
+      // Sum total weight for this farmer in the current month
+      const [sumRows] = await pool.query(
+        `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
          WHERE memberno = ? AND ccode = ? AND Transtype = 'MILK'
          AND transdate >= ? AND transdate <= ?`,
         [farmer_id, ccode, monthStart, monthEnd]
       );
       
-      const frequency = countRows.length > 0 ? countRows[0].frequency : 0;
+      const cumulativeWeight = sumRows.length > 0 ? parseFloat(sumRows[0].cumulative_weight) || 0 : 0;
       
       return sendJSON(res, { 
         success: true, 
         data: {
           farmer_id,
-          frequency,
+          cumulative_weight: cumulativeWeight,
           month_start: monthStart,
           month_end: monthEnd
         }

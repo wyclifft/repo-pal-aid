@@ -694,11 +694,11 @@ const Index = () => {
     // This ensures receipt is saved even if user closes modal without clicking Print
     await saveReceiptForReprinting(capturedCollections);
     
-    // Calculate and cache cumulative frequency if farmer has currqty=1 and global showCumulative is enabled
-    // The cumulative = backend count + current collection count
+    // Calculate and cache cumulative weight if farmer has currqty=1 and global showCumulative is enabled
+    // The cumulative = backend total weight + current collections weight
     if (showCumulative && selectedFarmer?.currqty === 1 && deviceFingerprint) {
       const cleanFarmerId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
-      const currentCollectionCount = capturedCollections.length;
+      const currentCollectionWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
       
       try {
         // Try to fetch from backend first
@@ -708,25 +708,26 @@ const Index = () => {
         );
         
         if (freqResult.success && freqResult.data) {
-          // Backend returned the count (which should include the current collection if synced)
-          // Cache this as the base count
-          await updateFarmerCumulative(cleanFarmerId, freqResult.data.frequency, true);
-          setCumulativeFrequency(freqResult.data.frequency);
+          // Backend returned the cumulative weight (which should include the current collection if synced)
+          // Cache this as the base weight
+          const backendWeight = freqResult.data.cumulative_weight ?? freqResult.data.frequency ?? 0;
+          await updateFarmerCumulative(cleanFarmerId, backendWeight, true);
+          setCumulativeFrequency(backendWeight);
         } else {
-          // Backend failed, use cached value + current collection
+          // Backend failed, use cached value + current collection weight
           const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
-          const newTotal = cachedTotal + currentCollectionCount;
-          // Update local count
-          await updateFarmerCumulative(cleanFarmerId, currentCollectionCount, false);
+          const newTotal = cachedTotal + currentCollectionWeight;
+          // Update local weight
+          await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
           setCumulativeFrequency(newTotal);
         }
       } catch (error) {
-        console.warn('Failed to fetch cumulative frequency, using cached:', error);
-        // Offline or error - use cached value + add current collections
+        console.warn('Failed to fetch cumulative weight, using cached:', error);
+        // Offline or error - use cached value + add current collections weight
         const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
-        const newTotal = cachedTotal + currentCollectionCount;
-        // Update local count
-        await updateFarmerCumulative(cleanFarmerId, currentCollectionCount, false);
+        const newTotal = cachedTotal + currentCollectionWeight;
+        // Update local weight
+        await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
         setCumulativeFrequency(newTotal);
       }
     } else {
