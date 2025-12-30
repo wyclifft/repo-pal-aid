@@ -103,7 +103,16 @@ const Index = () => {
   // Captured collections for batch printing
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
 
-  const { saveReceipt, savePrintedReceipts, getPrintedReceipts, getUnsyncedReceipts, clearUnsyncedReceipts, isReady } = useIndexedDB();
+  const { 
+    saveReceipt, 
+    savePrintedReceipts, 
+    getPrintedReceipts, 
+    getUnsyncedReceipts, 
+    clearUnsyncedReceipts, 
+    isReady,
+    updateFarmerCumulative,
+    getFarmerTotalCumulative
+  } = useIndexedDB();
   
   // Data sync hook for background syncing
   const { isSyncing, pendingCount, syncAllData } = useDataSync();
@@ -685,21 +694,40 @@ const Index = () => {
     // This ensures receipt is saved even if user closes modal without clicking Print
     await saveReceiptForReprinting(capturedCollections);
     
-    // Fetch cumulative frequency if farmer has currqty=1 and global showCumulative is enabled
+    // Calculate and cache cumulative frequency if farmer has currqty=1 and global showCumulative is enabled
+    // The cumulative = backend count + current collection count
     if (showCumulative && selectedFarmer?.currqty === 1 && deviceFingerprint) {
+      const cleanFarmerId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
+      const currentCollectionCount = capturedCollections.length;
+      
       try {
+        // Try to fetch from backend first
         const freqResult = await mysqlApi.farmerFrequency.getMonthlyFrequency(
-          selectedFarmer.farmer_id.replace(/^#/, '').trim(),
+          cleanFarmerId,
           deviceFingerprint
         );
+        
         if (freqResult.success && freqResult.data) {
+          // Backend returned the count (which should include the current collection if synced)
+          // Cache this as the base count
+          await updateFarmerCumulative(cleanFarmerId, freqResult.data.frequency, true);
           setCumulativeFrequency(freqResult.data.frequency);
         } else {
-          setCumulativeFrequency(undefined);
+          // Backend failed, use cached value + current collection
+          const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
+          const newTotal = cachedTotal + currentCollectionCount;
+          // Update local count
+          await updateFarmerCumulative(cleanFarmerId, currentCollectionCount, false);
+          setCumulativeFrequency(newTotal);
         }
       } catch (error) {
-        console.warn('Failed to fetch cumulative frequency:', error);
-        setCumulativeFrequency(undefined);
+        console.warn('Failed to fetch cumulative frequency, using cached:', error);
+        // Offline or error - use cached value + add current collections
+        const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
+        const newTotal = cachedTotal + currentCollectionCount;
+        // Update local count
+        await updateFarmerCumulative(cleanFarmerId, currentCollectionCount, false);
+        setCumulativeFrequency(newTotal);
       }
     } else {
       setCumulativeFrequency(undefined);

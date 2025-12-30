@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 9; // Incremented for device_config store
+const DB_VERSION = 10; // Incremented for farmer_cumulative store
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -99,6 +99,13 @@ export const useIndexedDB = () => {
       if (!database.objectStoreNames.contains('device_config')) {
         database.createObjectStore('device_config', { keyPath: 'id' });
         console.log('✅ Created device_config store');
+      }
+
+      // Add farmer_cumulative store for offline cumulative tracking
+      if (!database.objectStoreNames.contains('farmer_cumulative')) {
+        const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+        cumStore.createIndex('farmer_month', ['farmer_id', 'month'], { unique: true });
+        console.log('✅ Created farmer_cumulative store');
       }
     };
 
@@ -620,6 +627,115 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
+  /**
+   * Get farmer's cumulative count for the current month (for offline/caching)
+   * Returns { baseCount, localCount, month } where:
+   * - baseCount: last known count from backend
+   * - localCount: collections added locally since last sync
+   */
+  const getFarmerCumulative = useCallback(async (farmerId: string): Promise<{ baseCount: number; localCount: number; month: string } | null> => {
+    if (!db) return null;
+    try {
+      const now = new Date();
+      const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const cacheKey = `${farmerId}_${month}`;
+      
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('farmer_cumulative', 'readonly');
+        const store = tx.objectStore('farmer_cumulative');
+        const request = store.get(cacheKey);
+        request.onsuccess = () => {
+          if (request.result) {
+            resolve({
+              baseCount: request.result.baseCount || 0,
+              localCount: request.result.localCount || 0,
+              month: request.result.month
+            });
+          } else {
+            resolve(null);
+          }
+        };
+        request.onerror = () => reject(request.error);
+      });
+    } catch (error) {
+      console.warn('Failed to get farmer cumulative:', error);
+      return null;
+    }
+  }, [db]);
+
+  /**
+   * Update farmer's cumulative count
+   * - If fromBackend is true, updates baseCount from backend (resets localCount to 0)
+   * - If fromBackend is false, increments localCount by the given amount
+   */
+  const updateFarmerCumulative = useCallback(async (
+    farmerId: string, 
+    count: number, 
+    fromBackend: boolean = false
+  ): Promise<void> => {
+    if (!db) return;
+    try {
+      const now = new Date();
+      const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const cacheKey = `${farmerId}_${month}`;
+      
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('farmer_cumulative', 'readwrite');
+        const store = tx.objectStore('farmer_cumulative');
+        
+        // First get existing record
+        const getRequest = store.get(cacheKey);
+        getRequest.onsuccess = () => {
+          const existing = getRequest.result;
+          let newRecord;
+          
+          if (fromBackend) {
+            // Backend sync: update baseCount, reset localCount
+            newRecord = {
+              cacheKey,
+              farmer_id: farmerId,
+              month,
+              baseCount: count,
+              localCount: 0,
+              lastUpdated: new Date().toISOString()
+            };
+          } else {
+            // Local collection: increment localCount
+            newRecord = {
+              cacheKey,
+              farmer_id: farmerId,
+              month,
+              baseCount: existing?.baseCount || 0,
+              localCount: (existing?.localCount || 0) + count,
+              lastUpdated: new Date().toISOString()
+            };
+          }
+          
+          const putRequest = store.put(newRecord);
+          putRequest.onsuccess = () => {
+            console.log(`✅ Updated farmer cumulative: ${farmerId}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
+            resolve();
+          };
+          putRequest.onerror = () => reject(putRequest.error);
+        };
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+    } catch (error) {
+      console.error('Failed to update farmer cumulative:', error);
+    }
+  }, [db]);
+
+  /**
+   * Get total cumulative for farmer (baseCount + localCount)
+   */
+  const getFarmerTotalCumulative = useCallback(async (farmerId: string): Promise<number> => {
+    const cached = await getFarmerCumulative(farmerId);
+    if (cached) {
+      return cached.baseCount + cached.localCount;
+    }
+    return 0;
+  }, [getFarmerCumulative]);
+
   return {
     db,
     isReady,
@@ -648,5 +764,8 @@ export const useIndexedDB = () => {
     getRoutes,
     saveSessions,
     getSessions,
+    getFarmerCumulative,
+    updateFarmerCumulative,
+    getFarmerTotalCumulative,
   };
 };
