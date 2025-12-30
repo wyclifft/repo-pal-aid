@@ -243,7 +243,8 @@ const server = http.createServer(async (req, res) => {
       
       // Get farmers for this company, optionally filtered by route or mprefix
       // Include multOpt to enable client-side duplicate session enforcement
-      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, IFNULL(multOpt, 1) as multOpt FROM cm_members WHERE ccode = ?';
+      // Include currqty for controlling monthly cumulative display on receipts (1 = show, 0 = hide)
+      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty FROM cm_members WHERE ccode = ?';
       let params = [ccode];
       
       // Filter by exact route if specified (chkroute=1)
