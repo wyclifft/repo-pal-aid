@@ -722,7 +722,8 @@ export const authApi = {
 
 export interface FarmerMonthlyFrequency {
   farmer_id: string;
-  frequency: number;
+  frequency?: number; // Deprecated: kept for backwards compatibility
+  cumulative_weight: number; // Total weight sum for the month
   month_start: string;
   month_end: string;
 }

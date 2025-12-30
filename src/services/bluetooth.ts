@@ -1234,7 +1234,7 @@ export const printReceipt = async (data: {
   receipt += sep + '\n';
   
   if (data.cumulativeFrequency !== undefined) {
-    receipt += formatLine('Monthly Total ', String(data.cumulativeFrequency) + ' coll.', W) + '\n';
+    receipt += formatLine('Cumulative    ', data.cumulativeFrequency.toFixed(1), W) + '\n';
   }
   if (data.locationCode) {
     receipt += formatLine('Location      ', data.locationCode, W) + '\n';
