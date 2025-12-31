@@ -9,6 +9,7 @@ import { SplashScreen } from "@/components/SplashScreen";
 import { useDataSync } from "@/hooks/useDataSync";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { BackendStatusBanner } from "@/components/BackendStatusBanner";
+import { ServiceWorkerUpdateBanner } from "@/components/ServiceWorkerUpdateBanner";
 import { preloadCriticalAssets } from "@/utils/precachePages";
 
 // Lazy load route components for better performance
@@ -147,6 +148,7 @@ const AppContent = () => {
   
   return (
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <ServiceWorkerUpdateBanner />
       <BackendStatusBanner />
       <OfflineIndicator />
       <Suspense fallback={<PageLoader />}>

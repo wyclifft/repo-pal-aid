@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -7,7 +7,7 @@ interface UpdateState {
   registration: ServiceWorkerRegistration | null;
 }
 
-export const ServiceWorkerUpdateBanner = () => {
+export const ServiceWorkerUpdateBanner: React.FC = () => {
   const [updateState, setUpdateState] = useState<UpdateState>({
     updateAvailable: false,
     registration: null,
@@ -15,7 +15,18 @@ export const ServiceWorkerUpdateBanner = () => {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    if (!('serviceWorker' in navigator)) return;
+    // Skip service worker in Capacitor apps or when not supported
+    if (!('serviceWorker' in navigator)) {
+      console.log('Service worker not supported');
+      return;
+    }
+
+    // Check if running in Capacitor
+    const isCapacitor = !!(window as any).Capacitor?.isNativePlatform?.();
+    if (isCapacitor) {
+      console.log('Skipping SW update banner in Capacitor');
+      return;
+    }
 
     const handleUpdate = (registration: ServiceWorkerRegistration) => {
       const newWorker = registration.installing || registration.waiting;
@@ -31,23 +42,31 @@ export const ServiceWorkerUpdateBanner = () => {
     };
 
     // Check for existing waiting service worker
-    navigator.serviceWorker.ready.then((registration) => {
-      if (registration.waiting) {
-        setUpdateState({ updateAvailable: true, registration });
-      }
+    navigator.serviceWorker.ready
+      .then((registration) => {
+        if (registration.waiting) {
+          setUpdateState({ updateAvailable: true, registration });
+        }
 
-      // Listen for new updates
-      registration.addEventListener('updatefound', () => {
-        handleUpdate(registration);
+        // Listen for new updates
+        registration.addEventListener('updatefound', () => {
+          handleUpdate(registration);
+        });
+      })
+      .catch((err) => {
+        console.log('SW ready check failed:', err);
       });
-    });
 
     // Also check on registration
-    navigator.serviceWorker.getRegistration().then((registration) => {
-      if (registration?.waiting) {
-        setUpdateState({ updateAvailable: true, registration });
-      }
-    });
+    navigator.serviceWorker.getRegistration()
+      .then((registration) => {
+        if (registration?.waiting) {
+          setUpdateState({ updateAvailable: true, registration });
+        }
+      })
+      .catch((err) => {
+        console.log('SW registration check failed:', err);
+      });
   }, []);
 
   const handleUpdate = () => {
