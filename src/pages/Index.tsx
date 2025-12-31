@@ -694,13 +694,16 @@ const Index = () => {
     // This ensures receipt is saved even if user closes modal without clicking Print
     await saveReceiptForReprinting(capturedCollections);
     
+    const shouldShowCumulativeForFarmer =
+      showCumulative && Number(selectedFarmer?.currqty) === 1;
+
     // Calculate cumulative weight if farmer has currqty=1 and global showCumulative is enabled
     // CLOUD-BASED ACCUMULATION: Backend sums all transactions by ccode, shared across all devices
     // Formula: backend_cumulative (synced from all devices) + current_collection (not yet synced)
-    if (showCumulative && selectedFarmer?.currqty === 1 && deviceFingerprint) {
-      const cleanFarmerId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
+    if (shouldShowCumulativeForFarmer && deviceFingerprint) {
+      const cleanFarmerId = selectedFarmer!.farmer_id.replace(/^#/, '').trim();
       const currentCollectionWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
-      
+
       try {
         // Fetch cloud cumulative - this is the source of truth shared across all devices under same CCode
         const freqResult = await mysqlApi.farmerFrequency.getMonthlyFrequency(
@@ -711,15 +714,17 @@ const Index = () => {
         if (freqResult.success && freqResult.data) {
           // Backend returns cumulative from ALL synced transactions across ALL devices under same CCode
           const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-          
+
           // Total = cloud cumulative (all synced) + current collection (not yet synced)
           const totalWithCurrent = cloudCumulative + currentCollectionWeight;
-          
+
           // Update local cache with cloud value as base
           await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
           setCumulativeFrequency(totalWithCurrent);
-          
-          console.log(`📊 Cloud Cumulative (shared across CCode): ${cloudCumulative} + Current: ${currentCollectionWeight} = ${totalWithCurrent}`);
+
+          console.log(
+            `📊 Cloud Cumulative (shared across CCode): ${cloudCumulative} + Current: ${currentCollectionWeight} = ${totalWithCurrent}`
+          );
         } else {
           // Backend request failed but we're online - use local cache as fallback
           console.warn('⚠️ Failed to fetch cloud cumulative, using local cache');
@@ -739,7 +744,7 @@ const Index = () => {
     } else {
       setCumulativeFrequency(undefined);
     }
-    
+
     // Open receipt modal for printing
     setReceiptModalOpen(true);
     
@@ -1052,7 +1057,7 @@ const Index = () => {
           setCumulativeFrequency(undefined);
         }}
         cumulativeFrequency={cumulativeFrequency}
-        showCumulativeFrequency={showCumulative && selectedFarmer?.currqty === 1}
+        showCumulativeFrequency={showCumulative && Number(selectedFarmer?.currqty) === 1}
         printCopies={printCopies}
         routeLabel={routeLabel}
         locationCode={selectedRouteCode}
