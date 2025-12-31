@@ -706,32 +706,43 @@ const Index = () => {
           cleanFarmerId,
           deviceFingerprint
         );
-        
+
+        // Always keep a local running total so the receipt accumulates even if backend is stale
+        const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
+
         if (freqResult.success && freqResult.data) {
           // Backend returned the cumulative weight from already-synced transactions
-          // IMPORTANT: Always add current collection weight since it may not be synced yet
           const backendWeight = freqResult.data.cumulative_weight;
-          
+
           if (backendWeight !== undefined && backendWeight !== null) {
-            // Backend weight + current collection (which may not be synced yet)
-            const totalWithCurrent = backendWeight + currentCollectionWeight;
-            await updateFarmerCumulative(cleanFarmerId, backendWeight, true);
-            setCumulativeFrequency(totalWithCurrent);
-            console.log(`📊 Cumulative: Backend=${backendWeight} + Current=${currentCollectionWeight} = ${totalWithCurrent}`);
+            // If backend is stale (often returns 0 or a smaller number than we already have cached),
+            // do NOT reset local cumulative; continue accumulating locally.
+            if (backendWeight <= 0 && cachedTotal > 0) {
+              const newTotal = cachedTotal + currentCollectionWeight;
+              await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
+              setCumulativeFrequency(newTotal);
+              console.warn(`⚠️ Backend cumulative_weight returned ${backendWeight}; keeping local cumulative ${cachedTotal} + current ${currentCollectionWeight} = ${newTotal}`);
+            } else if (backendWeight < cachedTotal) {
+              const newTotal = cachedTotal + currentCollectionWeight;
+              await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
+              setCumulativeFrequency(newTotal);
+              console.warn(`⚠️ Backend cumulative_weight (${backendWeight}) < cachedTotal (${cachedTotal}); using local accumulation => ${newTotal}`);
+            } else {
+              // Backend looks consistent: update base and show backend + current (may not be synced yet)
+              const totalWithCurrent = backendWeight + currentCollectionWeight;
+              await updateFarmerCumulative(cleanFarmerId, backendWeight, true);
+              setCumulativeFrequency(totalWithCurrent);
+              console.log(`📊 Cumulative: Backend=${backendWeight} + Current=${currentCollectionWeight} = ${totalWithCurrent}`);
+            }
           } else {
             // Backend doesn't have cumulative_weight yet (needs deployment)
-            // Fall back to offline calculation
-            console.warn('⚠️ Backend returned frequency (count) instead of cumulative_weight (sum). Using offline calculation.');
-            const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
             const newTotal = cachedTotal + currentCollectionWeight;
             await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
             setCumulativeFrequency(newTotal);
           }
         } else {
           // Backend failed, use cached value + current collection weight
-          const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
           const newTotal = cachedTotal + currentCollectionWeight;
-          // Update local weight
           await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
           setCumulativeFrequency(newTotal);
         }
@@ -740,7 +751,6 @@ const Index = () => {
         // Offline or error - use cached value + add current collections weight
         const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
         const newTotal = cachedTotal + currentCollectionWeight;
-        // Update local weight
         await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
         setCumulativeFrequency(newTotal);
       }
