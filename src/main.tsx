@@ -2,7 +2,6 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
-import { ServiceWorkerUpdateBanner } from "./components/ServiceWorkerUpdateBanner.tsx";
 import { initializeNativePlatform } from "./utils/nativeInit";
 import "./index.css";
 import "./utils/errorHandler";
@@ -30,14 +29,15 @@ document.addEventListener('touchend', (e) => {
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <ServiceWorkerUpdateBanner />
       <App />
     </ErrorBoundary>
   </React.StrictMode>
 );
 
-// Advanced Service Worker registration
-if ('serviceWorker' in navigator) {
+// Advanced Service Worker registration - skip in Capacitor native apps
+const isCapacitor = !!(window as any).Capacitor?.isNativePlatform?.();
+
+if ('serviceWorker' in navigator && !isCapacitor) {
   window.addEventListener('load', async () => {
     try {
       const registration = await navigator.serviceWorker.register('/sw.js', {
@@ -51,11 +51,11 @@ if ('serviceWorker' in navigator) {
       (window as any).__swRegistration = registration;
       
       // Check for updates immediately
-      registration.update();
+      registration.update().catch(() => {});
       
       // Check for updates every 30 minutes
       setInterval(() => {
-        registration.update().catch(console.error);
+        registration.update().catch(() => {});
       }, 30 * 60 * 1000);
       
       // Handle waiting service worker
@@ -128,6 +128,8 @@ if ('serviceWorker' in navigator) {
       console.error('❌ Service Worker registration failed:', error);
     }
   });
+} else if (isCapacitor) {
+  console.log('📱 Capacitor native app - skipping Service Worker registration');
 }
 
 // Handle online/offline status
