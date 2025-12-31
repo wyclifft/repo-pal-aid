@@ -30,6 +30,7 @@ export const useDataSync = () => {
   const [offlineFirstMode, setOfflineFirstMode] = useState(getOfflineFirstMode);
   const mountedRef = useRef(true);
   const periodicSyncRef = useRef<NodeJS.Timeout | null>(null);
+  const syncInProgressRef = useRef(false); // Extra guard against concurrent syncs
   
   const { 
     saveFarmers, 
@@ -48,7 +49,9 @@ export const useDataSync = () => {
   // Update offlineFirstMode when settings change
   useEffect(() => {
     const checkSettings = () => {
-      setOfflineFirstMode(getOfflineFirstMode());
+      if (mountedRef.current) {
+        setOfflineFirstMode(getOfflineFirstMode());
+      }
     };
     
     // Check on mount and when storage changes
@@ -68,13 +71,25 @@ export const useDataSync = () => {
 
     try {
       const rawReceipts = await getUnsyncedReceipts();
-      // Filter and deduplicate
-      const unsyncedReceipts = deduplicateReceipts(
-        rawReceipts.filter((r: any) => r.type !== 'sale')
-      );
+      
+      // Filter out invalid entries (like PRINTED_RECEIPTS storage)
+      const validReceipts = rawReceipts.filter((r: any) => {
+        // Skip non-receipt entries
+        if (r.orderId === 'PRINTED_RECEIPTS') return false;
+        // Skip sale records
+        if (r.type === 'sale') return false;
+        // Must have required fields
+        if (!r.reference_no || !r.farmer_id || !r.weight) return false;
+        return true;
+      });
+      
+      // Deduplicate
+      const unsyncedReceipts = deduplicateReceipts(validReceipts);
       
       if (unsyncedReceipts.length === 0) {
-        setPendingCount(0);
+        if (mountedRef.current) {
+          setPendingCount(0);
+        }
         console.log('✅ No pending receipts to sync');
         return { synced: 0, failed: 0 };
       }
@@ -92,16 +107,6 @@ export const useDataSync = () => {
       for (const receipt of unsyncedReceipts) {
         if (!mountedRef.current) break; // Stop if unmounted
 
-        // Skip invalid receipts (missing required fields)
-        if (!receipt.reference_no || !receipt.farmer_id || !receipt.weight) {
-          console.warn(`⚠️ Skipping invalid receipt:`, receipt);
-          if (receipt.orderId) {
-            await deleteReceipt(receipt.orderId);
-            console.log(`🗑️ Deleted invalid receipt: ${receipt.orderId}`);
-          }
-          continue;
-        }
-
         try {
           console.log(`🔄 Attempting to sync: ${receipt.reference_no}`);
 
@@ -115,21 +120,25 @@ export const useDataSync = () => {
           // Client-side FINAL GUARD for multOpt=0 during background sync
           if (receipt.multOpt === 0) {
             const receiptDate = new Date(receipt.collection_date).toISOString().split('T')[0];
-            const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-              String(receipt.farmer_id || '').replace(/^#/, '').trim(),
-              normalizedSession,
-              receiptDate,
-              receiptDate,
-              deviceFingerprint
-            );
+            try {
+              const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
+                String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+                normalizedSession,
+                receiptDate,
+                receiptDate,
+                deviceFingerprint
+              );
 
-            if (existing) {
-              console.log(`⏭️ Skipping multOpt=0 duplicate (already exists): ${receipt.reference_no}`);
-              if (receipt.orderId) {
-                await deleteReceipt(receipt.orderId);
+              if (existing) {
+                console.log(`⏭️ Skipping multOpt=0 duplicate (already exists): ${receipt.reference_no}`);
+                if (receipt.orderId && typeof receipt.orderId === 'number') {
+                  await deleteReceipt(receipt.orderId);
+                }
+                synced++;
+                continue;
               }
-              synced++;
-              continue;
+            } catch (checkErr) {
+              console.warn('Duplicate check failed, proceeding with sync:', checkErr);
             }
           }
 
@@ -150,7 +159,7 @@ export const useDataSync = () => {
 
           // Check if sync was successful - API returns { success: true/false, reference_no: string }
           if (result.success) {
-            if (receipt.orderId) {
+            if (receipt.orderId && typeof receipt.orderId === 'number') {
               await deleteReceipt(receipt.orderId);
               console.log(`🗑️ Deleted local receipt: ${receipt.orderId}`);
             }
@@ -167,7 +176,7 @@ export const useDataSync = () => {
           const errorMsg = err?.message?.toLowerCase() || '';
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
             console.log(`⏭️ Already synced (duplicate): ${receipt.reference_no}`);
-            if (receipt.orderId) {
+            if (receipt.orderId && typeof receipt.orderId === 'number') {
               await deleteReceipt(receipt.orderId);
             }
             synced++;
@@ -198,7 +207,12 @@ export const useDataSync = () => {
     if (!isReady) return;
     try {
       const unsynced = await getUnsyncedReceipts();
-      const receiptsOnly = unsynced.filter((r: any) => r.type !== 'sale');
+      // Filter out non-receipt entries and sales
+      const receiptsOnly = unsynced.filter((r: any) => {
+        if (r.orderId === 'PRINTED_RECEIPTS') return false;
+        if (r.type === 'sale') return false;
+        return true;
+      });
       if (mountedRef.current) {
         setPendingCount(receiptsOnly.length);
       }
