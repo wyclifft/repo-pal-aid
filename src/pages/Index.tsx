@@ -708,14 +708,16 @@ const Index = () => {
         );
         
         if (freqResult.success && freqResult.data) {
-          // Backend returned the cumulative weight (which should include the current collection if synced)
-          // Cache this as the base weight
-          // IMPORTANT: Only use cumulative_weight (sum of weights), NOT frequency (count of collections)
+          // Backend returned the cumulative weight from already-synced transactions
+          // IMPORTANT: Always add current collection weight since it may not be synced yet
           const backendWeight = freqResult.data.cumulative_weight;
           
           if (backendWeight !== undefined && backendWeight !== null) {
+            // Backend weight + current collection (which may not be synced yet)
+            const totalWithCurrent = backendWeight + currentCollectionWeight;
             await updateFarmerCumulative(cleanFarmerId, backendWeight, true);
-            setCumulativeFrequency(backendWeight);
+            setCumulativeFrequency(totalWithCurrent);
+            console.log(`📊 Cumulative: Backend=${backendWeight} + Current=${currentCollectionWeight} = ${totalWithCurrent}`);
           } else {
             // Backend doesn't have cumulative_weight yet (needs deployment)
             // Fall back to offline calculation
