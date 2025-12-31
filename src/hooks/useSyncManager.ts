@@ -4,6 +4,8 @@ import { useRef, useCallback, useEffect } from 'react';
 let globalSyncLock = false;
 let lastSyncTimestamp = 0;
 const SYNC_DEBOUNCE_MS = 3000; // Minimum 3 seconds between syncs
+const LOCK_TIMEOUT_MS = 60000; // Auto-release lock after 60 seconds (prevents stuck locks)
+let lockAcquiredAt = 0;
 const onlineHandlers = new Set<() => void>();
 let onlineListenerAttached = false;
 
@@ -12,7 +14,16 @@ const initOnlineListener = () => {
   if (typeof window !== 'undefined' && !onlineListenerAttached) {
     const handleOnline = () => {
       console.log('📡 App back online - triggering sync handlers');
-      onlineHandlers.forEach(handler => handler());
+      // Small delay to ensure network is stable
+      setTimeout(() => {
+        onlineHandlers.forEach(handler => {
+          try {
+            handler();
+          } catch (error) {
+            console.error('Error in online handler:', error);
+          }
+        });
+      }, 500);
     };
     window.addEventListener('online', handleOnline);
     onlineListenerAttached = true;
@@ -22,10 +33,26 @@ const initOnlineListener = () => {
 // Initialize on module load
 initOnlineListener();
 
+// Auto-release stuck locks
+const checkAndReleaseStaleLock = () => {
+  if (globalSyncLock && lockAcquiredAt > 0) {
+    const now = Date.now();
+    if (now - lockAcquiredAt > LOCK_TIMEOUT_MS) {
+      console.warn('⚠️ Auto-releasing stale sync lock (was held for', Math.round((now - lockAcquiredAt) / 1000), 'seconds)');
+      globalSyncLock = false;
+      lockAcquiredAt = 0;
+    }
+  }
+};
+
 export const useSyncManager = () => {
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const mountedRef = useRef(true);
 
   const acquireLock = useCallback((): boolean => {
+    // First check for stale locks
+    checkAndReleaseStaleLock();
+    
     const now = Date.now();
     
     // Check debounce
@@ -41,15 +68,20 @@ export const useSyncManager = () => {
     }
     
     globalSyncLock = true;
+    lockAcquiredAt = now;
     lastSyncTimestamp = now;
     return true;
   }, []);
 
   const releaseLock = useCallback(() => {
     globalSyncLock = false;
+    lockAcquiredAt = 0;
   }, []);
 
-  const isLocked = useCallback(() => globalSyncLock, []);
+  const isLocked = useCallback(() => {
+    checkAndReleaseStaleLock();
+    return globalSyncLock;
+  }, []);
 
   const registerOnlineHandler = useCallback((handler: () => void) => {
     onlineHandlers.add(handler);
@@ -60,10 +92,15 @@ export const useSyncManager = () => {
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
+    
     return () => {
+      mountedRef.current = false;
       if (syncTimeoutRef.current) {
         clearTimeout(syncTimeoutRef.current);
       }
+      // Release lock if this component held it
+      // Note: Only release if we're unmounting, not just re-rendering
     };
   }, []);
 
@@ -83,9 +120,9 @@ export const deduplicateReceipts = <T extends { reference_no?: string; orderId?:
   
   for (const receipt of receipts) {
     const key = receipt.reference_no || `order_${receipt.orderId}`;
-    if (!seen.has(key)) {
+    if (key && !seen.has(key)) {
       seen.set(key, receipt);
-    } else {
+    } else if (key) {
       console.log(`🔄 Skipping duplicate receipt: ${key}`);
     }
   }

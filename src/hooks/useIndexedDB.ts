@@ -223,15 +223,33 @@ export const useIndexedDB = () => {
 
   const getUnsyncedReceipts = useCallback((): Promise<MilkCollection[]> => {
     return new Promise((resolve, reject) => {
-      if (!db) return reject('DB not ready');
-      const tx = db.transaction('receipts', 'readonly');
-      const store = tx.objectStore('receipts');
-      const request = store.getAll();
-      request.onsuccess = () => {
-        const unsynced = request.result.filter((r: MilkCollection) => !r.synced);
-        resolve(unsynced);
-      };
-      request.onerror = () => reject(request.error);
+      if (!db) return resolve([]); // Return empty instead of rejecting
+      try {
+        const tx = db.transaction('receipts', 'readonly');
+        const store = tx.objectStore('receipts');
+        const request = store.getAll();
+        request.onsuccess = () => {
+          // Filter out synced receipts and special storage entries
+          const unsynced = (request.result || []).filter((r: any) => {
+            // Skip special storage entries
+            if (r.orderId === 'PRINTED_RECEIPTS') return false;
+            // Only include unsynced receipts
+            return !r.synced;
+          });
+          resolve(unsynced);
+        };
+        request.onerror = () => {
+          console.error('Error getting unsynced receipts:', request.error);
+          resolve([]); // Return empty on error instead of rejecting
+        };
+        tx.onerror = () => {
+          console.error('Transaction error getting unsynced receipts:', tx.error);
+          resolve([]);
+        };
+      } catch (error) {
+        console.error('Exception getting unsynced receipts:', error);
+        resolve([]);
+      }
     });
   }, [db]);
 

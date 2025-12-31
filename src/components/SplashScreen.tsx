@@ -1,4 +1,4 @@
-import { useEffect, useState, memo } from 'react';
+import { useEffect, useState, memo, useRef } from 'react';
 
 interface SplashScreenProps {
   onComplete: () => void;
@@ -6,16 +6,47 @@ interface SplashScreenProps {
 
 export const SplashScreen = memo(({ onComplete }: SplashScreenProps) => {
   const [isVisible, setIsVisible] = useState(true);
+  const mountedRef = useRef(true);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const completeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const hasCompletedRef = useRef(false);
 
   useEffect(() => {
+    mountedRef.current = true;
+    
     // Show splash for 1 second for faster app launch
-    const timer = setTimeout(() => {
+    timerRef.current = setTimeout(() => {
+      if (!mountedRef.current || hasCompletedRef.current) return;
+      
       setIsVisible(false);
       // Quick fade out then complete
-      setTimeout(onComplete, 200);
+      completeTimerRef.current = setTimeout(() => {
+        if (!mountedRef.current || hasCompletedRef.current) return;
+        hasCompletedRef.current = true;
+        onComplete();
+      }, 200);
     }, 1000);
 
-    return () => clearTimeout(timer);
+    return () => {
+      mountedRef.current = false;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+      if (completeTimerRef.current) {
+        clearTimeout(completeTimerRef.current);
+      }
+    };
+  }, [onComplete]);
+
+  // Safety: call onComplete if component unmounts without completing
+  useEffect(() => {
+    return () => {
+      if (!hasCompletedRef.current) {
+        hasCompletedRef.current = true;
+        // Use setTimeout to avoid calling during unmount
+        setTimeout(() => onComplete(), 0);
+      }
+    };
   }, [onComplete]);
 
   if (!isVisible) {
