@@ -24,7 +24,7 @@ interface DeviceConfig {
 }
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 9; // Must match useIndexedDB.ts version
+const DB_VERSION = 10; // Must match useIndexedDB.ts version
 const STORE_NAME = 'device_config';
 const LOCALSTORAGE_KEY = 'device_config_backup';
 
