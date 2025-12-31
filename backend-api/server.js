@@ -669,10 +669,12 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      // Parse date and time
+      // Parse date and time (LOCAL date, not UTC)
+      // NOTE: toISOString() can shift date due to timezone, which breaks monthly cumulative queries.
       const collectionDate = new Date(body.collection_date);
-      const transdate = collectionDate.toISOString().split('T')[0]; // YYYY-MM-DD
-      const transtime = collectionDate.toTimeString().split(' ')[0]; // HH:MM:SS
+      const pad2 = (n) => String(n).padStart(2, '0');
+      const transdate = `${collectionDate.getFullYear()}-${pad2(collectionDate.getMonth() + 1)}-${pad2(collectionDate.getDate())}`; // YYYY-MM-DD local
+      const transtime = `${pad2(collectionDate.getHours())}:${pad2(collectionDate.getMinutes())}:${pad2(collectionDate.getSeconds())}`; // HH:MM:SS local
       const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
       
       // CHECK multOpt: If member has multOpt = 0, check for existing transaction in this session
@@ -1781,10 +1783,18 @@ const server = http.createServer(async (req, res) => {
       
       const ccode = deviceRows[0].ccode;
       
-      // Get current month's start and end dates
+      // Get current month's start and end dates (LOCAL date, not UTC)
+      // NOTE: Using toISOString() can shift dates due to timezone, causing off-by-one errors.
+      const toYmdLocal = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+
       const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+      const monthStart = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+      const monthEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
       
       // Sum total weight for this farmer in the current month
       const [sumRows] = await pool.query(
