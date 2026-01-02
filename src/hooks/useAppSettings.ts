@@ -162,8 +162,8 @@ const registerDevice = async (fingerprint: string, retryCount = 0): Promise<bool
   try {
     const deviceName = getDeviceName();
     const deviceInfo = getDeviceInfo();
-    // Include platform info for native apps
-    const deviceInfoString = `${deviceName} | ${deviceInfo.os} | ${deviceInfo.browser} | ${deviceInfo.screenResolution}${isNative ? ` | ${platform}` : ''}`;
+    // Simplified format: "Model (OS)" e.g. "HMD Pulse (Android)" or "Samsung A52 (Android)"
+    const deviceInfoString = `${deviceName} (${deviceInfo.os})`;
     
     const requestBody = {
       device_fingerprint: fingerprint,

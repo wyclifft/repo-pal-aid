@@ -70,8 +70,8 @@ const registerDeviceForApproval = async (fingerprint: string, attempt = 1): Prom
   try {
     const deviceName = getDeviceName();
     const deviceInfo = getDeviceInfo();
-    const platform = Capacitor.getPlatform();
-    const deviceInfoString = `${deviceName} | ${deviceInfo.os} | ${deviceInfo.browser} | ${deviceInfo.screenResolution} | ${platform}`;
+    // Simplified format: "Model (OS)" e.g. "HMD Pulse (Android)" or "Samsung A52 (Android)"
+    const deviceInfoString = `${deviceName} (${deviceInfo.os})`;
     
     const requestBody = {
       device_fingerprint: fingerprint,
