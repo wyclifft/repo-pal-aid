@@ -228,12 +228,12 @@ export const getDeviceInfo = () => {
   else if (ua.includes('Safari')) browser = 'Safari';
   else if (ua.includes('Edge')) browser = 'Edge';
 
-  // Detect OS
-  if (ua.includes('Windows')) os = 'Windows';
+  // Detect OS - Check Android BEFORE Linux (Android reports as Linux in UA)
+  if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+  else if (ua.includes('Windows')) os = 'Windows';
   else if (ua.includes('Mac')) os = 'macOS';
   else if (ua.includes('Linux')) os = 'Linux';
-  else if (ua.includes('Android')) os = 'Android';
-  else if (ua.includes('iOS')) os = 'iOS';
 
   // Detect device type
   if (/Mobile|Android|iPhone/i.test(ua)) deviceType = 'Mobile';
