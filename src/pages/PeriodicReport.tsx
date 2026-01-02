@@ -160,7 +160,7 @@ export default function PeriodicReport() {
   const totalCollections = reportData.reduce((sum, item) => sum + (item.collection_count || 0), 0);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#1e3a8a] via-[#3b82f6] to-[#60a5fa] p-4">
+    <div className="min-h-screen bg-gradient-to-br from-[#1e3a8a] via-[#3b82f6] to-[#60a5fa] p-4" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
       <div className="max-w-7xl mx-auto">
         <div className="bg-white/95 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-6">
           <div className="flex items-center justify-between gap-3 mb-6">

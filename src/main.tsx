@@ -35,7 +35,27 @@ createRoot(document.getElementById("root")!).render(
 );
 
 // Advanced Service Worker registration - skip in Capacitor native apps
-const isCapacitor = !!(window as any).Capacitor?.isNativePlatform?.();
+// Use multiple checks for reliable Capacitor detection (bridge may not be ready immediately)
+const isCapacitorApp = (): boolean => {
+  try {
+    // Check for Capacitor global object
+    const capGlobal = (window as any).Capacitor;
+    if (!capGlobal) return false;
+    
+    // Check isNativePlatform if available
+    if (typeof capGlobal.isNativePlatform === 'function') {
+      return capGlobal.isNativePlatform();
+    }
+    
+    // Fallback: check platform property
+    const platform = capGlobal.platform || capGlobal.getPlatform?.();
+    return platform === 'android' || platform === 'ios';
+  } catch {
+    return false;
+  }
+};
+
+const isCapacitor = isCapacitorApp();
 
 if ('serviceWorker' in navigator && !isCapacitor) {
   window.addEventListener('load', async () => {

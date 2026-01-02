@@ -21,9 +21,22 @@ export const ServiceWorkerUpdateBanner: React.FC = () => {
       return;
     }
 
-    // Check if running in Capacitor
-    const isCapacitor = !!(window as any).Capacitor?.isNativePlatform?.();
-    if (isCapacitor) {
+    // Check if running in Capacitor - use multiple detection methods for reliability
+    const isCapacitorApp = (): boolean => {
+      try {
+        const capGlobal = (window as any).Capacitor;
+        if (!capGlobal) return false;
+        if (typeof capGlobal.isNativePlatform === 'function') {
+          return capGlobal.isNativePlatform();
+        }
+        const platform = capGlobal.platform || capGlobal.getPlatform?.();
+        return platform === 'android' || platform === 'ios';
+      } catch {
+        return false;
+      }
+    };
+    
+    if (isCapacitorApp()) {
       console.log('Skipping SW update banner in Capacitor');
       return;
     }

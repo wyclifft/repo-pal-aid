@@ -217,7 +217,7 @@ const ZReport = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2] print:bg-white">
+    <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2] print:bg-white" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       {/* Session Close Banner - Show when closing session */}
       {isSessionClose && (
         <div className="bg-amber-500 text-white px-4 py-3 text-center print:hidden">
