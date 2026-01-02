@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { CornerDownLeft, Search, X } from 'lucide-react';
-import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
 import { type Route, type Session } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
+import { useHaptics } from '@/hooks/useHaptics';
 import { FarmerSearchModal } from './FarmerSearchModal';
 import { toast } from 'sonner';
 
@@ -57,6 +57,7 @@ export const BuyProduceScreen = ({
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const { getFarmers } = useIndexedDB();
+  const { light: hapticLight, medium: hapticMedium, success: hapticSuccess } = useHaptics();
   
   // Get psettings for AutoW enforcement and produce labeling
   // These values update automatically when psettings change in the database
@@ -171,14 +172,26 @@ export const BuyProduceScreen = ({
   };
 
   // Handle clear button with haptic feedback
-  const handleClear = async () => {
-    try {
-      await Haptics.impact({ style: ImpactStyle.Light });
-    } catch (err) {
-      // Haptics not available (web browser)
-    }
+  const handleClear = () => {
+    hapticLight();
     setMemberNo('');
     onClearFarmer();
+  };
+  
+  // Wrap capture/submit with haptic feedback
+  const handleCaptureWithHaptic = () => {
+    hapticMedium();
+    onCapture();
+  };
+  
+  const handleSubmitWithHaptic = () => {
+    hapticSuccess();
+    onSubmit();
+  };
+  
+  const handleBackWithHaptic = () => {
+    hapticLight();
+    onBack();
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
@@ -323,20 +336,20 @@ export const BuyProduceScreen = ({
         {/* Action Buttons */}
         <div className="flex gap-2 sm:gap-3">
           <button
-            onClick={onBack}
+            onClick={handleBackWithHaptic}
             className="flex-1 py-3 bg-white border-2 border-gray-800 rounded-lg font-semibold text-gray-800 hover:bg-gray-100 active:bg-gray-200 min-h-[48px] text-sm sm:text-base"
           >
             Back
           </button>
           <button
-            onClick={onCapture}
+            onClick={handleCaptureWithHaptic}
             disabled={!!captureDisabled}
             className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${captureDisabled ? 'opacity-50 pointer-events-none' : ''}`}
           >
             Capture
           </button>
           <button
-            onClick={onSubmit}
+            onClick={handleSubmitWithHaptic}
             disabled={!!submitDisabled}
             className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${submitDisabled ? 'opacity-50 pointer-events-none' : ''}`}
           >
