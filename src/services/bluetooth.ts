@@ -58,6 +58,19 @@ interface StoredPrinterInfo {
   timestamp: number;
 }
 
+// Debounce mechanism for BLE verification to prevent Android Bluetooth stack issues
+let lastVerificationTime = 0;
+const VERIFICATION_DEBOUNCE_MS = 2000; // Minimum 2 seconds between verifications
+
+const canVerifyConnection = (): boolean => {
+  const now = Date.now();
+  if (now - lastVerificationTime < VERIFICATION_DEBOUNCE_MS) {
+    return false;
+  }
+  lastVerificationTime = now;
+  return true;
+};
+
 const saveDeviceInfo = (deviceId: string, deviceName: string, scaleType: ScaleType) => {
   const info: StoredDeviceInfo = {
     deviceId,
@@ -153,15 +166,25 @@ export const broadcastPrinterConnectionChange = (connected: boolean) => {
 };
 
 // Verify if scale is actually connected by checking BLE state
+// Uses debouncing to prevent Android Bluetooth stack issues from frequent calls
 export const verifyScaleConnection = async (): Promise<boolean> => {
   if (!scale.deviceId || !scale.isConnected) {
     return false;
   }
   
+  // Skip verification if called too frequently (return cached state)
+  if (!canVerifyConnection()) {
+    return scale.isConnected;
+  }
+  
   if (Capacitor.isNativePlatform()) {
     try {
       // Try to get services - this will fail if disconnected
-      await BleClient.getServices(scale.deviceId);
+      // Use a timeout to prevent hanging on some Android devices
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('BLE verification timeout')), 3000)
+      );
+      await Promise.race([BleClient.getServices(scale.deviceId), timeoutPromise]);
       return true;
     } catch (error) {
       console.warn('⚠️ Scale connection verification failed:', error);
@@ -180,14 +203,24 @@ export const verifyScaleConnection = async (): Promise<boolean> => {
 };
 
 // Verify if printer is actually connected
+// Uses debouncing to prevent Android Bluetooth stack issues from frequent calls
 export const verifyPrinterConnection = async (): Promise<boolean> => {
   if (!printer.deviceId || !printer.isConnected) {
     return false;
   }
   
+  // Skip verification if called too frequently (return cached state)
+  if (!canVerifyConnection()) {
+    return printer.isConnected;
+  }
+  
   if (Capacitor.isNativePlatform()) {
     try {
-      await BleClient.getServices(printer.deviceId);
+      // Use a timeout to prevent hanging on some Android devices
+      const timeoutPromise = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('BLE verification timeout')), 3000)
+      );
+      await Promise.race([BleClient.getServices(printer.deviceId), timeoutPromise]);
       return true;
     } catch (error) {
       console.warn('⚠️ Printer connection verification failed:', error);
