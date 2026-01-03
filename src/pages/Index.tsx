@@ -698,44 +698,56 @@ const Index = () => {
       showCumulative && Number(selectedFarmer?.currqty) === 1;
 
     // Calculate cumulative weight if farmer has currqty=1 and global showCumulative is enabled
-    // CLOUD-BASED ACCUMULATION: Backend sums all transactions by ccode, shared across all devices
+    // CLOUD-BASED ACCUMULATION: ALWAYS fetch fresh from backend - never use stale local cache
     // Formula: backend_cumulative (synced from all devices) + current_collection (not yet synced)
     if (shouldShowCumulativeForFarmer && deviceFingerprint) {
       const cleanFarmerId = selectedFarmer!.farmer_id.replace(/^#/, '').trim();
       const currentCollectionWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
 
-      try {
-        // Fetch cloud cumulative - this is the source of truth shared across all devices under same CCode
-        const freqResult = await mysqlApi.farmerFrequency.getMonthlyFrequency(
-          cleanFarmerId,
-          deviceFingerprint
-        );
+      // FORCE CLOUD REFRESH: Always fetch fresh cumulative from backend
+      // Retry up to 3 times with timeout to ensure we get the latest cloud value
+      let cloudCumulative: number | null = null;
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts && cloudCumulative === null) {
+        attempts++;
+        try {
+          console.log(`🔄 Fetching cloud cumulative (attempt ${attempts}/${maxAttempts})...`);
+          
+          // Fetch cloud cumulative with timeout
+          const freqResult = await Promise.race([
+            mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint),
+            new Promise<{ success: false }>((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout')), 5000)
+            )
+          ]);
 
-        if (freqResult.success && freqResult.data) {
-          // Backend returns cumulative from ALL synced transactions across ALL devices under same CCode
-          const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-
-          // Total = cloud cumulative (all synced) + current collection (not yet synced)
-          const totalWithCurrent = cloudCumulative + currentCollectionWeight;
-
-          // Update local cache with cloud value as base
-          await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
-          setCumulativeFrequency(totalWithCurrent);
-
-          console.log(
-            `📊 Cloud Cumulative (shared across CCode): ${cloudCumulative} + Current: ${currentCollectionWeight} = ${totalWithCurrent}`
-          );
-        } else {
-          // Backend request failed but we're online - use local cache as fallback
-          console.warn('⚠️ Failed to fetch cloud cumulative, using local cache');
-          const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
-          const newTotal = cachedTotal + currentCollectionWeight;
-          await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
-          setCumulativeFrequency(newTotal);
+          if (freqResult.success && freqResult.data) {
+            cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+            console.log(`✅ Cloud Cumulative fetched: ${cloudCumulative} (attempt ${attempts})`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Cloud fetch attempt ${attempts} failed:`, error);
+          if (attempts < maxAttempts) {
+            // Wait 500ms before retry
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
         }
-      } catch (error) {
-        // Offline - use local cached value
-        console.warn('📴 Offline - using local cumulative cache:', error);
+      }
+
+      if (cloudCumulative !== null) {
+        // SUCCESS: Got fresh cloud value
+        const totalWithCurrent = cloudCumulative + currentCollectionWeight;
+        await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
+        setCumulativeFrequency(totalWithCurrent);
+        console.log(
+          `📊 CLOUD Cumulative: ${cloudCumulative} + Current: ${currentCollectionWeight} = ${totalWithCurrent}`
+        );
+      } else {
+        // FAILED after all retries - show toast warning and use local cache as last resort
+        console.error('❌ Failed to fetch cloud cumulative after all retries, using local cache');
+        toast.warning('Could not fetch latest cumulative from cloud - showing cached value');
         const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
         const newTotal = cachedTotal + currentCollectionWeight;
         await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
