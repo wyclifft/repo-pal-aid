@@ -699,16 +699,25 @@ const Index = () => {
 
     // Calculate cumulative weight if farmer has currqty=1 and global showCumulative is enabled
     // CLOUD-BASED ACCUMULATION: ALWAYS fetch fresh from backend - never use stale local cache
-    // Formula: backend_cumulative (synced from all devices) + current_collection (not yet synced)
+    // IMPORTANT: If we submitted online successfully, the cloud ALREADY includes our submission
+    // If we saved offline, we need to add the current weight to the cloud value
     if (shouldShowCumulativeForFarmer && deviceFingerprint) {
       const cleanFarmerId = selectedFarmer!.farmer_id.replace(/^#/, '').trim();
       const currentCollectionWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
+      
+      // Determine if our collection was synced to cloud (successCount > 0 means it's already in the cloud)
+      const wasSubmittedOnline = successCount > 0;
 
       // FORCE CLOUD REFRESH: Always fetch fresh cumulative from backend
       // Retry up to 3 times with timeout to ensure we get the latest cloud value
       let cloudCumulative: number | null = null;
       let attempts = 0;
       const maxAttempts = 3;
+      
+      // If submitted online, wait a moment for the database to settle
+      if (wasSubmittedOnline) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
       
       while (attempts < maxAttempts && cloudCumulative === null) {
         attempts++;
@@ -738,12 +747,22 @@ const Index = () => {
 
       if (cloudCumulative !== null) {
         // SUCCESS: Got fresh cloud value
-        const totalWithCurrent = cloudCumulative + currentCollectionWeight;
+        // CRITICAL FIX: If we submitted ONLINE, the cloud cumulative ALREADY includes our submission
+        // Only add currentCollectionWeight if we saved OFFLINE (it's not in cloud yet)
+        let displayTotal: number;
+        
+        if (wasSubmittedOnline) {
+          // Cloud already has our data, just use cloud value directly
+          displayTotal = cloudCumulative;
+          console.log(`📊 ONLINE: Cloud Cumulative already includes submission: ${cloudCumulative}`);
+        } else {
+          // Offline: cloud doesn't have our data yet, add it
+          displayTotal = cloudCumulative + currentCollectionWeight;
+          console.log(`📊 OFFLINE: Cloud Cumulative: ${cloudCumulative} + Current: ${currentCollectionWeight} = ${displayTotal}`);
+        }
+        
         await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
-        setCumulativeFrequency(totalWithCurrent);
-        console.log(
-          `📊 CLOUD Cumulative: ${cloudCumulative} + Current: ${currentCollectionWeight} = ${totalWithCurrent}`
-        );
+        setCumulativeFrequency(displayTotal);
       } else {
         // FAILED after all retries - show toast warning and use local cache as last resort
         console.error('❌ Failed to fetch cloud cumulative after all retries, using local cache');
