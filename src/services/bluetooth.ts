@@ -121,13 +121,36 @@ export const clearStoredPrinter = () => {
 const SERVICE_UUID_HC05 = numberToUUID(0xffe0);
 const SERVICE_UUID_HM10 = numberToUUID(0xfee7);
 
+// Expanded list of known scale service UUIDs for broader compatibility
+// Including T-Scale DR, ACS, and other common digital scale modules
 const GENERIC_SCALE_SERVICES = [
+  // Standard HC-05 / HM-10 modules
   numberToUUID(0xffe0),
   numberToUUID(0xfee7),
+  // Generic Access / Device Info (for discovery)
   numberToUUID(0x1800),
   numberToUUID(0x180a),
+  // Common scale services
   '0000fff0-0000-1000-8000-00805f9b34fb',
+  '0000fff1-0000-1000-8000-00805f9b34fb',
+  '0000fff2-0000-1000-8000-00805f9b34fb',
+  '0000fff3-0000-1000-8000-00805f9b34fb',
+  '0000fff4-0000-1000-8000-00805f9b34fb',
+  // ISSC/Microchip Transparent UART
   '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+  // Nordic UART Service (NUS) - used by many BLE scales
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
+  // T-Scale / DR Series common services
+  '0000ffe0-0000-1000-8000-00805f9b34fb',
+  '0000ffe1-0000-1000-8000-00805f9b34fb',
+  '0000ffe2-0000-1000-8000-00805f9b34fb',
+  '0000ffe5-0000-1000-8000-00805f9b34fb',
+  // Weight Scale Service (official Bluetooth SIG)
+  numberToUUID(0x181d),
+  // Xiaomi / Huami scales
+  '00001530-0000-3512-2118-0009af100700',
+  // Generic SPP-like services
+  '00001101-0000-1000-8000-00805f9b34fb',
 ];
 
 // Clear scale state and broadcast disconnection
@@ -317,7 +340,7 @@ export const connectBluetoothScale = async (
             continue;
           }
           
-          const notifyChar = service.characteristics.find(c => c.properties.notify);
+          const notifyChar = service.characteristics.find((c: any) => c.properties.notify);
           if (notifyChar) {
             serviceUuid = service.uuid;
             characteristicUuid = notifyChar.uuid;
@@ -328,10 +351,39 @@ export const connectBluetoothScale = async (
         }
       }
 
+      // Also try finding a characteristic with indicate if notify not found
+      if (!serviceUuid) {
+        console.log('⚠️ No notify characteristic, trying indicate...');
+        for (const service of services) {
+          if (service.uuid.toLowerCase().includes('1800') || 
+              service.uuid.toLowerCase().includes('1801') ||
+              service.uuid.toLowerCase().includes('180a')) {
+            continue;
+          }
+          
+          const indicateChar = service.characteristics.find((c: any) => c.properties.indicate);
+          if (indicateChar) {
+            serviceUuid = service.uuid;
+            characteristicUuid = indicateChar.uuid;
+            scaleType = 'Unknown';
+            console.log(`✅ Found scale service with indicate: ${service.uuid}`);
+            break;
+          }
+        }
+      }
+
       if (!serviceUuid || !characteristicUuid) {
+        // Log all discovered services for debugging
+        console.log('📋 All discovered services for debugging:');
+        for (const service of services) {
+          console.log(`  Service: ${service.uuid}`);
+          for (const char of service.characteristics) {
+            console.log(`    Char: ${char.uuid} - notify:${char.properties.notify}, indicate:${char.properties.indicate}, read:${char.properties.read}, write:${char.properties.write}`);
+          }
+        }
         console.error('❌ Could not find any compatible scale service');
         await BleClient.disconnect(device.deviceId);
-        throw new Error('Could not find compatible Bluetooth scale service.');
+        throw new Error('Could not find compatible Bluetooth scale service. Check console for discovered services.');
       }
 
       console.log(`📡 Starting notifications on ${serviceUuid}/${characteristicUuid}`);
@@ -341,25 +393,53 @@ export const connectBluetoothScale = async (
         serviceUuid,
         characteristicUuid,
         (value) => {
+          const rawBytes = new Uint8Array(value.buffer);
           const text = new TextDecoder().decode(value);
-          console.log(`📊 Raw scale data: "${text}"`);
+          console.log(`📊 Raw scale data: "${text}" (${rawBytes.length} bytes) [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
           
           let parsed: number | null = null;
           
+          // Strategy 1: Standard decimal format "12.34" or "12.34 kg"
           const decimalMatch = text.match(/(\d+\.\d+)/);
           if (decimalMatch) {
             parsed = parseFloat(decimalMatch[1]);
           }
           
+          // Strategy 2: Integer format (grams) - convert to kg
           if (!parsed || isNaN(parsed)) {
             const intMatch = text.match(/(\d+)/);
             if (intMatch) {
               const intValue = parseInt(intMatch[1]);
-              parsed = intValue > 1000 ? intValue / 1000 : intValue;
+              // If value > 100, assume grams and convert to kg
+              parsed = intValue > 100 ? intValue / 1000 : intValue;
             }
           }
           
-          if (parsed && !isNaN(parsed) && parsed > 0) {
+          // Strategy 3: T-Scale DR format - may send binary with weight in specific bytes
+          if (!parsed || isNaN(parsed)) {
+            if (rawBytes.length >= 6) {
+              // Some scales send weight as 2-byte integer at offset 4-5 (big endian)
+              const weightInt = (rawBytes[4] << 8) | rawBytes[5];
+              if (weightInt > 0 && weightInt < 50000) {
+                parsed = weightInt / 100; // Assume centgrams
+                console.log(`📊 Parsed from binary format: ${parsed} kg`);
+              }
+            }
+          }
+          
+          // Strategy 4: Try parsing from hex representation (some Chinese scales)
+          if (!parsed || isNaN(parsed)) {
+            const hexWeight = text.replace(/[^0-9A-Fa-f]/g, '');
+            if (hexWeight.length >= 4) {
+              const hexValue = parseInt(hexWeight.slice(0, 4), 16);
+              if (hexValue > 0 && hexValue < 50000) {
+                parsed = hexValue / 100;
+                console.log(`📊 Parsed from hex format: ${parsed} kg`);
+              }
+            }
+          }
+          
+          if (parsed && !isNaN(parsed) && parsed > 0 && parsed < 1000) {
             console.log(`✅ Parsed weight: ${parsed} kg`);
             onWeightUpdate(parsed, scaleType);
           }
