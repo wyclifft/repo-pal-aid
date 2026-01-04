@@ -2,7 +2,31 @@ import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetoo
 import { Capacitor } from '@capacitor/core';
 import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
 
-export type ScaleType = 'HC-05' | 'HM-10' | 'Unknown';
+export type ScaleType = 'HC-05' | 'HM-10' | 'DR-Series' | 'Unknown';
+
+// DR Series scale models for detection
+const DR_SERIES_MODELS = [
+  'DR 10', 'DR10', 'DR-10',
+  'DR 20', 'DR20', 'DR-20',
+  'DR 30', 'DR30', 'DR-30',
+  'DR 40', 'DR40', 'DR-40',
+  'DR 50', 'DR50', 'DR-50',
+  'DR 60', 'DR60', 'DR-60',
+  'DR 70', 'DR70', 'DR-70',
+  'DR 80', 'DR80', 'DR-80',
+  'DR 90', 'DR90', 'DR-90',
+  'DR 100', 'DR100', 'DR-100',
+  'DR 150', 'DR150', 'DR-150',
+  'T SCALE', 'T-SCALE', 'TSCALE',
+  'SCALE DR', 'SCALE-DR',
+];
+
+// Check if device name matches DR series
+const isDRSeriesScale = (deviceName: string | undefined): boolean => {
+  if (!deviceName) return false;
+  const upperName = deviceName.toUpperCase();
+  return DR_SERIES_MODELS.some(model => upperName.includes(model.toUpperCase()));
+};
 
 // Log helpful tips when this module loads
 if (typeof window !== 'undefined') {
@@ -122,7 +146,7 @@ const SERVICE_UUID_HC05 = numberToUUID(0xffe0);
 const SERVICE_UUID_HM10 = numberToUUID(0xfee7);
 
 // Expanded list of known scale service UUIDs for broader compatibility
-// Including T-Scale DR, ACS, and other common digital scale modules
+// Including T-Scale DR series (DR 10-150), ACS, and other common digital scale modules
 const GENERIC_SCALE_SERVICES = [
   // Standard HC-05 / HM-10 modules
   numberToUUID(0xffe0),
@@ -130,28 +154,129 @@ const GENERIC_SCALE_SERVICES = [
   // Generic Access / Device Info (for discovery)
   numberToUUID(0x1800),
   numberToUUID(0x180a),
-  // Common scale services
+  // Common scale services (FFF0-FFF9 range)
   '0000fff0-0000-1000-8000-00805f9b34fb',
   '0000fff1-0000-1000-8000-00805f9b34fb',
   '0000fff2-0000-1000-8000-00805f9b34fb',
   '0000fff3-0000-1000-8000-00805f9b34fb',
   '0000fff4-0000-1000-8000-00805f9b34fb',
+  '0000fff5-0000-1000-8000-00805f9b34fb',
   // ISSC/Microchip Transparent UART
   '49535343-fe7d-4ae5-8fa9-9fafd205e455',
   // Nordic UART Service (NUS) - used by many BLE scales
   '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
-  // T-Scale / DR Series common services
+  // T-Scale / DR Series common services (FFE0-FFE9 range) - CRITICAL for DR 10-150
   '0000ffe0-0000-1000-8000-00805f9b34fb',
   '0000ffe1-0000-1000-8000-00805f9b34fb',
   '0000ffe2-0000-1000-8000-00805f9b34fb',
+  '0000ffe3-0000-1000-8000-00805f9b34fb',
+  '0000ffe4-0000-1000-8000-00805f9b34fb',
   '0000ffe5-0000-1000-8000-00805f9b34fb',
   // Weight Scale Service (official Bluetooth SIG)
   numberToUUID(0x181d),
+  // Heart Rate Service (some scales misuse this)
+  numberToUUID(0x180d),
+  // Battery Service (for discovery)
+  numberToUUID(0x180f),
   // Xiaomi / Huami scales
   '00001530-0000-3512-2118-0009af100700',
   // Generic SPP-like services
   '00001101-0000-1000-8000-00805f9b34fb',
+  // Additional DR series specific UUIDs
+  '0000fee0-0000-1000-8000-00805f9b34fb',
+  '0000fee1-0000-1000-8000-00805f9b34fb',
+  '0000fee2-0000-1000-8000-00805f9b34fb',
+  // Custom services sometimes used by T-Scale DR
+  '0000180f-0000-1000-8000-00805f9b34fb',
+  '0000181c-0000-1000-8000-00805f9b34fb',
 ];
+
+// DR Series characteristic UUIDs - common across DR 10-150 models
+const DR_SERIES_CHARACTERISTIC_PATTERNS = [
+  'ffe1', 'ffe2', 'ffe3', 'ffe4', 'ffe5',
+  'fff1', 'fff2', 'fff3', 'fff4', 'fff5',
+  'fee1', 'fee2',
+];
+
+// Parse weight data from DR Series scales (DR 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150)
+const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null => {
+  // DR Series scales typically send data in one of these formats:
+  
+  // Format 1: ASCII text like "ST,GS,+  12.345kg" or "  12.345 kg"
+  const textMatch = text.match(/[+-]?\s*(\d+\.?\d*)\s*(kg|g|lb)?/i);
+  if (textMatch) {
+    let weight = parseFloat(textMatch[1]);
+    if (textMatch[2]?.toLowerCase() === 'g') {
+      weight = weight / 1000; // Convert grams to kg
+    }
+    if (weight > 0 && weight < 1000) {
+      console.log(`📊 DR Series parsed text format: ${weight} kg`);
+      return weight;
+    }
+  }
+  
+  // Format 2: Binary format with header byte + weight data
+  // Common DR format: [Header][Status][Sign][Weight High][Weight Low][Unit][Checksum]
+  if (rawBytes.length >= 6) {
+    // Try different byte positions for weight data
+    const positions = [
+      { high: 3, low: 4, divisor: 100 },  // Weight at bytes 3-4
+      { high: 4, low: 5, divisor: 100 },  // Weight at bytes 4-5
+      { high: 2, low: 3, divisor: 100 },  // Weight at bytes 2-3
+      { high: 3, low: 4, divisor: 1000 }, // Higher precision
+    ];
+    
+    for (const pos of positions) {
+      if (rawBytes.length > pos.low) {
+        const weightInt = (rawBytes[pos.high] << 8) | rawBytes[pos.low];
+        const weight = weightInt / pos.divisor;
+        if (weight > 0 && weight < 500) {
+          console.log(`📊 DR Series parsed binary (${pos.high}-${pos.low}): ${weight} kg`);
+          return weight;
+        }
+      }
+    }
+  }
+  
+  // Format 3: Little-endian 16-bit or 32-bit integer
+  if (rawBytes.length >= 4) {
+    // Try 16-bit little-endian at different offsets
+    for (let offset = 0; offset <= rawBytes.length - 2; offset++) {
+      const weightLE = rawBytes[offset] | (rawBytes[offset + 1] << 8);
+      const weight = weightLE / 100;
+      if (weight > 0.1 && weight < 500 && weight !== Math.floor(weight)) {
+        console.log(`📊 DR Series parsed LE16 at offset ${offset}: ${weight} kg`);
+        return weight;
+      }
+    }
+  }
+  
+  // Format 4: Direct decimal string anywhere in the data
+  const decimalMatch = text.match(/(\d+\.\d{1,3})/);
+  if (decimalMatch) {
+    const weight = parseFloat(decimalMatch[1]);
+    if (weight > 0 && weight < 500) {
+      console.log(`📊 DR Series parsed decimal: ${weight} kg`);
+      return weight;
+    }
+  }
+  
+  // Format 5: Integer representing grams or centgrams
+  const intMatch = text.replace(/[^0-9]/g, '');
+  if (intMatch.length >= 3) {
+    const intValue = parseInt(intMatch);
+    if (intValue > 100 && intValue < 500000) {
+      // Likely grams
+      const weight = intValue / 1000;
+      if (weight > 0.1 && weight < 500) {
+        console.log(`📊 DR Series parsed grams: ${weight} kg`);
+        return weight;
+      }
+    }
+  }
+  
+  return null;
+};
 
 // Clear scale state and broadcast disconnection
 const clearScaleState = () => {
@@ -294,22 +419,57 @@ export const connectBluetoothScale = async (
       let scaleType: ScaleType = 'Unknown';
       let serviceUuid = '';
       let characteristicUuid = '';
+      
+      // Check if this is a DR Series scale by name
+      const isDRScale = isDRSeriesScale(device.name);
+      if (isDRScale) {
+        console.log(`🎯 Detected DR Series scale by name: ${device.name}`);
+        scaleType = 'DR-Series';
+      }
 
       const services = await BleClient.getServices(device.deviceId);
       console.log(`📋 Found ${services.length} services`);
 
-      // Try HC-05 first
-      const hc05Service = services.find(s => 
-        s.uuid.toLowerCase().includes(SERVICE_UUID_HC05.toLowerCase()) ||
-        s.uuid.toLowerCase().includes('ffe0')
-      );
-      if (hc05Service && hc05Service.characteristics.length > 0) {
-        const notifyChar = hc05Service.characteristics.find(c => c.properties.notify);
-        if (notifyChar) {
-          serviceUuid = hc05Service.uuid;
-          characteristicUuid = notifyChar.uuid;
-          scaleType = 'HC-05';
-          console.log('✅ Detected HC-05 scale');
+      // For DR Series scales, prioritize FFE0-FFE5 services
+      if (isDRScale) {
+        for (const service of services) {
+          const uuid = service.uuid.toLowerCase();
+          // Check for DR Series characteristic patterns
+          if (DR_SERIES_CHARACTERISTIC_PATTERNS.some(pattern => uuid.includes(pattern)) ||
+              uuid.includes('ffe0') || uuid.includes('fff0') || uuid.includes('fee0')) {
+            const notifyChar = service.characteristics.find((c: any) => c.properties.notify);
+            const indicateChar = service.characteristics.find((c: any) => c.properties.indicate);
+            const readChar = service.characteristics.find((c: any) => c.properties.read);
+            
+            if (notifyChar || indicateChar) {
+              serviceUuid = service.uuid;
+              characteristicUuid = (notifyChar || indicateChar)!.uuid;
+              console.log(`✅ DR Series service found: ${service.uuid}, char: ${characteristicUuid}`);
+              break;
+            } else if (readChar && !serviceUuid) {
+              // Some DR scales use read-only characteristics
+              serviceUuid = service.uuid;
+              characteristicUuid = readChar.uuid;
+              console.log(`✅ DR Series read-only service found: ${service.uuid}`);
+            }
+          }
+        }
+      }
+
+      // Try HC-05 if not already found
+      if (!serviceUuid) {
+        const hc05Service = services.find(s => 
+          s.uuid.toLowerCase().includes(SERVICE_UUID_HC05.toLowerCase()) ||
+          s.uuid.toLowerCase().includes('ffe0')
+        );
+        if (hc05Service && hc05Service.characteristics.length > 0) {
+          const notifyChar = hc05Service.characteristics.find(c => c.properties.notify);
+          if (notifyChar) {
+            serviceUuid = hc05Service.uuid;
+            characteristicUuid = notifyChar.uuid;
+            if (!isDRScale) scaleType = 'HC-05';
+            console.log('✅ Detected HC-05 compatible scale');
+          }
         }
       }
 
@@ -324,8 +484,8 @@ export const connectBluetoothScale = async (
           if (notifyChar) {
             serviceUuid = hm10Service.uuid;
             characteristicUuid = notifyChar.uuid;
-            scaleType = 'HM-10';
-            console.log('✅ Detected HM-10 scale');
+            if (!isDRScale) scaleType = 'HM-10';
+            console.log('✅ Detected HM-10 compatible scale');
           }
         }
       }
@@ -398,6 +558,16 @@ export const connectBluetoothScale = async (
           console.log(`📊 Raw scale data: "${text}" (${rawBytes.length} bytes) [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
           
           let parsed: number | null = null;
+          
+          // Use specialized DR Series parser if detected
+          if (scaleType === 'DR-Series' || isDRScale) {
+            parsed = parseDRSeriesWeight(rawBytes, text);
+            if (parsed !== null) {
+              console.log(`✅ DR Series weight: ${parsed} kg`);
+              onWeightUpdate(parsed, scaleType);
+              return;
+            }
+          }
           
           // Strategy 1: Standard decimal format "12.34" or "12.34 kg"
           const decimalMatch = text.match(/(\d+\.\d+)/);
