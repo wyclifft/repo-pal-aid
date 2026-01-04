@@ -2,7 +2,7 @@ import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetoo
 import { Capacitor } from '@capacitor/core';
 import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
 
-export type ScaleType = 'HC-05' | 'HM-10' | 'DR-Series' | 'Unknown';
+export type ScaleType = 'HC-05' | 'HM-10' | 'DR-Series' | 'BTM-Series' | 'Unknown';
 
 // DR Series scale models for detection
 const DR_SERIES_MODELS = [
@@ -21,11 +21,36 @@ const DR_SERIES_MODELS = [
   'SCALE DR', 'SCALE-DR',
 ];
 
+// BTM Series (Bluetooth Module scales) - common Chinese Bluetooth scale modules
+// These are often used in various digital scales including T-Scale DR series
+const BTM_SERIES_PATTERNS = [
+  'BTM', 'BTM0', 'BTM03', 'BTM04', 'BTM05',
+  'BTM0304', 'BTM0404', 'BTM0504',
+  'BTM0304C', 'BTM0404C', 'BTM0504C',
+  // Common Bluetooth module prefixes
+  'BT-', 'BT_', 'BTLE', 'BLE-',
+  'HC-', 'HM-', 'JDY-', 'CC41',
+  // Generic scale prefixes
+  'SCALE', 'WEIGHT', 'BALANCE',
+];
+
 // Check if device name matches DR series
 const isDRSeriesScale = (deviceName: string | undefined): boolean => {
   if (!deviceName) return false;
   const upperName = deviceName.toUpperCase();
   return DR_SERIES_MODELS.some(model => upperName.includes(model.toUpperCase()));
+};
+
+// Check if device name matches BTM series (Bluetooth Module)
+const isBTMSeriesScale = (deviceName: string | undefined): boolean => {
+  if (!deviceName) return false;
+  const upperName = deviceName.toUpperCase();
+  return BTM_SERIES_PATTERNS.some(pattern => upperName.includes(pattern.toUpperCase()));
+};
+
+// Check if device is a compatible scale (DR Series or BTM Series)
+const isCompatibleScale = (deviceName: string | undefined): boolean => {
+  return isDRSeriesScale(deviceName) || isBTMSeriesScale(deviceName);
 };
 
 // Log helpful tips when this module loads
@@ -420,37 +445,63 @@ export const connectBluetoothScale = async (
       let serviceUuid = '';
       let characteristicUuid = '';
       
+      // Check if this is a BTM Series scale by name (e.g., BTM0304C1H)
+      const isBTMScale = isBTMSeriesScale(device.name);
+      if (isBTMScale) {
+        console.log(`🎯 Detected BTM Series scale by name: ${device.name}`);
+        scaleType = 'BTM-Series';
+      }
+      
       // Check if this is a DR Series scale by name
       const isDRScale = isDRSeriesScale(device.name);
       if (isDRScale) {
         console.log(`🎯 Detected DR Series scale by name: ${device.name}`);
         scaleType = 'DR-Series';
       }
+      
+      // Combined detection for compatible scales
+      const isCompatible = isBTMScale || isDRScale;
 
       const services = await BleClient.getServices(device.deviceId);
       console.log(`📋 Found ${services.length} services`);
 
-      // For DR Series scales, prioritize FFE0-FFE5 services
-      if (isDRScale) {
+      // For BTM Series or DR Series scales, prioritize FFE0-FFE5 and SPP-like services
+      if (isCompatible) {
+        console.log(`🔍 Scanning services for ${scaleType} scale...`);
         for (const service of services) {
           const uuid = service.uuid.toLowerCase();
-          // Check for DR Series characteristic patterns
-          if (DR_SERIES_CHARACTERISTIC_PATTERNS.some(pattern => uuid.includes(pattern)) ||
-              uuid.includes('ffe0') || uuid.includes('fff0') || uuid.includes('fee0')) {
+          console.log(`  📋 Service: ${uuid} with ${service.characteristics.length} characteristics`);
+          
+          // Check for common scale characteristic patterns (FFE0, FFF0, FEE0, SPP)
+          const isScaleService = DR_SERIES_CHARACTERISTIC_PATTERNS.some(pattern => uuid.includes(pattern)) ||
+              uuid.includes('ffe0') || uuid.includes('fff0') || uuid.includes('fee0') ||
+              uuid.includes('ffe1') || uuid.includes('fff1') || uuid.includes('fee1') ||
+              uuid.includes('1101'); // SPP-like service
+              
+          if (isScaleService || service.characteristics.length > 0) {
+            // Log all characteristics for debugging
+            for (const char of service.characteristics) {
+              console.log(`    📌 Char: ${char.uuid} - notify:${char.properties.notify}, indicate:${char.properties.indicate}, read:${char.properties.read}, write:${char.properties.write}`);
+            }
+            
             const notifyChar = service.characteristics.find((c: any) => c.properties.notify);
             const indicateChar = service.characteristics.find((c: any) => c.properties.indicate);
             const readChar = service.characteristics.find((c: any) => c.properties.read);
             
-            if (notifyChar || indicateChar) {
+            if (notifyChar) {
               serviceUuid = service.uuid;
-              characteristicUuid = (notifyChar || indicateChar)!.uuid;
-              console.log(`✅ DR Series service found: ${service.uuid}, char: ${characteristicUuid}`);
+              characteristicUuid = notifyChar.uuid;
+              console.log(`✅ ${scaleType} notify service found: ${service.uuid}, char: ${characteristicUuid}`);
               break;
+            } else if (indicateChar && !serviceUuid) {
+              serviceUuid = service.uuid;
+              characteristicUuid = indicateChar.uuid;
+              console.log(`✅ ${scaleType} indicate service found: ${service.uuid}, char: ${characteristicUuid}`);
             } else if (readChar && !serviceUuid) {
-              // Some DR scales use read-only characteristics
+              // Some scales use read-only characteristics with polling
               serviceUuid = service.uuid;
               characteristicUuid = readChar.uuid;
-              console.log(`✅ DR Series read-only service found: ${service.uuid}`);
+              console.log(`✅ ${scaleType} read-only service found: ${service.uuid}`);
             }
           }
         }
@@ -467,7 +518,7 @@ export const connectBluetoothScale = async (
           if (notifyChar) {
             serviceUuid = hc05Service.uuid;
             characteristicUuid = notifyChar.uuid;
-            if (!isDRScale) scaleType = 'HC-05';
+            if (!isCompatible) scaleType = 'HC-05';
             console.log('✅ Detected HC-05 compatible scale');
           }
         }
@@ -484,7 +535,7 @@ export const connectBluetoothScale = async (
           if (notifyChar) {
             serviceUuid = hm10Service.uuid;
             characteristicUuid = notifyChar.uuid;
-            if (!isDRScale) scaleType = 'HM-10';
+            if (!isCompatible) scaleType = 'HM-10';
             console.log('✅ Detected HM-10 compatible scale');
           }
         }
@@ -559,11 +610,11 @@ export const connectBluetoothScale = async (
           
           let parsed: number | null = null;
           
-          // Use specialized DR Series parser if detected
-          if (scaleType === 'DR-Series' || isDRScale) {
+          // Use specialized parser for BTM Series or DR Series scales
+          if (scaleType === 'BTM-Series' || scaleType === 'DR-Series' || isBTMScale || isDRScale) {
             parsed = parseDRSeriesWeight(rawBytes, text);
             if (parsed !== null) {
-              console.log(`✅ DR Series weight: ${parsed} kg`);
+              console.log(`✅ ${scaleType} weight: ${parsed} kg`);
               onWeightUpdate(parsed, scaleType);
               return;
             }
