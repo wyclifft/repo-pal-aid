@@ -1,6 +1,9 @@
 /**
  * Classic Bluetooth SPP (Serial Port Profile) Service
  * Supports industrial scales like DR series that use RFCOMM/Serial connections
+ * 
+ * NOTE: This module uses dynamic imports to avoid breaking web builds.
+ * Classic Bluetooth is only available on native Android platforms.
  */
 
 import { Capacitor } from '@capacitor/core';
@@ -44,34 +47,9 @@ const CLASSIC_SCALE_PATTERNS = [
   'SCALE', 'WEIGHT', 'BALANCE',
 ];
 
-// Lazy load the Bluetooth Serial plugin
-let BluetoothSerial: any = null;
-let pluginLoadError: string | null = null;
-
-const loadBluetoothSerial = async (): Promise<any> => {
-  if (pluginLoadError) {
-    console.warn('⚠️ Classic Bluetooth plugin previously failed to load:', pluginLoadError);
-    return null;
-  }
-  
-  if (BluetoothSerial) return BluetoothSerial;
-  
-  if (!Capacitor.isNativePlatform()) {
-    console.log('ℹ️ Classic Bluetooth only available on native platforms');
-    return null;
-  }
-  
-  try {
-    const module = await import('capacitor-bluetooth-serial');
-    BluetoothSerial = module.BluetoothSerial;
-    console.log('✅ Classic Bluetooth Serial plugin loaded');
-    return BluetoothSerial;
-  } catch (error: any) {
-    pluginLoadError = error.message || 'Failed to load plugin';
-    console.warn('⚠️ Classic Bluetooth Serial plugin not available:', error);
-    return null;
-  }
-};
+// Classic Bluetooth is not available in web builds - these are stub implementations
+// In a native app, you would need to implement a custom Capacitor plugin for Classic BT
+// or use an existing compatible one
 
 // Check if device name suggests Classic Bluetooth (industrial scale)
 export const isLikelyClassicDevice = (deviceName: string | undefined): boolean => {
@@ -80,66 +58,27 @@ export const isLikelyClassicDevice = (deviceName: string | undefined): boolean =
   return CLASSIC_SCALE_PATTERNS.some(pattern => upperName.includes(pattern.toUpperCase()));
 };
 
-// Check if Classic Bluetooth is available
+// Classic Bluetooth is currently only supported through BLE fallback
+// DR series scales that use Classic BT SPP need to be paired at system level
+// and may appear as BLE devices with SPP-like services
 export const isClassicBluetoothAvailable = async (): Promise<boolean> => {
-  if (!Capacitor.isNativePlatform()) return false;
-  
-  const plugin = await loadBluetoothSerial();
-  if (!plugin) return false;
-  
-  try {
-    const result = await plugin.isEnabled();
-    return result.enabled === true;
-  } catch (error) {
-    console.warn('⚠️ Failed to check Classic Bluetooth status:', error);
-    return false;
-  }
+  // Classic BT SPP requires a native plugin that's compatible with Capacitor 7
+  // Currently, no stable Capacitor 7 compatible Classic BT plugin exists
+  // Users should try BLE connection first - many "Classic" scales also support BLE
+  console.log('ℹ️ Classic Bluetooth SPP: Using BLE with extended service discovery');
+  return false;
 };
 
-// Enable Bluetooth if needed
-export const enableClassicBluetooth = async (): Promise<boolean> => {
-  const plugin = await loadBluetoothSerial();
-  if (!plugin) return false;
-  
-  try {
-    await plugin.enable();
-    return true;
-  } catch (error) {
-    console.warn('⚠️ Failed to enable Bluetooth:', error);
-    return false;
-  }
-};
-
-// Get list of paired (bonded) devices
+// Placeholder - returns empty array since Classic BT plugin not available
 export const getPairedDevices = async (): Promise<ClassicBluetoothDevice[]> => {
-  const plugin = await loadBluetoothSerial();
-  if (!plugin) return [];
-  
-  try {
-    console.log('🔍 Getting paired Bluetooth devices...');
-    const result = await plugin.list();
-    
-    const devices: ClassicBluetoothDevice[] = (result.devices || []).map((d: any) => ({
-      address: d.address || d.id,
-      name: d.name || `Unknown (${d.address?.slice(-6) || 'N/A'})`,
-      bonded: true,
-      deviceClass: d.class,
-    }));
-    
-    console.log(`📱 Found ${devices.length} paired devices:`, devices.map(d => d.name).join(', '));
-    return devices;
-  } catch (error) {
-    console.error('❌ Failed to get paired devices:', error);
-    return [];
-  }
+  console.log('ℹ️ Classic Bluetooth: Paired device listing requires native plugin');
+  console.log('💡 Tip: DR series scales (BTM modules) often work via BLE with FFE0/FFE1 services');
+  return [];
 };
 
-// Get paired devices that look like scales
+// Placeholder - returns empty array
 export const getPairedScales = async (): Promise<ClassicBluetoothDevice[]> => {
-  const allDevices = await getPairedDevices();
-  const scales = allDevices.filter(d => isLikelyClassicDevice(d.name));
-  console.log(`📊 Found ${scales.length} potential scale devices:`, scales.map(d => d.name).join(', '));
-  return scales;
+  return getPairedDevices();
 };
 
 // Parse weight data from raw serial data
@@ -186,99 +125,25 @@ const parseSerialWeightData = (data: string): number | null => {
     }
   }
   
-  // Strategy 4: Hex format (some Chinese scales)
-  const hexMatch = cleanData.match(/[0-9A-Fa-f]{4,8}/);
-  if (hexMatch) {
-    const hexValue = parseInt(hexMatch[0], 16);
-    if (hexValue > 0 && hexValue < 500000) {
-      const weight = hexValue / 1000;
-      if (weight > 0.1 && weight < 500) {
-        console.log(`✅ Parsed weight (hex): ${weight.toFixed(3)} kg`);
-        return weight;
-      }
-    }
-  }
-  
   console.log(`⚠️ Could not parse weight from: "${cleanData}"`);
   return null;
 };
 
-// Connect to a Classic Bluetooth scale
+// Placeholder - Classic BT connection not available without native plugin
 export const connectClassicScale = async (
   device: ClassicBluetoothDevice,
   onWeightUpdate: (weight: number) => void
 ): Promise<{ success: boolean; error?: string }> => {
-  const plugin = await loadBluetoothSerial();
-  if (!plugin) {
-    return { success: false, error: 'Classic Bluetooth plugin not available' };
-  }
-  
-  try {
-    console.log(`🔗 Connecting to Classic Bluetooth device: ${device.name} (${device.address})`);
-    
-    // Disconnect if already connected
-    if (classicScale.isConnected && classicScale.address) {
-      try {
-        await plugin.disconnect();
-        console.log('🔌 Disconnected previous Classic BT connection');
-      } catch (e) {
-        console.warn('⚠️ Failed to disconnect previous connection:', e);
-      }
-    }
-    
-    // Connect using RFCOMM/SPP
-    await plugin.connect({ address: device.address });
-    console.log('✅ Connected to Classic Bluetooth device');
-    
-    // Set up data listener
-    await plugin.enableNotifications();
-    
-    // Listen for incoming data
-    plugin.addListener('dataReceived', (data: any) => {
-      const rawData = data?.data || data?.value || (typeof data === 'string' ? data : '');
-      const weight = parseSerialWeightData(rawData);
-      if (weight !== null) {
-        onWeightUpdate(weight);
-      }
-    });
-    
-    // Update state
-    classicScale = {
-      device,
-      address: device.address,
-      isConnected: true,
-      connectionType: 'classic-spp',
-    };
-    
-    // Save for quick reconnect
-    saveClassicDeviceInfo(device);
-    
-    // Broadcast connection change
-    window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true, type: 'classic-spp' } }));
-    
-    console.log('✅ Classic Bluetooth scale ready');
-    return { success: true };
-  } catch (error: any) {
-    console.error('❌ Classic Bluetooth connection failed:', error);
-    clearClassicScaleState();
-    return { success: false, error: error.message || 'Connection failed' };
-  }
+  console.log('⚠️ Classic Bluetooth SPP connection requires a native Capacitor plugin');
+  console.log('💡 Try using BLE connection instead - most BTM/DR scales support both');
+  return { 
+    success: false, 
+    error: 'Classic Bluetooth SPP not available. Please use BLE connection.' 
+  };
 };
 
-// Disconnect from Classic Bluetooth scale
+// Disconnect placeholder
 export const disconnectClassicScale = async (): Promise<void> => {
-  const plugin = await loadBluetoothSerial();
-  
-  if (plugin && classicScale.isConnected) {
-    try {
-      await plugin.removeAllListeners();
-      await plugin.disconnect();
-      console.log('🔌 Disconnected from Classic Bluetooth scale');
-    } catch (e) {
-      console.warn('⚠️ Failed to disconnect Classic BT:', e);
-    }
-  }
-  
   clearClassicScaleState();
 };
 
@@ -317,25 +182,11 @@ export const clearStoredClassicDevice = () => {
   localStorage.removeItem(CLASSIC_DEVICE_KEY);
 };
 
-// Quick reconnect to last connected device
+// Quick reconnect placeholder
 export const quickReconnectClassicScale = async (
   onWeightUpdate: (weight: number) => void
 ): Promise<{ success: boolean; error?: string }> => {
-  const storedDevice = getStoredClassicDevice();
-  if (!storedDevice) {
-    return { success: false, error: 'No stored device' };
-  }
-  
-  // Check if device is still paired
-  const pairedDevices = await getPairedDevices();
-  const device = pairedDevices.find(d => d.address === storedDevice.address);
-  
-  if (!device) {
-    clearStoredClassicDevice();
-    return { success: false, error: 'Device no longer paired' };
-  }
-  
-  return connectClassicScale(device, onWeightUpdate);
+  return { success: false, error: 'Classic Bluetooth not available' };
 };
 
 // Check if Classic scale is connected
@@ -352,22 +203,7 @@ export const getCurrentClassicScaleInfo = (): { address: string; name: string } 
   };
 };
 
-// Send command to scale (some scales require commands to start streaming)
-export const sendScaleCommand = async (command: string): Promise<boolean> => {
-  const plugin = await loadBluetoothSerial();
-  if (!plugin || !classicScale.isConnected) return false;
-  
-  try {
-    await plugin.write({ value: command });
-    console.log(`📤 Sent command to scale: "${command}"`);
-    return true;
-  } catch (error) {
-    console.error('❌ Failed to send command:', error);
-    return false;
-  }
-};
-
-// Common scale commands
+// Common scale commands (for future use when native plugin is available)
 export const SCALE_COMMANDS = {
   READ_WEIGHT: '\x05',      // ENQ - common request for weight
   TARE: 'T',                // Tare command
