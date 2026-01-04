@@ -1,8 +1,37 @@
 import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetooth-le';
 import { Capacitor } from '@capacitor/core';
 import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
+import {
+  isClassicBluetoothAvailable,
+  getPairedScales,
+  connectClassicScale,
+  disconnectClassicScale,
+  isClassicScaleConnected,
+  getCurrentClassicScaleInfo,
+  quickReconnectClassicScale,
+  getStoredClassicDevice,
+  clearStoredClassicDevice,
+  type ClassicBluetoothDevice,
+  isLikelyClassicDevice,
+} from './bluetoothClassic';
 
-export type ScaleType = 'HC-05' | 'HM-10' | 'DR-Series' | 'BTM-Series' | 'Unknown';
+// Re-export Classic Bluetooth functions for convenience
+export {
+  isClassicBluetoothAvailable,
+  getPairedScales,
+  connectClassicScale,
+  disconnectClassicScale,
+  isClassicScaleConnected,
+  getCurrentClassicScaleInfo,
+  quickReconnectClassicScale,
+  getStoredClassicDevice,
+  clearStoredClassicDevice,
+  type ClassicBluetoothDevice,
+  isLikelyClassicDevice,
+};
+
+export type ScaleType = 'HC-05' | 'HM-10' | 'DR-Series' | 'BTM-Series' | 'Classic-SPP' | 'Unknown';
+export type ConnectionType = 'ble' | 'classic-spp';
 
 // DR Series scale models for detection
 const DR_SERIES_MODELS = [
@@ -65,6 +94,7 @@ interface BluetoothScale {
   characteristic: string | any | null;
   type: ScaleType;
   isConnected: boolean;
+  connectionType: ConnectionType;
 }
 
 let scale: BluetoothScale = {
@@ -74,6 +104,7 @@ let scale: BluetoothScale = {
   characteristic: null,
   type: 'Unknown',
   isConnected: false,
+  connectionType: 'ble',
 };
 
 interface BluetoothPrinter {
@@ -95,6 +126,7 @@ interface StoredDeviceInfo {
   deviceId: string;
   deviceName: string;
   scaleType: ScaleType;
+  connectionType: ConnectionType;
   timestamp: number;
 }
 
@@ -120,11 +152,12 @@ const canVerifyConnection = (): boolean => {
   return true;
 };
 
-const saveDeviceInfo = (deviceId: string, deviceName: string, scaleType: ScaleType) => {
+const saveDeviceInfo = (deviceId: string, deviceName: string, scaleType: ScaleType, connectionType: ConnectionType = 'ble') => {
   const info: StoredDeviceInfo = {
     deviceId,
     deviceName,
     scaleType,
+    connectionType,
     timestamp: Date.now(),
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(info));
@@ -312,6 +345,7 @@ const clearScaleState = () => {
     characteristic: null,
     type: 'Unknown',
     isConnected: false,
+    connectionType: 'ble',
   };
   broadcastScaleConnectionChange(false);
 };
@@ -675,9 +709,10 @@ export const connectBluetoothScale = async (
         characteristic: characteristicUuid, 
         type: scaleType,
         isConnected: true,
+        connectionType: 'ble',
       };
       
-      saveDeviceInfo(device.deviceId, device.name || 'Unknown Scale', scaleType);
+      saveDeviceInfo(device.deviceId, device.name || 'Unknown Scale', scaleType, 'ble');
       broadcastScaleConnectionChange(true);
       
       console.log('✅ Scale connection successful');
@@ -730,6 +765,7 @@ export const connectBluetoothScale = async (
         characteristic, 
         type: scaleType,
         isConnected: true,
+        connectionType: 'ble',
       };
       
       broadcastScaleConnectionChange(true);
@@ -882,6 +918,7 @@ export const quickReconnect = async (
           characteristic: characteristicUuid, 
           type: scaleType,
           isConnected: true,
+          connectionType: 'ble',
         };
         
         broadcastScaleConnectionChange(true);
@@ -934,6 +971,7 @@ export const quickReconnect = async (
           characteristic: notifyCharacteristic.uuid, 
           type: scaleType,
           isConnected: true,
+          connectionType: 'ble',
         };
         
         broadcastScaleConnectionChange(true);

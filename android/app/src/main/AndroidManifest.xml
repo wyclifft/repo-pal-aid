@@ -57,6 +57,7 @@
     <!-- Keep screen on during transactions -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     
-    <!-- Bluetooth feature declaration -->
+    <!-- Bluetooth feature declarations -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
 </manifest>
