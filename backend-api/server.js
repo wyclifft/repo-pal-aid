@@ -335,7 +335,8 @@ const server = http.createServer(async (req, res) => {
       }
       
       // Build query with STRICT ccode filtering
-      let query = 'SELECT * FROM transactions WHERE Transtype = "MILK"';
+      // Transtype = 1 is used for all produce purchases (milk/coffee collections)
+      let query = 'SELECT * FROM transactions WHERE Transtype = 1';
       let params = [];
       
       // When checking for accumulation (farmer_id + session + date range provided),
@@ -708,13 +709,13 @@ const server = http.createServer(async (req, res) => {
       console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
 
       if (multOpt === 0) {
-        // Check if member already has a milk transaction (Transtype = 'MILK') in this session today
+        // Check if member already has a produce transaction (Transtype = 1) in this session today
         const [existingTransRows] = await pool.query(
           `SELECT transrefno FROM transactions 
            WHERE memberno = ?
              AND UPPER(TRIM(session)) = ?
              AND transdate = ?
-             AND Transtype = 'MILK'
+             AND Transtype = 1
              AND ccode = ?
            LIMIT 1`,
           [cleanFarmerId, normalizedSession, transdate, ccode]
@@ -743,12 +744,13 @@ const server = http.createServer(async (req, res) => {
           attempt++;
           try {
             // Attempt the insert with current reference
+            // Transtype = 1 for all produce purchases (milk/coffee collections)
             await pool.query(
               `INSERT INTO transactions 
                 (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
                  amount, icode, time, capType, entry_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MILK', 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
               [
                 attemptTransrefno,
                 attemptUploadrefno ? String(attemptUploadrefno) : '',
@@ -983,7 +985,7 @@ const server = http.createServer(async (req, res) => {
           COUNT(*) as collection_count
         FROM transactions t
         LEFT JOIN cm_members cm ON t.memberno = cm.mcode AND t.ccode = cm.ccode
-        WHERE t.Transtype = 'MILK' 
+        WHERE t.Transtype = 1 
           AND t.transdate BETWEEN ? AND ?
           AND t.ccode = ?
       `;
@@ -1029,7 +1031,7 @@ const server = http.createServer(async (req, res) => {
         `SELECT transrefno, memberno as farmer_id, route, weight, session, 
                 transdate as collection_date, clerk as clerk_name
          FROM transactions 
-         WHERE transdate = ? AND Transtype = 'MILK' AND ccode = ?
+         WHERE transdate = ? AND Transtype = 1 AND ccode = ?
          ORDER BY session, route, memberno`,
         [date, ccode]
       );
@@ -1800,7 +1802,7 @@ const server = http.createServer(async (req, res) => {
       const [sumRows] = await pool.query(
         `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
-         WHERE memberno = ? AND ccode = ? AND Transtype = 'MILK'
+         WHERE memberno = ? AND ccode = ? AND Transtype = 1
          AND transdate >= ? AND transdate <= ?`,
         [farmer_id, ccode, monthStart, monthEnd]
       );

@@ -20,7 +20,7 @@ Updated the milk collection system to save receipts to the existing `transaction
   - `transdate` ← collection_date (date part: YYYY-MM-DD)
   - `transtime` ← collection_date (time part: HH:MM:SS)
   - `time` ← Unix timestamp
-  - `Transtype` ← 'MILK' (hardcoded)
+  - `Transtype` ← 1 (for all produce purchases: milk/coffee)
   - `processed` ← 0 (default)
   - `uploaded` ← 0 (default)
   - `ccode` ← '' (empty)
@@ -42,7 +42,7 @@ Updated the milk collection system to save receipts to the existing `transaction
 
 ### 2. Z-Report Changes
 - Now reads from `transactions` table
-- Filters by `Transtype = 'MILK'`
+- Filters by `Transtype = 1`
 - Maps fields appropriately for report generation
 
 ### 3. Frontend Changes
@@ -69,7 +69,7 @@ Updated the milk collection system to save receipts to the existing `transaction
 | collection_date | transdate | varchar(20) | Date (YYYY-MM-DD) |
 | collection_date | transtime | varchar(20) | Time (HH:MM:SS) |
 | collection_date | time | bigint(11) | Unix timestamp |
-| - | Transtype | varchar(20) | Always 'MILK' |
+| - | Transtype | int/varchar(20) | 1 for produce purchases (milk/coffee) |
 | - | processed | tinyint(4) | Always 0 |
 | - | uploaded | tinyint(4) | Always 0 |
 
