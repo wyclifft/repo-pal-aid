@@ -344,11 +344,6 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
                   💡 BLE: DR Series, BTM modules | Classic BT: Paired SPP devices
                 </p>
               )}
-              {!classicBtAvailable && isNative && (
-                <p className="text-xs text-amber-600">
-                  ⚠️ Classic BT: Native plugin pending implementation
-                </p>
-              )}
             </div>
           </div>
         )}

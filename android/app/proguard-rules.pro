@@ -19,3 +19,12 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Keep Capacitor plugin classes
+-keep class app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e.bluetooth.** { *; }
+
+# Keep Capacitor annotations
+-keep @com.getcapacitor.annotation.CapacitorPlugin class * { *; }
+-keepclassmembers class * {
+    @com.getcapacitor.PluginMethod public *;
+}

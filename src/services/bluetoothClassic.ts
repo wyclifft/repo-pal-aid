@@ -1,18 +1,16 @@
 /**
  * Classic Bluetooth SPP (Serial Port Profile) Service
- * Capacitor 7–compatible architecture for industrial scales using RFCOMM/Serial connections
+ * Capacitor 7–compatible native plugin for industrial scales using RFCOMM/Serial connections
  * 
- * ARCHITECTURE:
- * This module provides a native bridge pattern for Classic Bluetooth SPP support.
- * It uses Capacitor's registerPlugin to define a custom native plugin interface
- * that can be implemented in native Android/iOS code when available.
+ * IMPLEMENTATION:
+ * - Native Android plugin: android/.../bluetooth/BluetoothClassicPlugin.kt
+ * - Uses standard SPP UUID: 00001101-0000-1000-8000-00805F9B34FB
+ * - Thread-safe I/O with buffered continuous reading
+ * - Supports Android 8-14 with proper permission handling
  * 
  * For scales that support both BLE and Classic SPP (like many BTM/DR series),
- * BLE is preferred. This module provides Classic SPP as a fallback for devices
- * that ONLY support Classic Bluetooth.
- * 
- * TODO: Implement native Android plugin at:
- * android/app/src/main/java/app/lovable/bluetooth/BluetoothClassicPlugin.java
+ * BLE is preferred. This module provides Classic SPP for devices
+ * that ONLY support Classic Bluetooth or have more reliable SPP connections.
  */
 
 import { Capacitor, registerPlugin, PluginListenerHandle } from '@capacitor/core';
@@ -23,69 +21,47 @@ import { Capacitor, registerPlugin, PluginListenerHandle } from '@capacitor/core
 
 /**
  * Native Classic Bluetooth SPP Plugin Interface
- * This defines the contract for the native implementation
+ * Implemented in Kotlin at: android/.../bluetooth/BluetoothClassicPlugin.kt
  */
 export interface BluetoothClassicPlugin {
-  /**
-   * Check if Classic Bluetooth is available on this device
-   */
+  /** Check if Classic Bluetooth is available on this device */
   isAvailable(): Promise<{ available: boolean }>;
 
-  /**
-   * Request required Bluetooth permissions
-   */
+  /** Request required Bluetooth permissions (handles Android 12+ automatically) */
   requestPermissions(): Promise<{ granted: boolean }>;
 
-  /**
-   * Get list of paired/bonded Bluetooth devices
-   */
+  /** Get list of paired/bonded Bluetooth devices */
   getPairedDevices(): Promise<{ devices: ClassicBluetoothDevice[] }>;
 
-  /**
-   * Connect to a Classic Bluetooth device via SPP/RFCOMM
-   * @param options Device address to connect to
-   */
+  /** Connect to a Classic Bluetooth device via SPP/RFCOMM */
   connect(options: { address: string }): Promise<{ connected: boolean }>;
 
-  /**
-   * Disconnect from currently connected device
-   */
+  /** Disconnect from currently connected device */
   disconnect(): Promise<void>;
 
-  /**
-   * Check if currently connected
-   */
+  /** Check if currently connected */
   isConnected(): Promise<{ connected: boolean }>;
 
-  /**
-   * Write data to the connected device
-   * @param options Data to write (as base64 or string)
-   */
+  /** Write data to the connected device */
   write(options: { data: string }): Promise<void>;
 
-  /**
-   * Add listener for incoming data
-   */
+  /** Add listener for incoming data from the scale */
   addListener(
     eventName: 'dataReceived',
     listenerFunc: (data: { value: string }) => void
   ): Promise<PluginListenerHandle>;
 
-  /**
-   * Add listener for connection state changes
-   */
+  /** Add listener for connection state changes */
   addListener(
     eventName: 'connectionStateChanged',
     listenerFunc: (state: { connected: boolean }) => void
   ): Promise<PluginListenerHandle>;
 
-  /**
-   * Remove all listeners
-   */
+  /** Remove all listeners */
   removeAllListeners(): Promise<void>;
 }
 
-// Register the plugin - will use native implementation if available, otherwise fallback to web
+// Register the plugin - uses native implementation on Android, web fallback elsewhere
 const BluetoothClassic = registerPlugin<BluetoothClassicPlugin>('BluetoothClassic', {
   web: () => import('./bluetoothClassicWeb').then(m => new m.BluetoothClassicWeb()),
 });
