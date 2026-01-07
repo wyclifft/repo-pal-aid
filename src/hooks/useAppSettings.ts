@@ -523,7 +523,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const requireZeroScale = settings.zeroOpt === 1;
   const autoWeightOnly = settings.autow === 1;
   const showCumulative = settings.printcumm === 1 || settings.cumulative_frequency_status === 1;
-  const printCopies = Math.max(1, settings.printoptions || 1);
+  const printCopies = settings.printoptions ?? 1; // 0 = no print, 1+ = number of copies
   const offlineFirstMode = settings.online === 1;
   const sessionPrintOnly = settings.sessprint === 1;
   const useRouteFilter = settings.chkroute === 1;
