@@ -36,6 +36,12 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
   const handleReprint = async (receipt: PrintedReceipt) => {
     if (receipt.collections.length === 0) return;
     
+    // If printCopies is 0, skip printing entirely
+    if (printCopies === 0) {
+      toast.info('Printing disabled (0 copies configured)');
+      return;
+    }
+    
     setIsPrinting(receipt.farmerId);
 
     const firstReceipt = receipt.collections[0];
@@ -48,28 +54,37 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
     }));
 
     try {
-      const result = await printReceipt({
-        companyName: companyName,
-        farmerName: firstReceipt.farmer_name,
-        farmerId: firstReceipt.farmer_id,
-        route: firstReceipt.route,
-        routeLabel: routeLabel,
-        session: firstReceipt.session,
-        uploadRefNo: firstReceipt.uploadrefno || firstReceipt.reference_no,
-        collectorName: firstReceipt.clerk_name,
-        collections,
-        locationName: locationName || firstReceipt.route,
-        collectionDate: collectionDateTime
-      });
+      // Print multiple copies based on printoptions setting
+      for (let copy = 0; copy < printCopies; copy++) {
+        const result = await printReceipt({
+          companyName: companyName,
+          farmerName: firstReceipt.farmer_name,
+          farmerId: firstReceipt.farmer_id,
+          route: firstReceipt.route,
+          routeLabel: routeLabel,
+          session: firstReceipt.session,
+          uploadRefNo: firstReceipt.uploadrefno || firstReceipt.reference_no,
+          collectorName: firstReceipt.clerk_name,
+          collections,
+          locationName: locationName || firstReceipt.route,
+          collectionDate: collectionDateTime
+        });
 
-      if (result.success) {
-        toast.success('Receipt reprinted successfully');
-      } else {
-        if (result.error?.includes('No printer connected')) {
-          toast.info('No Bluetooth printer connected. Opening browser print...');
-          window.print();
-        } else {
-          toast.error(result.error || 'Failed to reprint receipt');
+        if (!result.success) {
+          if (result.error?.includes('No printer connected')) {
+            toast.info('No Bluetooth printer connected. Opening browser print...');
+            window.print();
+            break;
+          } else {
+            toast.error(result.error || 'Failed to reprint receipt');
+            break;
+          }
+        } else if (copy === printCopies - 1) {
+          toast.success(`Receipt reprinted (${printCopies} ${printCopies === 1 ? 'copy' : 'copies'})`);
+        }
+        
+        if (copy < printCopies - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
     } catch (error) {

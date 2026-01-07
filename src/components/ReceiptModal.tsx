@@ -34,6 +34,13 @@ export const ReceiptModal = ({
   const handlePrint = async () => {
     if (receipts.length === 0) return;
 
+    // If printCopies is 0, skip printing entirely
+    if (printCopies === 0) {
+      toast.info('Printing disabled (0 copies configured)');
+      onPrint?.();
+      return;
+    }
+
     const firstReceipt = receipts[0];
     const collectionDateTime = new Date(firstReceipt.collection_date);
     
