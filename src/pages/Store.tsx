@@ -20,6 +20,7 @@ const Store = () => {
   const { isAuthenticated, currentUser } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
   const [hasRoutes, setHasRoutes] = useState<boolean | null>(null);
+  const [storeEnabled, setStoreEnabled] = useState<boolean | null>(null);
 
   // Check authentication
   useEffect(() => {
@@ -73,7 +74,7 @@ const Store = () => {
     return () => clearTimeout(timer);
   }, [isReady]);
 
-  // Check if ccode has routes in fm_tanks before loading items
+  // Check if ccode has routes in fm_tanks before loading items AND check clientFetch permissions
   const checkRoutesAndLoadItems = async () => {
     try {
       setLoading(true);
@@ -81,12 +82,12 @@ const Store = () => {
       // Get device fingerprint to check routes
       const deviceFingerprint = await generateDeviceFingerprint();
       
-      // Try to fetch routes first to check if ccode has any
+      // Try to fetch routes first to check if ccode has any and if Store is enabled
       if (navigator.onLine) {
         try {
           const apiUrl = API_CONFIG.MYSQL_API_URL;
           const response = await fetch(
-            `${apiUrl}/api/routes?uniquedevcode=${encodeURIComponent(deviceFingerprint)}`,
+            `${apiUrl}/api/routes/by-device/${encodeURIComponent(deviceFingerprint)}`,
             { signal: AbortSignal.timeout(5000) } // 5 second timeout
           );
           
@@ -94,9 +95,11 @@ const Store = () => {
           if (response.status === 404) {
             console.log('📭 Routes endpoint not found - proceeding with items load');
             setHasRoutes(true);
+            setStoreEnabled(true);
           } else if (response.ok) {
             const data = await response.json();
-            const routesExist = data.success && data.data && data.data.length > 0;
+            const routes = data.data || [];
+            const routesExist = data.success && routes.length > 0;
             setHasRoutes(routesExist);
             
             if (!routesExist) {
@@ -105,26 +108,41 @@ const Store = () => {
               setLoading(false);
               return;
             }
+            
+            // Check if any route has Store enabled (clientFetch = 2)
+            const hasStoreEnabled = routes.some((route: { allowStore?: boolean }) => route.allowStore === true);
+            setStoreEnabled(hasStoreEnabled);
+            
+            if (!hasStoreEnabled) {
+              console.log('🔒 Store is disabled - no routes with clientFetch=2');
+              setItems([]);
+              setLoading(false);
+              return;
+            }
           } else {
             // Other error - allow items to load as fallback
             console.warn('Routes check returned status:', response.status);
             setHasRoutes(true);
+            setStoreEnabled(true);
           }
         } catch (err) {
           console.warn('Failed to check routes:', err);
           // On error, allow items to load (fallback behavior)
           setHasRoutes(true);
+          setStoreEnabled(true);
         }
       } else {
         // Offline - assume routes exist and load cached items
         setHasRoutes(true);
+        setStoreEnabled(true);
       }
       
-      // Routes exist, load items
+      // Routes exist and Store is enabled, load items
       await loadItems();
     } catch (error) {
       console.error('Failed to check routes:', error);
       setHasRoutes(true); // Fallback to allow items
+      setStoreEnabled(true);
       setLoading(false);
     }
   };
@@ -550,6 +568,14 @@ const Store = () => {
               <Package className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
               <p className="text-muted-foreground">No routes assigned to this company code</p>
               <p className="text-sm text-muted-foreground mt-2">Store items require routes to be configured in fm_tanks</p>
+            </CardContent>
+          </Card>
+        ) : storeEnabled === false ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <Package className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+              <p className="text-muted-foreground font-semibold">Store is not enabled for this company</p>
+              <p className="text-sm text-muted-foreground mt-2">No routes have clientFetch=2 configured. Please contact administrator.</p>
             </CardContent>
           </Card>
         ) : items.length === 0 ? (

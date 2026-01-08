@@ -183,12 +183,22 @@ export const Dashboard = ({
 
   const handleBuyProduce = () => {
     if (selectedRoute && selectedSession) {
+      // Check clientFetch permissions
+      if (selectedRoute.allowBuy === false) {
+        toast.error('Buy Produce is not enabled for this route');
+        return;
+      }
       onStartCollection(selectedRoute, selectedSession);
     }
   };
 
   const handleSellProduce = () => {
     if (selectedRoute && selectedSession) {
+      // Check clientFetch permissions
+      if (selectedRoute.allowSell === false) {
+        toast.error('Sell Produce is not enabled for this route');
+        return;
+      }
       onStartSelling(selectedRoute, selectedSession);
     }
   };
@@ -312,7 +322,20 @@ export const Dashboard = ({
 
         {/* Quick Action Icons */}
         <div className="flex justify-center gap-4 pb-3 flex-wrap px-2">
-          <button onClick={() => navigate('/store')} className="flex flex-col items-center active:scale-95 transition-transform">
+          <button 
+            onClick={() => {
+              // Check if Store is allowed based on selected route's clientFetch
+              // If no route selected or allowStore is false, show error
+              if (selectedRoute && selectedRoute.allowStore === false) {
+                toast.error('Store is not enabled for this route');
+                return;
+              }
+              navigate('/store');
+            }} 
+            className={`flex flex-col items-center active:scale-95 transition-transform ${
+              selectedRoute && selectedRoute.allowStore === false ? 'opacity-50' : ''
+            }`}
+          >
             <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
               <Store className="h-6 w-6 sm:h-7 sm:w-7 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
@@ -413,14 +436,16 @@ export const Dashboard = ({
               <div className="flex justify-center gap-3 flex-wrap">
                 <button
                   onClick={handleBuyProduce}
-                  className="flex-1 max-w-[10rem] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem]"
+                  disabled={selectedRoute?.allowBuy === false}
+                  className={`flex-1 max-w-[10rem] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem] disabled:opacity-50 disabled:cursor-not-allowed`}
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
                   Buy Produce
                 </button>
                 <button
                   onClick={handleSellProduce}
-                  className="flex-1 max-w-[10rem] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem]"
+                  disabled={selectedRoute?.allowSell === false}
+                  className={`flex-1 max-w-[10rem] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem] disabled:opacity-50 disabled:cursor-not-allowed`}
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
                   Sell Produce
