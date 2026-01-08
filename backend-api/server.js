@@ -1398,6 +1398,7 @@ const server = http.createServer(async (req, res) => {
         if (companyRows.length > 0) {
           companyName = companyRows[0].cname;
           cumulativeFrequencyStatus = companyRows[0].cumulative_frequency_status || 0;
+          const orgtype = companyRows[0].orgtype || 'D';
           appSettings = {
             printoptions: companyRows[0].printOptions,
             chkroute: companyRows[0].chkRoute,
@@ -1406,9 +1407,11 @@ const server = http.createServer(async (req, res) => {
             sessprint: companyRows[0].sessPrint,
             autow: companyRows[0].AutoW,
             online: companyRows[0].onlinemode,
-            orgtype: companyRows[0].orgtype,
+            orgtype: orgtype,
             printcumm: companyRows[0].printcumm,
             zeroOpt: companyRows[0].zeroopt,
+            // Derived labels from orgtype
+            periodLabel: orgtype === 'C' ? 'Season' : 'Session',
             // Additional company info
             caddress: companyRows[0].caddress,
             tel: companyRows[0].tel,
@@ -1794,12 +1797,14 @@ const server = http.createServer(async (req, res) => {
             autow: 0,
             online: 0,
             orgtype: 'D',
+            periodLabel: 'Session',
             printcumm: 0,
             zeroOpt: 0
           } 
         });
       }
       
+      const orgtype = rows[0].orgtype || 'D';
       return sendJSON(res, { 
         success: true, 
         data: {
@@ -1816,7 +1821,8 @@ const server = http.createServer(async (req, res) => {
           sessprint: rows[0].sessPrint,
           autow: rows[0].AutoW,
           online: rows[0].onlinemode,
-          orgtype: rows[0].orgtype,
+          orgtype: orgtype,
+          periodLabel: orgtype === 'C' ? 'Season' : 'Session',
           printcumm: rows[0].printcumm,
           zeroOpt: rows[0].zeroopt
         }

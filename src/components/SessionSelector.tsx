@@ -8,12 +8,14 @@ interface SessionSelectorProps {
   selectedSession: string;
   onSessionChange: (session: Session | null) => void;
   disabled?: boolean;
+  periodLabel?: string;
 }
 
 export const SessionSelector = ({ 
   selectedSession, 
   onSessionChange, 
-  disabled = false 
+  disabled = false,
+  periodLabel = 'Session'
 }: SessionSelectorProps) => {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
@@ -187,10 +189,10 @@ export const SessionSelector = ({
       <div className="mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">
           <Clock className="h-4 w-4 inline mr-1" />
-          Session
+          {periodLabel}
         </label>
         <div className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-500">
-          Loading sessions...
+          Loading {periodLabel.toLowerCase()}s...
         </div>
       </div>
     );
@@ -201,7 +203,7 @@ export const SessionSelector = ({
       <div className="mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">
           <Clock className="h-4 w-4 inline mr-1" />
-          Session
+          {periodLabel}
         </label>
         <div className="w-full px-4 py-3 border border-red-300 rounded-lg bg-red-50 text-red-600 text-sm">
           <AlertCircle className="h-4 w-4 inline mr-1" />
@@ -216,11 +218,11 @@ export const SessionSelector = ({
       <div className="mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">
           <Clock className="h-4 w-4 inline mr-1" />
-          Session
+          {periodLabel}
         </label>
         <div className="w-full px-4 py-3 border border-amber-300 rounded-lg bg-amber-50 text-amber-700 text-sm">
           <AlertCircle className="h-4 w-4 inline mr-1" />
-          No sessions configured for this company
+          No {periodLabel.toLowerCase()}s configured for this company
         </div>
       </div>
     );
@@ -230,7 +232,7 @@ export const SessionSelector = ({
     <div className="mb-4">
       <label className="block text-sm font-semibold text-gray-700 mb-2">
         <Clock className="h-4 w-4 inline mr-1" />
-        Session
+        {periodLabel}
       </label>
       <select
         value={selectedSession}
@@ -251,7 +253,7 @@ export const SessionSelector = ({
             : 'border-red-300 bg-red-50'
         } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
-        <option value="">Select session...</option>
+        <option value="">Select {periodLabel.toLowerCase()}...</option>
         {sessions.map((session) => {
           const isActive = isSessionActive(session);
           return (
@@ -281,7 +283,7 @@ export const SessionSelector = ({
           <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">
             <AlertCircle className="h-4 w-4" />
             <span>
-              No session is currently open. Data entry is not allowed.
+              No {periodLabel.toLowerCase()} is currently open. Data entry is not allowed.
             </span>
           </div>
         )}

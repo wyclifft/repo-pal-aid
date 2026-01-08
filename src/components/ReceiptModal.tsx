@@ -14,6 +14,7 @@ interface ReceiptModalProps {
   showCumulativeFrequency?: boolean;
   printCopies?: number;
   routeLabel?: string;
+  periodLabel?: string;
   locationCode?: string;
   locationName?: string;
 }
@@ -28,6 +29,7 @@ export const ReceiptModal = ({
   showCumulativeFrequency = false,
   printCopies = 1,
   routeLabel = 'Route',
+  periodLabel = 'Session',
   locationCode,
   locationName
 }: ReceiptModalProps) => {
@@ -183,7 +185,7 @@ export const ReceiptModal = ({
               <span className="font-medium">{firstReceipt.clerk_name}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Session</span>
+              <span className="text-muted-foreground">{periodLabel}</span>
               <span className="font-medium">{firstReceipt.session}</span>
             </div>
             <div className="text-center text-muted-foreground pt-1 border-t border-dashed mt-2">
