@@ -118,11 +118,11 @@ class BluetoothClassicPlugin : Plugin() {
     }
 
     /**
-     * Request Bluetooth permissions
+     * Request Bluetooth permissions - exposed as plugin method
      */
     @PluginMethod
-    fun requestPermissions(call: PluginCall) {
-        if (hasRequiredPermissions()) {
+    fun requestBluetoothPermissions(call: PluginCall) {
+        if (checkBluetoothPermissions()) {
             val result = JSObject().apply {
                 put("granted", true)
             }
@@ -140,7 +140,7 @@ class BluetoothClassicPlugin : Plugin() {
 
     @PermissionCallback
     private fun permissionCallback(call: PluginCall) {
-        val granted = hasRequiredPermissions()
+        val granted = checkBluetoothPermissions()
         val result = JSObject().apply {
             put("granted", granted)
         }
@@ -148,7 +148,10 @@ class BluetoothClassicPlugin : Plugin() {
         call.resolve(result)
     }
 
-    private fun hasRequiredPermissions(): Boolean {
+    /**
+     * Check if required Bluetooth permissions are granted
+     */
+    private fun checkBluetoothPermissions(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             // Android 12+ needs BLUETOOTH_CONNECT
             ContextCompat.checkSelfPermission(
@@ -170,7 +173,7 @@ class BluetoothClassicPlugin : Plugin() {
     @SuppressLint("MissingPermission")
     @PluginMethod
     fun getPairedDevices(call: PluginCall) {
-        if (!hasRequiredPermissions()) {
+        if (!checkBluetoothPermissions()) {
             call.reject("Bluetooth permission not granted")
             return
         }
@@ -219,7 +222,7 @@ class BluetoothClassicPlugin : Plugin() {
             return
         }
 
-        if (!hasRequiredPermissions()) {
+        if (!checkBluetoothPermissions()) {
             call.reject("Bluetooth permission not granted")
             return
         }

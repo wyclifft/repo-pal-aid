@@ -21,7 +21,7 @@ export class BluetoothClassicWeb extends WebPlugin implements BluetoothClassicPl
     return { available: false };
   }
 
-  async requestPermissions(): Promise<{ granted: boolean }> {
+  async requestBluetoothPermissions(): Promise<{ granted: boolean }> {
     console.log('ℹ️ Classic Bluetooth permissions not applicable on web');
     return { granted: false };
   }
