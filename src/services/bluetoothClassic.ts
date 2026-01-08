@@ -28,7 +28,7 @@ export interface BluetoothClassicPlugin {
   isAvailable(): Promise<{ available: boolean }>;
 
   /** Request required Bluetooth permissions (handles Android 12+ automatically) */
-  requestPermissions(): Promise<{ granted: boolean }>;
+  requestBluetoothPermissions(): Promise<{ granted: boolean }>;
 
   /** Get list of paired/bonded Bluetooth devices */
   getPairedDevices(): Promise<{ devices: ClassicBluetoothDevice[] }>;
@@ -164,7 +164,7 @@ export const requestClassicBluetoothPermissions = async (): Promise<boolean> => 
   }
 
   try {
-    const result = await BluetoothClassic.requestPermissions();
+    const result = await BluetoothClassic.requestBluetoothPermissions();
     return result.granted;
   } catch (error) {
     console.warn('⚠️ Failed to request Classic Bluetooth permissions:', error);
