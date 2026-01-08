@@ -324,16 +324,20 @@ export const Dashboard = ({
         <div className="flex justify-center gap-4 pb-3 flex-wrap px-2">
           <button 
             onClick={() => {
+              // Only allow Store navigation when a route is selected
+              if (!selectedRoute) {
+                toast.error('Please select a route first');
+                return;
+              }
               // Check if Store is allowed based on selected route's clientFetch
-              // If no route selected or allowStore is false, show error
-              if (selectedRoute && selectedRoute.allowStore === false) {
+              if (selectedRoute.allowStore === false) {
                 toast.error('Store is not enabled for this route');
                 return;
               }
               navigate('/store');
             }} 
             className={`flex flex-col items-center active:scale-95 transition-transform ${
-              selectedRoute && selectedRoute.allowStore === false ? 'opacity-50' : ''
+              !selectedRoute || selectedRoute.allowStore === false ? 'opacity-50' : ''
             }`}
           >
             <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
@@ -342,7 +346,17 @@ export const Dashboard = ({
             <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>Store</span>
           </button>
 
-          <button onClick={() => toast.info('AI Assistant - Coming Soon')} className="flex flex-col items-center active:scale-95 transition-transform">
+          <button 
+            onClick={() => {
+              // Only allow AI navigation when a route is selected
+              if (!selectedRoute) {
+                toast.error('Please select a route first');
+                return;
+              }
+              toast.info('AI Assistant - Coming Soon');
+            }} 
+            className={`flex flex-col items-center active:scale-95 transition-transform ${!selectedRoute ? 'opacity-50' : ''}`}
+          >
             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
               <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-sm flex-shrink-0" style={{ backgroundColor: '#D81B60' }} />
             </div>
