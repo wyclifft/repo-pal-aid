@@ -91,24 +91,34 @@ const Store = () => {
     }
   };
 
-  // Parse crbal string (e.g. "CR01#200|CR02#150") into structured entries with descriptions
+  // Parse crbal string (e.g. "CR02#11200,CR22#340") into structured entries with descriptions
+  // Only show credits matching the member's ccode
   const parsedCredits = useMemo<ParsedCredit[]>(() => {
     if (!selectedFarmer?.crbal || typeof selectedFarmer.crbal !== 'string' || !selectedFarmer.crbal.trim()) {
       return [];
     }
     
-    const entries = selectedFarmer.crbal.split('|').filter(Boolean);
-    return entries.map(entry => {
-      const [code, amountStr] = entry.split('#');
-      const amount = parseFloat(amountStr) || 0;
-      const creditType = creditTypes.find(ct => ct.crcode === code);
-      return {
-        code: code || '',
-        amount,
-        description: creditType?.descript || code || 'Unknown'
-      };
-    });
-  }, [selectedFarmer?.crbal, creditTypes]);
+    // Split by comma for multiple entries
+    const entries = selectedFarmer.crbal.split(',').filter(Boolean);
+    const memberCcode = selectedFarmer.ccode || '';
+    
+    return entries
+      .map(entry => {
+        const [code, amountStr] = entry.trim().split('#');
+        const amount = parseFloat(amountStr) || 0;
+        const creditType = creditTypes.find(ct => ct.crcode === code?.trim());
+        return {
+          code: code?.trim() || '',
+          amount,
+          description: creditType?.descript || ''
+        };
+      })
+      // Filter to only show credits matching member's ccode (if ccode exists)
+      .filter(credit => {
+        if (!memberCcode) return true; // Show all if no ccode
+        return credit.code === memberCcode || creditTypes.some(ct => ct.crcode === credit.code);
+      });
+  }, [selectedFarmer?.crbal, selectedFarmer?.ccode, creditTypes]);
 
   // Calculate total credit balance from parsed entries
   const totalCreditBalance = useMemo(() => {
@@ -369,9 +379,18 @@ const Store = () => {
   };
 
   // Farmer search modal filtering - filter by prefix based on mode
+  // Debtors view: mcode starting with D AND crbal ≠ 0
   const [farmerSearchQuery, setFarmerSearchQuery] = useState('');
   const prefix = isMemberMode ? 'M' : 'D';
-  const prefixFilteredFarmers = farmers.filter(f => f.farmer_id.toUpperCase().startsWith(prefix));
+  const prefixFilteredFarmers = farmers.filter(f => {
+    const matchesPrefix = f.farmer_id.toUpperCase().startsWith(prefix);
+    if (!isMemberMode) {
+      // Debtors: must have non-empty crbal
+      const hasCrbal = f.crbal && typeof f.crbal === 'string' && f.crbal.trim() !== '' && f.crbal !== '0';
+      return matchesPrefix && hasCrbal;
+    }
+    return matchesPrefix;
+  });
   const filteredFarmers = farmerSearchQuery.trim()
     ? prefixFilteredFarmers.filter(f =>
         f.farmer_id.toLowerCase().includes(farmerSearchQuery.toLowerCase()) ||
@@ -656,17 +675,30 @@ const Store = () => {
                   <div className="text-lg font-bold">{selectedFarmer.name}</div>
                 </div>
                 
-                {/* Credit Entries List */}
+                {/* Original crbal value */}
+                <div className="bg-gray-50 rounded-lg p-3 border">
+                  <div className="text-xs text-gray-500 font-medium mb-1">CREDIT BALANCE (RAW)</div>
+                  <div className="text-sm font-mono text-gray-700">{selectedFarmer.crbal || 'N/A'}</div>
+                </div>
+                
+                {/* Credit Entries List - Parsed */}
                 <div className="bg-gray-100 rounded-lg p-4">
-                  <div className="text-xs text-gray-500 font-medium mb-2">CREDIT ENTRIES</div>
+                  <div className="text-xs text-gray-500 font-medium mb-2">CREDIT ENTRIES (PARSED)</div>
                   {parsedCredits.length > 0 ? (
                     <div className="space-y-2">
                       {parsedCredits.map((credit, index) => (
-                        <div key={index} className="flex justify-between items-center bg-white rounded p-2 text-sm">
-                          <span className="font-medium">{credit.code} - {credit.description}</span>
-                          <span className={`font-bold ${credit.amount < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                            {credit.amount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
+                        <div key={index} className="bg-white rounded p-2 text-sm">
+                          <div className="flex justify-between items-center">
+                            <span className="font-mono text-gray-600">{credit.code}</span>
+                            <span className={`font-bold ${credit.amount < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              {credit.amount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          {credit.description && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              {credit.code} - {credit.description}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

@@ -207,7 +207,8 @@ export interface Farmer {
   route: string;
   multOpt?: number; // 0 = single delivery per session, 1 = multiple allowed
   currqty?: number; // 0 = hide monthly cumulative on receipt, 1 = show monthly cumulative
-  crbal?: string; // Credit balance string from cm_members e.g. "CR01#200|CR02#150"
+  crbal?: string; // Credit balance string from cm_members e.g. "CR02#11200,CR22#340"
+  ccode?: string; // Credit code for filtering credit entries
   created_at?: string;
   updated_at?: string;
 }
