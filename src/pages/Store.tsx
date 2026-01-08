@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { mysqlApi, type Item, type Sale, type Farmer } from '@/services/mysqlApi';
+import { mysqlApi, type Item, type Sale, type Farmer, type CreditType } from '@/services/mysqlApi';
 import { toast } from 'sonner';
 import { ArrowLeft, Search, X, CornerDownLeft } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -14,6 +14,12 @@ interface CartItem {
   item: Item;
   quantity: number;
   lineTotal: number;
+}
+
+interface ParsedCredit {
+  code: string;
+  amount: number;
+  description: string;
 }
 
 const Store = () => {
@@ -33,6 +39,9 @@ const Store = () => {
   const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
   const [showViewMore, setShowViewMore] = useState(false);
   const farmerInputRef = useRef<HTMLInputElement>(null);
+  
+  // Credit types lookup
+  const [creditTypes, setCreditTypes] = useState<CreditType[]>([]);
 
   // Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -58,10 +67,53 @@ const Store = () => {
     const timer = setTimeout(() => {
       checkRoutesAndLoadItems();
       loadFarmers();
+      loadCreditTypes();
       syncPendingSales();
     }, 100);
     return () => clearTimeout(timer);
   }, [isReady]);
+
+  // Load credit types from API for description lookup
+  const loadCreditTypes = async () => {
+    try {
+      if (navigator.onLine) {
+        const apiUrl = API_CONFIG.MYSQL_API_URL;
+        const response = await fetch(`${apiUrl}/api/credits`, { signal: AbortSignal.timeout(5000) });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && Array.isArray(data.data)) {
+            setCreditTypes(data.data);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load credit types:', error);
+    }
+  };
+
+  // Parse crbal string (e.g. "CR01#200|CR02#150") into structured entries with descriptions
+  const parsedCredits = useMemo<ParsedCredit[]>(() => {
+    if (!selectedFarmer?.crbal || typeof selectedFarmer.crbal !== 'string' || !selectedFarmer.crbal.trim()) {
+      return [];
+    }
+    
+    const entries = selectedFarmer.crbal.split('|').filter(Boolean);
+    return entries.map(entry => {
+      const [code, amountStr] = entry.split('#');
+      const amount = parseFloat(amountStr) || 0;
+      const creditType = creditTypes.find(ct => ct.crcode === code);
+      return {
+        code: code || '',
+        amount,
+        description: creditType?.descript || code || 'Unknown'
+      };
+    });
+  }, [selectedFarmer?.crbal, creditTypes]);
+
+  // Calculate total credit balance from parsed entries
+  const totalCreditBalance = useMemo(() => {
+    return parsedCredits.reduce((sum, credit) => sum + credit.amount, 0);
+  }, [parsedCredits]);
 
   const checkRoutesAndLoadItems = async () => {
     try {
@@ -603,10 +655,31 @@ const Store = () => {
                   <div className="text-xs text-gray-500 font-medium">NAME</div>
                   <div className="text-lg font-bold">{selectedFarmer.name}</div>
                 </div>
+                
+                {/* Credit Entries List */}
                 <div className="bg-gray-100 rounded-lg p-4">
-                  <div className="text-xs text-gray-500 font-medium mb-1">CREDIT BALANCE</div>
-                  <div className={`text-2xl font-bold ${(selectedFarmer.crbal || 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                    KES {((selectedFarmer.crbal || 0)).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <div className="text-xs text-gray-500 font-medium mb-2">CREDIT ENTRIES</div>
+                  {parsedCredits.length > 0 ? (
+                    <div className="space-y-2">
+                      {parsedCredits.map((credit, index) => (
+                        <div key={index} className="flex justify-between items-center bg-white rounded p-2 text-sm">
+                          <span className="font-medium">{credit.code} - {credit.description}</span>
+                          <span className={`font-bold ${credit.amount < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {credit.amount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-gray-400 text-center text-sm py-2">No credit entries</div>
+                  )}
+                </div>
+                
+                {/* Total Credit Balance */}
+                <div className="bg-[#5E35B1]/10 rounded-lg p-4 border-2 border-[#5E35B1]">
+                  <div className="text-xs text-gray-500 font-medium mb-1">TOTAL CREDIT BALANCE</div>
+                  <div className={`text-2xl font-bold ${totalCreditBalance < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    KES {totalCreditBalance.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
               </div>

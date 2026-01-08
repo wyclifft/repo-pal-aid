@@ -207,9 +207,14 @@ export interface Farmer {
   route: string;
   multOpt?: number; // 0 = single delivery per session, 1 = multiple allowed
   currqty?: number; // 0 = hide monthly cumulative on receipt, 1 = show monthly cumulative
-  crbal?: number; // Credit balance from cm_members
+  crbal?: string; // Credit balance string from cm_members e.g. "CR01#200|CR02#150"
   created_at?: string;
   updated_at?: string;
+}
+
+export interface CreditType {
+  crcode: string;
+  descript: string;
 }
 
 export const farmersApi = {
