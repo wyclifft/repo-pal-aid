@@ -30,7 +30,8 @@ const Store = () => {
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [showFarmerSearch, setShowFarmerSearch] = useState(false);
-  const [isMemberMode, setIsMemberMode] = useState(true);
+  const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
+  const [showViewMore, setShowViewMore] = useState(false);
   const farmerInputRef = useRef<HTMLInputElement>(null);
 
   // Cart state
@@ -179,16 +180,17 @@ const Store = () => {
     }
   };
 
-  // Resolve member ID to farmer
+  // Resolve member ID to farmer based on mode (M or D prefix)
   const resolveFarmerId = useCallback((input: string): Farmer | null => {
     if (!input.trim()) return null;
     const numericInput = input.replace(/\D/g, '');
+    const prefix = isMemberMode ? 'M' : 'D';
     
     const exactMatch = farmers.find(f => f.farmer_id.toLowerCase() === input.toLowerCase());
     if (exactMatch) return exactMatch;
     
     if (numericInput && numericInput === input.trim()) {
-      const paddedId = `M${numericInput.padStart(5, '0')}`;
+      const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
       const paddedMatch = farmers.find(f => f.farmer_id.toUpperCase() === paddedId.toUpperCase());
       if (paddedMatch) return paddedMatch;
       
@@ -199,7 +201,7 @@ const Store = () => {
       if (numericMatch) return numericMatch;
     }
     return null;
-  }, [farmers]);
+  }, [farmers, isMemberMode]);
 
   // Handle Enter key on member input
   const handleMemberEnter = () => {
@@ -314,14 +316,16 @@ const Store = () => {
     }
   };
 
-  // Farmer search modal filtering
+  // Farmer search modal filtering - filter by prefix based on mode
   const [farmerSearchQuery, setFarmerSearchQuery] = useState('');
+  const prefix = isMemberMode ? 'M' : 'D';
+  const prefixFilteredFarmers = farmers.filter(f => f.farmer_id.toUpperCase().startsWith(prefix));
   const filteredFarmers = farmerSearchQuery.trim()
-    ? farmers.filter(f =>
+    ? prefixFilteredFarmers.filter(f =>
         f.farmer_id.toLowerCase().includes(farmerSearchQuery.toLowerCase()) ||
         f.name.toLowerCase().includes(farmerSearchQuery.toLowerCase())
       ).slice(0, 50)
-    : farmers.slice(0, 50);
+    : prefixFilteredFarmers.slice(0, 50);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#26A69A]">
@@ -337,14 +341,18 @@ const Store = () => {
 
       {/* Main Content */}
       <div className="flex-1 bg-[#26A69A] px-4 py-3">
-        {/* Members Toggle */}
+        {/* Members/Debtors Toggle */}
         <div className="flex items-center justify-between mb-3">
-          <span className="text-white font-medium text-lg">Members</span>
+          <span className="text-white font-medium text-lg">{isMemberMode ? 'Members' : 'Debtors'}</span>
           <button
-            onClick={() => setIsMemberMode(!isMemberMode)}
-            className={`w-12 h-6 rounded-full transition-colors relative ${isMemberMode ? 'bg-gray-700' : 'bg-gray-400'}`}
+            onClick={() => {
+              setIsMemberMode(!isMemberMode);
+              setSelectedFarmer(null);
+              setFarmerId('');
+            }}
+            className={`w-12 h-6 rounded-full transition-colors relative ${isMemberMode ? 'bg-gray-700' : 'bg-orange-500'}`}
           >
-            <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-gray-900 transition-transform ${isMemberMode ? 'right-0.5' : 'left-0.5'}`} />
+            <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${isMemberMode ? 'right-0.5' : 'left-0.5'}`} />
           </button>
         </div>
 
@@ -384,13 +392,18 @@ const Store = () => {
         <div className="bg-white rounded-lg p-3 mb-3 border-l-4 border-gray-400">
           <div className="flex justify-between items-start">
             <div>
-              <div className="text-sm font-bold text-gray-700">MEMBER</div>
+              <div className="text-sm font-bold text-gray-700">{isMemberMode ? 'MEMBER' : 'DEBTOR'}</div>
               <div className="text-sm text-gray-600">
                 {selectedFarmer ? (
                   <>
                     {selectedFarmer.name} [{selectedFarmer.route || 'T000'}] - MULTI OPT =
                     <br />
-                    <span className="text-[#1565C0] underline">[1] -&gt;&gt;VIEW MORE&lt;&lt;</span>
+                    <button 
+                      onClick={() => setShowViewMore(true)}
+                      className="text-[#1565C0] underline font-medium"
+                    >
+                      [1] -&gt;&gt;VIEW MORE&lt;&lt;
+                    </button>
                   </>
                 ) : '-'}
               </div>
@@ -560,6 +573,47 @@ const Store = () => {
                 </button>
               ))}
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* View More Modal - Credit Balance */}
+      <Dialog open={showViewMore} onOpenChange={setShowViewMore}>
+        <DialogContent className="sm:max-w-md p-0">
+          <DialogHeader className="px-4 py-3 border-b flex flex-row items-center justify-between bg-[#5E35B1] text-white">
+            <DialogTitle className="text-white">{isMemberMode ? 'MEMBER' : 'DEBTOR'} DETAILS</DialogTitle>
+            <button onClick={() => setShowViewMore(false)} className="p-2 bg-[#E53935] text-white rounded">
+              <X className="h-4 w-4" />
+            </button>
+          </DialogHeader>
+          <div className="p-4">
+            {selectedFarmer && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-gray-500 font-medium">ID</div>
+                    <div className="text-lg font-bold">{selectedFarmer.farmer_id}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 font-medium">ROUTE</div>
+                    <div className="text-lg font-bold">{selectedFarmer.route || 'N/A'}</div>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 font-medium">NAME</div>
+                  <div className="text-lg font-bold">{selectedFarmer.name}</div>
+                </div>
+                <div className="bg-gray-100 rounded-lg p-4">
+                  <div className="text-xs text-gray-500 font-medium mb-1">CREDIT BALANCE</div>
+                  <div className={`text-2xl font-bold ${(selectedFarmer.crbal || 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    KES {((selectedFarmer.crbal || 0)).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400 text-center">
+                  MultiOpt: {selectedFarmer.multOpt || 0} | CurrQty: {selectedFarmer.currqty || 0}
+                </div>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
