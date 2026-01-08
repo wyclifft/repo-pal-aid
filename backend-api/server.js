@@ -203,14 +203,24 @@ const server = http.createServer(async (req, res) => {
       
       const ccode = deviceRows[0].ccode;
       
-      // Get routes from fm_tanks for this company
+      // Get routes from fm_tanks for this company, including clientFetch for flow control
       const [rows] = await pool.query(
-        `SELECT tcode, descript, icode, idesc, task1, task2, task3, task4, task5, task6, task7, task8, depart, ccode, mprefix 
+        `SELECT tcode, descript, icode, idesc, task1, task2, task3, task4, task5, task6, task7, task8, depart, ccode, mprefix, IFNULL(clientFetch, 1) as clientFetch 
          FROM fm_tanks WHERE ccode = ? ORDER BY descript`,
         [ccode]
       );
       
-      return sendJSON(res, { success: true, data: rows, ccode });
+      // Map rows to include explicit permission flags based on clientFetch
+      // clientFetch = 1: Enable Buy and Sell, Disable Store
+      // clientFetch = 2: Enable Store, Disable Buy and Sell
+      const routesWithPermissions = rows.map(row => ({
+        ...row,
+        allowBuy: row.clientFetch === 1,
+        allowSell: row.clientFetch === 1,
+        allowStore: row.clientFetch === 2
+      }));
+      
+      return sendJSON(res, { success: true, data: routesWithPermissions, ccode });
     }
 
     // Farmers endpoints - Fetch from cm_members table
@@ -668,6 +678,30 @@ const server = http.createServer(async (req, res) => {
           error: 'MANUAL_ENTRY_DISABLED',
           message: 'Manual weight entry is disabled. Please use the digital scale.' 
         }, 400);
+      }
+      
+      // ENFORCE clientFetch: Validate that the route allows Buy/Sell (clientFetch = 1)
+      // This prevents bypassing UI controls via direct API calls
+      const routeCode = (body.route || '').trim();
+      if (routeCode) {
+        const [routeRows] = await pool.query(
+          'SELECT IFNULL(clientFetch, 1) as clientFetch FROM fm_tanks WHERE tcode = ? AND ccode = ?',
+          [routeCode, ccode]
+        );
+        
+        if (routeRows.length > 0) {
+          const clientFetch = routeRows[0].clientFetch;
+          // clientFetch = 1: Buy/Sell allowed, Store disabled
+          // clientFetch = 2: Store allowed, Buy/Sell disabled
+          if (clientFetch !== 1) {
+            console.log(`❌ clientFetch enforcement: Buy/Sell disabled for route ${routeCode} (clientFetch=${clientFetch})`);
+            return sendJSON(res, { 
+              success: false, 
+              error: 'ROUTE_BUY_SELL_DISABLED',
+              message: 'Buy/Sell operations are not allowed for this route. Please use Store instead.' 
+            }, 403);
+          }
+        }
       }
       
       // Parse date and time (LOCAL date, not UTC)
@@ -1161,14 +1195,45 @@ const server = http.createServer(async (req, res) => {
         
         // Get device's ccode from devsettings using device_fingerprint
         let ccode = '';
+        let authorized = false;
         if (body.device_fingerprint) {
           const [deviceRows] = await conn.query(
-            'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+            'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
             [body.device_fingerprint]
           );
           if (deviceRows.length > 0) {
             ccode = deviceRows[0].ccode || '';
+            authorized = deviceRows[0].authorized === 1;
           }
+        }
+        
+        // Check device authorization
+        if (!authorized) {
+          await conn.rollback();
+          conn.release();
+          return sendJSON(res, { 
+            success: false, 
+            error: 'Device not authorized' 
+          }, 403);
+        }
+        
+        // ENFORCE clientFetch: Validate that at least one route allows Store (clientFetch = 2)
+        // For store sales, we check if any route in the company has clientFetch = 2
+        // This prevents Store access if no routes are configured for it
+        const [storeRoutes] = await conn.query(
+          'SELECT COUNT(*) as storeCount FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = 2',
+          [ccode]
+        );
+        
+        if (storeRoutes[0].storeCount === 0) {
+          console.log(`❌ clientFetch enforcement: Store disabled for company ${ccode} (no routes with clientFetch=2)`);
+          await conn.rollback();
+          conn.release();
+          return sendJSON(res, { 
+            success: false, 
+            error: 'STORE_DISABLED',
+            message: 'Store operations are not enabled for this company. Please contact administrator.' 
+          }, 403);
         }
         
         // Insert into transactions table
