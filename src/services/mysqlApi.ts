@@ -125,14 +125,15 @@ async function apiRequest<T>(
 // ==================== SESSIONS API ====================
 
 export interface Session {
+  id?: number;        // Season ID (only for orgtype = 'C')
   descript: string;
-  time_from: number; // Hour in 24-hour format (0-24)
-  time_to: number;   // Hour in 24-hour format (0-24)
+  time_from: number;  // Hour in 24-hour format (0-24)
+  time_to: number;    // Hour in 24-hour format (0-24)
   ccode?: string;
   // Season-specific fields (orgtype = 'C')
-  datefrom?: string; // YYYY-MM-DD
-  dateto?: string;   // YYYY-MM-DD
-  dateEnabled?: boolean; // Backend-calculated: true if current date is within range
+  datefrom?: string;  // YYYY-MM-DD format (e.g., 2025-03-01)
+  dateto?: string;    // YYYY-MM-DD format (e.g., 2025-03-10)
+  dateEnabled?: boolean; // Backend-calculated: true if current date is within datefrom-dateto range
 }
 
 export interface SessionsResponse {

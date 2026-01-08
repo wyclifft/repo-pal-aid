@@ -144,12 +144,13 @@ const server = http.createServer(async (req, res) => {
         
         const [seasonRows] = await pool.query(
           `SELECT 
+            id,
             descript, 
+            ccode,
             DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, 
             DATE_FORMAT(dateto, '%Y-%m-%d') as dateto, 
             time_from, 
-            time_to, 
-            ccode,
+            time_to,
             CASE 
               WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1 
               ELSE 0 
@@ -160,14 +161,15 @@ const server = http.createServer(async (req, res) => {
           [today, today, ccode]
         );
         
-        // Map rows with enabled flag calculated by backend
+        // Map rows with enabled flag calculated by backend - include all season details
         const processedSeasons = seasonRows.map(row => ({
+          id: row.id,
           descript: row.descript,
+          ccode: row.ccode,
           datefrom: row.datefrom,
           dateto: row.dateto,
           time_from: row.time_from,
           time_to: row.time_to,
-          ccode: row.ccode,
           dateEnabled: row.dateEnabled === 1 // Boolean for frontend
         }));
         

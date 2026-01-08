@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { mysqlApi, type Session, type SessionsResponse } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -24,7 +24,11 @@ export const SessionSelector = ({
   const [currentTime, setCurrentTime] = useState(new Date());
   const [periodLabel, setPeriodLabel] = useState(propPeriodLabel);
   const [orgtype, setOrgtype] = useState<string>('D');
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const { saveSessions, getSessions, isReady } = useIndexedDB();
+  
+  // Track if we've already loaded data to prevent flickering
+  const hasLoadedRef = useRef(false);
 
   // Update current time every minute
   useEffect(() => {
@@ -37,22 +41,18 @@ export const SessionSelector = ({
   // Convert time_from/time_to to integer hour
   const toHour = (value: any): number | null => {
     if (value === null || value === undefined) return null;
-    
-    // If already a number
     if (typeof value === 'number') return value;
-    
-    // If string, parse as integer
     if (typeof value === 'string') {
       const parsed = parseInt(value, 10);
       return isNaN(parsed) ? null : parsed;
     }
-    
     return null;
   };
 
-  // Check if a session/season is enabled based on date range (for seasons)
+  // Check if a session/season is enabled based on date range
+  // Uses backend-provided dateEnabled flag for accurate validation
   const isDateEnabled = useCallback((session: Session): boolean => {
-    // Backend provides dateEnabled flag - use it directly
+    // Backend provides dateEnabled flag - use it directly (most reliable)
     if (session.dateEnabled !== undefined) {
       return session.dateEnabled;
     }
@@ -62,14 +62,14 @@ export const SessionSelector = ({
       return true;
     }
     
-    // Manual date check as fallback
+    // Manual date check as fallback for seasons
     const today = new Date().toISOString().split('T')[0];
     return today >= session.datefrom && today <= session.dateto;
   }, []);
 
   // Check if a session is active based on current hour AND date range
   const isSessionActive = useCallback((session: Session): boolean => {
-    // First check date range (for seasons)
+    // First check date range (for seasons with datefrom/dateto)
     if (!isDateEnabled(session)) {
       return false;
     }
@@ -86,8 +86,7 @@ export const SessionSelector = ({
     
     // Handle sessions that span midnight (e.g., 22-6)
     if (timeTo < timeFrom) {
-      const isActive = currentHour >= timeFrom || currentHour < timeTo;
-      return isActive;
+      return currentHour >= timeFrom || currentHour < timeTo;
     }
     
     return currentHour >= timeFrom && currentHour < timeTo;
@@ -98,33 +97,58 @@ export const SessionSelector = ({
     return sessionList.find(s => isSessionActive(s)) || null;
   }, [isSessionActive]);
 
-  // Load sessions - wait for DB to be ready
+  // Process and update sessions without flickering
+  const processSessionData = useCallback((
+    data: Session[], 
+    backendPeriodLabel?: string, 
+    backendOrgtype?: string,
+    isFromNetwork = false
+  ) => {
+    // Update period label and orgtype from backend
+    if (backendPeriodLabel) {
+      setPeriodLabel(backendPeriodLabel);
+    }
+    if (backendOrgtype) {
+      setOrgtype(backendOrgtype);
+    }
+    
+    setSessions(data);
+    
+    const active = findActiveSession(data);
+    setActiveSession(active);
+    
+    // Auto-select active session if none selected
+    if (active && !selectedSession) {
+      onSessionChange(active);
+    }
+    
+    if (isFromNetwork) {
+      hasLoadedRef.current = true;
+      setInitialLoadComplete(true);
+    }
+  }, [findActiveSession, selectedSession, onSessionChange]);
+
+  // Load sessions - optimized to prevent flickering
   useEffect(() => {
     let isMounted = true;
     
     const loadSessions = async () => {
-      if (!isMounted) return;
-      setLoading(true);
+      // Don't show loading state if we already have data
+      if (!hasLoadedRef.current) {
+        setLoading(true);
+      }
       setError(null);
       
       try {
         const deviceFingerprint = await generateDeviceFingerprint();
-        let loadedSessions: Session[] = [];
         
-        // Try to load from cache first (only if DB is ready)
-        if (isReady) {
+        // Try to load from cache first (only if DB is ready and we haven't loaded yet)
+        if (isReady && !hasLoadedRef.current) {
           try {
             const cached = await getSessions();
-            if (cached && cached.length > 0) {
-              loadedSessions = cached;
-              if (isMounted) {
-                setSessions(cached);
-                const active = findActiveSession(cached);
-                setActiveSession(active);
-                if (active && !selectedSession) {
-                  onSessionChange(active);
-                }
-              }
+            if (cached && cached.length > 0 && isMounted) {
+              processSessionData(cached);
+              // Don't set loading false yet - wait for network
             }
           } catch (cacheErr) {
             console.warn('Cache read error:', cacheErr);
@@ -136,57 +160,47 @@ export const SessionSelector = ({
           try {
             const response = await mysqlApi.sessions.getByDevice(deviceFingerprint) as SessionsResponse;
             
+            if (!isMounted) return;
+            
             if (response.success && response.data && response.data.length > 0) {
-              loadedSessions = response.data;
+              processSessionData(
+                response.data, 
+                response.periodLabel, 
+                response.orgtype, 
+                true
+              );
               
-              // Update periodLabel and orgtype from backend response
+              // Save to cache
+              if (isReady) {
+                try {
+                  await saveSessions(response.data);
+                } catch (saveErr) {
+                  console.warn('Cache save error:', saveErr);
+                }
+              }
+            } else if (response.success) {
+              // No sessions found but request succeeded
               if (response.periodLabel) {
                 setPeriodLabel(response.periodLabel);
               }
               if (response.orgtype) {
                 setOrgtype(response.orgtype);
               }
-              
-              if (isMounted) {
-                setSessions(response.data);
-                if (isReady) {
-                  try {
-                    await saveSessions(response.data);
-                  } catch (saveErr) {
-                    console.warn('Cache save error:', saveErr);
-                  }
-                }
-                
-                const active = findActiveSession(response.data);
-                setActiveSession(active);
-                
-                // Auto-select active session if none selected
-                if (active && !selectedSession) {
-                  onSessionChange(active);
-                }
-              }
-            } else if (loadedSessions.length === 0) {
-              // No sessions found for this ccode - that's OK, not an error
-              console.log('No sessions configured for this company code');
-              
-              // Still update labels from response
-              if (response.periodLabel) {
-                setPeriodLabel(response.periodLabel);
-              }
+              setSessions([]);
+              setInitialLoadComplete(true);
+              hasLoadedRef.current = true;
             }
           } catch (fetchErr) {
             console.warn('Session fetch error:', fetchErr);
             // Continue with cached data if available
           }
-        } else if (loadedSessions.length === 0 && !isReady) {
-          // Only show error if we have no cached data AND offline AND DB not ready
+        } else if (!hasLoadedRef.current && !isReady) {
           if (isMounted) {
             setError('Offline - loading sessions...');
           }
         }
       } catch (err) {
         console.warn('Error loading sessions:', err);
-        // Don't set error - silently continue with empty sessions
       } finally {
         if (isMounted) {
           setLoading(false);
@@ -199,7 +213,7 @@ export const SessionSelector = ({
     return () => {
       isMounted = false;
     };
-  }, [isReady, findActiveSession, selectedSession, onSessionChange, getSessions, saveSessions]);
+  }, [isReady, processSessionData, getSessions, saveSessions]);
 
   // Re-check active session when time changes
   useEffect(() => {
@@ -219,7 +233,7 @@ export const SessionSelector = ({
     return `${hour12}:00 ${ampm}`;
   };
 
-  // Format date for display
+  // Format date for display (e.g., 01 Mar 2025)
   const formatDate = (dateStr: string | undefined) => {
     if (!dateStr) return '';
     try {
@@ -244,7 +258,8 @@ export const SessionSelector = ({
     return '✓ Active';
   };
 
-  if (loading) {
+  // Show loading only on initial load (prevents flickering)
+  if (loading && !hasLoadedRef.current) {
     return (
       <div className="mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -258,7 +273,7 @@ export const SessionSelector = ({
     );
   }
 
-  if (error) {
+  if (error && !hasLoadedRef.current) {
     return (
       <div className="mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -273,7 +288,7 @@ export const SessionSelector = ({
     );
   }
 
-  if (sessions.length === 0) {
+  if (sessions.length === 0 && initialLoadComplete) {
     return (
       <div className="mb-4">
         <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -316,10 +331,9 @@ export const SessionSelector = ({
         <option value="">Select {periodLabel.toLowerCase()}...</option>
         {sessions.map((session) => {
           const isActive = isSessionActive(session);
-          const dateOk = isDateEnabled(session);
           return (
             <option 
-              key={session.descript} 
+              key={session.id ? `season-${session.id}` : session.descript} 
               value={session.descript}
               disabled={!isActive}
             >
@@ -335,7 +349,7 @@ export const SessionSelector = ({
       <div className="mt-2">
         {activeSession ? (
           <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
-            <CheckCircle className="h-4 w-4" />
+            <CheckCircle className="h-4 w-4 flex-shrink-0" />
             <span>
               <strong>{activeSession.descript}</strong> is open 
               ({formatTime(activeSession.time_from)} - {formatTime(activeSession.time_to)})
@@ -348,7 +362,7 @@ export const SessionSelector = ({
           </div>
         ) : (
           <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">
-            <AlertCircle className="h-4 w-4" />
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
             <span>
               No {periodLabel.toLowerCase()} is currently open. Data entry is not allowed.
             </span>
