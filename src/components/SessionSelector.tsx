@@ -1,27 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
-import { mysqlApi, type Session } from '@/services/mysqlApi';
+import { mysqlApi, type Session, type SessionsResponse } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
-import { Clock, AlertCircle, CheckCircle } from 'lucide-react';
+import { Clock, AlertCircle, CheckCircle, Calendar } from 'lucide-react';
 
 interface SessionSelectorProps {
   selectedSession: string;
   onSessionChange: (session: Session | null) => void;
   disabled?: boolean;
-  periodLabel?: string;
+  periodLabel?: string; // Fallback only - prefer backend value
 }
 
 export const SessionSelector = ({ 
   selectedSession, 
   onSessionChange, 
   disabled = false,
-  periodLabel = 'Session'
+  periodLabel: propPeriodLabel = 'Session'
 }: SessionSelectorProps) => {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [periodLabel, setPeriodLabel] = useState(propPeriodLabel);
+  const [orgtype, setOrgtype] = useState<string>('D');
   const { saveSessions, getSessions, isReady } = useIndexedDB();
 
   // Update current time every minute
@@ -48,8 +50,30 @@ export const SessionSelector = ({
     return null;
   };
 
-  // Check if a session is active based on current hour
+  // Check if a session/season is enabled based on date range (for seasons)
+  const isDateEnabled = useCallback((session: Session): boolean => {
+    // Backend provides dateEnabled flag - use it directly
+    if (session.dateEnabled !== undefined) {
+      return session.dateEnabled;
+    }
+    
+    // Fallback: If no date fields, assume enabled (regular sessions)
+    if (!session.datefrom || !session.dateto) {
+      return true;
+    }
+    
+    // Manual date check as fallback
+    const today = new Date().toISOString().split('T')[0];
+    return today >= session.datefrom && today <= session.dateto;
+  }, []);
+
+  // Check if a session is active based on current hour AND date range
   const isSessionActive = useCallback((session: Session): boolean => {
+    // First check date range (for seasons)
+    if (!isDateEnabled(session)) {
+      return false;
+    }
+    
     const timeFrom = toHour(session.time_from);
     const timeTo = toHour(session.time_to);
     
@@ -63,14 +87,11 @@ export const SessionSelector = ({
     // Handle sessions that span midnight (e.g., 22-6)
     if (timeTo < timeFrom) {
       const isActive = currentHour >= timeFrom || currentHour < timeTo;
-      console.log('Session check (overnight):', { descript: session.descript?.trim(), timeFrom, timeTo, currentHour, isActive });
       return isActive;
     }
     
-    const isActive = currentHour >= timeFrom && currentHour < timeTo;
-    console.log('Session check:', { descript: session.descript?.trim(), timeFrom, timeTo, currentHour, isActive });
-    return isActive;
-  }, [currentTime]);
+    return currentHour >= timeFrom && currentHour < timeTo;
+  }, [currentTime, isDateEnabled]);
 
   // Find the currently active session from loaded sessions
   const findActiveSession = useCallback((sessionList: Session[]): Session | null => {
@@ -113,10 +134,19 @@ export const SessionSelector = ({
         // Fetch fresh data if online
         if (navigator.onLine) {
           try {
-            const response = await mysqlApi.sessions.getByDevice(deviceFingerprint);
+            const response = await mysqlApi.sessions.getByDevice(deviceFingerprint) as SessionsResponse;
             
             if (response.success && response.data && response.data.length > 0) {
               loadedSessions = response.data;
+              
+              // Update periodLabel and orgtype from backend response
+              if (response.periodLabel) {
+                setPeriodLabel(response.periodLabel);
+              }
+              if (response.orgtype) {
+                setOrgtype(response.orgtype);
+              }
+              
               if (isMounted) {
                 setSessions(response.data);
                 if (isReady) {
@@ -138,6 +168,11 @@ export const SessionSelector = ({
             } else if (loadedSessions.length === 0) {
               // No sessions found for this ccode - that's OK, not an error
               console.log('No sessions configured for this company code');
+              
+              // Still update labels from response
+              if (response.periodLabel) {
+                setPeriodLabel(response.periodLabel);
+              }
             }
           } catch (fetchErr) {
             console.warn('Session fetch error:', fetchErr);
@@ -182,6 +217,31 @@ export const SessionSelector = ({
     const ampm = hour >= 12 ? 'PM' : 'AM';
     const hour12 = hour % 12 || 12;
     return `${hour12}:00 ${ampm}`;
+  };
+
+  // Format date for display
+  const formatDate = (dateStr: string | undefined) => {
+    if (!dateStr) return '';
+    try {
+      const date = new Date(dateStr + 'T00:00:00');
+      return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  // Get session status text
+  const getSessionStatus = (session: Session): string => {
+    const dateOk = isDateEnabled(session);
+    const timeOk = isSessionActive(session);
+    
+    if (!dateOk) {
+      return '- Date closed';
+    }
+    if (!timeOk) {
+      return '- Time closed';
+    }
+    return '✓ Active';
   };
 
   if (loading) {
@@ -231,7 +291,7 @@ export const SessionSelector = ({
   return (
     <div className="mb-4">
       <label className="block text-sm font-semibold text-gray-700 mb-2">
-        <Clock className="h-4 w-4 inline mr-1" />
+        {orgtype === 'C' ? <Calendar className="h-4 w-4 inline mr-1" /> : <Clock className="h-4 w-4 inline mr-1" />}
         {periodLabel}
       </label>
       <select
@@ -239,7 +299,7 @@ export const SessionSelector = ({
         onChange={(e) => {
           const selected = sessions.find(s => s.descript === e.target.value);
           if (selected) {
-            // Check if selected session is active
+            // Check if selected session is active (date + time)
             if (!isSessionActive(selected)) {
               return; // Prevent selection of inactive sessions
             }
@@ -256,6 +316,7 @@ export const SessionSelector = ({
         <option value="">Select {periodLabel.toLowerCase()}...</option>
         {sessions.map((session) => {
           const isActive = isSessionActive(session);
+          const dateOk = isDateEnabled(session);
           return (
             <option 
               key={session.descript} 
@@ -263,7 +324,8 @@ export const SessionSelector = ({
               disabled={!isActive}
             >
               {session.descript} ({formatTime(session.time_from)} - {formatTime(session.time_to)})
-              {isActive ? ' ✓ Active' : ' - Closed'}
+              {session.datefrom && session.dateto && ` [${formatDate(session.datefrom)} - ${formatDate(session.dateto)}]`}
+              {' '}{getSessionStatus(session)}
             </option>
           );
         })}
@@ -277,6 +339,11 @@ export const SessionSelector = ({
             <span>
               <strong>{activeSession.descript}</strong> is open 
               ({formatTime(activeSession.time_from)} - {formatTime(activeSession.time_to)})
+              {activeSession.datefrom && activeSession.dateto && (
+                <span className="text-xs ml-1">
+                  [{formatDate(activeSession.datefrom)} - {formatDate(activeSession.dateto)}]
+                </span>
+              )}
             </span>
           </div>
         ) : (
@@ -291,7 +358,7 @@ export const SessionSelector = ({
       
       {/* Current Time Display */}
       <p className="text-xs text-gray-500 mt-1">
-        Current time: {currentTime.toLocaleTimeString()}
+        Current time: {currentTime.toLocaleTimeString()} | Date: {currentTime.toLocaleDateString()}
       </p>
     </div>
   );

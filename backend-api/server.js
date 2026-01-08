@@ -110,7 +110,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, version: APP_VERSION, node: process.version });
     }
 
-    // Sessions endpoint - Fetch from sessions table
+    // Sessions/Seasons endpoint - Fetch from sessions OR season table based on orgtype
     if (path.startsWith('/api/sessions/by-device/') && method === 'GET') {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
       
@@ -129,14 +129,77 @@ const server = http.createServer(async (req, res) => {
       
       const ccode = deviceRows[0].ccode;
       
-      // Get sessions from sessions table for this company
-      const [rows] = await pool.query(
-        `SELECT descript, time_from, time_to, ccode 
-         FROM sessions WHERE ccode = ? ORDER BY time_from`,
+      // Get orgtype from psettings to determine data source
+      const [psettingsRows] = await pool.query(
+        'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE ccode = ?',
         [ccode]
       );
       
-      return sendJSON(res, { success: true, data: rows, ccode });
+      const orgtype = psettingsRows.length > 0 ? psettingsRows[0].orgtype : 'D';
+      const periodLabel = orgtype === 'C' ? 'Season' : 'Session';
+      
+      if (orgtype === 'C') {
+        // Coffee mode: Fetch from season table with date range validation
+        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        
+        const [seasonRows] = await pool.query(
+          `SELECT 
+            descript, 
+            DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, 
+            DATE_FORMAT(dateto, '%Y-%m-%d') as dateto, 
+            time_from, 
+            time_to, 
+            ccode,
+            CASE 
+              WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1 
+              ELSE 0 
+            END as dateEnabled
+           FROM season 
+           WHERE ccode = ? 
+           ORDER BY datefrom DESC`,
+          [today, today, ccode]
+        );
+        
+        // Map rows with enabled flag calculated by backend
+        const processedSeasons = seasonRows.map(row => ({
+          descript: row.descript,
+          datefrom: row.datefrom,
+          dateto: row.dateto,
+          time_from: row.time_from,
+          time_to: row.time_to,
+          ccode: row.ccode,
+          dateEnabled: row.dateEnabled === 1 // Boolean for frontend
+        }));
+        
+        return sendJSON(res, { 
+          success: true, 
+          data: processedSeasons, 
+          ccode,
+          periodLabel,
+          orgtype
+        });
+      } else {
+        // Dairy mode: Fetch from sessions table (original behavior)
+        const [rows] = await pool.query(
+          `SELECT descript, time_from, time_to, ccode 
+           FROM sessions WHERE ccode = ? ORDER BY time_from`,
+          [ccode]
+        );
+        
+        // Sessions are always dateEnabled (no date range)
+        const processedSessions = rows.map(row => ({
+          ...row,
+          dateEnabled: true
+        }));
+        
+        return sendJSON(res, { 
+          success: true, 
+          data: processedSessions, 
+          ccode,
+          periodLabel,
+          orgtype
+        });
+      }
     }
 
     // Get active session for a device (based on current time)
