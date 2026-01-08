@@ -129,14 +129,28 @@ export interface Session {
   time_from: number; // Hour in 24-hour format (0-24)
   time_to: number;   // Hour in 24-hour format (0-24)
   ccode?: string;
+  // Season-specific fields (orgtype = 'C')
+  datefrom?: string; // YYYY-MM-DD
+  dateto?: string;   // YYYY-MM-DD
+  dateEnabled?: boolean; // Backend-calculated: true if current date is within range
+}
+
+export interface SessionsResponse {
+  success: boolean;
+  data?: Session[];
+  ccode?: string;
+  periodLabel?: string; // 'Season' or 'Session'
+  orgtype?: string;     // 'C' or 'D'
+  error?: string;
 }
 
 export const sessionsApi = {
   /**
-   * Get all sessions for a device's company
+   * Get all sessions/seasons for a device's company
+   * Returns periodLabel and orgtype to determine UI behavior
    */
-  getByDevice: async (uniquedevcode: string): Promise<ApiResponse<Session[]>> => {
-    return apiRequest<Session[]>(`/sessions/by-device/${encodeURIComponent(uniquedevcode)}`);
+  getByDevice: async (uniquedevcode: string): Promise<SessionsResponse> => {
+    return apiRequest<Session[]>(`/sessions/by-device/${encodeURIComponent(uniquedevcode)}`) as Promise<SessionsResponse>;
   },
   
   /**
