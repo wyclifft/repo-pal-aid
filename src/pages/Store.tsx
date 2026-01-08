@@ -106,7 +106,7 @@ const Store = () => {
       .map(entry => {
         const [code, amountStr] = entry.trim().split('#');
         const amount = parseFloat(amountStr) || 0;
-        const creditType = creditTypes.find(ct => ct.crcode === code?.trim());
+        const creditType = creditTypes.find(ct => ct.crcode?.trim() === code?.trim());
         return {
           code: code?.trim() || '',
           amount,
