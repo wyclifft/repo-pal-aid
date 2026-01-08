@@ -37,6 +37,8 @@ export interface AppSettings {
   email: string | null;
   // Cumulative frequency status (DB: cumulative_frequency_status)
   cumulative_frequency_status: number;
+  // Period label: "Season" (coffee) or "Session" (dairy) - derived from orgtype
+  periodLabel: string;
 }
 
 // Default settings - rdesc is empty to force use of dynamic DB value
@@ -55,7 +57,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   caddress: null,
   tel: null,
   email: null,
-  cumulative_frequency_status: 0
+  cumulative_frequency_status: 0,
+  periodLabel: 'Session' // Default to Session (dairy)
 };
 
 const SETTINGS_STORAGE_KEY = 'app_settings';
@@ -100,6 +103,7 @@ interface AppSettingsContextType {
   routeLabel: string;
   centerLabel: string;
   produceLabel: string;
+  periodLabel: string;
   requireStableReading: boolean;
   requireZeroScale: boolean;
   autoWeightOnly: boolean;
@@ -333,7 +337,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             caddress: deviceData.app_settings?.caddress ?? DEFAULT_SETTINGS.caddress,
             tel: deviceData.app_settings?.tel ?? DEFAULT_SETTINGS.tel,
             email: deviceData.app_settings?.email ?? DEFAULT_SETTINGS.email,
-            cumulative_frequency_status: parseInt(String(deviceData.cumulative_frequency_status ?? DEFAULT_SETTINGS.cumulative_frequency_status), 10)
+            cumulative_frequency_status: parseInt(String(deviceData.cumulative_frequency_status ?? DEFAULT_SETTINGS.cumulative_frequency_status), 10),
+            periodLabel: deviceData.app_settings?.periodLabel ?? DEFAULT_SETTINGS.periodLabel
           };
           
           // Log settings changes for debugging
@@ -518,6 +523,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const routeLabel = trimmedRdesc || (isDairy ? 'Route' : 'Center');
   const centerLabel = isCoffee ? 'Center' : 'Route';
   const produceLabel = isDairy ? 'Milk' : 'Coffee';
+  // Period label: use backend value if available, otherwise derive from orgtype
+  const periodLabel = settings.periodLabel || (isCoffee ? 'Season' : 'Session');
   // CRITICAL: Use strict equality with number 1 for boolean conversion
   const requireStableReading = settings.stableopt === 1;
   const requireZeroScale = settings.zeroOpt === 1;
@@ -540,6 +547,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     routeLabel,
     centerLabel,
     produceLabel,
+    periodLabel,
     requireStableReading,
     requireZeroScale,
     autoWeightOnly,

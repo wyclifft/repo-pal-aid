@@ -81,7 +81,7 @@ export const Dashboard = ({
   const [printerConnected, setPrinterConnected] = useState(() => isPrinterConnected());
   const [isReconnecting, setIsReconnecting] = useState(false);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
-  const { sessionPrintOnly } = useAppSettings();
+  const { sessionPrintOnly, periodLabel } = useAppSettings();
   
   // Listen for connection state changes from Settings or other components
   useEffect(() => {
@@ -469,6 +469,7 @@ export const Dashboard = ({
                   selectedSession={selectedSession?.descript || ''}
                   onSessionChange={handleSessionChange}
                   disabled={false}
+                  periodLabel={periodLabel}
                 />
               </div>
 
@@ -480,7 +481,7 @@ export const Dashboard = ({
                   className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md min-h-[2.75rem]"
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
-                  NEW SESSION
+                  NEW {periodLabel.toUpperCase()}
                 </button>
               </div>
             </div>
