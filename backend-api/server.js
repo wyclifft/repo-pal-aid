@@ -347,7 +347,7 @@ const server = http.createServer(async (req, res) => {
     // Original farmers endpoint (kept for backward compatibility)
     if (path === '/api/farmers' && method === 'GET') {
       const search = parsedUrl.query.search;
-      let query = 'SELECT mcode as farmer_id, descript as name, route, IFNULL(crbal, \'\') as crbal FROM cm_members';
+      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members';
       let params = [];
       if (search) {
         query += ' WHERE mcode LIKE ? OR descript LIKE ?';
@@ -360,7 +360,7 @@ const server = http.createServer(async (req, res) => {
 
     if (path.startsWith('/api/farmers/') && method === 'GET') {
       const id = path.split('/')[3];
-      const [rows] = await pool.query('SELECT mcode as farmer_id, descript as name, route, IFNULL(crbal, \'\') as crbal FROM cm_members WHERE mcode = ?', [id]);
+      const [rows] = await pool.query('SELECT mcode as farmer_id, descript as name, route, ccode, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members WHERE mcode = ?', [id]);
       if (rows.length === 0) return sendJSON(res, { success: false, error: 'Farmer not found' }, 404);
       return sendJSON(res, { success: true, data: rows[0] });
     }
