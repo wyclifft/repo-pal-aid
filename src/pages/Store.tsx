@@ -609,9 +609,6 @@ const Store = () => {
                     KES {((selectedFarmer.crbal || 0)).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
-                <div className="text-xs text-gray-400 text-center">
-                  MultiOpt: {selectedFarmer.multOpt || 0} | CurrQty: {selectedFarmer.currqty || 0}
-                </div>
               </div>
             )}
           </div>
