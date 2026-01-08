@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Milk Collection</string>
-    <string name="title_activity_main">Milk Collection</string>
+    <string name="app_name">DeliCoop101</string>
+    <string name="title_activity_main">DeliCoop101</string>
     <string name="package_name">app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e</string>
     <string name="custom_url_scheme">app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e</string>
 </resources>

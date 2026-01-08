@@ -4,7 +4,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 const config: CapacitorConfig = {
   appId: 'app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e',
-  appName: 'Milk Collection',
+  appName: 'DeliCoop101',
   webDir: 'dist',
   
   // Android configuration
