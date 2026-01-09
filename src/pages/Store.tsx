@@ -223,9 +223,9 @@ const Store = () => {
     try {
       setLoading(true);
       const cachedItems = await getItems();
-      // Filter to only show store items (invtype = '5')
+      // Filter to only show store items (invtype = '05')
       const storeItems = cachedItems.filter((item: Item & { invtype?: string }) => 
-        item.invtype === '5' || !item.invtype // Include items without invtype for backward compatibility
+        item.invtype === '05'
       );
       if (storeItems.length > 0) {
         setItems(storeItems);
