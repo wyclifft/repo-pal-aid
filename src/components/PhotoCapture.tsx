@@ -3,6 +3,8 @@ import { Camera, X, RotateCcw, Check } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { Capacitor } from '@capacitor/core';
+import { Camera as CapacitorCamera, CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';
 
 interface PhotoCaptureProps {
   open: boolean;
@@ -21,11 +23,20 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
   const [isLoading, setIsLoading] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
+  const [useNativeCamera, setUseNativeCamera] = useState(false);
 
-  // Start camera when dialog opens
+  // Check if we should use native camera on mount
   useEffect(() => {
-    if (open) {
-      startCamera();
+    setUseNativeCamera(Capacitor.isNativePlatform());
+  }, []);
+
+  // Start camera when dialog opens (web only)
+  useEffect(() => {
+    if (open && !useNativeCamera) {
+      startWebCamera();
+    } else if (open && useNativeCamera) {
+      // For native, trigger camera immediately
+      captureWithNativeCamera();
     } else {
       stopCamera();
       setCapturedImage(null);
@@ -36,9 +47,63 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
     return () => {
       stopCamera();
     };
-  }, [open, facingMode]);
+  }, [open, facingMode, useNativeCamera]);
 
-  const startCamera = async () => {
+  // Request camera permission and capture using Capacitor Camera plugin
+  const captureWithNativeCamera = async () => {
+    setIsLoading(true);
+    setCameraError(null);
+    
+    try {
+      // First, request camera permissions explicitly
+      const permStatus = await CapacitorCamera.requestPermissions({ permissions: ['camera'] });
+      console.log('Camera permission status:', permStatus);
+      
+      if (permStatus.camera === 'denied') {
+        setCameraError('Camera permission denied. Please enable camera access in your device settings.');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Take photo using native camera
+      const photo = await CapacitorCamera.getPhoto({
+        quality: 85,
+        allowEditing: false,
+        resultType: CameraResultType.Base64,
+        source: CameraSource.Camera,
+        direction: facingMode === 'user' ? CameraDirection.Front : CameraDirection.Rear,
+        correctOrientation: true,
+        saveToGallery: false,
+      });
+      
+      if (photo.base64String) {
+        // Convert base64 to blob
+        const byteCharacters = atob(photo.base64String);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+        
+        const previewUrl = `data:image/jpeg;base64,${photo.base64String}`;
+        setCapturedBlob(blob);
+        setCapturedImage(previewUrl);
+      }
+    } catch (error: any) {
+      console.error('Native camera error:', error);
+      if (error.message?.includes('cancelled') || error.message?.includes('canceled')) {
+        // User cancelled - just close
+        onClose();
+        return;
+      }
+      setCameraError('Failed to capture photo. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const startWebCamera = async () => {
     setIsLoading(true);
     setCameraError(null);
     
@@ -123,7 +188,11 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
     }
     setCapturedImage(null);
     setCapturedBlob(null);
-    startCamera();
+    if (useNativeCamera) {
+      captureWithNativeCamera();
+    } else {
+      startWebCamera();
+    }
   };
 
   const confirmPhoto = () => {
@@ -191,7 +260,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
                     <Camera className="h-12 w-12 mx-auto mb-3 opacity-50" />
                     <p className="text-sm">{cameraError}</p>
                     <Button 
-                      onClick={startCamera} 
+                      onClick={useNativeCamera ? captureWithNativeCamera : startWebCamera} 
                       variant="outline" 
                       className="mt-4 text-black"
                     >
