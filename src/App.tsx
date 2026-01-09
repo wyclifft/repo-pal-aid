@@ -11,6 +11,7 @@ import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { BackendStatusBanner } from "@/components/BackendStatusBanner";
 import { ServiceWorkerUpdateBanner } from "@/components/ServiceWorkerUpdateBanner";
 import { preloadCriticalAssets } from "@/utils/precachePages";
+import { requestAllPermissions } from "@/utils/permissionRequests";
 
 // Lazy load route components for better performance
 const Index = lazy(() => import("./pages/Index"));
@@ -173,13 +174,24 @@ const App = () => {
   const mountedRef = useRef(true);
   const initTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Preload critical assets on mount with error handling
+  // Preload critical assets and request permissions on mount
   useEffect(() => {
     try {
       preloadCriticalAssets();
     } catch (error) {
       console.warn('Failed to preload assets:', error);
     }
+    
+    // Request Bluetooth and Camera permissions on app startup
+    const requestPermissionsOnStartup = async () => {
+      try {
+        const permissions = await requestAllPermissions();
+        console.log('📱 Permissions requested on startup:', permissions);
+      } catch (error) {
+        console.warn('Failed to request permissions:', error);
+      }
+    };
+    requestPermissionsOnStartup();
   }, []);
 
   // Check if splash has been shown in this session with timeout safety
