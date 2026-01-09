@@ -82,6 +82,28 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     };
   }, []);
 
+  // Listen for global weight updates from any scale connection
+  useEffect(() => {
+    const handleWeightUpdate = (e: CustomEvent<{ weight: number; scaleType: ScaleType }>) => {
+      const { weight, scaleType: type } = e.detail;
+      setLiveWeight(weight);
+      setScaleType(type);
+      setScaleConnected(true);
+      
+      // Also update parent via callback
+      if (weight > 0) {
+        onWeightChange(weight);
+        onEntryTypeChange('scale');
+      }
+    };
+    
+    window.addEventListener('scaleWeightUpdate', handleWeightUpdate as EventListener);
+    
+    return () => {
+      window.removeEventListener('scaleWeightUpdate', handleWeightUpdate as EventListener);
+    };
+  }, [onWeightChange, onEntryTypeChange]);
+
   // Check if readings are stable (within threshold)
   const areReadingsStable = useCallback((readings: number[]): boolean => {
     if (readings.length < STABLE_READING_COUNT) return false;

@@ -134,7 +134,7 @@ const Settings = () => {
     setIsConnectingScale(true);
     const result = await quickReconnect(storedDevice.deviceId, (weight, type) => {
       setLastWeight(weight);
-      toast.success(`Weight received: ${weight} kg`);
+      // Silent - no toast notification for weight updates
     });
 
     setIsConnectingScale(false);
@@ -152,7 +152,7 @@ const Settings = () => {
     setIsConnectingScale(true);
     const result = await connectBluetoothScale((weight, type) => {
       setLastWeight(weight);
-      toast.success(`Weight received: ${weight} kg`);
+      // Silent - no toast notification for weight updates
     });
 
     setIsConnectingScale(false);

@@ -119,7 +119,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
           stableTimeoutRef.current = null;
         }
         
-        toast.success('Stable reading captured');
+        // Silent - no toast notification for stable reading
       } else {
         setIsWaitingForStable(true);
       }
@@ -214,7 +214,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
     if (!isNaN(manual) && manual > 0) {
       onWeightChange(manual);
       onEntryTypeChange('manual');
-      toast.success('Manual weight applied');
+      // Silent - no toast notification for manual weight
     } else {
       toast.error('Enter valid weight');
     }

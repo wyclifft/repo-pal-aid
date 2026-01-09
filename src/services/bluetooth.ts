@@ -367,6 +367,11 @@ export const broadcastScaleConnectionChange = (connected: boolean) => {
   window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
 };
 
+// Broadcast weight update events - allows any component to receive live weight
+export const broadcastScaleWeightUpdate = (weight: number, scaleType: ScaleType) => {
+  window.dispatchEvent(new CustomEvent('scaleWeightUpdate', { detail: { weight, scaleType } }));
+};
+
 export const broadcastPrinterConnectionChange = (connected: boolean) => {
   console.log(`📡 Broadcasting printer connection: ${connected}`);
   window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected } }));
@@ -649,6 +654,7 @@ export const connectBluetoothScale = async (
             parsed = parseDRSeriesWeight(rawBytes, text);
             if (parsed !== null) {
               console.log(`✅ ${scaleType} weight: ${parsed} kg`);
+              broadcastScaleWeightUpdate(parsed, scaleType);
               onWeightUpdate(parsed, scaleType);
               return;
             }
@@ -696,6 +702,7 @@ export const connectBluetoothScale = async (
           
           if (parsed && !isNaN(parsed) && parsed > 0 && parsed < 1000) {
             console.log(`✅ Parsed weight: ${parsed} kg`);
+            broadcastScaleWeightUpdate(parsed, scaleType);
             onWeightUpdate(parsed, scaleType);
           }
         }
@@ -906,6 +913,7 @@ export const quickReconnect = async (
             }
             
             if (parsed && !isNaN(parsed) && parsed > 0) {
+              broadcastScaleWeightUpdate(parsed, scaleType);
               onWeightUpdate(parsed, scaleType);
             }
           }
@@ -954,6 +962,7 @@ export const quickReconnect = async (
           if (match) {
             const parsed = parseFloat(match[1]);
             if (!isNaN(parsed)) {
+              broadcastScaleWeightUpdate(parsed, scaleType);
               onWeightUpdate(parsed, scaleType);
             }
           }
