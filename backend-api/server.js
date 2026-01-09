@@ -1308,13 +1308,56 @@ const server = http.createServer(async (req, res) => {
           }, 403);
         }
         
-        // Insert into transactions table
+        // Handle photo upload if provided
+        let photoFilename = null;
+        let photoDirectory = null;
+        
+        if (body.photo && typeof body.photo === 'string' && body.photo.startsWith('data:image/')) {
+          try {
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Extract base64 data from data URL
+            const matches = body.photo.match(/^data:image\/(\w+);base64,(.+)$/);
+            if (matches) {
+              const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+              const base64Data = matches[2];
+              const buffer = Buffer.from(base64Data, 'base64');
+              
+              // Create directory structure: uploads/store-photos/YYYY/MM
+              const uploadsDir = path.join(__dirname, 'uploads', 'store-photos');
+              const yearDir = String(now.getFullYear());
+              const monthDir = String(now.getMonth() + 1).padStart(2, '0');
+              const fullDir = path.join(uploadsDir, yearDir, monthDir);
+              
+              // Create directories if they don't exist
+              if (!fs.existsSync(fullDir)) {
+                fs.mkdirSync(fullDir, { recursive: true });
+              }
+              
+              // Generate unique filename
+              photoFilename = `${sale_ref}_${timestamp}.${ext}`;
+              photoDirectory = `uploads/store-photos/${yearDir}/${monthDir}`;
+              
+              // Write file
+              const filePath = path.join(fullDir, photoFilename);
+              fs.writeFileSync(filePath, buffer);
+              
+              console.log(`📷 Photo saved: ${photoDirectory}/${photoFilename}`);
+            }
+          } catch (photoError) {
+            console.error('❌ Photo upload error:', photoError);
+            // Continue without photo - don't fail the sale
+          }
+        }
+        
+        // Insert into transactions table (including photo columns)
         await conn.query(
           `INSERT INTO transactions 
             (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
              transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-             amount, icode, time, capType, milk_session_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             amount, icode, time, capType, milk_session_id, photo_filename, photo_directory)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             sale_ref,                           // transrefno
             body.sold_by || '',                 // userId
@@ -1336,7 +1379,9 @@ const server = http.createServer(async (req, res) => {
             body.item_code || '',               // icode
             timestamp,                          // time
             0,                                  // capType
-            ''                                  // milk_session_id
+            '',                                 // milk_session_id
+            photoFilename,                      // photo_filename
+            photoDirectory                      // photo_directory
           ]
         );
         
@@ -1349,7 +1394,13 @@ const server = http.createServer(async (req, res) => {
         await conn.commit();
         conn.release();
         
-        return sendJSON(res, { success: true, message: 'Sale recorded', sale_ref }, 201);
+        return sendJSON(res, { 
+          success: true, 
+          message: 'Sale recorded', 
+          sale_ref,
+          photo_saved: !!photoFilename,
+          photo_path: photoFilename ? `${photoDirectory}/${photoFilename}` : null
+        }, 201);
       } catch (error) {
         await conn.rollback();
         conn.release();
