@@ -6,6 +6,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { useHaptics } from '@/hooks/useHaptics';
 import { FarmerSearchModal } from './FarmerSearchModal';
+import { LiveWeightDisplay } from './LiveWeightDisplay';
 import { toast } from 'sonner';
 
 interface SellProduceScreenProps {
@@ -22,6 +23,8 @@ interface SellProduceScreenProps {
   selectedFarmer: { id: string; name: string } | null;
   todayWeight: number;
   onManualWeightChange?: (weight: number) => void;
+  onWeightChange?: (weight: number) => void;
+  onEntryTypeChange?: (entryType: 'scale' | 'manual') => void;
   captureDisabled?: boolean;
   submitDisabled?: boolean; // Disable submit for multOpt=0 farmers who already submitted
   // Supervisor mode capture restrictions
@@ -43,6 +46,8 @@ export const SellProduceScreen = ({
   selectedFarmer,
   todayWeight,
   onManualWeightChange,
+  onWeightChange,
+  onEntryTypeChange,
   captureDisabled,
   submitDisabled,
   allowDigital = true,
@@ -194,17 +199,13 @@ export const SellProduceScreen = ({
 
       {/* Main Content */}
       <div className="flex-1 px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4 overflow-y-auto" style={{ paddingBottom: 'max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))' }}>
-        {/* Weight Display */}
-        <div className="flex gap-2">
-          <div className="flex-1 bg-white border-2 border-gray-800 rounded-lg p-4 sm:p-6 flex items-center justify-center">
-            <span className="text-2xl sm:text-3xl font-bold">Kgs</span>
-          </div>
-          <div className="flex-1 bg-white border-2 border-gray-800 rounded-lg p-4 sm:p-6 flex items-center justify-center">
-            <span className="text-2xl sm:text-3xl font-bold">
-              {weight > 0 ? weight.toFixed(1) : '--'}
-            </span>
-          </div>
-        </div>
+        {/* Live Weight Display with Scale Connection */}
+        <LiveWeightDisplay
+          weight={weight}
+          onWeightChange={onWeightChange || (() => {})}
+          onEntryTypeChange={onEntryTypeChange || (() => {})}
+          digitalDisabled={digitalDisabled}
+        />
 
         {/* Manual Weight Entry - enforces supervisor mode and psettings AutoW */}
         <div className={`flex gap-2 items-center ${manualDisabled ? 'opacity-50' : ''}`}>
