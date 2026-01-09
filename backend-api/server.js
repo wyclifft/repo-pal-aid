@@ -139,7 +139,7 @@ const server = http.createServer(async (req, res) => {
       const periodLabel = orgtype === 'C' ? 'Season' : 'Session';
       
       if (orgtype === 'C') {
-        // Coffee mode: Fetch from season table with date range validation
+        // Coffee mode: Fetch from sessions table with date range validation
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
         
         const [seasonRows] = await pool.query(
@@ -155,7 +155,7 @@ const server = http.createServer(async (req, res) => {
               WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1 
               ELSE 0 
             END as dateEnabled
-           FROM fm_season 
+           FROM sessions 
            WHERE ccode = ? 
            ORDER BY datefrom DESC`,
           [today, today, ccode]
