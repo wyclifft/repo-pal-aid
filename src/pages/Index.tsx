@@ -1045,6 +1045,8 @@ const Index = () => {
             setWeight(w);
             setEntryType('manual');
           }}
+          onWeightChange={setWeight}
+          onEntryTypeChange={setEntryType}
           blacklistedFarmerIds={blacklistedFarmerIds}
           onFarmersLoaded={handleFarmersLoaded}
           captureDisabled={captureDisabledForSelectedFarmer}
@@ -1070,6 +1072,8 @@ const Index = () => {
             setWeight(w);
             setEntryType('manual');
           }}
+          onWeightChange={setWeight}
+          onEntryTypeChange={setEntryType}
           captureDisabled={captureDisabledForSelectedFarmer}
           submitDisabled={submitDisabledForSelectedFarmer}
           allowDigital={captureMode.allowDigital}
