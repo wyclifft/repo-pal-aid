@@ -647,6 +647,7 @@ export interface Item {
   stockbal: number;
   ccode?: string;
   sellable: number;
+  invtype?: string; // '1' = produce (milk, cherry), '5' = store items, '6' = AI items
 }
 
 export const itemsApi = {

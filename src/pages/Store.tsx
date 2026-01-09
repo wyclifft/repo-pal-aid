@@ -3,13 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type Item, type Sale, type Farmer, type CreditType } from '@/services/mysqlApi';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, X, CornerDownLeft, Camera } from 'lucide-react';
+import { ArrowLeft, Search, X, CornerDownLeft, Camera, Scale } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { API_CONFIG } from '@/config/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import PhotoCapture from '@/components/PhotoCapture';
+import { useScaleConnection } from '@/hooks/useScaleConnection';
+import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
 
 interface CartItem {
   item: Item;
@@ -54,6 +56,25 @@ const Store = () => {
   // Photo capture state for theft prevention
   const [showPhotoCapture, setShowPhotoCapture] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<{ blob: Blob; preview: string } | null>(null);
+
+  // Scale weight state
+  const [weight, setWeight] = useState(0);
+  const [entryType, setEntryType] = useState<'scale' | 'manual'>('manual');
+  
+  // Scale connection hook
+  const {
+    scaleConnected,
+    liveWeight,
+    autoReconnect,
+  } = useScaleConnection({ 
+    onWeightChange: setWeight, 
+    onEntryTypeChange: setEntryType 
+  });
+
+  // Auto-reconnect scale on mount
+  useEffect(() => {
+    autoReconnect();
+  }, []);
 
   // Clerk info
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
@@ -202,8 +223,12 @@ const Store = () => {
     try {
       setLoading(true);
       const cachedItems = await getItems();
-      if (cachedItems.length > 0) {
-        setItems(cachedItems);
+      // Filter to only show store items (invtype = '5')
+      const storeItems = cachedItems.filter((item: Item & { invtype?: string }) => 
+        item.invtype === '5' || !item.invtype // Include items without invtype for backward compatibility
+      );
+      if (storeItems.length > 0) {
+        setItems(storeItems);
       }
       setLoading(false);
     } catch (error) {
@@ -387,11 +412,20 @@ const Store = () => {
     const deviceFingerprint = await generateDeviceFingerprint();
 
     try {
+      // Generate store transaction reference (transtype = 5)
+      const refs = await generateReferenceWithUploadRef('store');
+      if (!refs) {
+        toast.error('Failed to generate reference number');
+        setSubmitting(false);
+        setSyncing(false);
+        return;
+      }
+
       // Convert photo to base64
       const photoBase64 = await blobToBase64(capturedPhoto.blob);
 
       for (const cartItem of cart) {
-        const sale: Sale = {
+        const sale: Sale & { transrefno?: string; uploadrefno?: string; transtype?: number } = {
           farmer_id: selectedFarmer.farmer_id,
           farmer_name: selectedFarmer.name,
           item_code: cartItem.item.icode,
@@ -401,6 +435,9 @@ const Store = () => {
           sold_by: currentUser?.user_id || 'Unknown',
           device_fingerprint: deviceFingerprint,
           photo: photoBase64,
+          transrefno: refs.transrefno,
+          uploadrefno: refs.uploadrefno,
+          transtype: 5, // Store transaction type
         };
 
         if (navigator.onLine) {
@@ -410,7 +447,7 @@ const Store = () => {
         }
       }
 
-      toast.success(`Sale completed: KES${cartTotal.toFixed(0)}`);
+      toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.transrefno}]`);
       setCart([]);
       // Clean up photo
       if (capturedPhoto.preview) {
@@ -451,11 +488,26 @@ const Store = () => {
     <div className="min-h-screen flex flex-col bg-[#26A69A]">
       {/* Purple Header */}
       <div className="bg-[#5E35B1] text-white px-4 py-3" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-1">
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <h1 className="text-xl font-semibold">Store</h1>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate('/')} className="p-1">
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="text-xl font-semibold">Store</h1>
+          </div>
+          
+          {/* Live Weight Display - Top Right */}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
+            scaleConnected ? 'bg-green-500/20 border border-green-400' : 'bg-white/10'
+          }`}>
+            <span className="text-sm font-medium">Kgs</span>
+            <span className={`text-lg font-bold ${scaleConnected ? 'text-green-300' : ''}`}>
+              {scaleConnected && liveWeight > 0 ? liveWeight.toFixed(1) : (weight > 0 ? weight.toFixed(1) : '--')}
+            </span>
+            {scaleConnected && (
+              <Scale className="h-4 w-4 text-green-400" />
+            )}
+          </div>
         </div>
       </div>
 
