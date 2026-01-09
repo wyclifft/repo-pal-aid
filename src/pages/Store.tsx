@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type Item, type Sale, type Farmer, type CreditType } from '@/services/mysqlApi';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, X, CornerDownLeft } from 'lucide-react';
+import { ArrowLeft, Search, X, CornerDownLeft, Camera } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { API_CONFIG } from '@/config/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import PhotoCapture from '@/components/PhotoCapture';
 
 interface CartItem {
   item: Item;
@@ -49,6 +50,10 @@ const Store = () => {
   const [itemSearchQuery, setItemSearchQuery] = useState('');
   const [filteredItems, setFilteredItems] = useState<Item[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  // Photo capture state for theft prevention
+  const [showPhotoCapture, setShowPhotoCapture] = useState(false);
+  const [capturedPhoto, setCapturedPhoto] = useState<{ blob: Blob; preview: string } | null>(null);
 
   // Clerk info
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
@@ -331,7 +336,37 @@ const Store = () => {
   // Calculate total
   const cartTotal = cart.reduce((sum, c) => sum + c.lineTotal, 0);
 
-  // Submit sale
+  // Handle photo capture
+  const handlePhotoCaptured = (blob: Blob, preview: string) => {
+    setCapturedPhoto({ blob, preview });
+    toast.success('Photo captured');
+  };
+
+  // Convert blob to base64
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  // Initiate sale - requires photo first
+  const handleInitiateSale = () => {
+    if (!selectedFarmer) {
+      toast.error('Please select a member first');
+      return;
+    }
+    if (cart.length === 0) {
+      toast.error('Please add items to cart');
+      return;
+    }
+    // Open photo capture dialog
+    setShowPhotoCapture(true);
+  };
+
+  // Submit sale after photo is captured
   const handleSubmit = async () => {
     if (!selectedFarmer) {
       toast.error('Please select a member first');
@@ -341,12 +376,20 @@ const Store = () => {
       toast.error('Please add items to cart');
       return;
     }
+    if (!capturedPhoto) {
+      toast.error('Please capture buyer photo first');
+      setShowPhotoCapture(true);
+      return;
+    }
 
     setSubmitting(true);
     setSyncing(true);
     const deviceFingerprint = await generateDeviceFingerprint();
 
     try {
+      // Convert photo to base64
+      const photoBase64 = await blobToBase64(capturedPhoto.blob);
+
       for (const cartItem of cart) {
         const sale: Sale = {
           farmer_id: selectedFarmer.farmer_id,
@@ -357,6 +400,7 @@ const Store = () => {
           price: cartItem.item.sprice,
           sold_by: currentUser?.user_id || 'Unknown',
           device_fingerprint: deviceFingerprint,
+          photo: photoBase64,
         };
 
         if (navigator.onLine) {
@@ -368,6 +412,11 @@ const Store = () => {
 
       toast.success(`Sale completed: KES${cartTotal.toFixed(0)}`);
       setCart([]);
+      // Clean up photo
+      if (capturedPhoto.preview) {
+        URL.revokeObjectURL(capturedPhoto.preview);
+      }
+      setCapturedPhoto(null);
       try { Haptics.impact({ style: ImpactStyle.Heavy }); } catch {}
     } catch (error) {
       console.error('Sale error:', error);
@@ -511,10 +560,11 @@ const Store = () => {
             ADD ITEM
           </button>
           <button
-            onClick={handleSubmit}
+            onClick={handleInitiateSale}
             disabled={submitting || cart.length === 0}
-            className="flex-1 py-3 bg-[#7E57C2] text-white font-bold rounded-full disabled:opacity-50"
+            className="flex-1 py-3 bg-[#7E57C2] text-white font-bold rounded-full disabled:opacity-50 flex items-center justify-center gap-2"
           >
+            <Camera className="h-4 w-4" />
             {submitting ? 'SUBMITTING...' : 'SUBMIT'}
           </button>
         </div>
@@ -719,6 +769,34 @@ const Store = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Photo Capture Modal */}
+      <PhotoCapture
+        open={showPhotoCapture}
+        onClose={() => setShowPhotoCapture(false)}
+        onCapture={(blob, preview) => {
+          handlePhotoCaptured(blob, preview);
+          // Auto-submit after photo is captured
+          setShowPhotoCapture(false);
+          // Small delay to let state update
+          setTimeout(() => handleSubmit(), 100);
+        }}
+        title="Capture Buyer Photo"
+      />
+
+      {/* Captured Photo Preview */}
+      {capturedPhoto && !showPhotoCapture && (
+        <div className="fixed bottom-24 right-4 z-40">
+          <div className="bg-white rounded-lg shadow-lg p-2 border-2 border-green-500">
+            <img 
+              src={capturedPhoto.preview} 
+              alt="Captured buyer" 
+              className="w-16 h-16 object-cover rounded"
+            />
+            <div className="text-xs text-center text-green-600 font-medium mt-1">✓ Photo</div>
+          </div>
+        </div>
+      )}
 
       {/* Syncing Overlay */}
       {syncing && (

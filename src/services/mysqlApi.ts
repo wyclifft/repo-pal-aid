@@ -674,6 +674,7 @@ export interface Sale {
   sale_date?: string;
   remarks?: string;
   device_fingerprint?: string;
+  photo?: string; // Base64 encoded buyer photo for theft prevention
 }
 
 export const salesApi = {
