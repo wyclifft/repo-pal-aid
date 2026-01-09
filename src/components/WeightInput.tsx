@@ -148,18 +148,15 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
       setScaleConnected(true);
       setScaleType(result.type);
       setConnectionType('ble');
-      toast.success(`Scale Connected via BLE (${result.type}) ✅`);
       
       // Start stable reading timeout if enabled
       if (requireStableReading) {
         stableTimeoutRef.current = setTimeout(() => {
           if (isWaitingForStable) {
-            toast.warning('Scale reading unstable. Try keeping the container still.');
+            // Silent - no toast notification
           }
         }, STABLE_READING_TIMEOUT);
       }
-    } else {
-      toast.error(result.error || 'Failed to connect scale');
     }
     setIsConnecting(false);
   };
@@ -173,12 +170,9 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
       const scales = await getPairedScales();
       setPairedDevices(scales);
       
-      if (scales.length === 0) {
-        toast.info('No paired scale devices found. Pair your scale in Android Bluetooth settings first.');
-      }
+      // Silent - no toast notification for empty device list
     } catch (error) {
       console.error('Error getting paired devices:', error);
-      toast.error('Failed to get paired devices');
     }
     
     setIsLoadingPaired(false);
@@ -197,17 +191,14 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
       setScaleConnected(true);
       setScaleType('Classic-SPP');
       setConnectionType('classic-spp');
-      toast.success(`Scale Connected via Classic BT: ${device.name} ✅`);
       
       if (requireStableReading) {
         stableTimeoutRef.current = setTimeout(() => {
           if (isWaitingForStable) {
-            toast.warning('Scale reading unstable. Try keeping the container still.');
+            // Silent - no toast notification
           }
         }, STABLE_READING_TIMEOUT);
       }
-    } else {
-      toast.error(result.error || 'Failed to connect to scale');
     }
     
     setIsConnecting(false);

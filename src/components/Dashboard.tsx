@@ -215,13 +215,6 @@ export const Dashboard = ({
       });
       scaleSuccess = scaleResult.success;
       setScaleConnected(scaleResult.success);
-      if (scaleResult.success) {
-        toast.success(`Scale connected: ${storedScale.deviceName}`);
-      } else {
-        toast.error(`Scale reconnect failed: ${scaleResult.error}`);
-      }
-    } else {
-      toast.info('No previously connected scale found');
     }
 
     const storedPrinter = getStoredPrinterInfo();

@@ -506,18 +506,6 @@ const Store = () => {
             <h1 className="text-xl font-semibold">Store</h1>
           </div>
           
-          {/* Live Weight Display - Top Right */}
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
-            scaleConnected ? 'bg-green-500/20 border border-green-400' : 'bg-white/10'
-          }`}>
-            <span className="text-sm font-medium">Kgs</span>
-            <span className={`text-lg font-bold ${scaleConnected ? 'text-green-300' : ''}`}>
-              {scaleConnected && liveWeight > 0 ? liveWeight.toFixed(1) : (weight > 0 ? weight.toFixed(1) : '--')}
-            </span>
-            {scaleConnected && (
-              <Scale className="h-4 w-4 text-green-400" />
-            )}
-          </div>
         </div>
       </div>
 
