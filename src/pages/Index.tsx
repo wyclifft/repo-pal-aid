@@ -1023,7 +1023,8 @@ const Index = () => {
   // For multOpt=0: disable Submit only after first successful submission in this session
   // Check both: hook blacklist (persistent) AND local session tracking (edge case coverage)
   // For multOpt=1: never disable Submit (allow unlimited submissions)
-  const submitDisabledForSelectedFarmer = isSelectedFarmerBlacklisted;
+  // Also disable Submit if no weight has been captured (weight <= 0)
+  const submitDisabledForSelectedFarmer = isSelectedFarmerBlacklisted || weight <= 0;
 
   return (
     <>
