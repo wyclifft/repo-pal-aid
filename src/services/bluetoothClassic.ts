@@ -14,6 +14,7 @@
  */
 
 import { Capacitor, registerPlugin, PluginListenerHandle } from '@capacitor/core';
+import { broadcastScaleWeightUpdate } from './bluetooth';
 
 // ============================================================================
 // NATIVE PLUGIN INTERFACE - Capacitor 7 Compatible
@@ -287,6 +288,7 @@ export const connectClassicScale = async (
     dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (data) => {
       const weight = parseSerialWeightData(data.value);
       if (weight !== null) {
+        broadcastScaleWeightUpdate(weight, 'Classic-SPP');
         onWeightUpdate(weight);
       }
     });
