@@ -422,7 +422,7 @@ const Store = () => {
     const deviceFingerprint = await generateDeviceFingerprint();
 
     try {
-      // Generate store transaction reference (transtype = 5)
+      // Generate store transaction reference (transtype = 2)
       const refs = await generateReferenceWithUploadRef('store');
       if (!refs) {
         toast.error('Failed to generate reference number');
@@ -447,7 +447,7 @@ const Store = () => {
           photo: photoBase64,
           transrefno: refs.transrefno,
           uploadrefno: refs.uploadrefno,
-          transtype: 5, // Store transaction type
+          transtype: 2, // Store transaction type
         };
 
         if (navigator.onLine) {
