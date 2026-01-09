@@ -222,13 +222,23 @@ const Store = () => {
   const loadItems = async () => {
     try {
       setLoading(true);
+      // First try to load from cache
       const cachedItems = await getItems();
-      // Filter to only show store items (invtype = '05')
-      const storeItems = cachedItems.filter((item: Item & { invtype?: string }) => 
+      // Filter cached items to only show store items (invtype = '05')
+      const cachedStoreItems = cachedItems.filter((item: Item & { invtype?: string }) => 
         item.invtype === '05'
       );
-      if (storeItems.length > 0) {
-        setItems(storeItems);
+      if (cachedStoreItems.length > 0) {
+        setItems(cachedStoreItems);
+      }
+      
+      // If online, fetch fresh store items from backend with invtype filter
+      if (navigator.onLine) {
+        const deviceFingerprint = await generateDeviceFingerprint();
+        const response = await mysqlApi.items.getAll(deviceFingerprint, '05');
+        if (response.success && response.data && response.data.length > 0) {
+          setItems(response.data);
+        }
       }
       setLoading(false);
     } catch (error) {

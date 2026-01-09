@@ -1211,8 +1211,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Items endpoints
+    // Items endpoint with invtype filtering
+    // invtype values: '01' = produce (milk, cherry), '05' = store items, '06' = AI items
     if (path === '/api/items' && method === 'GET') {
       const uniquedevcode = parsedUrl.query.uniquedevcode;
+      const invtype = parsedUrl.query.invtype; // Optional filter: '01', '05', '06'
       
       if (!uniquedevcode) {
         return sendJSON(res, { 
@@ -1236,11 +1239,18 @@ const server = http.createServer(async (req, res) => {
       
       const ccode = deviceRows[0].ccode;
       
-      // Filter items by device's company code
-      const [rows] = await pool.query(
-        'SELECT * FROM fm_items WHERE sellable = 1 AND ccode = ? ORDER BY descript',
-        [ccode]
-      );
+      // Build query with optional invtype filter
+      let query = 'SELECT * FROM fm_items WHERE sellable = 1 AND ccode = ?';
+      const params = [ccode];
+      
+      if (invtype) {
+        query += ' AND invtype = ?';
+        params.push(invtype);
+      }
+      
+      query += ' ORDER BY descript';
+      
+      const [rows] = await pool.query(query, params);
       
       return sendJSON(res, { success: true, data: rows });
     }
