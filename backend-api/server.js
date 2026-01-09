@@ -155,7 +155,7 @@ const server = http.createServer(async (req, res) => {
               WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1 
               ELSE 0 
             END as dateEnabled
-           FROM season 
+           FROM fm_season 
            WHERE ccode = ? 
            ORDER BY datefrom DESC`,
           [today, today, ccode]
