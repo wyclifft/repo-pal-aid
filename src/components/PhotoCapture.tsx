@@ -25,6 +25,9 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [useNativeCamera, setUseNativeCamera] = useState(false);
 
+  // Track if native camera is already being triggered to prevent double capture
+  const nativeCameraTriggeredRef = useRef(false);
+
   // Check if we should use native camera on mount
   useEffect(() => {
     setUseNativeCamera(Capacitor.isNativePlatform());
@@ -35,9 +38,14 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
     if (open && !useNativeCamera) {
       startWebCamera();
     } else if (open && useNativeCamera) {
-      // For native, trigger camera immediately
-      captureWithNativeCamera();
+      // For native, trigger camera only once per dialog open
+      if (!nativeCameraTriggeredRef.current) {
+        nativeCameraTriggeredRef.current = true;
+        captureWithNativeCamera();
+      }
     } else {
+      // Dialog closed - reset state
+      nativeCameraTriggeredRef.current = false;
       stopCamera();
       setCapturedImage(null);
       setCapturedBlob(null);
@@ -47,7 +55,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
     return () => {
       stopCamera();
     };
-  }, [open, facingMode, useNativeCamera]);
+  }, [open, useNativeCamera]); // Remove facingMode from dependencies for native camera
 
   // Request camera permission and capture using Capacitor Camera plugin
   const captureWithNativeCamera = async () => {
