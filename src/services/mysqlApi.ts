@@ -652,10 +652,16 @@ export interface Item {
 
 export const itemsApi = {
   /**
-   * Get all sellable items filtered by device
+   * Get all sellable items filtered by device and optionally by invtype
+   * @param uniquedevcode - Device code
+   * @param invtype - Optional item type filter: '01' = produce, '05' = store, '06' = AI
    */
-  getAll: async (uniquedevcode: string): Promise<ApiResponse<Item[]>> => {
-    return apiRequest<Item[]>(`/items?uniquedevcode=${encodeURIComponent(uniquedevcode)}`);
+  getAll: async (uniquedevcode: string, invtype?: string): Promise<ApiResponse<Item[]>> => {
+    let url = `/items?uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+    if (invtype) {
+      url += `&invtype=${encodeURIComponent(invtype)}`;
+    }
+    return apiRequest<Item[]>(url);
   }
 };
 
