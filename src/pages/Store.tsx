@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import PhotoCapture from '@/components/PhotoCapture';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
+import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
 
 interface CartItem {
   item: Item;
@@ -56,6 +57,10 @@ const Store = () => {
   // Photo capture state for theft prevention
   const [showPhotoCapture, setShowPhotoCapture] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<{ blob: Blob; preview: string } | null>(null);
+
+  // Receipt modal state
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
 
   // Scale weight state
   const [weight, setWeight] = useState(0);
@@ -457,6 +462,17 @@ const Store = () => {
         }
       }
 
+      // Create receipt data using unified helper
+      const companyName = localStorage.getItem('companyName') || 'Company';
+      const receipt = createStoreReceiptData(
+        cart,
+        { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
+        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName: currentUser?.user_id || 'Unknown' },
+        companyName
+      );
+      setReceiptData(receipt);
+      setShowReceipt(true);
+
       toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.transrefno}]`);
       setCart([]);
       // Clean up photo
@@ -857,6 +873,14 @@ const Store = () => {
           </div>
         </div>
       )}
+
+      {/* Unified Transaction Receipt Modal */}
+      <TransactionReceipt
+        data={receiptData}
+        open={showReceipt}
+        onClose={() => setShowReceipt(false)}
+        onPrint={() => setShowReceipt(false)}
+      />
     </div>
   );
 };

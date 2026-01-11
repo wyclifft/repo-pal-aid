@@ -11,6 +11,7 @@ import { API_CONFIG } from '@/config/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { CowDetailsModal, type CowDetails } from '@/components/CowDetailsModal';
 import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
+import { TransactionReceipt, createAIReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
 
 interface CartItem {
   item: Item;
@@ -54,6 +55,10 @@ const AIPage = () => {
   // Cow details modal state - triggered ONLY after item is added
   const [showCowDetailsModal, setShowCowDetailsModal] = useState(false);
   const [pendingItem, setPendingItem] = useState<Item | null>(null);
+
+  // Receipt modal state
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
 
   // Clerk info
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
@@ -384,6 +389,17 @@ const AIPage = () => {
         }
       }
 
+      // Create receipt data using unified helper
+      const companyName = localStorage.getItem('companyName') || 'Company';
+      const receipt = createAIReceiptData(
+        cart,
+        { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
+        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName: clerkName },
+        companyName
+      );
+      setReceiptData(receipt);
+      setShowReceipt(true);
+
       toast.success(`AI Service completed: KES${cartTotal.toFixed(0)} [${refs.transrefno}]`);
       setCart([]);
       try { Haptics.impact({ style: ImpactStyle.Heavy }); } catch { }
@@ -702,6 +718,14 @@ const AIPage = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Unified Transaction Receipt Modal */}
+      <TransactionReceipt
+        data={receiptData}
+        open={showReceipt}
+        onClose={() => setShowReceipt(false)}
+        onPrint={() => setShowReceipt(false)}
+      />
     </div>
   );
 };
