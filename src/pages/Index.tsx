@@ -9,7 +9,7 @@ import { ReprintModal } from '@/components/ReprintModal';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { type AppUser, type Farmer, type MilkCollection, getCaptureMode } from '@/lib/supabase';
-import { type Route, type Session } from '@/services/mysqlApi';
+import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useDataSync } from '@/hooks/useDataSync';
@@ -86,6 +86,7 @@ const Index = () => {
   const [selectedRouteMprefix, setSelectedRouteMprefix] = useState(''); // mprefix from fm_tanks for chkroute=0
   const [session, setSession] = useState(''); // Session description from sessions table
   const [activeSession, setActiveSession] = useState<Session | null>(null); // Currently active session object
+  const [selectedProduct, setSelectedProduct] = useState<Item | null>(null); // Selected produce item (invtype=01)
   const [searchValue, setSearchValue] = useState('');
 
   // Weight
@@ -301,23 +302,25 @@ const Index = () => {
   };
 
   // Handle starting collection from Dashboard (Buy Produce)
-  const handleStartCollection = (route: Route, session: Session) => {
+  const handleStartCollection = (route: Route, session: Session, product: Item | null) => {
     setSelectedRouteCode(route.tcode);
     setSelectedRouteMprefix(route.mprefix || '');
     setRouteName(route.descript);
     setSession(session.descript);
     setActiveSession(session);
+    setSelectedProduct(product);
     setCollectionMode('buy');
     setShowCollection(true);
   };
 
   // Handle starting selling from Dashboard (Sell Produce)
-  const handleStartSelling = (route: Route, session: Session) => {
+  const handleStartSelling = (route: Route, session: Session, product: Item | null) => {
     setSelectedRouteCode(route.tcode);
     setSelectedRouteMprefix(route.mprefix || '');
     setRouteName(route.descript);
     setSession(session.descript);
     setActiveSession(session);
+    setSelectedProduct(product);
     setCollectionMode('sell');
     setShowCollection(true);
   };
@@ -503,6 +506,9 @@ const Index = () => {
       multOpt: farmerMultOpt,
       orderId: Date.now(),
       synced: false, // Not synced - only locally captured
+      // Product info from selected produce item (invtype=01)
+      product_code: selectedProduct?.icode,
+      product_name: selectedProduct?.descript,
     };
 
     console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Local capture only (not submitted)');

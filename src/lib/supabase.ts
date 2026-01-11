@@ -75,4 +75,7 @@ export interface MilkCollection {
   multOpt?: number;
   orderId?: number;
   synced?: boolean;
+  // Product info (invtype=01 items)
+  product_code?: string; // icode from fm_items
+  product_name?: string; // descript from fm_items
 }
