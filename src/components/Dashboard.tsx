@@ -359,12 +359,19 @@ export const Dashboard = ({
                 toast.error('Please select a route first');
                 return;
               }
-              toast.info('AI Assistant - Coming Soon');
+              // Check if AI Services is allowed based on selected route's clientFetch = 3
+              if (selectedRoute.allowAI === false) {
+                toast.error('AI Services is not enabled for this route');
+                return;
+              }
+              navigate('/ai');
             }} 
-            className={`flex flex-col items-center active:scale-95 transition-transform ${!selectedRoute ? 'opacity-50' : ''}`}
+            className={`flex flex-col items-center active:scale-95 transition-transform ${
+              !selectedRoute || selectedRoute.allowAI === false ? 'opacity-50' : ''
+            }`}
           >
             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
-              <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-sm flex-shrink-0" style={{ backgroundColor: '#D81B60' }} />
+              <Cpu className="h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
             <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>AI</span>
           </button>

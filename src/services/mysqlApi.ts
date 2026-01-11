@@ -183,11 +183,13 @@ export interface Route {
   // clientFetch controls portal/button access
   // 1 = Enable Buy and Sell, Disable Store
   // 2 = Enable Store, Disable Buy and Sell
+  // 3 = Enable AI Services
   clientFetch?: number;
   // Explicit permission flags derived from clientFetch
   allowBuy?: boolean;
   allowSell?: boolean;
   allowStore?: boolean;
+  allowAI?: boolean;
 }
 
 export const routesApi = {
