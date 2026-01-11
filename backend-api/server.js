@@ -278,11 +278,13 @@ const server = http.createServer(async (req, res) => {
       // Map rows to include explicit permission flags based on clientFetch
       // clientFetch = 1: Enable Buy and Sell, Disable Store
       // clientFetch = 2: Enable Store, Disable Buy and Sell
+      // clientFetch = 3: Enable AI Services
       const routesWithPermissions = rows.map(row => ({
         ...row,
         allowBuy: row.clientFetch === 1,
         allowSell: row.clientFetch === 1,
-        allowStore: row.clientFetch === 2
+        allowStore: row.clientFetch === 2,
+        allowAI: row.clientFetch === 3
       }));
       
       return sendJSON(res, { success: true, data: routesWithPermissions, ccode });
