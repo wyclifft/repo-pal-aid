@@ -3,15 +3,18 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type Item, type Farmer, type CreditType } from '@/services/mysqlApi';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, X, CornerDownLeft } from 'lucide-react';
+import { ArrowLeft, Search, X, CornerDownLeft, Wifi, WifiOff } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useSalesSync } from '@/hooks/useSalesSync';
+import { useFarmerResolution } from '@/hooks/useFarmerResolution';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { API_CONFIG } from '@/config/api';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CowDetailsModal, type CowDetails } from '@/components/CowDetailsModal';
 import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createAIReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 
 interface CartItem {
   item: Item;
@@ -64,6 +67,10 @@ const AIPage = () => {
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
 
   const { getFarmers, getItems, isReady } = useIndexedDB();
+  const { saveOfflineSale, syncPendingSales } = useSalesSync();
+  
+  // Online status tracking
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   // Check authentication
   useEffect(() => {
@@ -72,12 +79,33 @@ const AIPage = () => {
     }
   }, [isAuthenticated, navigate]);
 
+  // Track online status
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      // Auto-sync pending AI transactions when back online
+      syncPendingSales();
+    };
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [syncPendingSales]);
+
   useEffect(() => {
     if (!isReady) return;
     const timer = setTimeout(() => {
       checkRoutesAndLoadItems();
       loadFarmers();
       loadCreditTypes();
+      // Sync any pending AI transactions on load
+      if (navigator.onLine) {
+        syncPendingSales();
+      }
     }, 100);
     return () => clearTimeout(timer);
   }, [isReady]);
@@ -213,40 +241,19 @@ const AIPage = () => {
     }
   };
 
-  // Resolve member ID to farmer based on mode (M or D prefix)
-  const resolveFarmerId = useCallback((input: string): Farmer | null => {
-    if (!input.trim()) return null;
-    const numericInput = input.replace(/\D/g, '');
-    const prefix = isMemberMode ? 'M' : 'D';
-    
-    const exactMatch = farmers.find(f => f.farmer_id.toLowerCase() === input.toLowerCase());
-    if (exactMatch) return exactMatch;
-    
-    if (numericInput && numericInput === input.trim()) {
-      const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
-      const paddedMatch = farmers.find(f => f.farmer_id.toUpperCase() === paddedId.toUpperCase());
-      if (paddedMatch) return paddedMatch;
-      
-      const numericMatch = farmers.find(f => {
-        const farmerNumeric = f.farmer_id.replace(/\D/g, '');
-        return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
-      });
-      if (numericMatch) return numericMatch;
-    }
-    return null;
-  }, [farmers, isMemberMode]);
+  // Use shared farmer resolution hook
+  const { resolveFarmerId, resolveAndSelect } = useFarmerResolution({
+    farmers,
+    isMemberMode,
+  });
 
   // Handle Enter key on member input
   const handleMemberEnter = () => {
     if (!farmerId.trim()) return;
-    const farmer = resolveFarmerId(farmerId);
-    if (farmer) {
+    resolveAndSelect(farmerId, (farmer) => {
       setSelectedFarmer(farmer);
       setFarmerId(farmer.farmer_id);
-      try { Haptics.impact({ style: ImpactStyle.Light }); } catch { }
-    } else {
-      toast.error('Member not found');
-    }
+    });
   };
 
   // Clear member selection
@@ -381,11 +388,12 @@ const AIPage = () => {
         };
 
         if (navigator.onLine) {
-          // Submit to AI endpoint (use sales endpoint for now, can be customized)
+          // Submit to AI endpoint
           await mysqlApi.sales.create(aiTransaction);
         } else {
-          // Save offline - would need an IndexedDB store for AI transactions
-          toast.warning('AI transactions require online connection');
+          // Save offline for later sync
+          await saveOfflineSale(aiTransaction);
+          console.log(`💾 AI transaction saved offline: ${refs.transrefno}`);
         }
       }
 
@@ -400,7 +408,8 @@ const AIPage = () => {
       setReceiptData(receipt);
       setShowReceipt(true);
 
-      toast.success(`AI Service completed: KES${cartTotal.toFixed(0)} [${refs.transrefno}]`);
+      const statusMsg = navigator.onLine ? '' : ' (saved offline)';
+      toast.success(`AI Service completed${statusMsg}: KES${cartTotal.toFixed(0)} [${refs.transrefno}]`);
       setCart([]);
       try { Haptics.impact({ style: ImpactStyle.Heavy }); } catch { }
     } catch (error) {
@@ -431,13 +440,18 @@ const AIPage = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#26A69A]">
-      {/* Purple Header */}
+      {/* Purple Header with online status */}
       <div className="bg-[#5E35B1] text-white px-4 py-3" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/')} className="p-1">
             <ArrowLeft className="h-6 w-6" />
           </button>
-          <h1 className="text-xl font-bold">AI Services</h1>
+          <h1 className="text-xl font-bold flex-1">AI Services</h1>
+          {/* Online/Offline indicator */}
+          <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full ${isOnline ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
+            {isOnline ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+            <span>{isOnline ? 'Online' : 'Offline'}</span>
+          </div>
         </div>
       </div>
 
@@ -605,6 +619,9 @@ const AIPage = () => {
         <DialogContent className="sm:max-w-md mx-4 max-h-[80vh] flex flex-col">
           <DialogHeader className="flex flex-row items-center gap-2 pb-2">
             <DialogTitle>Search {isMemberMode ? 'Member' : 'Debtor'}</DialogTitle>
+            <DialogDescription className="sr-only">
+              Search and select a {isMemberMode ? 'member' : 'debtor'} for this AI service transaction
+            </DialogDescription>
           </DialogHeader>
           <div className="flex gap-2 mb-3">
             <input
@@ -646,6 +663,9 @@ const AIPage = () => {
         <DialogContent className="sm:max-w-md mx-4 max-h-[80vh] flex flex-col">
           <DialogHeader className="flex flex-row items-center gap-2 pb-2">
             <DialogTitle>Select AI Service</DialogTitle>
+            <DialogDescription className="sr-only">
+              Choose an AI service to add to this transaction
+            </DialogDescription>
             <button onClick={() => setShowItemSearch(false)} className="ml-auto p-2 bg-[#E53935] text-white rounded">
               <X className="h-4 w-4" />
             </button>
@@ -695,6 +715,9 @@ const AIPage = () => {
         <DialogContent className="sm:max-w-md mx-4">
           <DialogHeader>
             <DialogTitle>Member Details</DialogTitle>
+            <DialogDescription className="sr-only">
+              View detailed information about the selected member
+            </DialogDescription>
           </DialogHeader>
           {selectedFarmer && (
             <div className="space-y-2">

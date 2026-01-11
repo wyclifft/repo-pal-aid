@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { X } from 'lucide-react';
 
 export interface CowDetails {
@@ -54,7 +54,12 @@ export const CowDetailsModal = ({
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="sm:max-w-md mx-4 p-0 rounded-xl overflow-hidden">
         <DialogHeader className="flex flex-row items-center justify-between p-4 bg-white border-b">
-          <DialogTitle className="text-xl font-semibold">Add Cow Details</DialogTitle>
+          <div>
+            <DialogTitle className="text-xl font-semibold">Add Cow Details</DialogTitle>
+            <DialogDescription className="sr-only">
+              Enter details about the cow for this AI service
+            </DialogDescription>
+          </div>
           <button 
             onClick={handleClose}
             className="p-1.5 hover:bg-gray-100 rounded-full transition-colors"
