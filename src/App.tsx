@@ -17,6 +17,7 @@ import { requestAllPermissions } from "@/utils/permissionRequests";
 const Index = lazy(() => import("./pages/Index"));
 const ZReport = lazy(() => import("./pages/ZReport"));
 const Store = lazy(() => import("./pages/Store"));
+const AIPage = lazy(() => import("./pages/AIPage"));
 const PeriodicReport = lazy(() => import("./pages/PeriodicReport"));
 const Settings = lazy(() => import("./pages/Settings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -157,6 +158,7 @@ const AppContent = () => {
           <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />
           <Route path="/z-report" element={<PageWrapper><ZReport /></PageWrapper>} />
           <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
+          <Route path="/ai" element={<PageWrapper><AIPage /></PageWrapper>} />
           <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
           <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
           <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
