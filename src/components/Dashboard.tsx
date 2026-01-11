@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2 } from 'lucide-react';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
+import { ProductSelector } from '@/components/ProductSelector';
 import { MemberSyncBanner } from '@/components/MemberSyncBanner';
 
-import { type Route, type Session } from '@/services/mysqlApi';
+import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionClose } from '@/hooks/useSessionClose';
 import { useAppSettings } from '@/hooks/useAppSettings';
@@ -41,8 +42,8 @@ interface DashboardProps {
   companyName: string;
   isOnline: boolean;
   pendingCount: number;
-  onStartCollection: (route: Route, session: Session) => void;
-  onStartSelling: (route: Route, session: Session) => void;
+  onStartCollection: (route: Route, session: Session, product: Item | null) => void;
+  onStartSelling: (route: Route, session: Session, product: Item | null) => void;
   onLogout: () => void;
   onOpenRecentReceipts?: () => void;
   allowZReport?: boolean; // From supervisor mode - controls Z report visibility
@@ -70,6 +71,10 @@ export const Dashboard = ({
   
   const [selectedSession, setSelectedSession] = useState<Session | null>(() => {
     return initialDataRef.current?.session || null;
+  });
+  
+  const [selectedProduct, setSelectedProduct] = useState<Item | null>(() => {
+    return initialDataRef.current?.product || null;
   });
   
   const [sessionActive, setSessionActive] = useState(() => {
@@ -106,6 +111,7 @@ export const Dashboard = ({
     setSessionActive(false);
     setSelectedRoute(null);
     setSelectedSession(null);
+    setSelectedProduct(null);
     localStorage.removeItem(SESSION_STORAGE_KEY);
   }, []);
   
@@ -156,18 +162,25 @@ export const Dashboard = ({
     const sessionData = {
       route: selectedRoute,
       session: selectedSession,
+      product: selectedProduct,
       active: sessionActive,
       timestamp: Date.now()
     };
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionData));
-  }, [selectedRoute, selectedSession, sessionActive]);
+  }, [selectedRoute, selectedSession, selectedProduct, sessionActive]);
 
   const handleRouteChange = (route: Route | null) => {
     setSelectedRoute(route);
+    // Clear product when route changes (will auto-select if only one)
+    setSelectedProduct(null);
   };
 
   const handleSessionChange = (session: Session | null) => {
     setSelectedSession(session);
+  };
+  
+  const handleProductChange = (product: Item | null) => {
+    setSelectedProduct(product);
   };
 
   const handleNewSession = () => {
@@ -188,7 +201,7 @@ export const Dashboard = ({
         toast.error('Buy Produce is not enabled for this route');
         return;
       }
-      onStartCollection(selectedRoute, selectedSession);
+      onStartCollection(selectedRoute, selectedSession, selectedProduct);
     }
   };
 
@@ -199,7 +212,7 @@ export const Dashboard = ({
         toast.error('Sell Produce is not enabled for this route');
         return;
       }
-      onStartSelling(selectedRoute, selectedSession);
+      onStartSelling(selectedRoute, selectedSession, selectedProduct);
     }
   };
 
@@ -479,6 +492,18 @@ export const Dashboard = ({
                   periodLabel={periodLabel}
                 />
               </div>
+
+              {/* Product Selector - only shows if route has invtype=01 products */}
+              {selectedRoute && (
+                <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+                  <ProductSelector
+                    selectedProduct={selectedProduct}
+                    onProductChange={handleProductChange}
+                    routeCode={selectedRoute.tcode}
+                    disabled={false}
+                  />
+                </div>
+              )}
 
               {/* New Session Button */}
               <div className="flex justify-center pt-1">

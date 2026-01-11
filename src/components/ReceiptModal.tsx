@@ -140,6 +140,13 @@ export const ReceiptModal = ({
 
           {/* Collections List */}
           <div className="border-t border-b border-dashed py-2 space-y-1">
+            {/* Show product if available */}
+            {firstReceipt.product_name && (
+              <div className="flex justify-between text-xs mb-1 pb-1 border-b border-dashed">
+                <span className="text-muted-foreground">Product</span>
+                <span className="font-medium">{firstReceipt.product_name}</span>
+              </div>
+            )}
             {receipts.map((receipt, index) => (
               <div key={receipt.reference_no} className="flex justify-between text-xs">
                 <span>{index + 1}: {receipt.reference_no}</span>
