@@ -58,16 +58,27 @@ export const getCaptureMode = (supervisor?: number): {
   }
 };
 
+// DB Column Mapping for transactions table (Transtype = 1):
+// Frontend field → DB column
+// reference_no → transrefno
+// uploadrefno → Uploadrefno  
+// farmer_id → memberno
+// session → session (AM/PM for dairy, season name for coffee)
+// weight → weight
+// clerk_name → clerk
+// collection_date → transdate
+// product_code → icode
+
 export interface MilkCollection {
-  reference_no?: string;
-  uploadrefno?: string; // Formatted reference (devcode + milkId) for approval workflows - e.g., BA0500000031
-  farmer_id: string;
-  farmer_name: string;
-  route: string;
-  session: string;
-  weight: number;
-  clerk_name: string;
-  collection_date: Date;
+  reference_no?: string;      // → DB: transrefno
+  uploadrefno?: string;       // → DB: Uploadrefno - Formatted reference (devcode + milkId)
+  farmer_id: string;          // → DB: memberno
+  farmer_name: string;        // Display only, not stored directly
+  route: string;              // → DB: route
+  session: string;            // → DB: session - AM/PM for dairy, season name for coffee
+  weight: number;             // → DB: weight
+  clerk_name: string;         // → DB: clerk
+  collection_date: Date;      // → DB: transdate
   /**
    * Snapshot of member multOpt at the time of capture.
    * 0 = single delivery per session, 1 = multiple allowed.
@@ -75,7 +86,7 @@ export interface MilkCollection {
   multOpt?: number;
   orderId?: number;
   synced?: boolean;
-  // Product info (invtype=01 items)
-  product_code?: string; // icode from fm_items
-  product_name?: string; // descript from fm_items
+  // Product info (from fm_items, invtype=01)
+  product_code?: string;      // → DB: icode
+  product_name?: string;      // Display only, derived from fm_items.descript
 }

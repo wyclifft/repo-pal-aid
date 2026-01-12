@@ -446,15 +446,19 @@ const server = http.createServer(async (req, res) => {
       const [rows] = await pool.query(query, params);
       
       // Map transactions fields back to expected format
+      // DB columns → Frontend fields
       const mappedRows = rows.map(row => ({
-        reference_no: row.transrefno,
-        farmer_id: row.memberno,
-        farmer_name: row.memberno,
-        route: row.route,
-        session: row.session,
-        weight: row.weight,
-        clerk_name: row.clerk,
-        collection_date: row.transdate
+        reference_no: row.transrefno,      // DB: transrefno
+        uploadrefno: row.Uploadrefno,      // DB: Uploadrefno
+        farmer_id: row.memberno,           // DB: memberno
+        farmer_name: row.memberno,         // Display placeholder (resolved on frontend)
+        route: row.route,                  // DB: route
+        session: row.session,              // DB: session (AM/PM or season name)
+        weight: row.weight,                // DB: weight
+        clerk_name: row.clerk,             // DB: clerk
+        collection_date: row.transdate,    // DB: transdate
+        product_code: row.icode,           // DB: icode
+        entry_type: row.entry_type         // DB: entry_type
       }));
       
       return sendJSON(res, { success: true, data: mappedRows });
@@ -466,15 +470,19 @@ const server = http.createServer(async (req, res) => {
       if (rows.length === 0) return sendJSON(res, { success: false, error: 'Collection not found' }, 404);
       
       // Map transaction fields back to expected format
+      // DB columns → Frontend fields
       const mapped = {
-        reference_no: rows[0].transrefno,
-        farmer_id: rows[0].memberno,
-        farmer_name: rows[0].memberno,
-        route: rows[0].route,
-        session: rows[0].session,
-        weight: rows[0].weight,
-        clerk_name: rows[0].clerk,
-        collection_date: rows[0].transdate
+        reference_no: rows[0].transrefno,    // DB: transrefno
+        uploadrefno: rows[0].Uploadrefno,    // DB: Uploadrefno
+        farmer_id: rows[0].memberno,         // DB: memberno
+        farmer_name: rows[0].memberno,       // Display placeholder
+        route: rows[0].route,                // DB: route
+        session: rows[0].session,            // DB: session
+        weight: rows[0].weight,              // DB: weight
+        clerk_name: rows[0].clerk,           // DB: clerk
+        collection_date: rows[0].transdate,  // DB: transdate
+        product_code: rows[0].icode,         // DB: icode
+        entry_type: rows[0].entry_type       // DB: entry_type
       };
       
       return sendJSON(res, { success: true, data: mapped });
@@ -1135,9 +1143,10 @@ const server = http.createServer(async (req, res) => {
       const ccode = deviceRows[0].ccode;
       
       // Fetch all collections for the specified date and company
+      // DB columns → Frontend fields mapping
       const [collections] = await pool.query(
-        `SELECT transrefno, memberno as farmer_id, route, weight, session, 
-                transdate as collection_date, clerk as clerk_name
+        `SELECT transrefno, Uploadrefno as uploadrefno, memberno as farmer_id, route, weight, session, 
+                transdate as collection_date, clerk as clerk_name, icode as product_code, entry_type
          FROM transactions 
          WHERE transdate = ? AND Transtype = 1 AND ccode = ?
          ORDER BY session, route, memberno`,
@@ -1377,12 +1386,14 @@ const server = http.createServer(async (req, res) => {
         }
         
         // Insert into transactions table (including photo columns and AI cow details)
+        // Column names match EXACTLY the transactions table schema:
+        // cowname, cowbreed, noofcalfs, aibreed
         await conn.query(
           `INSERT INTO transactions 
             (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
              transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
              amount, icode, time, capType, milk_session_id, photo_filename, photo_directory,
-             cow_name, cow_breed, number_of_calves, other_details)
+             cowname, cowbreed, noofcalfs, aibreed)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             transrefno,                         // transrefno (from frontend)
@@ -1409,10 +1420,10 @@ const server = http.createServer(async (req, res) => {
             '',                                 // milk_session_id
             photoFilename,                      // photo_filename
             photoDirectory,                     // photo_directory
-            body.cow_name || '',                // cow_name (AI)
-            body.cow_breed || '',               // cow_breed (AI)
-            body.number_of_calves || '',        // number_of_calves (AI)
-            body.other_details || ''            // other_details (AI)
+            body.cow_name || '',                // cowname (AI) - maps from frontend cow_name
+            body.cow_breed || '',               // cowbreed (AI) - maps from frontend cow_breed
+            body.number_of_calves || '',        // noofcalfs (AI) - maps from frontend number_of_calves
+            body.other_details || ''            // aibreed (AI) - maps from frontend other_details
           ]
         );
         
@@ -1440,7 +1451,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (path === '/api/sales' && method === 'GET') {
-      const { farmer_id, date_from, date_to, uniquedevcode } = parsedUrl.query;
+      const { farmer_id, date_from, date_to, uniquedevcode, transtype } = parsedUrl.query;
       
       // Get device's ccode if uniquedevcode provided
       let ccode = null;
@@ -1454,8 +1465,16 @@ const server = http.createServer(async (req, res) => {
         }
       }
       
-      let query = 'SELECT * FROM transactions WHERE Transtype = "STORE"';
+      // Support filtering by transtype: 2 = Store, 3 = AI, or both (default)
+      let query = 'SELECT * FROM transactions WHERE Transtype IN (2, 3)';
       let params = [];
+      
+      if (transtype === '2') {
+        query = 'SELECT * FROM transactions WHERE Transtype = 2';
+      } else if (transtype === '3') {
+        query = 'SELECT * FROM transactions WHERE Transtype = 3';
+      }
+      
       if (ccode !== null) { query += ' AND ccode = ?'; params.push(ccode); }
       if (farmer_id) { query += ' AND memberno = ?'; params.push(farmer_id); }
       if (date_from) { query += ' AND transdate >= ?'; params.push(date_from); }
@@ -1464,8 +1483,12 @@ const server = http.createServer(async (req, res) => {
       const [rows] = await pool.query(query, params);
       
       // Map transactions fields back to frontend expected format
+      // Including AI-specific fields (cowname, cowbreed, noofcalfs, aibreed)
       const mappedRows = rows.map(row => ({
         sale_ref: row.transrefno,
+        transrefno: row.transrefno,
+        uploadrefno: row.Uploadrefno,
+        transtype: row.Transtype,
         farmer_id: row.memberno,
         item_code: row.icode,
         quantity: row.weight,
@@ -1473,7 +1496,15 @@ const server = http.createServer(async (req, res) => {
         amount: row.amount,
         sold_by: row.clerk,
         sale_date: `${row.transdate} ${row.transtime}`,
-        device_fingerprint: row.deviceserial
+        device_fingerprint: row.deviceserial,
+        // AI-specific fields (DB column → frontend field)
+        cow_name: row.cowname || '',
+        cow_breed: row.cowbreed || '',
+        number_of_calves: row.noofcalfs || '',
+        other_details: row.aibreed || '',
+        // Photo fields
+        photo_filename: row.photo_filename,
+        photo_directory: row.photo_directory
       }));
       
       return sendJSON(res, { success: true, data: mappedRows });
