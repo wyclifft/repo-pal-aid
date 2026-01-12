@@ -33,8 +33,10 @@ export const LiveWeightDisplay = ({
     }
   }, []);
 
-  // Display weight - prefer live weight from scale, fall back to prop weight
-  const displayWeight = scaleConnected && liveWeight > 0 ? liveWeight : weight;
+  // Display weight - ONLY show live weight from scale when connected
+  // When disconnected, show "--" to indicate no reading available
+  // This ensures the captured weight always comes from the actual scale
+  const displayWeight = scaleConnected ? liveWeight : 0;
 
   return (
     <div className="flex gap-2">
@@ -50,14 +52,18 @@ export const LiveWeightDisplay = ({
           : 'bg-white border-gray-800'
       }`}>
         <span className={`text-2xl sm:text-3xl font-bold ${
-          scaleConnected ? 'text-green-700' : ''
+          scaleConnected ? 'text-green-700' : 'text-gray-400'
         }`}>
-          {displayWeight > 0 ? displayWeight.toFixed(1) : '--'}
+          {scaleConnected && displayWeight > 0 ? displayWeight.toFixed(1) : '--'}
         </span>
-        {scaleConnected && (
+        {scaleConnected ? (
           <span className="text-xs text-green-600 mt-1 flex items-center gap-1">
             <Scale className="h-3 w-3" />
             Live
+          </span>
+        ) : (
+          <span className="text-xs text-gray-400 mt-1">
+            No scale connected
           </span>
         )}
       </div>

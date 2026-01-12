@@ -344,8 +344,8 @@ export const BuyProduceScreen = ({
           </button>
           <button
             onClick={handleCaptureWithHaptic}
-            disabled={!!captureDisabled}
-            className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${captureDisabled ? 'opacity-50 pointer-events-none' : ''}`}
+            disabled={!!captureDisabled || weight <= 0}
+            className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${(captureDisabled || weight <= 0) ? 'opacity-50 pointer-events-none' : ''}`}
           >
             Capture
           </button>
