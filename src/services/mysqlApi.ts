@@ -672,6 +672,9 @@ export const itemsApi = {
 export interface Sale {
   id?: number;
   sale_ref?: string;
+  transrefno?: string;  // Frontend-generated reference (same format as Buy)
+  uploadrefno?: string; // Frontend-generated type-specific ID
+  transtype?: number;   // 2 = Store, 3 = AI
   farmer_id: string;
   farmer_name: string;
   item_code: string;
@@ -684,14 +687,19 @@ export interface Sale {
   remarks?: string;
   device_fingerprint?: string;
   photo?: string; // Base64 encoded buyer photo for theft prevention
+  // AI-specific fields
+  cow_name?: string;
+  cow_breed?: string;
+  number_of_calves?: string;
+  other_details?: string;
 }
 
 export const salesApi = {
   /**
-   * Create a new sale
+   * Create a new sale (Store transtype=2, AI transtype=3)
    */
   create: async (sale: Sale): Promise<boolean> => {
-    const response = await apiRequest<{ sale_ref: string }>('/sales', {
+    const response = await apiRequest<{ transrefno: string }>('/sales', {
       method: 'POST',
       body: JSON.stringify(sale),
     });
