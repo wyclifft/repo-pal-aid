@@ -1370,7 +1370,7 @@ const server = http.createServer(async (req, res) => {
               }
               
               // Generate unique filename
-              photoFilename = `${sale_ref}_${timestamp}.${ext}`;
+              photoFilename = `${transrefno}_${timestamp}.${ext}`;
               photoDirectory = `uploads/store-photos/${yearDir}/${monthDir}`;
               
               // Write file
@@ -1439,7 +1439,7 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { 
           success: true, 
           message: 'Sale recorded', 
-          sale_ref,
+          sale_ref: transrefno,
           photo_saved: !!photoFilename,
           photo_path: photoFilename ? `${photoDirectory}/${photoFilename}` : null
         }, 201);
