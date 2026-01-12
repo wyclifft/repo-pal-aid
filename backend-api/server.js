@@ -2161,6 +2161,58 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // ===== TRANSACTION PHOTOS ENDPOINT (Read-only for auditing) =====
+    if (path === '/api/transaction-photos' && method === 'GET') {
+      const page = parseInt(parsedUrl.query.page) || 1;
+      const limit = Math.min(parseInt(parsedUrl.query.limit) || 20, 100);
+      const offset = (page - 1) * limit;
+      const search = parsedUrl.query.search || '';
+      const dateFilter = parsedUrl.query.date || '';
+
+      let whereClause = 'photo_filename IS NOT NULL AND photo_filename != ""';
+      const params = [];
+
+      // Add search filter (member, reference, clerk)
+      if (search) {
+        whereClause += ' AND (memberno LIKE ? OR transrefno LIKE ? OR clerk LIKE ?)';
+        const searchPattern = `%${search}%`;
+        params.push(searchPattern, searchPattern, searchPattern);
+      }
+
+      // Add date filter
+      if (dateFilter) {
+        whereClause += ' AND transdate = ?';
+        params.push(dateFilter);
+      }
+
+      // Get total count
+      const [countResult] = await pool.query(
+        `SELECT COUNT(*) as total FROM transactions WHERE ${whereClause}`,
+        params
+      );
+      const total = countResult[0]?.total || 0;
+
+      // Get paginated results
+      const [rows] = await pool.query(
+        `SELECT ID, transrefno, memberno, transdate, transtime, clerk, amount, 
+                photo_filename, photo_directory
+         FROM transactions 
+         WHERE ${whereClause}
+         ORDER BY ID DESC
+         LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
+
+      return sendJSON(res, {
+        success: true,
+        data: rows,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      });
+    }
+
     // 404
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
 

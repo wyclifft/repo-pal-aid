@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type Item, type Sale, type Farmer, type CreditType } from '@/services/mysqlApi';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, X, CornerDownLeft, Camera, Scale, Wifi, WifiOff } from 'lucide-react';
+import { ArrowLeft, Search, X, CornerDownLeft, Camera, Scale, Wifi, WifiOff, Image } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSalesSync } from '@/hooks/useSalesSync';
 import { useFarmerResolution } from '@/hooks/useFarmerResolution';
@@ -15,6 +15,7 @@ import PhotoCapture from '@/components/PhotoCapture';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
+import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 
 interface CartItem {
   item: Item;
@@ -63,6 +64,9 @@ const Store = () => {
   // Receipt modal state
   const [showReceipt, setShowReceipt] = useState(false);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
+
+  // Photo audit viewer state
+  const [showPhotoAudit, setShowPhotoAudit] = useState(false);
 
   // Scale weight state
   const [weight, setWeight] = useState(0);
@@ -523,7 +527,13 @@ const Store = () => {
             </button>
             <h1 className="text-xl font-semibold">Store</h1>
           </div>
-          
+          <button
+            onClick={() => setShowPhotoAudit(true)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 rounded-lg text-sm font-medium"
+          >
+            <Image className="h-4 w-4" />
+            Audit Photos
+          </button>
         </div>
       </div>
 
@@ -882,6 +892,12 @@ const Store = () => {
         open={showReceipt}
         onClose={() => setShowReceipt(false)}
         onPrint={() => setShowReceipt(false)}
+      />
+
+      {/* Photo Audit Viewer */}
+      <PhotoAuditViewer
+        open={showPhotoAudit}
+        onClose={() => setShowPhotoAudit(false)}
       />
     </div>
   );
