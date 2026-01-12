@@ -131,7 +131,9 @@ const Index = () => {
     showCumulative,
     printCopies,
     produceLabel,
-    routeLabel
+    routeLabel,
+    periodLabel,
+    isCoffee
   } = useAppSettings();
 
   // Session blacklist for farmers with multOpt=0
@@ -393,10 +395,13 @@ const Index = () => {
     }
 
     // Derive AM/PM from the active session's time_from (hour-based)
+    // For coffee mode (season), use the season name (descript) instead of AM/PM
     const timeFrom = typeof activeSession.time_from === 'number' 
       ? activeSession.time_from 
       : parseInt(String(activeSession.time_from), 10);
-    const currentSessionType: 'AM' | 'PM' = (timeFrom >= 12) ? 'PM' : 'AM';
+    const amPmSession: 'AM' | 'PM' = (timeFrom >= 12) ? 'PM' : 'AM';
+    // For coffee (season mode), use season name; for dairy (session mode), use AM/PM
+    const currentSessionType = isCoffee ? (activeSession.descript || amPmSession) : amPmSession;
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
     // ========== multOpt=0 DUPLICATE SESSION CHECK (works online & offline) ==========
@@ -1002,6 +1007,10 @@ const Index = () => {
           onClose={() => setReprintModalOpen(false)}
           receipts={printedReceipts}
           companyName={companyName}
+          printCopies={printCopies}
+          routeLabel={routeLabel}
+          periodLabel={periodLabel}
+          locationName={routeName}
         />
       </>
     );
@@ -1103,6 +1112,7 @@ const Index = () => {
         showCumulativeFrequency={showCumulative && Number(selectedFarmer?.currqty) === 1}
         printCopies={printCopies}
         routeLabel={routeLabel}
+        periodLabel={periodLabel}
         locationCode={selectedRouteCode}
         locationName={routeName}
       />
@@ -1115,6 +1125,7 @@ const Index = () => {
         companyName={companyName}
         printCopies={printCopies}
         routeLabel={routeLabel}
+        periodLabel={periodLabel}
         locationName={routeName}
       />
     </>

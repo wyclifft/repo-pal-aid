@@ -20,12 +20,13 @@ interface ReprintModalProps {
   companyName: string;
   printCopies?: number;
   routeLabel?: string;
+  periodLabel?: string;
   locationName?: string;
 }
 
 const ITEMS_PER_PAGE = 4; // Reduced for better mobile visibility
 
-export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies = 1, routeLabel = 'Route', locationName }: ReprintModalProps) => {
+export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies = 1, routeLabel = 'Route', periodLabel = 'Session', locationName }: ReprintModalProps) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [isPrinting, setIsPrinting] = useState<string | null>(null);
   
