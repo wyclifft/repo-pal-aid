@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { mysqlApi, type Item, type Sale, type Farmer, type CreditType } from '@/services/mysqlApi';
+import { mysqlApi, type Item, type Sale, type Farmer, type CreditType, type BatchSaleRequest } from '@/services/mysqlApi';
 import { toast } from 'sonner';
 import { ArrowLeft, Search, X, CornerDownLeft, Camera, Scale, Wifi, WifiOff, Image } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -13,7 +13,7 @@ import { API_CONFIG } from '@/config/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import PhotoCapture from '@/components/PhotoCapture';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
-import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
+import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
 import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 
@@ -413,6 +413,7 @@ const Store = () => {
   };
 
   // Submit sale after photo is captured
+  // Uses batch endpoint: ONE photo, UNIQUE transrefno per item, SAME uploadrefno
   const handleSubmit = async () => {
     if (!selectedFarmer) {
       toast.error('Please select a member first');
@@ -433,7 +434,7 @@ const Store = () => {
     const deviceFingerprint = await generateDeviceFingerprint();
 
     try {
-      // Generate store transaction reference (transtype = 2)
+      // Generate ONE uploadrefno for the entire batch (like Buy milk)
       const refs = await generateReferenceWithUploadRef('store');
       if (!refs) {
         toast.error('Failed to generate reference number');
@@ -442,30 +443,84 @@ const Store = () => {
         return;
       }
 
-      // Convert photo to base64
+      // Generate unique transrefno for EACH cart item
+      const batchItems: Array<{
+        transrefno: string;
+        item_code: string;
+        item_name: string;
+        quantity: number;
+        price: number;
+      }> = [];
+
+      // First item uses the transrefno from refs
+      batchItems.push({
+        transrefno: refs.transrefno,
+        item_code: cart[0].item.icode,
+        item_name: cart[0].item.descript,
+        quantity: cart[0].quantity,
+        price: cart[0].item.sprice,
+      });
+
+      // Additional items get new unique transrefnos (same pattern as Buy multi-capture)
+      for (let i = 1; i < cart.length; i++) {
+        const newTransRef = await generateTransRefOnly();
+        if (!newTransRef) {
+          toast.error('Failed to generate reference for item');
+          setSubmitting(false);
+          setSyncing(false);
+          return;
+        }
+        batchItems.push({
+          transrefno: newTransRef,
+          item_code: cart[i].item.icode,
+          item_name: cart[i].item.descript,
+          quantity: cart[i].quantity,
+          price: cart[i].item.sprice,
+        });
+      }
+
+      // Convert photo to base64 ONCE
       const photoBase64 = await blobToBase64(capturedPhoto.blob);
 
-      for (const cartItem of cart) {
-        const sale: Sale = {
-          transrefno: refs.transrefno,
-          uploadrefno: refs.uploadrefno,
-          transtype: 2, // Store transaction type
-          farmer_id: selectedFarmer.farmer_id,
-          farmer_name: selectedFarmer.name,
-          item_code: cartItem.item.icode,
-          item_name: cartItem.item.descript,
-          quantity: cartItem.quantity,
-          price: cartItem.item.sprice,
-          sold_by: currentUser?.user_id || 'Unknown',
-          device_fingerprint: deviceFingerprint,
-          photo: photoBase64,
-        };
+      // Build batch request
+      const batchRequest: BatchSaleRequest = {
+        uploadrefno: refs.uploadrefno,
+        transtype: 2, // Store transaction
+        farmer_id: selectedFarmer.farmer_id,
+        farmer_name: selectedFarmer.name,
+        sold_by: currentUser?.user_id || 'Unknown',
+        device_fingerprint: deviceFingerprint,
+        photo: photoBase64, // ONE photo for all items
+        items: batchItems,
+      };
 
-        if (navigator.onLine) {
-          await mysqlApi.sales.create(sale);
-        } else {
+      if (navigator.onLine) {
+        // Online: use batch endpoint
+        const result = await mysqlApi.sales.createBatch(batchRequest);
+        if (!result.success) {
+          throw new Error(result.error || 'Batch sale failed');
+        }
+        console.log(`✅ Batch sale complete: ${batchItems.length} items, uploadrefno=${refs.uploadrefno}`);
+      } else {
+        // Offline: save each item individually for later sync
+        for (const item of batchItems) {
+          const sale: Sale = {
+            transrefno: item.transrefno,
+            uploadrefno: refs.uploadrefno,
+            transtype: 2,
+            farmer_id: selectedFarmer.farmer_id,
+            farmer_name: selectedFarmer.name,
+            item_code: item.item_code,
+            item_name: item.item_name,
+            quantity: item.quantity,
+            price: item.price,
+            sold_by: currentUser?.user_id || 'Unknown',
+            device_fingerprint: deviceFingerprint,
+            photo: photoBase64, // Include photo for offline sync
+          };
           await saveSale(sale);
         }
+        console.log(`💾 Saved ${batchItems.length} items offline for sync`);
       }
 
       // Create receipt data using unified helper
@@ -479,7 +534,7 @@ const Store = () => {
       setReceiptData(receipt);
       setShowReceipt(true);
 
-      toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.transrefno}]`);
+      toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.uploadrefno}]`);
       setCart([]);
       // Clean up photo
       if (capturedPhoto.preview) {
