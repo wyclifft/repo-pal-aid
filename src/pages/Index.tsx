@@ -351,9 +351,9 @@ const Index = () => {
       return;
     }
 
-    // Prevent capturing zero weight entries
-    if (weight === 0) {
-      toast.error('Cannot capture zero weight entry');
+    // Prevent capturing zero weight entries - must have actual weight from scale or manual
+    if (weight === 0 || weight <= 0) {
+      toast.error('Cannot capture zero weight. Please place item on scale or enter weight manually.');
       return;
     }
 
@@ -1030,7 +1030,8 @@ const Index = () => {
   // Check both: hook blacklist (persistent) AND local session tracking (edge case coverage)
   // For multOpt=1: never disable Submit (allow unlimited submissions)
   // Also disable Submit if no weight has been captured (weight <= 0)
-  const submitDisabledForSelectedFarmer = isSelectedFarmerBlacklisted || weight <= 0;
+  // Submit is disabled if farmer is blacklisted OR no collections captured yet
+  const submitDisabledForSelectedFarmer = isSelectedFarmerBlacklisted || capturedCollections.length === 0;
 
   return (
     <>

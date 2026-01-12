@@ -398,7 +398,7 @@ const AIPage = () => {
       }
 
       // Create receipt data using unified helper
-      const companyName = localStorage.getItem('companyName') || 'Company';
+      const companyName = localStorage.getItem('device_company_name') || 'DAIRY COLLECTION';
       const receipt = createAIReceiptData(
         cart,
         { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
