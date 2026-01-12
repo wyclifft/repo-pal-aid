@@ -369,6 +369,9 @@ const AIPage = () => {
       // Build AI transaction data
       for (const cartItem of cart) {
         const aiTransaction = {
+          transrefno: refs.transrefno,
+          uploadrefno: refs.uploadrefno,
+          transtype: 3, // AI transaction type
           farmer_id: selectedFarmer.farmer_id,
           farmer_name: selectedFarmer.name,
           item_code: cartItem.item.icode,
@@ -377,10 +380,7 @@ const AIPage = () => {
           price: cartItem.item.sprice,
           sold_by: currentUser?.user_id || 'Unknown',
           device_fingerprint: deviceFingerprint,
-          transrefno: refs.transrefno,
-          uploadrefno: refs.uploadrefno,
-          transtype: 3, // AI transaction type
-          // Cow details
+          // Cow details for AI
           cow_name: cartItem.cowDetails?.cowName || '',
           cow_breed: cartItem.cowDetails?.cowBreed || '',
           number_of_calves: cartItem.cowDetails?.numberOfCalves || '',
@@ -388,7 +388,7 @@ const AIPage = () => {
         };
 
         if (navigator.onLine) {
-          // Submit to AI endpoint
+          // Submit to sales endpoint with transtype=3 for AI
           await mysqlApi.sales.create(aiTransaction);
         } else {
           // Save offline for later sync

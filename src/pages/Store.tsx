@@ -442,7 +442,10 @@ const Store = () => {
       const photoBase64 = await blobToBase64(capturedPhoto.blob);
 
       for (const cartItem of cart) {
-        const sale: Sale & { transrefno?: string; uploadrefno?: string; transtype?: number } = {
+        const sale: Sale = {
+          transrefno: refs.transrefno,
+          uploadrefno: refs.uploadrefno,
+          transtype: 2, // Store transaction type
           farmer_id: selectedFarmer.farmer_id,
           farmer_name: selectedFarmer.name,
           item_code: cartItem.item.icode,
@@ -452,9 +455,6 @@ const Store = () => {
           sold_by: currentUser?.user_id || 'Unknown',
           device_fingerprint: deviceFingerprint,
           photo: photoBase64,
-          transrefno: refs.transrefno,
-          uploadrefno: refs.uploadrefno,
-          transtype: 2, // Store transaction type
         };
 
         if (navigator.onLine) {

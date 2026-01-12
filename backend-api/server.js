@@ -1257,7 +1257,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, data: rows });
     }
 
-    // Sales endpoints
+    // Sales endpoints - Unified for Store (transtype=2) and AI (transtype=3)
     if (path === '/api/sales' && method === 'POST') {
       const body = await parseBody(req);
       const conn = await pool.getConnection();
@@ -1265,8 +1265,12 @@ const server = http.createServer(async (req, res) => {
       try {
         await conn.beginTransaction();
         
-        // Generate sale reference
-        const sale_ref = body.sale_ref || `SALE-${Date.now()}`;
+        // Use frontend-provided references (same logic as Buy module)
+        const transrefno = body.transrefno || body.sale_ref || `SALE-${Date.now()}`;
+        const uploadrefno = body.uploadrefno || '';
+        
+        // Determine transtype: 2 = Store, 3 = AI (default to Store for backward compat)
+        const transtype = body.transtype === 3 ? 3 : 2;
         
         // Get current date and time
         const now = new Date();
@@ -1301,24 +1305,33 @@ const server = http.createServer(async (req, res) => {
           }, 403);
         }
         
-        // ENFORCE clientFetch: Validate that at least one route allows Store (clientFetch = 2)
-        // For store sales, we check if any route in the company has clientFetch = 2
-        // This prevents Store access if no routes are configured for it
-        const [storeRoutes] = await conn.query(
-          'SELECT COUNT(*) as storeCount FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = 2',
-          [ccode]
+        // ENFORCE clientFetch based on transtype
+        // transtype 2 (Store): requires clientFetch = 2
+        // transtype 3 (AI): requires clientFetch = 3
+        const requiredClientFetch = transtype;
+        const [allowedRoutes] = await conn.query(
+          'SELECT COUNT(*) as routeCount FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ?',
+          [ccode, requiredClientFetch]
         );
         
-        if (storeRoutes[0].storeCount === 0) {
-          console.log(`❌ clientFetch enforcement: Store disabled for company ${ccode} (no routes with clientFetch=2)`);
+        if (allowedRoutes[0].routeCount === 0) {
+          const serviceName = transtype === 3 ? 'AI Services' : 'Store';
+          console.log(`❌ clientFetch enforcement: ${serviceName} disabled for company ${ccode} (no routes with clientFetch=${requiredClientFetch})`);
           await conn.rollback();
           conn.release();
           return sendJSON(res, { 
             success: false, 
-            error: 'STORE_DISABLED',
-            message: 'Store operations are not enabled for this company. Please contact administrator.' 
+            error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
+            message: `${serviceName} operations are not enabled for this company. Please contact administrator.` 
           }, 403);
         }
+        
+        console.log(`🟢 BACKEND: Creating ${transtype === 3 ? 'AI' : 'Store'} transaction`);
+        console.log('📝 TransRefNo:', transrefno);
+        console.log('📝 UploadRefNo:', uploadrefno);
+        console.log('👤 Member:', body.farmer_id);
+        console.log('📦 Item:', body.item_code, body.item_name);
+        console.log('💰 Amount:', amount);
         
         // Handle photo upload if provided
         let photoFilename = null;
@@ -1363,25 +1376,27 @@ const server = http.createServer(async (req, res) => {
           }
         }
         
-        // Insert into transactions table (including photo columns)
+        // Insert into transactions table (including photo columns and AI cow details)
         await conn.query(
           `INSERT INTO transactions 
-            (transrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+            (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
              transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-             amount, icode, time, capType, milk_session_id, photo_filename, photo_directory)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             amount, icode, time, capType, milk_session_id, photo_filename, photo_directory,
+             cow_name, cow_breed, number_of_calves, other_details)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            sale_ref,                           // transrefno
+            transrefno,                         // transrefno (from frontend)
+            uploadrefno,                        // Uploadrefno (from frontend)
             body.sold_by || '',                 // userId
             body.sold_by || '',                 // clerk
             body.device_fingerprint || '',      // deviceserial
             body.farmer_id || '',               // memberno
-            '',                                 // route (empty for store sales)
+            '',                                 // route (empty for store/AI sales)
             body.quantity || 0,                 // weight (using quantity)
-            '',                                 // session (empty for store sales)
+            '',                                 // session (empty for store/AI sales)
             transdate,                          // transdate
             transtime,                          // transtime
-            'STORE',                            // Transtype
+            transtype,                          // Transtype: 2 for Store, 3 for AI
             0,                                  // processed
             0,                                  // uploaded
             ccode,                              // ccode (from device's devsettings)
@@ -1393,7 +1408,11 @@ const server = http.createServer(async (req, res) => {
             0,                                  // capType
             '',                                 // milk_session_id
             photoFilename,                      // photo_filename
-            photoDirectory                      // photo_directory
+            photoDirectory,                     // photo_directory
+            body.cow_name || '',                // cow_name (AI)
+            body.cow_breed || '',               // cow_breed (AI)
+            body.number_of_calves || '',        // number_of_calves (AI)
+            body.other_details || ''            // other_details (AI)
           ]
         );
         
