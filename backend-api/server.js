@@ -1450,6 +1450,185 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // Batch Sales endpoint - ONE photo, MULTIPLE items, each with unique transrefno
+    // Used by Store when selling multiple items to a single buyer
+    if (path === '/api/sales/batch' && method === 'POST') {
+      const body = await parseBody(req);
+      const conn = await pool.getConnection();
+      
+      try {
+        await conn.beginTransaction();
+        
+        // Validate required fields
+        if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
+          await conn.rollback();
+          conn.release();
+          return sendJSON(res, { success: false, error: 'No items provided' }, 400);
+        }
+        
+        const uploadrefno = body.uploadrefno || '';
+        const transtype = body.transtype === 3 ? 3 : 2;
+        
+        // Get current date and time
+        const now = new Date();
+        const transdate = now.toISOString().split('T')[0];
+        const transtime = now.toTimeString().split(' ')[0];
+        const timestamp = Math.floor(now.getTime() / 1000);
+        
+        // Get device's ccode from devsettings
+        let ccode = '';
+        let authorized = false;
+        if (body.device_fingerprint) {
+          const [deviceRows] = await conn.query(
+            'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+            [body.device_fingerprint]
+          );
+          if (deviceRows.length > 0) {
+            ccode = deviceRows[0].ccode || '';
+            authorized = deviceRows[0].authorized === 1;
+          }
+        }
+        
+        if (!authorized) {
+          await conn.rollback();
+          conn.release();
+          return sendJSON(res, { success: false, error: 'Device not authorized' }, 403);
+        }
+        
+        // clientFetch enforcement for Store/AI
+        const requiredClientFetch = transtype;
+        const [allowedRoutes] = await conn.query(
+          'SELECT COUNT(*) as routeCount FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ?',
+          [ccode, requiredClientFetch]
+        );
+        
+        if (allowedRoutes[0].routeCount === 0) {
+          const serviceName = transtype === 3 ? 'AI Services' : 'Store';
+          await conn.rollback();
+          conn.release();
+          return sendJSON(res, { 
+            success: false, 
+            error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
+            message: `${serviceName} operations are not enabled for this company.` 
+          }, 403);
+        }
+        
+        // Handle photo upload ONCE (shared by all items)
+        let photoFilename = null;
+        let photoDirectory = null;
+        
+        if (body.photo && typeof body.photo === 'string' && body.photo.startsWith('data:image/')) {
+          try {
+            const fs = require('fs');
+            const path = require('path');
+            
+            const matches = body.photo.match(/^data:image\/(\w+);base64,(.+)$/);
+            if (matches) {
+              const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+              const base64Data = matches[2];
+              const buffer = Buffer.from(base64Data, 'base64');
+              
+              const uploadsDir = path.join(__dirname, 'uploads', 'store-photos');
+              const yearDir = String(now.getFullYear());
+              const monthDir = String(now.getMonth() + 1).padStart(2, '0');
+              const fullDir = path.join(uploadsDir, yearDir, monthDir);
+              
+              if (!fs.existsSync(fullDir)) {
+                fs.mkdirSync(fullDir, { recursive: true });
+              }
+              
+              // Use uploadrefno for batch photo filename
+              photoFilename = `${uploadrefno}_${timestamp}.${ext}`;
+              photoDirectory = `uploads/store-photos/${yearDir}/${monthDir}`;
+              
+              const filePath = path.join(fullDir, photoFilename);
+              fs.writeFileSync(filePath, buffer);
+              
+              console.log(`📷 Batch photo saved: ${photoDirectory}/${photoFilename}`);
+            }
+          } catch (photoError) {
+            console.error('❌ Batch photo upload error:', photoError);
+            // Continue without photo
+          }
+        }
+        
+        console.log(`🛒 Batch sale: ${body.items.length} items, uploadrefno=${uploadrefno}`);
+        
+        const insertedRefs = [];
+        
+        // Insert each item with its unique transrefno
+        for (const item of body.items) {
+          const transrefno = item.transrefno;
+          const amount = (item.quantity || 0) * (item.price || 0);
+          
+          await conn.query(
+            `INSERT INTO transactions 
+              (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+               transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
+               amount, icode, time, capType, milk_session_id, photo_filename, photo_directory,
+               cowname, cowbreed, noofcalfs, aibreed)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              transrefno,
+              uploadrefno,
+              body.sold_by || '',
+              body.sold_by || '',
+              body.device_fingerprint || '',
+              body.farmer_id || '',
+              '',
+              item.quantity || 0,
+              '',
+              transdate,
+              transtime,
+              transtype,
+              0,
+              0,
+              ccode,
+              0,
+              item.price || 0,
+              amount,
+              item.item_code || '',
+              timestamp,
+              0,
+              '',
+              photoFilename,  // Same photo for all items
+              photoDirectory,
+              item.cow_name || '',
+              item.cow_breed || '',
+              item.number_of_calves || '',
+              item.other_details || ''
+            ]
+          );
+          
+          // Update stock balance for this item
+          await conn.query(
+            'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
+            [item.quantity || 0, item.item_code]
+          );
+          
+          insertedRefs.push(transrefno);
+          console.log(`✅ Inserted item: ${transrefno} - ${item.item_code} x ${item.quantity}`);
+        }
+        
+        await conn.commit();
+        conn.release();
+        
+        return sendJSON(res, { 
+          success: true, 
+          message: `Batch sale recorded: ${body.items.length} items`,
+          uploadrefno,
+          transrefnos: insertedRefs,
+          photo_saved: !!photoFilename,
+          photo_path: photoFilename ? `${photoDirectory}/${photoFilename}` : null
+        }, 201);
+        
+      } catch (error) {
+        await conn.rollback();
+        conn.release();
+        throw error;
+      }
+    }
+
     if (path === '/api/sales' && method === 'GET') {
       const { farmer_id, date_from, date_to, uniquedevcode, transtype } = parsedUrl.query;
       

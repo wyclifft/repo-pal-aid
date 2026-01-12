@@ -1,7 +1,7 @@
 import { useCallback, useRef, useEffect } from 'react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSyncManager, deduplicateReceipts } from '@/hooks/useSyncManager';
-import { mysqlApi, type Sale } from '@/services/mysqlApi';
+import { mysqlApi, type Sale, type BatchSaleRequest } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
 
@@ -18,6 +18,7 @@ interface AITransaction extends Sale {
 /**
  * Unified hook for syncing Store and AI transactions
  * Centralizes offline storage and background sync logic
+ * Supports batch sync: groups items by uploadrefno for efficient upload
  */
 export const useSalesSync = () => {
   const mountedRef = useRef(true);
@@ -46,6 +47,7 @@ export const useSalesSync = () => {
   }, [isReady, saveSale]);
 
   // Sync all pending store and AI sales
+  // Groups store items by uploadrefno for batch sync
   const syncPendingSales = useCallback(async (): Promise<{ synced: number; failed: number }> => {
     if (!navigator.onLine || !isReady) {
       return { synced: 0, failed: 0 };
@@ -75,11 +77,95 @@ export const useSalesSync = () => {
       console.log(`📤 Syncing ${pendingSales.length} pending sales/AI transactions...`);
       const deviceFingerprint = await generateDeviceFingerprint();
 
-      for (const saleRecord of pendingSales) {
+      // Group store sales by uploadrefno for batch sync
+      const storeBatches: Record<string, typeof pendingSales> = {};
+      const aiSales: typeof pendingSales = [];
+
+      for (const sale of pendingSales) {
+        if (sale.transtype === 3) {
+          aiSales.push(sale);
+        } else if (sale.uploadrefno) {
+          if (!storeBatches[sale.uploadrefno]) {
+            storeBatches[sale.uploadrefno] = [];
+          }
+          storeBatches[sale.uploadrefno].push(sale);
+        } else {
+          // No uploadrefno - sync individually
+          aiSales.push(sale);
+        }
+      }
+
+      // Sync store batches (grouped by uploadrefno)
+      for (const [uploadrefno, batchSales] of Object.entries(storeBatches)) {
         if (!mountedRef.current) break;
 
         try {
-          // Clean up sale data before sending
+          const firstSale = batchSales[0];
+          
+          // Build batch request - photo only from first item
+          const batchRequest: BatchSaleRequest = {
+            uploadrefno,
+            transtype: 2,
+            farmer_id: String(firstSale.farmer_id || '').replace(/^#/, '').trim(),
+            farmer_name: String(firstSale.farmer_name || '').trim(),
+            sold_by: String(firstSale.sold_by || '').trim(),
+            device_fingerprint: deviceFingerprint,
+            photo: firstSale.photo, // ONE photo for batch
+            items: batchSales.map(sale => ({
+              transrefno: sale.transrefno || '',
+              item_code: String(sale.item_code || '').trim(),
+              item_name: String(sale.item_name || '').trim(),
+              quantity: Number(sale.quantity) || 0,
+              price: Number(sale.price) || 0,
+            })),
+          };
+
+          const result = await mysqlApi.sales.createBatch(batchRequest);
+          
+          if (result.success) {
+            // Delete all items in this batch
+            for (const sale of batchSales) {
+              if (sale.orderId) {
+                await deleteSale(sale.orderId);
+              }
+            }
+            synced += batchSales.length;
+            console.log(`✅ Synced batch: ${uploadrefno} (${batchSales.length} items)`);
+          } else {
+            // Check for duplicate - if so, still delete local
+            const errorMsg = result.error?.toLowerCase() || '';
+            if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
+              for (const sale of batchSales) {
+                if (sale.orderId) {
+                  await deleteSale(sale.orderId);
+                }
+              }
+              synced += batchSales.length;
+            } else {
+              failed += batchSales.length;
+            }
+          }
+        } catch (error: any) {
+          console.error('Batch sync error:', error);
+          const errorMsg = error?.message?.toLowerCase() || '';
+          if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
+            for (const sale of batchSales) {
+              if (sale.orderId) {
+                await deleteSale(sale.orderId);
+              }
+            }
+            synced += batchSales.length;
+          } else {
+            failed += batchSales.length;
+          }
+        }
+      }
+
+      // Sync AI sales individually
+      for (const saleRecord of aiSales) {
+        if (!mountedRef.current) break;
+
+        try {
           const cleanSale: Sale = {
             farmer_id: String(saleRecord.farmer_id || '').replace(/^#/, '').trim(),
             farmer_name: String(saleRecord.farmer_name || '').trim(),
@@ -104,13 +190,12 @@ export const useSalesSync = () => {
           if (success && saleRecord.orderId) {
             await deleteSale(saleRecord.orderId);
             synced++;
-            console.log(`✅ Synced ${saleRecord.type || 'sale'}: ${saleRecord.transrefno || saleRecord.orderId}`);
+            console.log(`✅ Synced AI: ${saleRecord.transrefno || saleRecord.orderId}`);
           } else {
             failed++;
           }
         } catch (error: any) {
-          console.error('Sync error for sale:', error);
-          // Check for duplicate error
+          console.error('AI sync error:', error);
           const errorMsg = error?.message?.toLowerCase() || '';
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
             if (saleRecord.orderId) {

@@ -710,6 +710,33 @@ export interface Sale {
   other_details?: string;     // → DB: aibreed
 }
 
+export interface BatchSaleRequest {
+  uploadrefno: string;
+  transtype: number;
+  farmer_id: string;
+  farmer_name: string;
+  sold_by: string;
+  device_fingerprint: string;
+  photo?: string;  // ONE photo for entire batch
+  items: Array<{
+    transrefno: string;  // Unique per item
+    item_code: string;
+    item_name: string;
+    quantity: number;
+    price: number;
+  }>;
+}
+
+export interface BatchSaleResponse {
+  success: boolean;
+  message?: string;
+  uploadrefno?: string;
+  transrefnos?: string[];
+  photo_saved?: boolean;
+  photo_path?: string;
+  error?: string;
+}
+
 export const salesApi = {
   /**
    * Create a new sale (Store transtype=2, AI transtype=3)
@@ -720,6 +747,26 @@ export const salesApi = {
       body: JSON.stringify(sale),
     });
     return response.success;
+  },
+
+  /**
+   * Create batch sale - ONE photo, MULTIPLE items with unique transrefnos
+   * Used by Store for multi-item transactions
+   */
+  createBatch: async (batch: BatchSaleRequest): Promise<BatchSaleResponse> => {
+    const response = await apiRequest<BatchSaleResponse>('/sales/batch', {
+      method: 'POST',
+      body: JSON.stringify(batch),
+    });
+    return {
+      success: response.success,
+      message: response.data?.message || response.error,
+      uploadrefno: response.data?.uploadrefno,
+      transrefnos: response.data?.transrefnos,
+      photo_saved: response.data?.photo_saved,
+      photo_path: response.data?.photo_path,
+      error: response.error,
+    };
   },
 
   /**
