@@ -1559,6 +1559,8 @@ export const printReceipt = async (data: {
   route?: string;
   routeLabel?: string;
   session?: string;
+  periodLabel?: string;
+  productName?: string;
   uploadRefNo?: string;
   collectorName: string;
   collections: Array<{
@@ -1605,6 +1607,11 @@ export const printReceipt = async (data: {
   receipt += formatLine('Member Name   ', data.farmerName, W) + '\n';
   receipt += formatLine('Reference NO  ', data.uploadRefNo || '', W) + '\n';
   receipt += formatLine('Date          ', formattedDate + ' ' + formattedTime, W) + '\n';
+  
+  // Product name (for milk/coffee types)
+  if (data.productName) {
+    receipt += formatLine('Product       ', data.productName, W) + '\n';
+  }
   receipt += '\n';
   
   receipt += collectionsText;
@@ -1625,7 +1632,10 @@ export const printReceipt = async (data: {
   }
   receipt += formatLine('Member Region ', data.route || '', W) + '\n';
   receipt += formatLine('Clerk Name    ', data.collectorName, W) + '\n';
-  receipt += formatLine('Session       ', data.session || '', W) + '\n';
+  
+  // Use periodLabel (Session/Season) with the session value
+  const periodLabel = data.periodLabel || 'Session';
+  receipt += formatLine(periodLabel.padEnd(14), data.session || '', W) + '\n';
   receipt += formatLine('', formattedDate + ' ' + formattedTime, W) + '\n';
 
   return printToBluetoothPrinter(receipt);

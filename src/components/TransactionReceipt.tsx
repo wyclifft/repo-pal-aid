@@ -139,6 +139,8 @@ export const TransactionReceipt = ({
         route: memberRoute || '',
         routeLabel,
         session: session || '',
+        periodLabel,
+        productName,
         uploadRefNo: uploadrefno || transrefno,
         collectorName: clerkName,
         collections,
