@@ -301,17 +301,29 @@ export const farmersApi = {
 
 // ==================== MILK COLLECTION API ====================
 
+// DB Column Mapping for transactions table (Transtype = 1):
+// Frontend field → DB column
+// reference_no → transrefno
+// uploadrefno → Uploadrefno  
+// farmer_id → memberno
+// farmer_name → (not stored, derived from cm_members.descript)
+// route → route
+// session → session (AM/PM for dairy, season name for coffee)
+// weight → weight
+// clerk_name → clerk
+// collection_date → transdate
+
 export interface MilkCollection {
   id?: number;
-  reference_no?: string;
-  uploadrefno?: string; // Formatted reference (devcode + milkId) for approval workflows - e.g., BA0500000031
-  farmer_id: string;
-  farmer_name: string;
-  route: string;
-  session: 'AM' | 'PM';
-  weight: number;
-  clerk_name: string;
-  collection_date: Date | string;
+  reference_no?: string;      // → DB: transrefno
+  uploadrefno?: string;       // → DB: Uploadrefno - Formatted reference (devcode + milkId)
+  farmer_id: string;          // → DB: memberno
+  farmer_name: string;        // → Not stored, derived from cm_members
+  route: string;              // → DB: route
+  session: string;            // → DB: session - AM/PM for dairy, season name for coffee
+  weight: number;             // → DB: weight
+  clerk_name: string;         // → DB: clerk
+  collection_date: Date | string; // → DB: transdate
   created_at?: string;
   updated_at?: string;
   /**
@@ -320,7 +332,10 @@ export interface MilkCollection {
   multOpt?: number;
   orderId?: number;
   synced?: boolean;
-  device_fingerprint?: string;
+  device_fingerprint?: string; // → DB: deviceserial
+  // Product info (from fm_items, invtype=01)
+  product_code?: string;      // → DB: icode
+  product_name?: string;      // → Not stored, derived from fm_items.descript
 }
 
 export const milkCollectionApi = {
@@ -672,26 +687,27 @@ export const itemsApi = {
 export interface Sale {
   id?: number;
   sale_ref?: string;
-  transrefno?: string;  // Frontend-generated reference (same format as Buy)
-  uploadrefno?: string; // Frontend-generated type-specific ID
-  transtype?: number;   // 2 = Store, 3 = AI
-  farmer_id: string;
-  farmer_name: string;
-  item_code: string;
-  item_name: string;
-  quantity: number;
-  price: number;
-  total_amount?: number;
-  sold_by: string;
-  sale_date?: string;
+  transrefno?: string;  // Frontend-generated reference (same format as Buy) → DB: transrefno
+  uploadrefno?: string; // Frontend-generated type-specific ID → DB: Uploadrefno
+  transtype?: number;   // 2 = Store, 3 = AI → DB: Transtype
+  farmer_id: string;    // → DB: memberno
+  farmer_name: string;  // → Not stored, used for display
+  item_code: string;    // → DB: icode
+  item_name: string;    // → Not stored, derived from icode
+  quantity: number;     // → DB: weight
+  price: number;        // → DB: iprice
+  total_amount?: number; // → DB: amount
+  sold_by: string;      // → DB: userId, clerk
+  sale_date?: string;   // → DB: transdate
   remarks?: string;
-  device_fingerprint?: string;
-  photo?: string; // Base64 encoded buyer photo for theft prevention
-  // AI-specific fields
-  cow_name?: string;
-  cow_breed?: string;
-  number_of_calves?: string;
-  other_details?: string;
+  device_fingerprint?: string; // → DB: deviceserial
+  photo?: string;       // Base64 encoded buyer photo for theft prevention
+  // AI-specific fields (mapped to DB columns):
+  // Frontend field → DB column
+  cow_name?: string;          // → DB: cowname
+  cow_breed?: string;         // → DB: cowbreed
+  number_of_calves?: string;  // → DB: noofcalfs
+  other_details?: string;     // → DB: aibreed
 }
 
 export const salesApi = {
