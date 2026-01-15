@@ -89,4 +89,6 @@ export interface MilkCollection {
   // Product info (from fm_items, invtype=01)
   product_code?: string;      // → DB: icode
   product_name?: string;      // Display only, derived from fm_items.descript
+  // Entry type: 'scale' for Bluetooth scale readings, 'manual' for manual input
+  entry_type?: 'scale' | 'manual';
 }

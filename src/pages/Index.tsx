@@ -514,6 +514,8 @@ const Index = () => {
       // Product info from selected produce item (invtype=01)
       product_code: selectedProduct?.icode,
       product_name: selectedProduct?.descript,
+      // Entry type: 'scale' for Bluetooth readings, 'manual' for manual input
+      entry_type: entryType,
     };
 
     console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Local capture only (not submitted)');
@@ -612,6 +614,7 @@ const Index = () => {
             clerk_name: capture.clerk_name,
             collection_date: capture.collection_date,
             device_fingerprint: deviceFingerprint, // CRITICAL: Required for authorization
+            entry_type: capture.entry_type, // Pass entry_type to backend
           });
 
           console.log(`📨 Submit result for ${referenceNo}:`, result);
