@@ -13,14 +13,14 @@ let onlineListenerAttached = false;
 const initOnlineListener = () => {
   if (typeof window !== 'undefined' && !onlineListenerAttached) {
     const handleOnline = () => {
-      console.log('📡 App back online - triggering sync handlers');
+      console.log('[ONLINE] App back online - triggering sync handlers');
       // Small delay to ensure network is stable
       setTimeout(() => {
         onlineHandlers.forEach(handler => {
           try {
             handler();
           } catch (error) {
-            console.error('Error in online handler:', error);
+            console.error('[SYNC] Error in online handler:', error);
           }
         });
       }, 500);
@@ -38,7 +38,7 @@ const checkAndReleaseStaleLock = () => {
   if (globalSyncLock && lockAcquiredAt > 0) {
     const now = Date.now();
     if (now - lockAcquiredAt > LOCK_TIMEOUT_MS) {
-      console.warn('⚠️ Auto-releasing stale sync lock (was held for', Math.round((now - lockAcquiredAt) / 1000), 'seconds)');
+      console.warn('[SYNC] Auto-releasing stale sync lock (was held for', Math.round((now - lockAcquiredAt) / 1000), 'seconds)');
       globalSyncLock = false;
       lockAcquiredAt = 0;
     }
@@ -57,13 +57,13 @@ export const useSyncManager = () => {
     
     // Check debounce
     if (now - lastSyncTimestamp < SYNC_DEBOUNCE_MS) {
-      console.log('⏸️ Sync debounced - too soon after last sync');
+      console.log('[SYNC] Sync debounced - too soon after last sync');
       return false;
     }
     
     // Check lock
     if (globalSyncLock) {
-      console.log('⏸️ Sync locked - another sync in progress');
+      console.log('[SYNC] Sync locked - another sync in progress');
       return false;
     }
     
@@ -123,7 +123,7 @@ export const deduplicateReceipts = <T extends { reference_no?: string; orderId?:
     if (key && !seen.has(key)) {
       seen.set(key, receipt);
     } else if (key) {
-      console.log(`🔄 Skipping duplicate receipt: ${key}`);
+      console.log(`[SYNC] Skipping duplicate receipt: ${key}`);
     }
   }
   

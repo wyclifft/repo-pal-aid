@@ -65,7 +65,7 @@ export const useDataSync = () => {
   // In background sync mode (online=0), this runs automatically
   const syncOfflineReceipts = useCallback(async (): Promise<{ synced: number; failed: number }> => {
     if (!isReady || !navigator.onLine) {
-      console.log('📴 Sync skipped: not ready or offline');
+      console.log('[SYNC] Sync skipped: not ready or offline');
       return { synced: 0, failed: 0 };
     }
 
@@ -90,11 +90,11 @@ export const useDataSync = () => {
         if (mountedRef.current) {
           setPendingCount(0);
         }
-        console.log('✅ No pending receipts to sync');
+        console.log('[SYNC] No pending receipts to sync');
         return { synced: 0, failed: 0 };
       }
 
-      console.log(`📤 Syncing ${unsyncedReceipts.length} offline receipts...`);
+      console.log(`[SYNC] Syncing ${unsyncedReceipts.length} offline receipts...`);
       
       // Dispatch sync start event
       window.dispatchEvent(new CustomEvent('syncStart'));
@@ -108,7 +108,7 @@ export const useDataSync = () => {
         if (!mountedRef.current) break; // Stop if unmounted
 
         try {
-          console.log(`🔄 Attempting to sync: ${receipt.reference_no}`);
+          console.log(`[SYNC] Attempting to sync: ${receipt.reference_no}`);
 
           // Normalize session to AM/PM - handle legacy data that might have description
           let normalizedSession: 'AM' | 'PM' = 'AM';
@@ -130,7 +130,7 @@ export const useDataSync = () => {
               );
 
               if (existing) {
-                console.log(`⏭️ Skipping multOpt=0 duplicate (already exists): ${receipt.reference_no}`);
+                console.log(`[SKIP] Skipping multOpt=0 duplicate (already exists): ${receipt.reference_no}`);
                 if (receipt.orderId && typeof receipt.orderId === 'number') {
                   await deleteReceipt(receipt.orderId);
                 }
@@ -138,7 +138,7 @@ export const useDataSync = () => {
                 continue;
               }
             } catch (checkErr) {
-              console.warn('Duplicate check failed, proceeding with sync:', checkErr);
+              console.warn('[SYNC] Duplicate check failed, proceeding with sync:', checkErr);
             }
           }
 
@@ -156,27 +156,27 @@ export const useDataSync = () => {
             entry_type: receipt.entry_type, // Pass entry_type to backend
           });
 
-          console.log(`📨 API response for ${receipt.reference_no}:`, result);
+          console.log(`[API] Response for ${receipt.reference_no}:`, result);
 
           // Check if sync was successful - API returns { success: true/false, reference_no: string }
           if (result.success) {
             if (receipt.orderId && typeof receipt.orderId === 'number') {
               await deleteReceipt(receipt.orderId);
-              console.log(`🗑️ Deleted local receipt: ${receipt.orderId}`);
+              console.log(`[DB] Deleted local receipt: ${receipt.orderId}`);
             }
             synced++;
-            console.log(`✅ Synced successfully: ${receipt.reference_no}`);
+            console.log(`[SUCCESS] Synced successfully: ${receipt.reference_no}`);
           } else {
             failed++;
-            console.warn(`⚠️ Sync failed for: ${receipt.reference_no}`, result);
+            console.warn(`[WARN] Sync failed for: ${receipt.reference_no}`, result);
           }
         } catch (err: any) {
-          console.error(`❌ Exception syncing ${receipt.reference_no}:`, err);
+          console.error(`[ERROR] Exception syncing ${receipt.reference_no}:`, err);
           
           // Check if it's a duplicate error (already exists in DB)
           const errorMsg = err?.message?.toLowerCase() || '';
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
-            console.log(`⏭️ Already synced (duplicate): ${receipt.reference_no}`);
+            console.log(`[SKIP] Already synced (duplicate): ${receipt.reference_no}`);
             if (receipt.orderId && typeof receipt.orderId === 'number') {
               await deleteReceipt(receipt.orderId);
             }
@@ -194,10 +194,10 @@ export const useDataSync = () => {
         setPendingCount(failed);
       }
       
-      console.log(`📊 Sync complete: ${synced} synced, ${failed} failed`);
+      console.log(`[SYNC] Sync complete: ${synced} synced, ${failed} failed`);
       return { synced, failed };
     } catch (err) {
-      console.error('Sync failed:', err);
+      console.error('[SYNC] Sync failed:', err);
       window.dispatchEvent(new CustomEvent('syncComplete'));
       return { synced: 0, failed: 0 };
     }
@@ -259,7 +259,7 @@ export const useDataSync = () => {
         if (routesResponse.success && routesResponse.data && routesResponse.data.length > 0) {
           await saveRoutes(routesResponse.data);
           syncedCount++;
-          console.log(`✅ Synced ${routesResponse.data.length} routes`);
+          console.log(`[SUCCESS] Synced ${routesResponse.data.length} routes`);
         }
       } catch (err) {
         console.warn('Routes sync skipped:', err);
@@ -271,7 +271,7 @@ export const useDataSync = () => {
         if (sessionsResponse.success && sessionsResponse.data && sessionsResponse.data.length > 0) {
           await saveSessions(sessionsResponse.data);
           syncedCount++;
-          console.log(`✅ Synced ${sessionsResponse.data.length} sessions`);
+          console.log(`[SUCCESS] Synced ${sessionsResponse.data.length} sessions`);
         }
       } catch (err) {
         console.warn('Sessions sync skipped:', err);
@@ -295,7 +295,7 @@ export const useDataSync = () => {
           }
           
           syncedCount++;
-          console.log(`✅ Synced ALL ${response.data.length} farmers for offline use`);
+          console.log(`[SUCCESS] Synced ALL ${response.data.length} farmers for offline use`);
         } else if (response.message?.includes('not authorized')) {
           hasAuthError = true;
         }
@@ -318,7 +318,7 @@ export const useDataSync = () => {
         if (itemsResponse.success && itemsResponse.data && itemsResponse.data.length > 0) {
           await saveItems(itemsResponse.data);
           syncedCount++;
-          console.log(`✅ Synced ${itemsResponse.data.length} items`);
+          console.log(`[SUCCESS] Synced ${itemsResponse.data.length} items`);
         }
       } catch (err) {
         console.warn('Items sync skipped:', err);
@@ -407,13 +407,13 @@ export const useDataSync = () => {
   useEffect(() => {
     // Skip auto-sync on reconnect in offline-first mode
     if (offlineFirstMode) {
-      console.log('📴 Offline-first mode: auto-sync on reconnect disabled');
+      console.log('[OFFLINE] Offline-first mode: auto-sync on reconnect disabled');
       return;
     }
     
     const unregister = registerOnlineHandler(() => {
       if (mountedRef.current && isReady) {
-        console.log('📡 Online handler triggered (background mode)');
+        console.log('[ONLINE] Online handler triggered (background mode)');
         syncAllData(false, false); // Don't show member banner on auto-reconnect
       }
     });
@@ -427,13 +427,13 @@ export const useDataSync = () => {
     
     // Skip periodic sync in offline-first mode
     if (offlineFirstMode) {
-      console.log('📴 Offline-first mode: periodic sync disabled');
+      console.log('[OFFLINE] Offline-first mode: periodic sync disabled');
       return;
     }
 
     periodicSyncRef.current = setInterval(() => {
       if (navigator.onLine && mountedRef.current) {
-        console.log('🔄 Periodic sync (background mode)');
+        console.log('[SYNC] Periodic sync (background mode)');
         syncAllData(true, false); // Don't show member banner on periodic sync
       }
     }, 5 * 60 * 1000);
