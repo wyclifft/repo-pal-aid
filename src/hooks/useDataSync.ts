@@ -153,6 +153,7 @@ export const useDataSync = () => {
             clerk_name: receipt.clerk_name,
             collection_date: receipt.collection_date,
             device_fingerprint: deviceFingerprint,
+            entry_type: receipt.entry_type, // Pass entry_type to backend
           });
 
           console.log(`📨 API response for ${receipt.reference_no}:`, result);
