@@ -13,6 +13,14 @@ import {
   clearStoredClassicDevice,
   type ClassicBluetoothDevice,
   isLikelyClassicDevice,
+  // Classic Printer functions
+  connectClassicPrinter,
+  disconnectClassicPrinter,
+  isClassicPrinterConnected,
+  printToClassicPrinter,
+  getPairedPrinters,
+  quickReconnectClassicPrinter,
+  getStoredClassicPrinter,
 } from './bluetoothClassic';
 
 // Re-export Classic Bluetooth functions for convenience
@@ -28,6 +36,14 @@ export {
   clearStoredClassicDevice,
   type ClassicBluetoothDevice,
   isLikelyClassicDevice,
+  // Classic Printer exports
+  connectClassicPrinter,
+  disconnectClassicPrinter,
+  isClassicPrinterConnected,
+  printToClassicPrinter,
+  getPairedPrinters,
+  quickReconnectClassicPrinter,
+  getStoredClassicPrinter,
 };
 
 export type ScaleType = 'HC-05' | 'HM-10' | 'DR-Series' | 'BTM-Series' | 'Classic-SPP' | 'Unknown';
@@ -259,80 +275,80 @@ const DR_SERIES_CHARACTERISTIC_PATTERNS = [
 // Parse weight data from DR Series scales (DR 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150)
 const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null => {
   // DR Series scales typically send data in one of these formats:
+  console.log(`📊 DR Parser input - text: "${text}", bytes: [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
   
-  // Format 1: ASCII text like "ST,GS,+  12.345kg" or "  12.345 kg"
-  const textMatch = text.match(/[+-]?\s*(\d+\.?\d*)\s*(kg|g|lb)?/i);
-  if (textMatch) {
-    let weight = parseFloat(textMatch[1]);
-    if (textMatch[2]?.toLowerCase() === 'g') {
-      weight = weight / 1000; // Convert grams to kg
-    }
-    if (weight > 0 && weight < 1000) {
-      console.log(`📊 DR Series parsed text format: ${weight} kg`);
-      return weight;
-    }
-  }
+  // PRIORITY 1: ASCII text formats - most reliable
+  // Format: "ST,GS,+  12.345kg" or "  12.345 kg" or just "12.345"
   
-  // Format 2: Binary format with header byte + weight data
-  // Common DR format: [Header][Status][Sign][Weight High][Weight Low][Unit][Checksum]
-  if (rawBytes.length >= 6) {
-    // Try different byte positions for weight data
-    const positions = [
-      { high: 3, low: 4, divisor: 100 },  // Weight at bytes 3-4
-      { high: 4, low: 5, divisor: 100 },  // Weight at bytes 4-5
-      { high: 2, low: 3, divisor: 100 },  // Weight at bytes 2-3
-      { high: 3, low: 4, divisor: 1000 }, // Higher precision
-    ];
-    
-    for (const pos of positions) {
-      if (rawBytes.length > pos.low) {
-        const weightInt = (rawBytes[pos.high] << 8) | rawBytes[pos.low];
-        const weight = weightInt / pos.divisor;
-        if (weight > 0 && weight < 500) {
-          console.log(`📊 DR Series parsed binary (${pos.high}-${pos.low}): ${weight} kg`);
-          return weight;
-        }
-      }
-    }
-  }
-  
-  // Format 3: Little-endian 16-bit or 32-bit integer
-  if (rawBytes.length >= 4) {
-    // Try 16-bit little-endian at different offsets
-    for (let offset = 0; offset <= rawBytes.length - 2; offset++) {
-      const weightLE = rawBytes[offset] | (rawBytes[offset + 1] << 8);
-      const weight = weightLE / 100;
-      if (weight > 0.1 && weight < 500 && weight !== Math.floor(weight)) {
-        console.log(`📊 DR Series parsed LE16 at offset ${offset}: ${weight} kg`);
-        return weight;
-      }
-    }
-  }
-  
-  // Format 4: Direct decimal string anywhere in the data
-  const decimalMatch = text.match(/(\d+\.\d{1,3})/);
+  // First try to find a proper decimal weight with decimal point
+  const decimalMatch = text.match(/(\d{1,3}\.\d{1,3})/);
   if (decimalMatch) {
     const weight = parseFloat(decimalMatch[1]);
-    if (weight > 0 && weight < 500) {
-      console.log(`📊 DR Series parsed decimal: ${weight} kg`);
+    // Sanity check: realistic weight range (0.1 to 200 kg for dairy)
+    if (weight >= 0.1 && weight <= 200) {
+      console.log(`✅ DR Series parsed decimal: ${weight} kg`);
       return weight;
     }
   }
   
-  // Format 5: Integer representing grams or centgrams
-  const intMatch = text.replace(/[^0-9]/g, '');
-  if (intMatch.length >= 3) {
-    const intValue = parseInt(intMatch);
-    if (intValue > 100 && intValue < 500000) {
-      // Likely grams
-      const weight = intValue / 1000;
-      if (weight > 0.1 && weight < 500) {
-        console.log(`📊 DR Series parsed grams: ${weight} kg`);
+  // Format with unit suffix
+  const unitMatch = text.match(/[+-]?\s*(\d+\.?\d*)\s*(kg|KG|Kg)/);
+  if (unitMatch) {
+    const weight = parseFloat(unitMatch[1]);
+    if (weight >= 0.1 && weight <= 200) {
+      console.log(`✅ DR Series parsed with unit: ${weight} kg`);
+      return weight;
+    }
+  }
+  
+  // Grams format (e.g., "12345g" or "12345 g")
+  const gramsMatch = text.match(/(\d{3,6})\s*(g|G)\b/);
+  if (gramsMatch) {
+    const weight = parseInt(gramsMatch[1]) / 1000;
+    if (weight >= 0.1 && weight <= 200) {
+      console.log(`✅ DR Series parsed grams: ${weight} kg`);
+      return weight;
+    }
+  }
+  
+  // PRIORITY 2: Structured binary formats with known headers
+  // Only parse binary if text parsing completely failed AND we have recognizable structure
+  
+  // Check for known scale data header patterns (0x02 STX, 0x53 'S', etc.)
+  if (rawBytes.length >= 8 && (rawBytes[0] === 0x02 || rawBytes[0] === 0x53)) {
+    // Common format: [STX][Status][Sign][Weight 4 bytes][Unit][ETX]
+    // Weight as BCD or ASCII digits in bytes 3-6
+    const isBCD = rawBytes.slice(3, 7).every(b => (b & 0xF0) <= 0x90 && (b & 0x0F) <= 0x09);
+    if (isBCD) {
+      // Decode BCD: each nibble is a digit
+      let bcdValue = 0;
+      for (let i = 3; i < 7; i++) {
+        bcdValue = bcdValue * 100 + ((rawBytes[i] >> 4) * 10) + (rawBytes[i] & 0x0F);
+      }
+      const weight = bcdValue / 1000; // Assume 3 decimal places
+      if (weight >= 0.1 && weight <= 200) {
+        console.log(`✅ DR Series parsed BCD: ${weight} kg`);
         return weight;
       }
     }
   }
   
+  // PRIORITY 3: Check if the entire text is digits that could be grams
+  const cleanDigits = text.replace(/[^0-9]/g, '');
+  if (cleanDigits.length >= 4 && cleanDigits.length <= 6) {
+    const gramsValue = parseInt(cleanDigits);
+    // Must be in reasonable grams range (100g to 200kg = 200000g)
+    if (gramsValue >= 100 && gramsValue <= 200000) {
+      const weight = gramsValue / 1000;
+      console.log(`✅ DR Series parsed integer grams: ${weight} kg`);
+      return weight;
+    }
+  }
+  
+  // DO NOT fall back to arbitrary binary byte interpretation
+  // This was causing the hardcoded 212 kg issue from misinterpreted header bytes
+  
+  console.log(`⚠️ DR Series: Could not parse weight from data`);
   return null;
 };
 
@@ -1638,5 +1654,12 @@ export const printReceipt = async (data: {
   receipt += formatLine(periodLabel.padEnd(14), data.session || '', W) + '\n';
   receipt += formatLine('', formattedDate + ' ' + formattedTime, W) + '\n';
 
+  // Try Classic Bluetooth printer first (for built-in POS printers)
+  if (isClassicPrinterConnected()) {
+    console.log('🖨️ Using Classic Bluetooth printer');
+    return printToClassicPrinter(receipt);
+  }
+  
+  // Fall back to BLE printer
   return printToBluetoothPrinter(receipt);
 };

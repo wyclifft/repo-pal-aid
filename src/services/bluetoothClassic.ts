@@ -487,3 +487,202 @@ export const sendScaleCommand = async (command: string): Promise<boolean> => {
     return false;
   }
 };
+
+// ============================================================================
+// CLASSIC BLUETOOTH PRINTER SUPPORT
+// ============================================================================
+
+let classicPrinter: {
+  device: ClassicBluetoothDevice | null;
+  address: string | null;
+  isConnected: boolean;
+} = {
+  device: null,
+  address: null,
+  isConnected: false,
+};
+
+const CLASSIC_PRINTER_KEY = 'lastClassicBluetoothPrinter';
+
+/**
+ * Connect to a Classic Bluetooth printer (built-in POS printers, SPP printers)
+ */
+export const connectClassicPrinter = async (
+  device: ClassicBluetoothDevice
+): Promise<{ success: boolean; error?: string }> => {
+  if (!Capacitor.isNativePlatform()) {
+    return { 
+      success: false, 
+      error: 'Classic Bluetooth only available on native platforms' 
+    };
+  }
+
+  try {
+    console.log(`🖨️ Connecting to Classic BT printer: ${device.name} (${device.address})`);
+
+    // Disconnect any existing printer connection first
+    if (classicPrinter.isConnected) {
+      await disconnectClassicPrinter();
+    }
+
+    // Connect to device
+    const result = await BluetoothClassic.connect({ address: device.address });
+    
+    if (!result.connected) {
+      return { success: false, error: 'Failed to connect to printer' };
+    }
+
+    // Set up connection state listener
+    await BluetoothClassic.addListener('connectionStateChanged', (state) => {
+      if (!state.connected) {
+        console.log('⚠️ Classic BT printer connection lost');
+        clearClassicPrinterState();
+      }
+    });
+
+    // Update state
+    classicPrinter = {
+      device,
+      address: device.address,
+      isConnected: true,
+    };
+
+    // Save device for quick reconnect
+    localStorage.setItem(CLASSIC_PRINTER_KEY, JSON.stringify({
+      ...device,
+      timestamp: Date.now(),
+    }));
+
+    // Broadcast connection change
+    window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true, type: 'classic' } }));
+
+    console.log(`✅ Connected to Classic BT printer: ${device.name}`);
+    return { success: true };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('❌ Classic BT printer connection error:', error);
+    return { success: false, error: errorMessage };
+  }
+};
+
+/**
+ * Disconnect from Classic Bluetooth printer
+ */
+export const disconnectClassicPrinter = async (): Promise<void> => {
+  try {
+    await BluetoothClassic.disconnect();
+  } catch (error) {
+    console.warn('⚠️ Error disconnecting Classic BT printer:', error);
+  }
+  clearClassicPrinterState();
+};
+
+const clearClassicPrinterState = () => {
+  classicPrinter = {
+    device: null,
+    address: null,
+    isConnected: false,
+  };
+  window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: false, type: 'classic' } }));
+};
+
+/**
+ * Check if Classic printer is connected
+ */
+export const isClassicPrinterConnected = (): boolean => {
+  return classicPrinter.isConnected;
+};
+
+/**
+ * Get stored Classic printer device
+ */
+export const getStoredClassicPrinter = (): (ClassicBluetoothDevice & { timestamp: number }) | null => {
+  try {
+    const stored = localStorage.getItem(CLASSIC_PRINTER_KEY);
+    if (!stored) return null;
+    return JSON.parse(stored);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Quick reconnect to last used Classic printer
+ */
+export const quickReconnectClassicPrinter = async (): Promise<{ success: boolean; error?: string }> => {
+  const storedDevice = getStoredClassicPrinter();
+  if (!storedDevice) {
+    return { success: false, error: 'No stored Classic printer' };
+  }
+
+  // Check if device is still valid (within 24 hours)
+  const hoursSinceLastConnect = (Date.now() - storedDevice.timestamp) / (1000 * 60 * 60);
+  if (hoursSinceLastConnect > 24) {
+    localStorage.removeItem(CLASSIC_PRINTER_KEY);
+    return { success: false, error: 'Stored printer expired' };
+  }
+
+  return connectClassicPrinter(storedDevice);
+};
+
+/**
+ * Print data to Classic Bluetooth printer using SPP
+ */
+export const printToClassicPrinter = async (content: string): Promise<{ success: boolean; error?: string }> => {
+  if (!classicPrinter.isConnected) {
+    return { success: false, error: 'No Classic printer connected' };
+  }
+
+  try {
+    console.log('🖨️ Printing via Classic Bluetooth SPP...');
+    
+    // ESC/POS commands
+    const ESC = '\x1B';
+    const GS = '\x1D';
+    
+    // Build print data with ESC/POS commands
+    const printData = 
+      ESC + '@' +           // Initialize printer
+      ESC + 'a\x01' +       // Center alignment
+      content +
+      '\n\n\n\n\n' +        // Line feeds
+      GS + 'V\x00';         // Cut paper
+    
+    // Send data in chunks to avoid buffer overflow
+    const chunkSize = 200;
+    for (let i = 0; i < printData.length; i += chunkSize) {
+      const chunk = printData.slice(i, i + chunkSize);
+      await BluetoothClassic.write({ data: chunk });
+      // Small delay between chunks
+      if (i + chunkSize < printData.length) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+    
+    console.log('✅ Classic BT print completed');
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Print failed';
+    console.error('❌ Classic BT print error:', error);
+    return { success: false, error: errorMessage };
+  }
+};
+
+/**
+ * Get paired devices that are likely printers
+ */
+export const getPairedPrinters = async (): Promise<ClassicBluetoothDevice[]> => {
+  const devices = await getPairedDevices();
+  const printerPatterns = [
+    'PRINT', 'POS', 'THERMAL', 'RECEIPT', 'EPSON', 'STAR', 
+    'BIXOLON', 'ZEBRA', 'TSP', 'TM-', 'CS10', 'SUNMI', 'IMIN',
+    'PP-', 'RPP', 'PT-', 'MPT-', 'MP-',
+  ];
+  
+  return devices.filter(d => {
+    if (!d.name) return false;
+    const upperName = d.name.toUpperCase();
+    return printerPatterns.some(pattern => upperName.includes(pattern));
+  });
+};
