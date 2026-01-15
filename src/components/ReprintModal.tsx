@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Check, Square, CheckSquare } from 'lucide-react';
 import { printReceipt } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -11,6 +11,11 @@ interface PrintedReceipt {
   farmerName: string;
   collections: MilkCollection[];
   printedAt: Date;
+  // Extended fields for Store/AI receipts
+  type?: 'milk' | 'store' | 'ai';
+  totalAmount?: number;
+  itemCount?: number;
+  uploadrefno?: string;
 }
 
 interface ReprintModalProps {
@@ -22,13 +27,26 @@ interface ReprintModalProps {
   routeLabel?: string;
   periodLabel?: string;
   locationName?: string;
+  onDeleteReceipts?: (indices: number[]) => void;
 }
 
-const ITEMS_PER_PAGE = 4; // Reduced for better mobile visibility
+const ITEMS_PER_PAGE = 4;
 
-export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies = 1, routeLabel = 'Route', periodLabel = 'Session', locationName }: ReprintModalProps) => {
+export const ReprintModal = ({ 
+  open, 
+  onClose, 
+  receipts, 
+  companyName, 
+  printCopies = 1, 
+  routeLabel = 'Route', 
+  periodLabel = 'Session', 
+  locationName,
+  onDeleteReceipts 
+}: ReprintModalProps) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [isPrinting, setIsPrinting] = useState<string | null>(null);
+  const [isDeleteMode, setIsDeleteMode] = useState(false);
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   
   const totalPages = Math.ceil(receipts.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -37,7 +55,6 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
   const handleReprint = async (receipt: PrintedReceipt) => {
     if (receipt.collections.length === 0) return;
     
-    // If printCopies is 0, skip printing entirely
     if (printCopies === 0) {
       toast.info('Printing disabled (0 copies configured)');
       return;
@@ -55,7 +72,6 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
     }));
 
     try {
-      // Print multiple copies based on printoptions setting
       for (let copy = 0; copy < printCopies; copy++) {
         const result = await printReceipt({
           companyName: companyName,
@@ -64,7 +80,7 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
           route: firstReceipt.route,
           routeLabel: routeLabel,
           session: firstReceipt.session,
-          uploadRefNo: firstReceipt.uploadrefno || firstReceipt.reference_no,
+          uploadRefNo: receipt.uploadrefno || firstReceipt.uploadrefno || firstReceipt.reference_no,
           collectorName: firstReceipt.clerk_name,
           collections,
           locationName: locationName || firstReceipt.route,
@@ -104,11 +120,67 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   };
 
-  // Reset to first page when modal opens
+  const toggleDeleteMode = () => {
+    setIsDeleteMode(!isDeleteMode);
+    setSelectedForDelete(new Set());
+  };
+
+  const toggleSelectReceipt = (globalIndex: number) => {
+    const newSelected = new Set(selectedForDelete);
+    if (newSelected.has(globalIndex)) {
+      newSelected.delete(globalIndex);
+    } else {
+      newSelected.add(globalIndex);
+    }
+    setSelectedForDelete(newSelected);
+  };
+
+  const selectAllOnPage = () => {
+    const newSelected = new Set(selectedForDelete);
+    paginatedReceipts.forEach((_, idx) => {
+      newSelected.add(startIndex + idx);
+    });
+    setSelectedForDelete(newSelected);
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedForDelete.size === 0) {
+      toast.error('No receipts selected');
+      return;
+    }
+    
+    if (onDeleteReceipts) {
+      onDeleteReceipts(Array.from(selectedForDelete));
+      toast.success(`Deleted ${selectedForDelete.size} receipt${selectedForDelete.size !== 1 ? 's' : ''}`);
+    }
+    
+    setSelectedForDelete(new Set());
+    setIsDeleteMode(false);
+    setCurrentPage(1);
+  };
+
   const handleOpenChange = (open: boolean) => {
     if (!open) {
       setCurrentPage(1);
+      setIsDeleteMode(false);
+      setSelectedForDelete(new Set());
       onClose();
+    }
+  };
+
+  const getReceiptTypeLabel = (type?: string) => {
+    switch (type) {
+      case 'store': return '🛒 Store';
+      case 'ai': return '🤖 AI';
+      default: return '🥛 Milk';
+    }
+  };
+
+  const getReceiptTypeBg = (type?: string) => {
+    switch (type) {
+      case 'store': return 'bg-orange-50 border-orange-200';
+      case 'ai': return 'bg-purple-50 border-purple-200';
+      default: return 'bg-card';
     }
   };
 
@@ -118,13 +190,52 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
         <DialogHeader className="pb-2 flex-shrink-0">
           <DialogTitle className="text-base sm:text-lg font-semibold flex items-center justify-between">
             <span>Recent Receipts</span>
-            {receipts.length > 0 && (
-              <span className="text-xs sm:text-sm font-normal text-muted-foreground">
-                {receipts.length} total
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {receipts.length > 0 && (
+                <span className="text-xs sm:text-sm font-normal text-muted-foreground">
+                  {receipts.length} total
+                </span>
+              )}
+              {onDeleteReceipts && receipts.length > 0 && (
+                <button
+                  onClick={toggleDeleteMode}
+                  className={`p-2 rounded-md transition-colors ${
+                    isDeleteMode 
+                      ? 'bg-destructive text-destructive-foreground' 
+                      : 'hover:bg-accent'
+                  }`}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </DialogTitle>
         </DialogHeader>
+
+        {/* Delete mode toolbar */}
+        {isDeleteMode && (
+          <div className="flex items-center justify-between p-2 bg-destructive/10 rounded-lg mb-2">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={selectAllOnPage}
+                className="text-xs px-2 py-1 bg-secondary rounded hover:bg-secondary/80"
+              >
+                Select Page
+              </button>
+              <span className="text-sm text-muted-foreground">
+                {selectedForDelete.size} selected
+              </span>
+            </div>
+            <button
+              onClick={handleDeleteSelected}
+              disabled={selectedForDelete.size === 0}
+              className="px-3 py-1 bg-destructive text-destructive-foreground rounded text-sm font-medium
+                       hover:bg-destructive/90 disabled:opacity-50"
+            >
+              Delete
+            </button>
+          </div>
+        )}
 
         {/* Scrollable receipt list */}
         <div className="flex-1 overflow-y-auto min-h-0 space-y-2 sm:space-y-3 -mx-1 px-1">
@@ -133,47 +244,91 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
               No recent receipts to display
             </div>
           ) : (
-            paginatedReceipts.map((receipt, index) => (
-              <div
-                key={startIndex + index}
-                className="border rounded-lg p-3 space-y-2 bg-card active:bg-accent/50 transition-colors"
-              >
-                {/* Header: Farmer info + Weight */}
-                <div className="flex justify-between items-start gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-sm sm:text-base truncate">{receipt.farmerName}</div>
-                    <div className="text-xs sm:text-sm text-muted-foreground">{receipt.farmerId}</div>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <div className="font-bold text-base sm:text-lg">{getTotalWeight(receipt.collections).toFixed(1)} Kg</div>
-                    <div className="text-[10px] sm:text-xs text-muted-foreground">{receipt.collections.length} collections</div>
-                  </div>
-                </div>
-                
-                {/* Timestamp */}
-                <div className="flex items-center gap-1 text-[10px] sm:text-xs text-muted-foreground">
-                  <Clock className="h-3 w-3 flex-shrink-0" />
-                  <span className="truncate">{format(new Date(receipt.printedAt), 'MMM dd, HH:mm')}</span>
-                </div>
-
-                {/* Reprint Button - Touch friendly */}
-                <button
-                  onClick={() => handleReprint(receipt)}
-                  disabled={isPrinting !== null}
-                  className="w-full py-3 sm:py-2 bg-primary text-primary-foreground rounded-md font-medium 
-                           hover:bg-primary/90 active:bg-primary/80 transition-colors 
-                           flex items-center justify-center gap-2 min-h-[44px]
-                           disabled:opacity-50 disabled:cursor-not-allowed"
+            paginatedReceipts.map((receipt, index) => {
+              const globalIndex = startIndex + index;
+              const isSelected = selectedForDelete.has(globalIndex);
+              
+              return (
+                <div
+                  key={globalIndex}
+                  className={`border rounded-lg p-3 space-y-2 transition-colors ${getReceiptTypeBg(receipt.type)} ${
+                    isDeleteMode && isSelected ? 'ring-2 ring-destructive' : ''
+                  }`}
+                  onClick={isDeleteMode ? () => toggleSelectReceipt(globalIndex) : undefined}
                 >
-                  <Printer className="h-4 w-4" />
-                  {isPrinting === receipt.farmerId ? 'Printing...' : 'Reprint'}
-                </button>
-              </div>
-            ))
+                  {/* Header: Farmer info + Weight/Amount */}
+                  <div className="flex justify-between items-start gap-2">
+                    {isDeleteMode && (
+                      <div className="flex-shrink-0 pt-1">
+                        {isSelected ? (
+                          <CheckSquare className="h-5 w-5 text-destructive" />
+                        ) : (
+                          <Square className="h-5 w-5 text-muted-foreground" />
+                        )}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm sm:text-base truncate">{receipt.farmerName}</div>
+                      <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-2">
+                        <span>{receipt.farmerId}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted">
+                          {getReceiptTypeLabel(receipt.type)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      {receipt.type === 'store' || receipt.type === 'ai' ? (
+                        <>
+                          <div className="font-bold text-base sm:text-lg">
+                            KES{(receipt.totalAmount || 0).toLocaleString()}
+                          </div>
+                          <div className="text-[10px] sm:text-xs text-muted-foreground">
+                            {receipt.itemCount || receipt.collections.length} item{(receipt.itemCount || receipt.collections.length) !== 1 ? 's' : ''}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="font-bold text-base sm:text-lg">{getTotalWeight(receipt.collections).toFixed(1)} Kg</div>
+                          <div className="text-[10px] sm:text-xs text-muted-foreground">{receipt.collections.length} collections</div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Timestamp + Reference */}
+                  <div className="flex items-center justify-between text-[10px] sm:text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1">
+                      <Clock className="h-3 w-3 flex-shrink-0" />
+                      <span className="truncate">{format(new Date(receipt.printedAt), 'MMM dd, HH:mm')}</span>
+                    </div>
+                    {receipt.uploadrefno && (
+                      <span className="font-mono text-[10px] truncate max-w-[100px]">
+                        {receipt.uploadrefno}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Reprint Button - Only show when not in delete mode */}
+                  {!isDeleteMode && (
+                    <button
+                      onClick={() => handleReprint(receipt)}
+                      disabled={isPrinting !== null}
+                      className="w-full py-3 sm:py-2 bg-primary text-primary-foreground rounded-md font-medium 
+                               hover:bg-primary/90 active:bg-primary/80 transition-colors 
+                               flex items-center justify-center gap-2 min-h-[44px]
+                               disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Printer className="h-4 w-4" />
+                      {isPrinting === receipt.farmerId ? 'Printing...' : 'Reprint'}
+                    </button>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
 
-        {/* Pagination Controls - Touch friendly */}
+        {/* Pagination Controls */}
         {totalPages > 1 && (
           <div className="flex items-center justify-between pt-3 border-t flex-shrink-0">
             <button
@@ -187,7 +342,6 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
             </button>
             
             <div className="flex items-center gap-1">
-              {/* Simplified pagination for mobile - show fewer buttons */}
               {totalPages <= 5 ? (
                 Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
                   <button
@@ -204,7 +358,6 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
                   </button>
                 ))
               ) : (
-                // Compact view for many pages
                 <span className="text-sm font-medium px-2">
                   {currentPage} / {totalPages}
                 </span>
@@ -223,7 +376,7 @@ export const ReprintModal = ({ open, onClose, receipts, companyName, printCopies
           </div>
         )}
 
-        {/* Close button - Touch friendly */}
+        {/* Close button */}
         <div className="flex justify-end pt-2 flex-shrink-0">
           <button
             onClick={onClose}

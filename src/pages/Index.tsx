@@ -1014,6 +1014,11 @@ const Index = () => {
           routeLabel={routeLabel}
           periodLabel={periodLabel}
           locationName={routeName}
+          onDeleteReceipts={async (indices) => {
+            const updated = printedReceipts.filter((_, idx) => !indices.includes(idx));
+            setPrintedReceipts(updated);
+            await savePrintedReceipts(updated);
+          }}
         />
       </>
     );
@@ -1130,6 +1135,11 @@ const Index = () => {
         routeLabel={routeLabel}
         periodLabel={periodLabel}
         locationName={routeName}
+        onDeleteReceipts={async (indices) => {
+          const updated = printedReceipts.filter((_, idx) => !indices.includes(idx));
+          setPrintedReceipts(updated);
+          await savePrintedReceipts(updated);
+        }}
       />
     </>
   );
