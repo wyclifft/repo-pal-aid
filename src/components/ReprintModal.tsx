@@ -194,11 +194,11 @@ export const ReprintModal = ({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="w-[95vw] max-w-md mx-auto p-4 sm:p-6 max-h-[90vh] flex flex-col">
+      <DialogContent className="w-[95vw] max-w-md mx-auto p-4 sm:p-6 max-h-[90vh] flex flex-col" hideCloseButton>
         <DialogHeader className="pb-2 flex-shrink-0">
           <DialogTitle className="text-base sm:text-lg font-semibold flex items-center justify-between">
             <span>Recent Receipts</span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               {receipts.length > 0 && (
                 <span className="text-xs sm:text-sm font-normal text-muted-foreground">
                   {receipts.length} total
@@ -216,6 +216,12 @@ export const ReprintModal = ({
                   <Trash2 className="h-4 w-4" />
                 </button>
               )}
+              <button
+                onClick={onClose}
+                className="p-2 rounded-md hover:bg-accent transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
           </DialogTitle>
         </DialogHeader>
