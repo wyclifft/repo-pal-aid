@@ -38,10 +38,10 @@ export const useSalesSync = () => {
         synced: false,
         type: (sale as AITransaction).transtype === 3 ? 'ai' : 'sale',
       });
-      console.log(`💾 Saved offline ${(sale as AITransaction).transtype === 3 ? 'AI' : 'store'} sale`);
+      console.log(`[OFFLINE] Saved offline ${(sale as AITransaction).transtype === 3 ? 'AI' : 'store'} sale`);
       return true;
     } catch (error) {
-      console.error('Failed to save offline sale:', error);
+      console.error('[OFFLINE] Failed to save offline sale:', error);
       return false;
     }
   }, [isReady, saveSale]);
@@ -54,7 +54,7 @@ export const useSalesSync = () => {
     }
 
     if (!acquireLock()) {
-      console.log('⏸️ Sale sync locked - another sync in progress');
+      console.log('[SYNC] Sale sync locked - another sync in progress');
       return { synced: 0, failed: 0 };
     }
 
@@ -74,7 +74,7 @@ export const useSalesSync = () => {
         return { synced: 0, failed: 0 };
       }
 
-      console.log(`📤 Syncing ${pendingSales.length} pending sales/AI transactions...`);
+      console.log(`[SYNC] Syncing ${pendingSales.length} pending sales/AI transactions...`);
       const deviceFingerprint = await generateDeviceFingerprint();
 
       // Group store sales by uploadrefno for batch sync
@@ -130,7 +130,7 @@ export const useSalesSync = () => {
               }
             }
             synced += batchSales.length;
-            console.log(`✅ Synced batch: ${uploadrefno} (${batchSales.length} items)`);
+            console.log(`[SUCCESS] Synced batch: ${uploadrefno} (${batchSales.length} items)`);
           } else {
             // Check for duplicate - if so, still delete local
             const errorMsg = result.error?.toLowerCase() || '';
@@ -146,7 +146,7 @@ export const useSalesSync = () => {
             }
           }
         } catch (error: any) {
-          console.error('Batch sync error:', error);
+          console.error('[SYNC] Batch sync error:', error);
           const errorMsg = error?.message?.toLowerCase() || '';
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
             for (const sale of batchSales) {
@@ -190,12 +190,12 @@ export const useSalesSync = () => {
           if (success && saleRecord.orderId) {
             await deleteSale(saleRecord.orderId);
             synced++;
-            console.log(`✅ Synced AI: ${saleRecord.transrefno || saleRecord.orderId}`);
+            console.log(`[SUCCESS] Synced AI: ${saleRecord.transrefno || saleRecord.orderId}`);
           } else {
             failed++;
           }
         } catch (error: any) {
-          console.error('AI sync error:', error);
+          console.error('[SYNC] AI sync error:', error);
           const errorMsg = error?.message?.toLowerCase() || '';
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
             if (saleRecord.orderId) {
@@ -209,12 +209,12 @@ export const useSalesSync = () => {
       }
 
       if (synced > 0) {
-        console.log(`📊 Sales sync complete: ${synced} synced, ${failed} failed`);
+        console.log(`[SYNC] Sales sync complete: ${synced} synced, ${failed} failed`);
       }
 
       return { synced, failed };
     } catch (error) {
-      console.error('Failed to sync sales:', error);
+      console.error('[SYNC] Failed to sync sales:', error);
       return { synced: 0, failed: 0 };
     } finally {
       releaseLock();
@@ -236,7 +236,7 @@ export const useSalesSync = () => {
   useEffect(() => {
     const unregister = registerOnlineHandler(() => {
       if (mountedRef.current && isReady && navigator.onLine) {
-        console.log('📡 Online - syncing pending sales');
+        console.log('[ONLINE] Syncing pending sales');
         syncPendingSales().then(({ synced }) => {
           if (synced > 0) {
             toast.success(`Synced ${synced} offline sale${synced !== 1 ? 's' : ''}`);

@@ -9,22 +9,22 @@ let dbInstance: IDBDatabase | null = null;
 // Helper function to clear corrupted database
 const clearDatabase = async (): Promise<void> => {
   return new Promise((resolve, reject) => {
-    console.log('🗑️ Clearing corrupted database...');
+    console.log('[DB] Clearing corrupted database...');
     const deleteRequest = indexedDB.deleteDatabase(DB_NAME);
     
     deleteRequest.onsuccess = () => {
-      console.log('✅ Database cleared successfully');
+      console.log('[DB] Database cleared successfully');
       dbInstance = null;
       resolve();
     };
     
     deleteRequest.onerror = () => {
-      console.error('❌ Failed to clear database:', deleteRequest.error);
+      console.error('[DB] Failed to clear database:', deleteRequest.error);
       reject(deleteRequest.error);
     };
     
     deleteRequest.onblocked = () => {
-      console.warn('⚠️ Database deletion blocked - close all tabs');
+      console.warn('[DB] Database deletion blocked - close all tabs');
     };
   });
 };
@@ -98,14 +98,14 @@ export const useIndexedDB = () => {
       // Add device_config store for offline reference generation
       if (!database.objectStoreNames.contains('device_config')) {
         database.createObjectStore('device_config', { keyPath: 'id' });
-        console.log('✅ Created device_config store');
+        console.log('[DB] Created device_config store');
       }
 
       // Add farmer_cumulative store for offline cumulative tracking
       if (!database.objectStoreNames.contains('farmer_cumulative')) {
         const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
         cumStore.createIndex('farmer_month', ['farmer_id', 'month'], { unique: true });
-        console.log('✅ Created farmer_cumulative store');
+        console.log('[DB] Created farmer_cumulative store');
       }
     };
 
@@ -117,19 +117,19 @@ export const useIndexedDB = () => {
         if (database.objectStoreNames.contains('device_approvals')) {
           const tx = database.transaction('device_approvals', 'readonly');
           const store = tx.objectStore('device_approvals');
-          console.log('✅ device_approvals keyPath confirmed:', store.keyPath);
+          console.log('[DB] device_approvals keyPath confirmed:', store.keyPath);
           
           // Check if keyPath is correct
           if (store.keyPath !== 'device_fingerprint') {
-            console.error('❌ SCHEMA MISMATCH: keyPath is', store.keyPath, 'but should be device_fingerprint');
+            console.error('[DB] SCHEMA MISMATCH: keyPath is', store.keyPath, 'but should be device_fingerprint');
             setSchemaError(true);
             database.close();
             // Clear and recreate database
             clearDatabase().then(() => {
-              console.log('🔄 Retrying database initialization...');
+              console.log('[DB] Retrying database initialization...');
               setTimeout(() => openDatabase(), 100);
             }).catch(err => {
-              console.error('Failed to clear database:', err);
+              console.error('[DB] Failed to clear database:', err);
             });
             return;
           }
@@ -139,20 +139,20 @@ export const useIndexedDB = () => {
         setDb(database);
         setIsReady(true);
         setSchemaError(false);
-        console.log('IndexedDB ready ✅ Version:', database.version);
+        console.log('[DB] IndexedDB ready. Version:', database.version);
       } catch (error) {
-        console.error('Error during database initialization:', error);
+        console.error('[DB] Error during database initialization:', error);
         setSchemaError(true);
       }
     };
 
     request.onerror = (event) => {
-      console.error('IndexedDB error:', (event.target as IDBOpenDBRequest).error);
+      console.error('[DB] IndexedDB error:', (event.target as IDBOpenDBRequest).error);
       setSchemaError(true);
     };
 
     request.onblocked = () => {
-      console.warn('⚠️ IndexedDB upgrade blocked - close other tabs');
+      console.warn('[DB] IndexedDB upgrade blocked - close other tabs');
     };
 
     return () => {
