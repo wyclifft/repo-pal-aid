@@ -12,7 +12,7 @@ import {
 } from '@/services/bluetoothClassic';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { toast } from 'sonner';
-import { Scale, CheckCircle2, AlertCircle, Bluetooth, BluetoothSearching, List } from 'lucide-react';
+import { Scale, CheckCircle2, AlertCircle, Bluetooth, BluetoothSearching, List, Lightbulb } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import {
   Dialog,
@@ -320,10 +320,11 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
             
             {/* Connection Status */}
             <div className="text-sm text-gray-600 text-center space-y-1">
-              <p>
+              <p className="flex items-center justify-center gap-1">
                 Scale: {scaleConnected ? (
-                  <span className="text-green-600 font-medium">
-                    Connected ({scaleType}) via {connectionType === 'ble' ? 'BLE' : 'Classic BT'} ✅
+                  <span className="text-green-600 font-medium flex items-center gap-1">
+                    Connected ({scaleType}) via {connectionType === 'ble' ? 'BLE' : 'Classic BT'}
+                    <CheckCircle2 className="h-4 w-4" />
                   </span>
                 ) : (
                   'Not Connected'
@@ -331,8 +332,9 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
               </p>
               {requireStableReading && <p className="text-xs">• Stable reading required</p>}
               {isNative && (
-                <p className="text-xs text-gray-500">
-                  💡 BLE: DR Series, BTM modules | Classic BT: Paired SPP devices
+                <p className="text-xs text-gray-500 flex items-center justify-center gap-1">
+                  <Lightbulb className="h-3 w-3" />
+                  BLE: DR Series, BTM modules | Classic BT: Paired SPP devices
                 </p>
               )}
             </div>

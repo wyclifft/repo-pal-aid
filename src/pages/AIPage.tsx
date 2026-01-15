@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type Item, type Farmer, type CreditType } from '@/services/mysqlApi';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, X, CornerDownLeft, Wifi, WifiOff } from 'lucide-react';
+import { ArrowLeft, Search, X, CornerDownLeft, Wifi, WifiOff, Beef } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSalesSync } from '@/hooks/useSalesSync';
 import { useFarmerResolution } from '@/hooks/useFarmerResolution';
@@ -585,8 +585,9 @@ const AIPage = () => {
                       Qty: {cartItem.quantity} × KES{cartItem.item.sprice}
                     </p>
                     {cartItem.cowDetails?.cowName && (
-                      <p className="text-xs text-purple-600">
-                        🐄 {cartItem.cowDetails.cowName} ({cartItem.cowDetails.cowBreed || 'Unknown breed'})
+                      <p className="text-xs text-purple-600 flex items-center gap-1">
+                        <Beef className="h-3 w-3" />
+                        {cartItem.cowDetails.cowName} ({cartItem.cowDetails.cowBreed || 'Unknown breed'})
                       </p>
                     )}
                   </div>

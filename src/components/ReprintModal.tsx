@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Check, Square, CheckSquare } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Check, Square, CheckSquare, ShoppingCart, Bot, Milk } from 'lucide-react';
 import { printReceipt } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -168,11 +168,19 @@ export const ReprintModal = ({
     }
   };
 
+  const getReceiptTypeIcon = (type?: string) => {
+    switch (type) {
+      case 'store': return <ShoppingCart className="h-3 w-3" />;
+      case 'ai': return <Bot className="h-3 w-3" />;
+      default: return <Milk className="h-3 w-3" />;
+    }
+  };
+
   const getReceiptTypeLabel = (type?: string) => {
     switch (type) {
-      case 'store': return '🛒 Store';
-      case 'ai': return '🤖 AI';
-      default: return '🥛 Milk';
+      case 'store': return 'Store';
+      case 'ai': return 'AI';
+      default: return 'Milk';
     }
   };
 
@@ -271,7 +279,8 @@ export const ReprintModal = ({
                       <div className="font-semibold text-sm sm:text-base truncate">{receipt.farmerName}</div>
                       <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-2">
                         <span>{receipt.farmerId}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted flex items-center gap-1">
+                          {getReceiptTypeIcon(receipt.type)}
                           {getReceiptTypeLabel(receipt.type)}
                         </span>
                       </div>
