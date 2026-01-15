@@ -90,11 +90,10 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
       setScaleType(type);
       setScaleConnected(true);
       
-      // Also update parent via callback
-      if (weight > 0) {
-        onWeightChange(weight);
-        onEntryTypeChange('scale');
-      }
+      // Always update parent via callback when scale is connected
+      // This ensures 0.0 readings are properly reflected
+      onWeightChange(weight);
+      onEntryTypeChange('scale');
     };
     
     window.addEventListener('scaleWeightUpdate', handleWeightUpdate as EventListener);
@@ -118,6 +117,16 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     setLastRawWeight(newWeight);
     setLiveWeight(newWeight);
     if (type) setScaleType(type);
+    
+    // Always update for 0 weight to show empty scale state
+    if (newWeight === 0) {
+      onWeightChange(0);
+      onEntryTypeChange('scale');
+      setIsWaitingForStable(false);
+      setStableReadingProgress(0);
+      stableReadingsRef.current = [];
+      return;
+    }
     
     if (requireStableReading && newWeight > 0) {
       // Add to readings buffer
