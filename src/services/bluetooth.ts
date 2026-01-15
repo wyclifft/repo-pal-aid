@@ -280,8 +280,15 @@ const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null 
   // PRIORITY 1: ASCII text formats - most reliable
   // Format: "ST,GS,+  12.345kg" or "  12.345 kg" or just "12.345"
   
-  // First try to find a proper decimal weight with decimal point
-  const decimalMatch = text.match(/(\d{1,3}\.\d{1,3})/);
+  // First check for negative values - return 0 for negative readings (empty scale / tare offset)
+  const negativeMatch = text.match(/-\s*(\d{1,3}\.?\d*)/);
+  if (negativeMatch) {
+    console.log(`⚠️ DR Series: Negative weight detected (-${negativeMatch[1]}), returning 0`);
+    return 0;
+  }
+  
+  // First try to find a proper decimal weight with decimal point (positive only)
+  const decimalMatch = text.match(/\+?\s*(\d{1,3}\.\d{1,3})/);
   if (decimalMatch) {
     const weight = parseFloat(decimalMatch[1]);
     // Sanity check: realistic weight range (0.1 to 200 kg for dairy)
@@ -289,15 +296,28 @@ const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null 
       console.log(`✅ DR Series parsed decimal: ${weight} kg`);
       return weight;
     }
+    // Return 0 for values below 0.1 (essentially zero/empty)
+    if (weight >= 0 && weight < 0.1) {
+      console.log(`📊 DR Series: Near-zero weight (${weight}), returning 0`);
+      return 0;
+    }
   }
   
-  // Format with unit suffix
-  const unitMatch = text.match(/[+-]?\s*(\d+\.?\d*)\s*(kg|KG|Kg)/);
+  // Format with unit suffix - check for negative sign
+  const unitMatch = text.match(/([+-]?)\s*(\d+\.?\d*)\s*(kg|KG|Kg)/);
   if (unitMatch) {
-    const weight = parseFloat(unitMatch[1]);
+    const isNegative = unitMatch[1] === '-';
+    if (isNegative) {
+      console.log(`⚠️ DR Series: Negative weight with unit detected, returning 0`);
+      return 0;
+    }
+    const weight = parseFloat(unitMatch[2]);
     if (weight >= 0.1 && weight <= 200) {
       console.log(`✅ DR Series parsed with unit: ${weight} kg`);
       return weight;
+    }
+    if (weight >= 0 && weight < 0.1) {
+      return 0;
     }
   }
   
@@ -676,8 +696,17 @@ export const connectBluetoothScale = async (
             }
           }
           
-          // Strategy 1: Standard decimal format "12.34" or "12.34 kg"
-          const decimalMatch = text.match(/(\d+\.\d+)/);
+          // Check for negative values first - return 0 for negative readings
+          const negativeMatch = text.match(/-\s*(\d+\.?\d*)/);
+          if (negativeMatch) {
+            console.log(`⚠️ Negative weight detected (-${negativeMatch[1]}), returning 0`);
+            broadcastScaleWeightUpdate(0, scaleType);
+            onWeightUpdate(0, scaleType);
+            return;
+          }
+          
+          // Strategy 1: Standard decimal format "12.34" or "12.34 kg" (positive only)
+          const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
           if (decimalMatch) {
             parsed = parseFloat(decimalMatch[1]);
           }
