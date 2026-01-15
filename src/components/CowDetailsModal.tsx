@@ -52,7 +52,7 @@ export const CowDetailsModal = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="sm:max-w-md mx-4 p-0 rounded-xl overflow-hidden">
+      <DialogContent className="sm:max-w-md mx-4 p-0 rounded-xl overflow-hidden" hideCloseButton>
         <DialogHeader className="flex flex-row items-center justify-between p-4 bg-white border-b">
           <div>
             <DialogTitle className="text-xl font-semibold">Add Cow Details</DialogTitle>

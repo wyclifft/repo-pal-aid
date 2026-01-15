@@ -750,7 +750,7 @@ const Store = () => {
 
       {/* Farmer Search Modal */}
       <Dialog open={showFarmerSearch} onOpenChange={setShowFarmerSearch}>
-        <DialogContent className="sm:max-w-md p-0">
+        <DialogContent className="sm:max-w-md p-0" hideCloseButton>
           <DialogHeader className="px-4 py-3 border-b flex flex-row items-center justify-between">
             <DialogTitle>SEARCH MEMBER</DialogTitle>
             <button onClick={() => setShowFarmerSearch(false)} className="p-2 bg-[#E53935] text-white rounded">
@@ -793,7 +793,7 @@ const Store = () => {
 
       {/* Item Search Modal */}
       <Dialog open={showItemSearch} onOpenChange={setShowItemSearch}>
-        <DialogContent className="sm:max-w-md p-0">
+        <DialogContent className="sm:max-w-md p-0" hideCloseButton>
           <DialogHeader className="px-4 py-3 border-b flex flex-row items-center justify-between">
             <DialogTitle>SEARCH ITEM</DialogTitle>
             <button onClick={() => setShowItemSearch(false)} className="p-2 bg-[#E53935] text-white rounded">
@@ -833,7 +833,7 @@ const Store = () => {
 
       {/* View More Modal - Credit Balance */}
       <Dialog open={showViewMore} onOpenChange={setShowViewMore}>
-        <DialogContent className="sm:max-w-md p-0">
+        <DialogContent className="sm:max-w-md p-0" hideCloseButton>
           <DialogHeader className="px-4 py-3 border-b flex flex-row items-center justify-between bg-[#5E35B1] text-white">
             <DialogTitle className="text-white">{isMemberMode ? 'MEMBER' : 'DEBTOR'} DETAILS</DialogTitle>
             <button onClick={() => setShowViewMore(false)} className="p-2 bg-[#E53935] text-white rounded">
