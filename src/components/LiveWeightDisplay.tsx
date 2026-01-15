@@ -54,7 +54,7 @@ export const LiveWeightDisplay = ({
         <span className={`text-2xl sm:text-3xl font-bold ${
           scaleConnected ? 'text-green-700' : 'text-gray-400'
         }`}>
-          {scaleConnected && displayWeight > 0 ? displayWeight.toFixed(1) : '--'}
+          {scaleConnected ? displayWeight.toFixed(1) : '--'}
         </span>
         {scaleConnected ? (
           <span className="text-xs text-green-600 mt-1 flex items-center gap-1">
