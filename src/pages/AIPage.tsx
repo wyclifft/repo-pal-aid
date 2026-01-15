@@ -617,24 +617,24 @@ const AIPage = () => {
 
       {/* Farmer Search Dialog */}
       <Dialog open={showFarmerSearch} onOpenChange={setShowFarmerSearch}>
-        <DialogContent className="sm:max-w-md mx-4 max-h-[80vh] flex flex-col">
+        <DialogContent className="sm:max-w-md mx-4 max-h-[80vh] flex flex-col" hideCloseButton>
           <DialogHeader className="flex flex-row items-center gap-2 pb-2">
             <DialogTitle>Search {isMemberMode ? 'Member' : 'Debtor'}</DialogTitle>
             <DialogDescription className="sr-only">
               Search and select a {isMemberMode ? 'member' : 'debtor'} for this AI service transaction
             </DialogDescription>
+            <button onClick={() => setShowFarmerSearch(false)} className="ml-auto p-2 bg-[#E53935] text-white rounded">
+              <X className="h-4 w-4" />
+            </button>
           </DialogHeader>
-          <div className="flex gap-2 mb-3">
+          <div className="mb-3">
             <input
               type="text"
               placeholder="Search by ID or name..."
               value={farmerSearchQuery}
               onChange={(e) => setFarmerSearchQuery(e.target.value)}
-              className="flex-1 px-3 py-2 border rounded-lg"
+              className="w-full px-3 py-2 border rounded-lg"
             />
-            <button onClick={() => setShowFarmerSearch(false)} className="p-2 bg-[#E53935] text-white rounded">
-              <X className="h-4 w-4" />
-            </button>
           </div>
           <div className="flex-1 overflow-y-auto divide-y max-h-[50vh]">
             {filteredFarmers.map((f) => (
@@ -661,7 +661,7 @@ const AIPage = () => {
 
       {/* Item Search Dialog */}
       <Dialog open={showItemSearch} onOpenChange={setShowItemSearch}>
-        <DialogContent className="sm:max-w-md mx-4 max-h-[80vh] flex flex-col">
+        <DialogContent className="sm:max-w-md mx-4 max-h-[80vh] flex flex-col" hideCloseButton>
           <DialogHeader className="flex flex-row items-center gap-2 pb-2">
             <DialogTitle>Select AI Service</DialogTitle>
             <DialogDescription className="sr-only">

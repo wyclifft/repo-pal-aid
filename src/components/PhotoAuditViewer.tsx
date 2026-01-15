@@ -110,7 +110,7 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
     <>
       {/* Main Photo List Dialog */}
       <Dialog open={open && !selectedPhoto} onOpenChange={(isOpen) => !isOpen && onClose()}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] p-0 overflow-hidden">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] p-0 overflow-hidden" hideCloseButton>
           <DialogHeader className="px-4 py-3 border-b bg-[#5E35B1] text-white flex flex-row items-center justify-between">
             <DialogTitle className="text-white flex items-center gap-2">
               <Image className="h-5 w-5" />
@@ -251,7 +251,7 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
 
       {/* Photo Detail Dialog */}
       <Dialog open={!!selectedPhoto} onOpenChange={(isOpen) => !isOpen && setSelectedPhoto(null)}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] p-0 overflow-hidden">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] p-0 overflow-hidden" hideCloseButton>
           <DialogHeader className="px-4 py-3 border-b bg-[#5E35B1] text-white flex flex-row items-center justify-between">
             <DialogTitle className="text-white text-sm truncate flex-1">
               {selectedPhoto?.transrefno || 'Photo Details'}

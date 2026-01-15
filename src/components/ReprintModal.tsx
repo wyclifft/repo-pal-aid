@@ -385,18 +385,6 @@ export const ReprintModal = ({
           </div>
         )}
 
-        {/* Close button */}
-        <div className="flex justify-end pt-2 flex-shrink-0">
-          <button
-            onClick={onClose}
-            className="px-5 py-3 bg-secondary text-secondary-foreground rounded-md font-medium 
-                     hover:bg-secondary/80 active:bg-secondary/70 transition-colors 
-                     flex items-center gap-2 min-h-[44px]"
-          >
-            <X className="h-4 w-4" />
-            Close
-          </button>
-        </div>
       </DialogContent>
     </Dialog>
   );
