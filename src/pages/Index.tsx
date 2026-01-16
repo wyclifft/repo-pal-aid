@@ -38,6 +38,21 @@ const Index = () => {
     farmerName: string;
     collections: MilkCollection[];
     printedAt: Date;
+    type?: 'milk' | 'store' | 'ai';
+    totalAmount?: number;
+    itemCount?: number;
+    uploadrefno?: string;
+    items?: Array<{
+      item_code: string;
+      item_name: string;
+      quantity: number;
+      price: number;
+      lineTotal: number;
+      cowDetails?: any;
+    }>;
+    clerkName?: string;
+    memberRoute?: string;
+    transactionDate?: Date;
   }>>([]);
 
   // Helper function to save receipt for reprinting - used by handleSubmit
@@ -53,7 +68,7 @@ const Index = () => {
     );
     
     if (existingReceipt) {
-      console.log('⚠️ Receipt already saved, skipping duplicate');
+      console.log('[SKIP] Receipt already saved, skipping duplicate');
       return false;
     }
     
@@ -61,7 +76,8 @@ const Index = () => {
       farmerId: collections[0].farmer_id,
       farmerName: collections[0].farmer_name,
       collections: [...collections],
-      printedAt: new Date()
+      printedAt: new Date(),
+      type: 'milk' as const
     };
     
     const updatedReceipts = [newPrintedReceipt, ...printedReceipts];
@@ -69,7 +85,7 @@ const Index = () => {
     
     try {
       await savePrintedReceipts(updatedReceipts);
-      console.log('✅ Receipt saved for reprinting (total:', updatedReceipts.length, ')');
+      console.log('[SUCCESS] Receipt saved for reprinting (total:', updatedReceipts.length, ')');
       return true;
     } catch (error) {
       console.error('Failed to save receipt for reprinting:', error);

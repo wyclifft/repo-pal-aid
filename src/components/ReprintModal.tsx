@@ -2,11 +2,22 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { MilkCollection } from '@/lib/supabase';
 import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Check, Square, CheckSquare, ShoppingCart, Bot, Milk } from 'lucide-react';
-import { printReceipt } from '@/services/bluetooth';
+import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import type { CowDetails } from '@/components/CowDetailsModal';
 
-interface PrintedReceipt {
+// Store/AI item interface for reprinting
+export interface ReprintItem {
+  item_code: string;
+  item_name: string;
+  quantity: number;
+  price: number;
+  lineTotal: number;
+  cowDetails?: CowDetails;
+}
+
+export interface PrintedReceipt {
   farmerId: string;
   farmerName: string;
   collections: MilkCollection[];
@@ -16,6 +27,11 @@ interface PrintedReceipt {
   totalAmount?: number;
   itemCount?: number;
   uploadrefno?: string;
+  // Store/AI specific fields for reprinting
+  items?: ReprintItem[];
+  clerkName?: string;
+  memberRoute?: string;
+  transactionDate?: Date;
 }
 
 interface ReprintModalProps {
@@ -53,7 +69,15 @@ export const ReprintModal = ({
   const paginatedReceipts = receipts.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
   const handleReprint = async (receipt: PrintedReceipt) => {
-    if (receipt.collections.length === 0) return;
+    // For Store/AI receipts, check items; for milk, check collections
+    const hasData = (receipt.type === 'store' || receipt.type === 'ai') 
+      ? (receipt.items && receipt.items.length > 0)
+      : (receipt.collections && receipt.collections.length > 0);
+    
+    if (!hasData) {
+      toast.error('No data available to reprint');
+      return;
+    }
     
     if (printCopies === 0) {
       toast.info('Printing disabled (0 copies configured)');
@@ -62,46 +86,86 @@ export const ReprintModal = ({
     
     setIsPrinting(receipt.farmerId);
 
-    const firstReceipt = receipt.collections[0];
-    const collectionDateTime = new Date(firstReceipt.collection_date);
-    
-    const collections = receipt.collections.map((r, index) => ({
-      index: index + 1,
-      weight: r.weight,
-      transrefno: r.reference_no
-    }));
-
     try {
-      for (let copy = 0; copy < printCopies; copy++) {
-        const result = await printReceipt({
-          companyName: companyName,
-          farmerName: firstReceipt.farmer_name,
-          farmerId: firstReceipt.farmer_id,
-          route: firstReceipt.route,
-          routeLabel: routeLabel,
-          session: firstReceipt.session,
-          uploadRefNo: receipt.uploadrefno || firstReceipt.uploadrefno || firstReceipt.reference_no,
-          collectorName: firstReceipt.clerk_name,
-          collections,
-          locationName: locationName || firstReceipt.route,
-          collectionDate: collectionDateTime
-        });
-
-        if (!result.success) {
-          if (result.error?.includes('No printer connected')) {
-            toast.info('No Bluetooth printer connected. Opening browser print...');
-            window.print();
-            break;
-          } else {
-            toast.error(result.error || 'Failed to reprint receipt');
-            break;
-          }
-        } else if (copy === printCopies - 1) {
-          toast.success(`Receipt reprinted (${printCopies} ${printCopies === 1 ? 'copy' : 'copies'})`);
-        }
+      // Handle Store/AI receipts differently
+      if ((receipt.type === 'store' || receipt.type === 'ai') && receipt.items) {
+        const transactionDate = receipt.transactionDate 
+          ? new Date(receipt.transactionDate) 
+          : new Date(receipt.printedAt);
         
-        if (copy < printCopies - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+        for (let copy = 0; copy < printCopies; copy++) {
+          const result = await printStoreAIReceipt({
+            companyName: companyName,
+            memberName: receipt.farmerName,
+            memberId: receipt.farmerId,
+            memberRoute: receipt.memberRoute,
+            uploadRefNo: receipt.uploadrefno || '',
+            clerkName: receipt.clerkName || 'Unknown',
+            items: receipt.items,
+            totalAmount: receipt.totalAmount || 0,
+            transactionDate,
+            receiptType: receipt.type as 'store' | 'ai'
+          });
+
+          if (!result.success) {
+            if (result.error?.includes('No printer connected')) {
+              toast.info('No Bluetooth printer connected. Opening browser print...');
+              window.print();
+              break;
+            } else {
+              toast.error(result.error || 'Failed to reprint receipt');
+              break;
+            }
+          } else if (copy === printCopies - 1) {
+            toast.success(`Receipt reprinted (${printCopies} ${printCopies === 1 ? 'copy' : 'copies'})`);
+          }
+          
+          if (copy < printCopies - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+      } else {
+        // Original milk receipt handling
+        const firstReceipt = receipt.collections[0];
+        const collectionDateTime = new Date(firstReceipt.collection_date);
+        
+        const collections = receipt.collections.map((r, index) => ({
+          index: index + 1,
+          weight: r.weight,
+          transrefno: r.reference_no
+        }));
+
+        for (let copy = 0; copy < printCopies; copy++) {
+          const result = await printReceipt({
+            companyName: companyName,
+            farmerName: firstReceipt.farmer_name,
+            farmerId: firstReceipt.farmer_id,
+            route: firstReceipt.route,
+            routeLabel: routeLabel,
+            session: firstReceipt.session,
+            uploadRefNo: receipt.uploadrefno || firstReceipt.uploadrefno || firstReceipt.reference_no,
+            collectorName: firstReceipt.clerk_name,
+            collections,
+            locationName: locationName || firstReceipt.route,
+            collectionDate: collectionDateTime
+          });
+
+          if (!result.success) {
+            if (result.error?.includes('No printer connected')) {
+              toast.info('No Bluetooth printer connected. Opening browser print...');
+              window.print();
+              break;
+            } else {
+              toast.error(result.error || 'Failed to reprint receipt');
+              break;
+            }
+          } else if (copy === printCopies - 1) {
+            toast.success(`Receipt reprinted (${printCopies} ${printCopies === 1 ? 'copy' : 'copies'})`);
+          }
+          
+          if (copy < printCopies - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
         }
       }
     } catch (error) {
