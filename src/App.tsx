@@ -5,6 +5,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ReprintProvider } from "@/contexts/ReprintContext";
 import { SplashScreen } from "@/components/SplashScreen";
 import { useDataSync } from "@/hooks/useDataSync";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
@@ -304,9 +305,11 @@ const App = () => {
       }}
     >
       <AuthProvider>
-        <Toaster />
-        <Sonner position="top-center" richColors closeButton />
-        <AppContent />
+        <ReprintProvider>
+          <Toaster />
+          <Sonner position="top-center" richColors closeButton />
+          <AppContent />
+        </ReprintProvider>
       </AuthProvider>
     </PersistQueryClientProvider>
   );

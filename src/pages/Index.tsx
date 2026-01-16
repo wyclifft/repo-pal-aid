@@ -8,6 +8,7 @@ import { ReceiptModal } from '@/components/ReceiptModal';
 import { ReprintModal } from '@/components/ReprintModal';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { useReprint } from '@/contexts/ReprintContext';
 import { type AppUser, type Farmer, type MilkCollection, getCaptureMode } from '@/lib/supabase';
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { mysqlApi } from '@/services/mysqlApi';
@@ -31,68 +32,9 @@ const Index = () => {
     return localStorage.getItem('device_company_name') || 'DAIRY COLLECTION';
   });
 
-  // Reprint receipts state
+  // Reprint receipts state - now from shared context
   const [reprintModalOpen, setReprintModalOpen] = useState(false);
-  const [printedReceipts, setPrintedReceipts] = useState<Array<{
-    farmerId: string;
-    farmerName: string;
-    collections: MilkCollection[];
-    printedAt: Date;
-    type?: 'milk' | 'store' | 'ai';
-    totalAmount?: number;
-    itemCount?: number;
-    uploadrefno?: string;
-    items?: Array<{
-      item_code: string;
-      item_name: string;
-      quantity: number;
-      price: number;
-      lineTotal: number;
-      cowDetails?: any;
-    }>;
-    clerkName?: string;
-    memberRoute?: string;
-    transactionDate?: Date;
-  }>>([]);
-
-  // Helper function to save receipt for reprinting - used by handleSubmit
-  // Returns true if saved, false if duplicate
-  const saveReceiptForReprinting = async (collections: MilkCollection[]): Promise<boolean> => {
-    if (collections.length === 0) return false;
-    
-    // Check for duplicate - don't save if same farmer and same collections already exist
-    const existingReceipt = printedReceipts.find(r => 
-      r.farmerId === collections[0].farmer_id &&
-      r.collections.length === collections.length &&
-      r.collections.every((c, i) => c.reference_no === collections[i].reference_no)
-    );
-    
-    if (existingReceipt) {
-      console.log('[SKIP] Receipt already saved, skipping duplicate');
-      return false;
-    }
-    
-    const newPrintedReceipt = {
-      farmerId: collections[0].farmer_id,
-      farmerName: collections[0].farmer_name,
-      collections: [...collections],
-      printedAt: new Date(),
-      type: 'milk' as const
-    };
-    
-    const updatedReceipts = [newPrintedReceipt, ...printedReceipts];
-    setPrintedReceipts(updatedReceipts);
-    
-    try {
-      await savePrintedReceipts(updatedReceipts);
-      console.log('[SUCCESS] Receipt saved for reprinting (total:', updatedReceipts.length, ')');
-      return true;
-    } catch (error) {
-      console.error('Failed to save receipt for reprinting:', error);
-      return false;
-    }
-  };
-  
+  const { printedReceipts, addMilkReceipt, deleteReceipts } = useReprint();
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null); // Full farmer object with multOpt
@@ -213,25 +155,8 @@ const Index = () => {
     }
   }, [activeSession?.descript, clearBlacklist]);
 
-  // Load printed receipts from IndexedDB on mount and filter out old ones
-  useEffect(() => {
-    if (!isReady) return;
-    
-    const loadPrintedReceipts = async () => {
-      try {
-        const cached = await getPrintedReceipts();
-        if (cached && cached.length > 0) {
-          // Load ALL receipts - no time limit, keep them all for reprinting
-          setPrintedReceipts(cached);
-          console.log(`📦 Loaded ${cached.length} receipts from cache for reprinting`);
-        }
-      } catch (error) {
-        console.error('Failed to load printed receipts:', error);
-      }
-    };
-    
-    loadPrintedReceipts();
-  }, [isReady, getPrintedReceipts]);
+  // NOTE: Printed receipts are now loaded from ReprintContext, no need to load here
+  // The ReprintProvider handles loading from IndexedDB
 
   // Reset lastSavedWeight when weight is 0 (ready for next collection) - applies to both scale and manual entry
   useEffect(() => {
@@ -722,7 +647,7 @@ const Index = () => {
 
     // Save receipt for reprinting IMMEDIATELY after submission (before modal opens)
     // This ensures receipt is saved even if user closes modal without clicking Print
-    await saveReceiptForReprinting(capturedCollections);
+    await addMilkReceipt(capturedCollections);
     
     const shouldShowCumulativeForFarmer =
       showCumulative && Number(selectedFarmer?.currqty) === 1;
@@ -1030,10 +955,8 @@ const Index = () => {
           routeLabel={routeLabel}
           periodLabel={periodLabel}
           locationName={routeName}
-          onDeleteReceipts={async (indices) => {
-            const updated = printedReceipts.filter((_, idx) => !indices.includes(idx));
-            setPrintedReceipts(updated);
-            await savePrintedReceipts(updated);
+          onDeleteReceipts={(indices) => {
+            deleteReceipts(indices);
           }}
         />
       </>
@@ -1151,10 +1074,8 @@ const Index = () => {
         routeLabel={routeLabel}
         periodLabel={periodLabel}
         locationName={routeName}
-        onDeleteReceipts={async (indices) => {
-          const updated = printedReceipts.filter((_, idx) => !indices.includes(idx));
-          setPrintedReceipts(updated);
-          await savePrintedReceipts(updated);
+        onDeleteReceipts={(indices) => {
+          deleteReceipts(indices);
         }}
       />
     </>

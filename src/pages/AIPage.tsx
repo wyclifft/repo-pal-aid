@@ -15,6 +15,8 @@ import { CowDetailsModal, type CowDetails } from '@/components/CowDetailsModal';
 import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createAIReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
+import { useReprint } from '@/contexts/ReprintContext';
+import type { ReprintItem } from '@/components/ReprintModal';
 
 interface CartItem {
   item: Item;
@@ -68,6 +70,7 @@ const AIPage = () => {
 
   const { getFarmers, getItems, isReady } = useIndexedDB();
   const { saveOfflineSale, syncPendingSales } = useSalesSync();
+  const { addAIReceipt } = useReprint();
   
   // Online status tracking
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -407,6 +410,27 @@ const AIPage = () => {
       );
       setReceiptData(receipt);
       setShowReceipt(true);
+
+      // Save receipt for reprinting with full item details including cow details
+      const reprintItems: ReprintItem[] = cart.map(c => ({
+        item_code: c.item.icode,
+        item_name: c.item.descript,
+        quantity: c.quantity,
+        price: c.item.sprice,
+        lineTotal: c.lineTotal,
+        cowDetails: c.cowDetails,
+      }));
+
+      await addAIReceipt({
+        farmerId: selectedFarmer.farmer_id,
+        farmerName: selectedFarmer.name,
+        memberRoute: selectedFarmer.route,
+        clerkName: clerkName,
+        uploadrefno: refs.uploadrefno,
+        items: reprintItems,
+        totalAmount: cartTotal,
+        transactionDate: new Date(),
+      });
 
       const statusMsg = navigator.onLine ? '' : ' (saved offline)';
       toast.success(`AI Service completed${statusMsg}: KES${cartTotal.toFixed(0)} [${refs.transrefno}]`);

@@ -16,6 +16,8 @@ import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
 import PhotoAuditViewer from '@/components/PhotoAuditViewer';
+import { useReprint } from '@/contexts/ReprintContext';
+import type { ReprintItem } from '@/components/ReprintModal';
 
 interface CartItem {
   item: Item;
@@ -91,6 +93,7 @@ const Store = () => {
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
 
   const { getFarmers, saveSale, getUnsyncedSales, deleteSale, getItems, isReady } = useIndexedDB();
+  const { addStoreReceipt } = useReprint();
 
   // Check authentication
   useEffect(() => {
@@ -533,6 +536,26 @@ const Store = () => {
       );
       setReceiptData(receipt);
       setShowReceipt(true);
+
+      // Save receipt for reprinting with full item details
+      const reprintItems: ReprintItem[] = cart.map(c => ({
+        item_code: c.item.icode,
+        item_name: c.item.descript,
+        quantity: c.quantity,
+        price: c.item.sprice,
+        lineTotal: c.lineTotal,
+      }));
+
+      await addStoreReceipt({
+        farmerId: selectedFarmer.farmer_id,
+        farmerName: selectedFarmer.name,
+        memberRoute: selectedFarmer.route,
+        clerkName: currentUser?.user_id || 'Unknown',
+        uploadrefno: refs.uploadrefno,
+        items: reprintItems,
+        totalAmount: cartTotal,
+        transactionDate: new Date(),
+      });
 
       toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.uploadrefno}]`);
       setCart([]);
