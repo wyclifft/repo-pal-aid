@@ -1692,3 +1692,118 @@ export const printReceipt = async (data: {
   // Fall back to BLE printer
   return printToBluetoothPrinter(receipt);
 };
+
+// Store/AI Receipt Item interface for reprinting
+interface StoreAIReceiptItem {
+  item_code: string;
+  item_name: string;
+  quantity: number;
+  price: number;
+  lineTotal: number;
+  cowDetails?: {
+    cowName?: string;
+    cowBreed?: string;
+    numberOfCalves?: number | string;
+    otherDetails?: string;
+  };
+}
+
+// Print Store/AI receipt with full item details
+export const printStoreAIReceipt = async (data: {
+  companyName?: string;
+  memberName: string;
+  memberId: string;
+  memberRoute?: string;
+  uploadRefNo?: string;
+  clerkName: string;
+  items: StoreAIReceiptItem[];
+  totalAmount: number;
+  transactionDate?: Date;
+  receiptType: 'store' | 'ai';
+}): Promise<{ success: boolean; error?: string }> => {
+  const companyName = data.companyName || 'DAIRY COLLECTION';
+  
+  const dateObj = data.transactionDate || new Date();
+  const formattedDate = dateObj.toLocaleDateString('en-CA');
+  const formattedTime = dateObj.toLocaleTimeString('en-GB', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    second: '2-digit'
+  });
+
+  // 58mm thermal paper = 32 characters per line
+  const W = 32;
+  const sep = '-'.repeat(W);
+
+  // Build items text
+  let itemsText = '';
+  data.items.forEach((item, index) => {
+    // Truncate item name to fit
+    const displayName = item.item_name.length > 16 
+      ? item.item_name.substring(0, 14) + '..' 
+      : item.item_name;
+    const qty = `x${item.quantity}`;
+    const amount = `${item.lineTotal.toFixed(0)}`;
+    
+    // Format: "ItemName x2    500"
+    const leftPart = `${displayName} ${qty}`;
+    const spaces = W - leftPart.length - amount.length;
+    itemsText += leftPart + ' '.repeat(Math.max(1, spaces)) + amount + '\n';
+    
+    // For AI receipts, add cow details if present
+    if (data.receiptType === 'ai' && item.cowDetails) {
+      const cd = item.cowDetails;
+      if (cd.cowName) {
+        itemsText += `  Cow: ${cd.cowName.substring(0, W - 7)}\n`;
+      }
+      if (cd.cowBreed) {
+        itemsText += `  Breed: ${cd.cowBreed.substring(0, W - 9)}\n`;
+      }
+      if (cd.numberOfCalves) {
+        itemsText += `  Calves: ${cd.numberOfCalves}\n`;
+      }
+      if (cd.otherDetails) {
+        itemsText += `  Notes: ${cd.otherDetails.substring(0, W - 9)}\n`;
+      }
+    }
+  });
+
+  const receiptTitle = data.receiptType === 'store' 
+    ? 'STORE PURCHASE RECEIPT' 
+    : 'AI SERVICE RECEIPT';
+
+  let receipt = '';
+  
+  receipt += centerText(companyName, W) + '\n';
+  receipt += centerText(receiptTitle, W) + '\n';
+  receipt += '\n';
+  
+  receipt += formatLine('Member NO     ', '#' + data.memberId, W) + '\n';
+  receipt += formatLine('Member Name   ', data.memberName, W) + '\n';
+  receipt += formatLine('Reference NO  ', data.uploadRefNo || '', W) + '\n';
+  receipt += formatLine('Date          ', formattedDate + ' ' + formattedTime, W) + '\n';
+  receipt += '\n';
+  
+  receipt += sep + '\n';
+  receipt += itemsText;
+  receipt += sep + '\n';
+  
+  const totalStr = data.totalAmount.toFixed(0);
+  receipt += formatLine('Total [KES]   ', totalStr, W) + '\n';
+  receipt += '\n';
+  
+  if (data.memberRoute) {
+    receipt += formatLine('Member Region ', data.memberRoute, W) + '\n';
+  }
+  receipt += formatLine('Clerk Name    ', data.clerkName, W) + '\n';
+  receipt += formatLine('', formattedDate + ' ' + formattedTime, W) + '\n';
+
+  // Try Classic Bluetooth printer first (for built-in POS printers)
+  if (isClassicPrinterConnected()) {
+    console.log('[PRINT] Using Classic Bluetooth printer for Store/AI receipt');
+    return printToClassicPrinter(receipt);
+  }
+  
+  // Fall back to BLE printer
+  return printToBluetoothPrinter(receipt);
+};
