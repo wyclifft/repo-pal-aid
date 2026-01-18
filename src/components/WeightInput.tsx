@@ -142,21 +142,29 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
     stableReadingsRef.current = [];
     setStableReadingProgress(0);
     
-    const result = await connectBluetoothScale(handleScaleReading);
+    try {
+      const result = await connectBluetoothScale(handleScaleReading);
 
-    if (result.success) {
-      setScaleConnected(true);
-      setScaleType(result.type);
-      setConnectionType('ble');
-      
-      // Start stable reading timeout if enabled
-      if (requireStableReading) {
-        stableTimeoutRef.current = setTimeout(() => {
-          if (isWaitingForStable) {
-            // Silent - no toast notification
-          }
-        }, STABLE_READING_TIMEOUT);
+      if (result.success) {
+        setScaleConnected(true);
+        setScaleType(result.type);
+        setConnectionType('ble');
+        toast.success(`Scale connected: ${result.type}`);
+        
+        // Start stable reading timeout if enabled
+        if (requireStableReading) {
+          stableTimeoutRef.current = setTimeout(() => {
+            if (isWaitingForStable) {
+              toast.warning('Waiting for stable reading - keep container still');
+            }
+          }, STABLE_READING_TIMEOUT);
+        }
+      } else {
+        toast.error(result.error || 'Failed to connect to scale');
       }
+    } catch (error) {
+      console.error('BLE connection error:', error);
+      toast.error('Connection failed. Please try again.');
     }
     setIsConnecting(false);
   };
@@ -185,20 +193,28 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
     stableReadingsRef.current = [];
     setStableReadingProgress(0);
 
-    const result = await connectClassicScale(device, handleClassicWeightUpdate);
+    try {
+      const result = await connectClassicScale(device, handleClassicWeightUpdate);
 
-    if (result.success) {
-      setScaleConnected(true);
-      setScaleType('Classic-SPP');
-      setConnectionType('classic-spp');
-      
-      if (requireStableReading) {
-        stableTimeoutRef.current = setTimeout(() => {
-          if (isWaitingForStable) {
-            // Silent - no toast notification
-          }
-        }, STABLE_READING_TIMEOUT);
+      if (result.success) {
+        setScaleConnected(true);
+        setScaleType('Classic-SPP');
+        setConnectionType('classic-spp');
+        toast.success(`Connected to ${device.name}`);
+        
+        if (requireStableReading) {
+          stableTimeoutRef.current = setTimeout(() => {
+            if (isWaitingForStable) {
+              toast.warning('Waiting for stable reading - keep container still');
+            }
+          }, STABLE_READING_TIMEOUT);
+        }
+      } else {
+        toast.error(result.error || 'Failed to connect to Classic BT device');
       }
+    } catch (error) {
+      console.error('Classic BT connection error:', error);
+      toast.error('Classic BT connection failed. Ensure device is paired.');
     }
     
     setIsConnecting(false);
