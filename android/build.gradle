@@ -22,31 +22,34 @@ apply from: "variables.gradle"
 // Some Capacitor-generated configs may request Java 21; this override keeps builds
 // compatible on machines that only have JDK 17 installed.
 subprojects { subProj ->
+    // Force Java 17 across all Android modules (including Capacitor libraries).
+    // Some dependencies (notably Capacitor) ship with Java 21 compileOptions; we override
+    // them *after evaluation* so our Java 17 settings win.
+
+    // 1) Ensure JavaCompile tasks use 17
     subProj.tasks.withType(JavaCompile).configureEach {
         sourceCompatibility = JavaVersion.VERSION_17.toString()
         targetCompatibility = JavaVersion.VERSION_17.toString()
     }
 
+    // 2) Ensure Kotlin compiles to JVM 17
     subProj.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
         kotlinOptions {
             jvmTarget = '17'
         }
     }
 
-    // Override compileOptions for all Android library/application plugins
-    subProj.plugins.withId('com.android.library') {
-        subProj.android {
-            compileOptions {
-                sourceCompatibility JavaVersion.VERSION_17
-                targetCompatibility JavaVersion.VERSION_17
-            }
-        }
-    }
-    subProj.plugins.withId('com.android.application') {
-        subProj.android {
-            compileOptions {
-                sourceCompatibility JavaVersion.VERSION_17
-                targetCompatibility JavaVersion.VERSION_17
+    // 3) Override Android compileOptions AFTER the module's own build.gradle runs
+    subProj.afterEvaluate {
+        def hasAndroidLib = subProj.plugins.hasPlugin('com.android.library')
+        def hasAndroidApp = subProj.plugins.hasPlugin('com.android.application')
+
+        if (hasAndroidLib || hasAndroidApp) {
+            subProj.android {
+                compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
+                }
             }
         }
     }
