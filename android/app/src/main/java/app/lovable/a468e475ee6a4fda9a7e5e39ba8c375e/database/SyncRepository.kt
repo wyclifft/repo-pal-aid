@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 class SyncRepository private constructor(context: Context) {
     
     companion object {
-        private const val TAG = "SyncRepository"
+        internal const val TAG = "SyncRepository"
         
         @Volatile
         private var INSTANCE: SyncRepository? = null
@@ -28,7 +28,7 @@ class SyncRepository private constructor(context: Context) {
     
     private val database = DelicoopDatabase.getInstance(context)
     private val dao = database.syncRecordDao()
-    private val gson: Gson = GsonBuilder()
+    internal val gson: Gson = GsonBuilder()
         .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ")
         .create()
     
@@ -210,7 +210,7 @@ class SyncRepository private constructor(context: Context) {
     /**
      * Parse payload JSON to a specific type
      */
-    inline fun <reified T> parsePayload(record: SyncRecord): T? {
+    internal inline fun <reified T> parsePayload(record: SyncRecord): T? {
         return try {
             gson.fromJson(record.payload, T::class.java)
         } catch (e: Exception) {
