@@ -18,6 +18,24 @@ buildscript {
 
 apply from: "variables.gradle"
 
+// Force Java 17 across all Android modules (including Capacitor libraries).
+// Some Capacitor-generated configs may request Java 21; this override keeps builds
+// compatible on machines that only have JDK 17 installed.
+subprojects { subProj ->
+    subProj.tasks.withType(JavaCompile).configureEach {
+        sourceCompatibility = JavaVersion.VERSION_17.toString()
+        targetCompatibility = JavaVersion.VERSION_17.toString()
+        // Ensure "--release" doesn't stay at 21
+        options.release.set(17)
+    }
+
+    subProj.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions {
+            jvmTarget = '17'
+        }
+    }
+}
+
 allprojects {
     repositories {
         google()
