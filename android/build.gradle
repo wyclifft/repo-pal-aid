@@ -32,6 +32,24 @@ subprojects { subProj ->
             jvmTarget = '17'
         }
     }
+
+    // Override compileOptions for all Android library/application plugins
+    subProj.plugins.withId('com.android.library') {
+        subProj.android {
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+        }
+    }
+    subProj.plugins.withId('com.android.application') {
+        subProj.android {
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+        }
+    }
 }
 
 allprojects {
