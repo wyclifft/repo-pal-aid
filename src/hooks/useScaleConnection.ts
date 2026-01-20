@@ -218,11 +218,28 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
           }, STABLE_READING_TIMEOUT);
         }
       } else {
-        toast.error(result.error || 'Failed to connect to scale');
+        // Provide helpful error message with suggestion
+        const errorMsg = result.error || 'Failed to connect to scale';
+        if (errorMsg.includes('notification') || errorMsg.includes('CCCD')) {
+          toast.error('Scale notification setup failed. Try Classic Bluetooth from Settings.');
+        } else {
+          toast.error(errorMsg);
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('BLE connection error:', error);
-      toast.error('Connection failed. Please try again.');
+      const errorMsg = error?.message || String(error);
+      
+      // Provide actionable error messages
+      if (errorMsg.includes('notification') || errorMsg.includes('CCCD') || errorMsg.includes('Settings')) {
+        toast.error('BLE notification failed. Try using Classic Bluetooth connection instead.', {
+          duration: 5000,
+        });
+      } else if (errorMsg.includes('cancelled') || errorMsg.includes('canceled')) {
+        // User cancelled - no toast needed
+      } else {
+        toast.error('Connection failed. Please try again.');
+      }
     }
     setIsConnecting(false);
   }, [handleScaleReading, requireStableReading, isWaitingForStable, requestPermissions]);

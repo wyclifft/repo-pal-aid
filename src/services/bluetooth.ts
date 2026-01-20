@@ -673,85 +673,175 @@ export const connectBluetoothScale = async (
       }
 
       console.log(`📡 Starting notifications on ${serviceUuid}/${characteristicUuid}`);
-
-      await BleClient.startNotifications(
-        device.deviceId,
-        serviceUuid,
-        characteristicUuid,
-        (value) => {
-          const rawBytes = new Uint8Array(value.buffer);
-          const text = new TextDecoder().decode(value);
-          console.log(`📊 Raw scale data: "${text}" (${rawBytes.length} bytes) [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
-          
-          let parsed: number | null = null;
-          
-          // Use specialized parser for BTM Series or DR Series scales
-          if (scaleType === 'BTM-Series' || scaleType === 'DR-Series' || isBTMScale || isDRScale) {
-            parsed = parseDRSeriesWeight(rawBytes, text);
-            if (parsed !== null) {
-              console.log(`✅ ${scaleType} weight: ${parsed} kg`);
-              broadcastScaleWeightUpdate(parsed, scaleType);
-              onWeightUpdate(parsed, scaleType);
-              return;
-            }
-          }
-          
-          // Check for negative values first - return 0 for negative readings
-          const negativeMatch = text.match(/-\s*(\d+\.?\d*)/);
-          if (negativeMatch) {
-            console.log(`⚠️ Negative weight detected (-${negativeMatch[1]}), returning 0`);
-            broadcastScaleWeightUpdate(0, scaleType);
-            onWeightUpdate(0, scaleType);
-            return;
-          }
-          
-          // Strategy 1: Standard decimal format "12.34" or "12.34 kg" (positive only)
-          const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
-          if (decimalMatch) {
-            parsed = parseFloat(decimalMatch[1]);
-          }
-          
-          // Strategy 2: Integer format (grams) - convert to kg
-          if (!parsed || isNaN(parsed)) {
-            const intMatch = text.match(/(\d+)/);
-            if (intMatch) {
-              const intValue = parseInt(intMatch[1]);
-              // If value > 100, assume grams and convert to kg
-              parsed = intValue > 100 ? intValue / 1000 : intValue;
-            }
-          }
-          
-          // Strategy 3: T-Scale DR format - may send binary with weight in specific bytes
-          if (!parsed || isNaN(parsed)) {
-            if (rawBytes.length >= 6) {
-              // Some scales send weight as 2-byte integer at offset 4-5 (big endian)
-              const weightInt = (rawBytes[4] << 8) | rawBytes[5];
-              if (weightInt > 0 && weightInt < 50000) {
-                parsed = weightInt / 100; // Assume centgrams
-                console.log(`📊 Parsed from binary format: ${parsed} kg`);
-              }
-            }
-          }
-          
-          // Strategy 4: Try parsing from hex representation (some Chinese scales)
-          if (!parsed || isNaN(parsed)) {
-            const hexWeight = text.replace(/[^0-9A-Fa-f]/g, '');
-            if (hexWeight.length >= 4) {
-              const hexValue = parseInt(hexWeight.slice(0, 4), 16);
-              if (hexValue > 0 && hexValue < 50000) {
-                parsed = hexValue / 100;
-                console.log(`📊 Parsed from hex format: ${parsed} kg`);
-              }
-            }
-          }
-          
-          if (parsed && !isNaN(parsed) && parsed > 0 && parsed < 1000) {
-            console.log(`✅ Parsed weight: ${parsed} kg`);
+      
+      // Helper function to handle weight data
+      const handleWeightData = (value: DataView) => {
+        const rawBytes = new Uint8Array(value.buffer);
+        const text = new TextDecoder().decode(value);
+        console.log(`📊 Raw scale data: "${text}" (${rawBytes.length} bytes) [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
+        
+        let parsed: number | null = null;
+        
+        // Use specialized parser for BTM Series or DR Series scales
+        if (scaleType === 'BTM-Series' || scaleType === 'DR-Series' || isBTMScale || isDRScale) {
+          parsed = parseDRSeriesWeight(rawBytes, text);
+          if (parsed !== null) {
+            console.log(`✅ ${scaleType} weight: ${parsed} kg`);
             broadcastScaleWeightUpdate(parsed, scaleType);
             onWeightUpdate(parsed, scaleType);
+            return;
           }
         }
-      );
+        
+        // Check for negative values first - return 0 for negative readings
+        const negativeMatch = text.match(/-\s*(\d+\.?\d*)/);
+        if (negativeMatch) {
+          console.log(`⚠️ Negative weight detected (-${negativeMatch[1]}), returning 0`);
+          broadcastScaleWeightUpdate(0, scaleType);
+          onWeightUpdate(0, scaleType);
+          return;
+        }
+        
+        // Strategy 1: Standard decimal format "12.34" or "12.34 kg" (positive only)
+        const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
+        if (decimalMatch) {
+          parsed = parseFloat(decimalMatch[1]);
+        }
+        
+        // Strategy 2: Integer format (grams) - convert to kg
+        if (!parsed || isNaN(parsed)) {
+          const intMatch = text.match(/(\d+)/);
+          if (intMatch) {
+            const intValue = parseInt(intMatch[1]);
+            // If value > 100, assume grams and convert to kg
+            parsed = intValue > 100 ? intValue / 1000 : intValue;
+          }
+        }
+        
+        // Strategy 3: T-Scale DR format - may send binary with weight in specific bytes
+        if (!parsed || isNaN(parsed)) {
+          if (rawBytes.length >= 6) {
+            // Some scales send weight as 2-byte integer at offset 4-5 (big endian)
+            const weightInt = (rawBytes[4] << 8) | rawBytes[5];
+            if (weightInt > 0 && weightInt < 50000) {
+              parsed = weightInt / 100; // Assume centgrams
+              console.log(`📊 Parsed from binary format: ${parsed} kg`);
+            }
+          }
+        }
+        
+        // Strategy 4: Try parsing from hex representation (some Chinese scales)
+        if (!parsed || isNaN(parsed)) {
+          const hexWeight = text.replace(/[^0-9A-Fa-f]/g, '');
+          if (hexWeight.length >= 4) {
+            const hexValue = parseInt(hexWeight.slice(0, 4), 16);
+            if (hexValue > 0 && hexValue < 50000) {
+              parsed = hexValue / 100;
+              console.log(`📊 Parsed from hex format: ${parsed} kg`);
+            }
+          }
+        }
+        
+        if (parsed && !isNaN(parsed) && parsed > 0 && parsed < 1000) {
+          console.log(`✅ Parsed weight: ${parsed} kg`);
+          broadcastScaleWeightUpdate(parsed, scaleType);
+          onWeightUpdate(parsed, scaleType);
+        }
+      };
+
+      // Add a small delay before enabling notifications - some scales need settling time
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Try to enable notifications with retry and fallback logic
+      let notificationStarted = false;
+      let lastError: Error | null = null;
+      
+      // Find both notify and indicate characteristics for fallback
+      const targetService = services.find(s => s.uuid.toLowerCase() === serviceUuid.toLowerCase());
+      const notifyChars = targetService?.characteristics.filter(c => c.properties.notify) || [];
+      const indicateChars = targetService?.characteristics.filter(c => c.properties.indicate) || [];
+      
+      // Build list of characteristics to try: selected first, then other notify, then indicate
+      const charsToTry: Array<{uuid: string, useIndicate: boolean}> = [];
+      charsToTry.push({ uuid: characteristicUuid, useIndicate: false });
+      
+      for (const char of notifyChars) {
+        if (char.uuid !== characteristicUuid) {
+          charsToTry.push({ uuid: char.uuid, useIndicate: false });
+        }
+      }
+      for (const char of indicateChars) {
+        charsToTry.push({ uuid: char.uuid, useIndicate: true });
+      }
+      
+      console.log(`🔍 Will try ${charsToTry.length} characteristic(s) for notifications`);
+      
+      for (const charAttempt of charsToTry) {
+        if (notificationStarted) break;
+        
+        try {
+          console.log(`📡 Attempting ${charAttempt.useIndicate ? 'indications' : 'notifications'} on ${charAttempt.uuid}...`);
+          
+          // Some scales need a "start" command written before they send data
+          // Try writing common start commands (ignore failures - most chars are read-only)
+          const writeChar = targetService?.characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse);
+          if (writeChar) {
+            try {
+              // Common "start sending" commands used by various scales
+              const startCommands = [
+                new Uint8Array([0x01]),           // Simple start
+                new Uint8Array([0x53]),           // 'S' character
+                new Uint8Array([0x52]),           // 'R' for read
+                new Uint8Array([0x00, 0x01]),     // Two-byte start
+              ];
+              
+              for (const cmd of startCommands) {
+                try {
+                  await BleClient.write(
+                    device.deviceId,
+                    serviceUuid,
+                    writeChar.uuid,
+                    new DataView(cmd.buffer),
+                    { timeout: 500 }
+                  );
+                  console.log(`📤 Sent start command to ${writeChar.uuid}`);
+                  break; // One successful write is enough
+                } catch {
+                  // Ignore individual command failures
+                }
+              }
+            } catch (writeErr) {
+              console.log('ℹ️ No writable characteristic or write failed (normal for most scales)');
+            }
+          }
+          
+          await BleClient.startNotifications(
+            device.deviceId,
+            serviceUuid,
+            charAttempt.uuid,
+            handleWeightData
+          );
+          
+          characteristicUuid = charAttempt.uuid;
+          notificationStarted = true;
+          console.log(`✅ ${charAttempt.useIndicate ? 'Indications' : 'Notifications'} started successfully on ${charAttempt.uuid}`);
+          
+        } catch (err: any) {
+          lastError = err;
+          const errorMsg = err?.message || String(err);
+          console.warn(`⚠️ Failed to start on ${charAttempt.uuid}: ${errorMsg}`);
+          
+          // Small delay before trying next characteristic
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      
+      if (!notificationStarted) {
+        console.error('❌ Failed to start notifications on any characteristic');
+        console.log('💡 Tip: If BLE fails, try Classic Bluetooth connection from Settings');
+        await BleClient.disconnect(device.deviceId);
+        throw new Error(`Failed to enable scale notifications: ${lastError?.message || 'CCCD write failed'}. Try Classic Bluetooth instead.`);
+      }
 
       // Update scale state
       scale = { 
@@ -933,36 +1023,94 @@ export const quickReconnect = async (
         }
 
         serviceUuid = service.uuid;
-        const notifyChar = service.characteristics.find(c => c.properties.notify);
-        characteristicUuid = notifyChar?.uuid || service.characteristics[0].uuid;
-
-        await BleClient.startNotifications(
-          deviceId,
-          serviceUuid,
-          characteristicUuid,
-          (value) => {
-            const text = new TextDecoder().decode(value);
-            let parsed: number | null = null;
-            
+        
+        // Helper for weight parsing
+        const handleReconnectWeight = (value: DataView) => {
+          const rawBytes = new Uint8Array(value.buffer);
+          const text = new TextDecoder().decode(value);
+          console.log(`📊 Reconnect data: "${text}" (${rawBytes.length} bytes)`);
+          
+          let parsed: number | null = null;
+          
+          // Try DR/BTM parser first
+          parsed = parseDRSeriesWeight(rawBytes, text);
+          
+          if (!parsed) {
             const decimalMatch = text.match(/(\d+\.\d+)/);
             if (decimalMatch) {
               parsed = parseFloat(decimalMatch[1]);
             }
-            
-            if (!parsed || isNaN(parsed)) {
-              const intMatch = text.match(/(\d+)/);
-              if (intMatch) {
-                const intValue = parseInt(intMatch[1]);
-                parsed = intValue > 1000 ? intValue / 1000 : intValue;
-              }
-            }
-            
-            if (parsed && !isNaN(parsed) && parsed > 0) {
-              broadcastScaleWeightUpdate(parsed, scaleType);
-              onWeightUpdate(parsed, scaleType);
+          }
+          
+          if (!parsed || isNaN(parsed)) {
+            const intMatch = text.match(/(\d+)/);
+            if (intMatch) {
+              const intValue = parseInt(intMatch[1]);
+              parsed = intValue > 1000 ? intValue / 1000 : intValue;
             }
           }
-        );
+          
+          if (parsed && !isNaN(parsed) && parsed > 0) {
+            broadcastScaleWeightUpdate(parsed, scaleType);
+            onWeightUpdate(parsed, scaleType);
+          }
+        };
+
+        // Build list of characteristics to try with fallback
+        const notifyChars = service.characteristics.filter(c => c.properties.notify);
+        const indicateChars = service.characteristics.filter(c => c.properties.indicate);
+        const charsToTry: string[] = [];
+        
+        // Add notify chars first
+        for (const char of notifyChars) {
+          charsToTry.push(char.uuid);
+        }
+        // Then indicate chars
+        for (const char of indicateChars) {
+          if (!charsToTry.includes(char.uuid)) {
+            charsToTry.push(char.uuid);
+          }
+        }
+        // Fallback to first characteristic
+        if (charsToTry.length === 0 && service.characteristics.length > 0) {
+          charsToTry.push(service.characteristics[0].uuid);
+        }
+        
+        console.log(`🔍 Reconnect: trying ${charsToTry.length} characteristic(s)`);
+        
+        let notificationStarted = false;
+        let lastError: Error | null = null;
+        
+        // Add settling delay
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        for (const charUuid of charsToTry) {
+          if (notificationStarted) break;
+          
+          try {
+            console.log(`📡 Reconnect: trying notifications on ${charUuid}...`);
+            
+            await BleClient.startNotifications(
+              deviceId,
+              serviceUuid,
+              charUuid,
+              handleReconnectWeight
+            );
+            
+            characteristicUuid = charUuid;
+            notificationStarted = true;
+            console.log(`✅ Reconnect: notifications started on ${charUuid}`);
+            
+          } catch (err: any) {
+            lastError = err;
+            console.warn(`⚠️ Reconnect: failed on ${charUuid}: ${err?.message || err}`);
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+        
+        if (!notificationStarted) {
+          throw new Error(`Reconnect notification failed: ${lastError?.message || 'CCCD write failed'}`);
+        }
 
         scale = { 
           device: { deviceId } as BleDevice, 
