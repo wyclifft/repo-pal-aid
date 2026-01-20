@@ -215,6 +215,20 @@ export const parseSerialWeightData = (data: string): number | null => {
   // Clean the data
   const cleanData = data.trim().replace(/[\x00-\x1F\x7F]/g, '');
   
+  // Check for negative values - return 0
+  const negativeMatch = cleanData.match(/-\s*(\d+\.?\d*)/);
+  if (negativeMatch) {
+    console.log(`⚠️ Negative weight detected, returning 0`);
+    return 0;
+  }
+  
+  // Check for zero first
+  const zeroMatch = cleanData.match(/^\s*\+?\s*0+\.?0*\s*(kg|g|lb|oz)?\s*$/i);
+  if (zeroMatch) {
+    console.log(`✅ Parsed weight (zero): 0 kg`);
+    return 0;
+  }
+  
   // Strategy 1: Standard weight format like "ST,GS,+  12.345kg" or "12.345 kg"
   const standardMatch = cleanData.match(/[+-]?\s*(\d+\.?\d*)\s*(kg|g|lb|oz)?/i);
   if (standardMatch) {
@@ -225,7 +239,7 @@ export const parseSerialWeightData = (data: string): number | null => {
     else if (unit === 'lb') weight = weight * 0.453592;
     else if (unit === 'oz') weight = weight * 0.0283495;
     
-    if (weight > 0 && weight < 1000) {
+    if (weight >= 0 && weight < 1000) {
       console.log(`✅ Parsed weight (standard): ${weight.toFixed(3)} kg`);
       return weight;
     }
@@ -235,7 +249,7 @@ export const parseSerialWeightData = (data: string): number | null => {
   const decimalMatch = cleanData.match(/(\d+\.\d{1,4})/);
   if (decimalMatch) {
     const weight = parseFloat(decimalMatch[1]);
-    if (weight > 0 && weight < 500) {
+    if (weight >= 0 && weight < 500) {
       console.log(`✅ Parsed weight (decimal): ${weight.toFixed(3)} kg`);
       return weight;
     }
@@ -245,7 +259,7 @@ export const parseSerialWeightData = (data: string): number | null => {
   const intMatch = cleanData.replace(/[^0-9]/g, '');
   if (intMatch.length >= 3) {
     const intValue = parseInt(intMatch);
-    if (intValue > 100 && intValue < 500000) {
+    if (intValue >= 0 && intValue < 500000) {
       const weight = intValue / 1000;
       console.log(`✅ Parsed weight (grams): ${weight.toFixed(3)} kg`);
       return weight;
