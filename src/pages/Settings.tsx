@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
 import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2 } from "lucide-react";
+import { BluetoothDebugPanel } from "@/components/BluetoothDebugPanel";
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -657,6 +658,9 @@ Date: ${new Date().toLocaleString()}
             </p>
           </CardContent>
         </Card>
+
+        {/* Bluetooth Debug Panel */}
+        <BluetoothDebugPanel />
 
         <Card>
           <CardHeader>
