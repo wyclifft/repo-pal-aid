@@ -702,50 +702,65 @@ export const connectBluetoothScale = async (
           return;
         }
         
-        // Strategy 1: Standard decimal format "12.34" or "12.34 kg" (positive only)
+        // Strategy 1: Standard decimal format "12.34" or "12.34 kg" or "+12.34" (positive only)
         const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
         if (decimalMatch) {
           parsed = parseFloat(decimalMatch[1]);
+          console.log(`📊 Strategy 1 (decimal): ${parsed} kg`);
         }
         
-        // Strategy 2: Integer format (grams) - convert to kg
-        if (!parsed || isNaN(parsed)) {
+        // Strategy 2: Try matching "0.0" or "0" explicitly (zero readings)
+        if (parsed === null || isNaN(parsed)) {
+          const zeroMatch = text.match(/^\s*\+?\s*0+\.?0*\s*$/);
+          if (zeroMatch) {
+            parsed = 0;
+            console.log(`📊 Strategy 2 (zero match): 0 kg`);
+          }
+        }
+        
+        // Strategy 3: Integer format - could be kg or grams
+        if (parsed === null || isNaN(parsed)) {
           const intMatch = text.match(/(\d+)/);
           if (intMatch) {
             const intValue = parseInt(intMatch[1]);
             // If value > 100, assume grams and convert to kg
             parsed = intValue > 100 ? intValue / 1000 : intValue;
+            console.log(`📊 Strategy 3 (integer ${intValue}): ${parsed} kg`);
           }
         }
         
-        // Strategy 3: T-Scale DR format - may send binary with weight in specific bytes
-        if (!parsed || isNaN(parsed)) {
+        // Strategy 4: T-Scale DR format - binary with weight in specific bytes
+        if (parsed === null || isNaN(parsed)) {
           if (rawBytes.length >= 6) {
             // Some scales send weight as 2-byte integer at offset 4-5 (big endian)
             const weightInt = (rawBytes[4] << 8) | rawBytes[5];
-            if (weightInt > 0 && weightInt < 50000) {
+            if (weightInt >= 0 && weightInt < 50000) {
               parsed = weightInt / 100; // Assume centgrams
-              console.log(`📊 Parsed from binary format: ${parsed} kg`);
+              console.log(`📊 Strategy 4 (binary format): ${parsed} kg`);
             }
           }
         }
         
-        // Strategy 4: Try parsing from hex representation (some Chinese scales)
-        if (!parsed || isNaN(parsed)) {
+        // Strategy 5: Try parsing from hex representation (some Chinese scales)
+        if (parsed === null || isNaN(parsed)) {
           const hexWeight = text.replace(/[^0-9A-Fa-f]/g, '');
           if (hexWeight.length >= 4) {
             const hexValue = parseInt(hexWeight.slice(0, 4), 16);
-            if (hexValue > 0 && hexValue < 50000) {
+            if (hexValue >= 0 && hexValue < 50000) {
               parsed = hexValue / 100;
-              console.log(`📊 Parsed from hex format: ${parsed} kg`);
+              console.log(`📊 Strategy 5 (hex format): ${parsed} kg`);
             }
           }
         }
         
-        if (parsed && !isNaN(parsed) && parsed > 0 && parsed < 1000) {
-          console.log(`✅ Parsed weight: ${parsed} kg`);
+        // Broadcast if we have a valid weight (including 0)
+        if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
+          console.log(`✅ Broadcasting weight: ${parsed} kg from ${scaleType}`);
           broadcastScaleWeightUpdate(parsed, scaleType);
           onWeightUpdate(parsed, scaleType);
+        } else {
+          // Log unparseable data for debugging
+          console.warn(`⚠️ Could not parse weight from: "${text}" (hex: ${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')})`);
         }
       };
 
@@ -1024,35 +1039,65 @@ export const quickReconnect = async (
 
         serviceUuid = service.uuid;
         
-        // Helper for weight parsing
+        // Helper for weight parsing - mirrors main connection logic
         const handleReconnectWeight = (value: DataView) => {
           const rawBytes = new Uint8Array(value.buffer);
           const text = new TextDecoder().decode(value);
-          console.log(`📊 Reconnect data: "${text}" (${rawBytes.length} bytes)`);
+          console.log(`📊 Reconnect data: "${text}" (${rawBytes.length} bytes) [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
           
           let parsed: number | null = null;
           
+          // Check for negative values first - return 0 for negative readings
+          const negativeMatch = text.match(/-\s*(\d+\.?\d*)/);
+          if (negativeMatch) {
+            console.log(`⚠️ Negative weight detected, returning 0`);
+            broadcastScaleWeightUpdate(0, scaleType);
+            onWeightUpdate(0, scaleType);
+            return;
+          }
+          
           // Try DR/BTM parser first
           parsed = parseDRSeriesWeight(rawBytes, text);
+          if (parsed !== null) {
+            console.log(`✅ Reconnect DR/BTM parsed: ${parsed} kg`);
+            broadcastScaleWeightUpdate(parsed, scaleType);
+            onWeightUpdate(parsed, scaleType);
+            return;
+          }
           
-          if (!parsed) {
-            const decimalMatch = text.match(/(\d+\.\d+)/);
-            if (decimalMatch) {
-              parsed = parseFloat(decimalMatch[1]);
+          // Strategy 1: Standard decimal format
+          const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
+          if (decimalMatch) {
+            parsed = parseFloat(decimalMatch[1]);
+            console.log(`📊 Reconnect decimal: ${parsed} kg`);
+          }
+          
+          // Strategy 2: Zero match
+          if (parsed === null || isNaN(parsed)) {
+            const zeroMatch = text.match(/^\s*\+?\s*0+\.?0*\s*$/);
+            if (zeroMatch) {
+              parsed = 0;
+              console.log(`📊 Reconnect zero match: 0 kg`);
             }
           }
           
-          if (!parsed || isNaN(parsed)) {
+          // Strategy 3: Integer
+          if (parsed === null || isNaN(parsed)) {
             const intMatch = text.match(/(\d+)/);
             if (intMatch) {
               const intValue = parseInt(intMatch[1]);
               parsed = intValue > 1000 ? intValue / 1000 : intValue;
+              console.log(`📊 Reconnect integer: ${parsed} kg`);
             }
           }
           
-          if (parsed && !isNaN(parsed) && parsed > 0) {
+          // Broadcast if valid (including 0)
+          if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
+            console.log(`✅ Reconnect broadcasting: ${parsed} kg`);
             broadcastScaleWeightUpdate(parsed, scaleType);
             onWeightUpdate(parsed, scaleType);
+          } else {
+            console.warn(`⚠️ Reconnect: could not parse "${text}"`);
           }
         };
 
