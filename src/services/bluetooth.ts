@@ -405,6 +405,7 @@ export const broadcastScaleConnectionChange = (connected: boolean) => {
 
 // Broadcast weight update events - allows any component to receive live weight
 export const broadcastScaleWeightUpdate = (weight: number, scaleType: ScaleType) => {
+  console.log(`📡 Broadcasting weight update: ${weight} kg from ${scaleType}`);
   window.dispatchEvent(new CustomEvent('scaleWeightUpdate', { detail: { weight, scaleType } }));
 };
 
