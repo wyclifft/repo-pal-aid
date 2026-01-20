@@ -414,6 +414,137 @@ export const broadcastPrinterConnectionChange = (connected: boolean) => {
   window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected } }));
 };
 
+// Force re-subscribe to BLE notifications on current scale connection
+// Use when weight data stops flowing but scale still shows connected
+export const resubscribeScaleNotifications = async (
+  onWeightUpdate: (weight: number, scaleType: ScaleType) => void
+): Promise<{ success: boolean; error?: string }> => {
+  if (!scale.deviceId || !scale.isConnected || scale.connectionType !== 'ble') {
+    console.warn('⚠️ Cannot resubscribe: no BLE scale connected');
+    return { success: false, error: 'No BLE scale connected' };
+  }
+  
+  if (!Capacitor.isNativePlatform()) {
+    console.warn('⚠️ Resubscribe only supported on native platform');
+    return { success: false, error: 'Not supported on web' };
+  }
+  
+  console.log('🔄 Force re-subscribing to scale notifications...');
+  const deviceId = scale.deviceId;
+  const scaleType = scale.type;
+  
+  try {
+    // Stop existing notifications first
+    if (scale.serviceUuid && scale.characteristic) {
+      try {
+        await BleClient.stopNotifications(deviceId, scale.serviceUuid, scale.characteristic);
+        console.log('⏹️ Stopped existing notifications');
+      } catch (e) {
+        console.warn('⚠️ Could not stop existing notifications:', e);
+      }
+    }
+    
+    // Small delay for hardware reset
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    // Re-discover services
+    const services = await BleClient.getServices(deviceId);
+    console.log(`📋 Rediscovered ${services.length} services`);
+    
+    // Find notify/indicate characteristics
+    let serviceUuid = '';
+    let characteristicUuid = '';
+    
+    for (const service of services) {
+      if (service.uuid.toLowerCase().includes('1800') || 
+          service.uuid.toLowerCase().includes('1801') ||
+          service.uuid.toLowerCase().includes('180a')) {
+        continue;
+      }
+      
+      const notifyChar = service.characteristics.find(c => c.properties.notify);
+      const indicateChar = service.characteristics.find(c => c.properties.indicate);
+      
+      if (notifyChar) {
+        serviceUuid = service.uuid;
+        characteristicUuid = notifyChar.uuid;
+        break;
+      }
+      if (indicateChar && !serviceUuid) {
+        serviceUuid = service.uuid;
+        characteristicUuid = indicateChar.uuid;
+      }
+    }
+    
+    if (!serviceUuid || !characteristicUuid) {
+      throw new Error('No notify characteristic found');
+    }
+    
+    // Create weight handler
+    const handleResubscribeWeight = (value: DataView) => {
+      const rawBytes = new Uint8Array(value.buffer);
+      const text = new TextDecoder().decode(value);
+      console.log(`📊 Resubscribe data: "${text}"`);
+      
+      // Parse weight
+      let parsed: number | null = null;
+      
+      // Use DR/BTM parser
+      parsed = parseDRSeriesWeight(rawBytes, text);
+      
+      if (parsed === null) {
+        // Standard decimal format
+        const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
+        if (decimalMatch) {
+          parsed = parseFloat(decimalMatch[1]);
+        }
+      }
+      
+      if (parsed === null) {
+        // Zero match
+        const zeroMatch = text.match(/^\s*\+?\s*0+\.?0*\s*$/);
+        if (zeroMatch) parsed = 0;
+      }
+      
+      if (parsed === null) {
+        // Integer
+        const intMatch = text.match(/(\d+)/);
+        if (intMatch) {
+          const intValue = parseInt(intMatch[1]);
+          parsed = intValue > 1000 ? intValue / 1000 : intValue;
+        }
+      }
+      
+      if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
+        console.log(`✅ Resubscribe weight: ${parsed} kg`);
+        broadcastScaleWeightUpdate(parsed, scaleType);
+        try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
+      }
+    };
+    
+    // Start notifications
+    await BleClient.startNotifications(
+      deviceId,
+      serviceUuid,
+      characteristicUuid,
+      handleResubscribeWeight
+    );
+    
+    // Update scale state
+    scale.serviceUuid = serviceUuid;
+    scale.characteristic = characteristicUuid;
+    
+    console.log('✅ Successfully re-subscribed to notifications');
+    broadcastScaleConnectionChange(true);
+    
+    return { success: true };
+    
+  } catch (error: any) {
+    console.error('❌ Resubscribe failed:', error);
+    return { success: false, error: error?.message || 'Resubscribe failed' };
+  }
+};
+
 // Verify if scale is actually connected by checking BLE state
 // Uses debouncing to prevent Android Bluetooth stack issues from frequent calls
 export const verifyScaleConnection = async (): Promise<boolean> => {
