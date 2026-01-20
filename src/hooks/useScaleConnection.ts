@@ -109,21 +109,23 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   useEffect(() => {
     const handleWeightUpdate = (e: CustomEvent<{ weight: number; scaleType: ScaleType }>) => {
       const { weight, scaleType: type } = e.detail;
-      console.log(`🎯 useScaleConnection received weight: ${weight} kg from ${type}`);
+      console.log(`🎯 useScaleConnection received scaleWeightUpdate event: ${weight} kg from ${type}`);
       setLiveWeight(weight);
       setScaleType(type);
       setScaleConnected(true);
       
       // Always update parent via callback when scale is connected
       // Use refs to avoid stale closures
+      console.log(`🎯 useScaleConnection calling onWeightChangeRef.current(${weight})`);
       onWeightChangeRef.current(weight);
       onEntryTypeChangeRef.current('scale');
     };
     
     window.addEventListener('scaleWeightUpdate', handleWeightUpdate as EventListener);
-    console.log('📡 useScaleConnection: listening for scaleWeightUpdate events');
+    console.log('📡 useScaleConnection: Now listening for scaleWeightUpdate events');
     
     return () => {
+      console.log('📡 useScaleConnection: Removed scaleWeightUpdate listener');
       window.removeEventListener('scaleWeightUpdate', handleWeightUpdate as EventListener);
     };
   }, []); // Empty deps - handlers use refs
