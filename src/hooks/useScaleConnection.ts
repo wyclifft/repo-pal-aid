@@ -11,6 +11,7 @@ import {
   quickReconnect, 
   getStoredDeviceInfo,
   isScaleConnected,
+  resubscribeScaleNotifications,
   type ScaleType 
 } from '@/services/bluetooth';
 import {
@@ -343,6 +344,27 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     }
   }, [handleScaleReading, scaleConnected]);
 
+  // Force re-subscribe to BLE notifications (when weight stops flowing)
+  const forceResubscribe = useCallback(async () => {
+    if (!scaleConnected || connectionType !== 'ble') {
+      toast.error('No BLE scale connected');
+      return;
+    }
+    
+    setIsConnecting(true);
+    toast.info('Re-subscribing to scale notifications...');
+    
+    const result = await resubscribeScaleNotifications(handleScaleReading);
+    
+    setIsConnecting(false);
+    
+    if (result.success) {
+      toast.success('Notifications restored');
+    } else {
+      toast.error(result.error || 'Resubscribe failed');
+    }
+  }, [scaleConnected, connectionType, handleScaleReading]);
+
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
@@ -378,6 +400,7 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     showPairedDevicesDialog,
     connectClassicDevice,
     autoReconnect,
+    forceResubscribe,
     requestPermissions,
   };
 };
