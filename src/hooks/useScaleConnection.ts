@@ -34,11 +34,25 @@ interface UseScaleConnectionOptions {
 }
 
 export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseScaleConnectionOptions) => {
-  const [scaleConnected, setScaleConnected] = useState(() => isScaleConnected());
+  // Initialize from actual bluetooth state - recheck on each render to catch late connections
+  const [scaleConnected, setScaleConnected] = useState(() => {
+    const connected = isScaleConnected();
+    console.log(`🔌 useScaleConnection init: scaleConnected=${connected}`);
+    return connected;
+  });
   const [scaleType, setScaleType] = useState<ScaleType>('Unknown');
   const [connectionType, setConnectionType] = useState<'ble' | 'classic-spp'>('ble');
   const [isConnecting, setIsConnecting] = useState(false);
   const [liveWeight, setLiveWeight] = useState(0);
+  
+  // Re-sync connection state on mount in case scale was connected elsewhere
+  useEffect(() => {
+    const currentlyConnected = isScaleConnected();
+    console.log(`🔄 useScaleConnection mount check: scaleConnected=${currentlyConnected}`);
+    if (currentlyConnected !== scaleConnected) {
+      setScaleConnected(currentlyConnected);
+    }
+  }, []);
   
   // Classic Bluetooth state
   const [classicBtAvailable, setClassicBtAvailable] = useState(false);

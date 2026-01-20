@@ -30,19 +30,22 @@ export const LiveWeightDisplay = ({
   
   const [hasReceivedData, setHasReceivedData] = useState(false);
 
-  // Auto-reconnect on mount if we have a stored device
+  // Auto-reconnect on mount ONLY if not already connected and we have a stored device
   useEffect(() => {
-    if (!scaleConnected && !digitalDisabled) {
+    console.log(`📺 LiveWeightDisplay mount: scaleConnected=${scaleConnected}, digitalDisabled=${digitalDisabled}`);
+    if (!scaleConnected && !digitalDisabled && !isConnecting) {
+      console.log('📺 LiveWeightDisplay: attempting autoReconnect...');
       autoReconnect();
     }
-  }, []);
+  }, []); // Only on mount
   
   // Track when we receive data from scale
   useEffect(() => {
-    if (scaleConnected && liveWeight !== undefined) {
+    console.log(`📺 LiveWeightDisplay state: scaleConnected=${scaleConnected}, liveWeight=${liveWeight}, weight=${weight}`);
+    if (scaleConnected && liveWeight !== undefined && liveWeight !== 0) {
       setHasReceivedData(true);
     }
-  }, [scaleConnected, liveWeight]);
+  }, [scaleConnected, liveWeight, weight]);
 
   // Reset data received flag when disconnected
   useEffect(() => {
@@ -51,8 +54,9 @@ export const LiveWeightDisplay = ({
     }
   }, [scaleConnected]);
 
-  // Display weight: use liveWeight when connected, otherwise use passed weight prop
-  const displayWeight = scaleConnected ? liveWeight : weight;
+  // Display weight: prefer liveWeight if we have it, then weight prop, then 0
+  // Use liveWeight if available (from global events), otherwise fall back to passed weight prop
+  const displayWeight = liveWeight > 0 ? liveWeight : (weight > 0 ? weight : 0);
 
   return (
     <div className="flex">
@@ -70,14 +74,14 @@ export const LiveWeightDisplay = ({
           : 'bg-white border-gray-900'
       }`}>
         <span className={`text-4xl sm:text-5xl font-black ${
-          scaleConnected ? 'text-gray-900' : isConnecting ? 'text-yellow-600' : 'text-gray-400'
+          (scaleConnected || displayWeight > 0) ? 'text-gray-900' : isConnecting ? 'text-yellow-600' : 'text-gray-400'
         }`}>
           {isConnecting 
             ? '...' 
-            : scaleConnected 
+            : displayWeight > 0 
               ? displayWeight.toFixed(1) 
-              : displayWeight > 0 
-                ? displayWeight.toFixed(1) 
+              : scaleConnected 
+                ? '0.0'
                 : '--'
           }
         </span>
@@ -86,12 +90,16 @@ export const LiveWeightDisplay = ({
             <Loader2 className="h-3 w-3 animate-spin" />
             Connecting
           </span>
-        ) : scaleConnected ? (
+        ) : (scaleConnected || displayWeight > 0) ? (
           <span className="text-xs text-green-600 mt-1 flex items-center gap-1">
             <Scale className="h-3 w-3" />
-            {hasReceivedData ? 'Live' : 'Waiting...'}
+            {(hasReceivedData || displayWeight > 0) ? 'Live' : 'Waiting...'}
           </span>
-        ) : null}
+        ) : (
+          <span className="text-xs text-gray-400 mt-1">
+            No scale connected
+          </span>
+        )}
       </div>
     </div>
   );
