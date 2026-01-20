@@ -689,7 +689,7 @@ export const connectBluetoothScale = async (
           if (parsed !== null) {
             console.log(`✅ ${scaleType} weight: ${parsed} kg`);
             broadcastScaleWeightUpdate(parsed, scaleType);
-            onWeightUpdate(parsed, scaleType);
+            try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback, global broadcast still works */ }
             return;
           }
         }
@@ -699,7 +699,7 @@ export const connectBluetoothScale = async (
         if (negativeMatch) {
           console.log(`⚠️ Negative weight detected (-${negativeMatch[1]}), returning 0`);
           broadcastScaleWeightUpdate(0, scaleType);
-          onWeightUpdate(0, scaleType);
+          try { onWeightUpdate(0, scaleType); } catch (e) { /* Stale callback, global broadcast still works */ }
           return;
         }
         
@@ -758,7 +758,7 @@ export const connectBluetoothScale = async (
         if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
           console.log(`✅ Broadcasting weight: ${parsed} kg from ${scaleType}`);
           broadcastScaleWeightUpdate(parsed, scaleType);
-          onWeightUpdate(parsed, scaleType);
+          try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback, global broadcast still works */ }
         } else {
           // Log unparseable data for debugging
           console.warn(`⚠️ Could not parse weight from: "${text}" (hex: ${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')})`);
@@ -1053,7 +1053,7 @@ export const quickReconnect = async (
           if (negativeMatch) {
             console.log(`⚠️ Negative weight detected, returning 0`);
             broadcastScaleWeightUpdate(0, scaleType);
-            onWeightUpdate(0, scaleType);
+            try { onWeightUpdate(0, scaleType); } catch (e) { /* Stale callback */ }
             return;
           }
           
@@ -1062,7 +1062,7 @@ export const quickReconnect = async (
           if (parsed !== null) {
             console.log(`✅ Reconnect DR/BTM parsed: ${parsed} kg`);
             broadcastScaleWeightUpdate(parsed, scaleType);
-            onWeightUpdate(parsed, scaleType);
+            try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
             return;
           }
           
@@ -1096,7 +1096,7 @@ export const quickReconnect = async (
           if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
             console.log(`✅ Reconnect broadcasting: ${parsed} kg`);
             broadcastScaleWeightUpdate(parsed, scaleType);
-            onWeightUpdate(parsed, scaleType);
+            try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
           } else {
             console.warn(`⚠️ Reconnect: could not parse "${text}"`);
           }
