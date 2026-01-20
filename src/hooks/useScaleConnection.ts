@@ -82,26 +82,37 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     };
   }, []);
 
+  // Use refs to avoid stale closures in event handlers
+  const onWeightChangeRef = useRef(onWeightChange);
+  const onEntryTypeChangeRef = useRef(onEntryTypeChange);
+  
+  useEffect(() => {
+    onWeightChangeRef.current = onWeightChange;
+    onEntryTypeChangeRef.current = onEntryTypeChange;
+  }, [onWeightChange, onEntryTypeChange]);
+
   // Listen for global weight updates from any scale connection
   useEffect(() => {
     const handleWeightUpdate = (e: CustomEvent<{ weight: number; scaleType: ScaleType }>) => {
       const { weight, scaleType: type } = e.detail;
+      console.log(`🎯 useScaleConnection received weight: ${weight} kg from ${type}`);
       setLiveWeight(weight);
       setScaleType(type);
       setScaleConnected(true);
       
       // Always update parent via callback when scale is connected
-      // This ensures 0.0 readings are properly reflected
-      onWeightChange(weight);
-      onEntryTypeChange('scale');
+      // Use refs to avoid stale closures
+      onWeightChangeRef.current(weight);
+      onEntryTypeChangeRef.current('scale');
     };
     
     window.addEventListener('scaleWeightUpdate', handleWeightUpdate as EventListener);
+    console.log('📡 useScaleConnection: listening for scaleWeightUpdate events');
     
     return () => {
       window.removeEventListener('scaleWeightUpdate', handleWeightUpdate as EventListener);
     };
-  }, [onWeightChange, onEntryTypeChange]);
+  }, []); // Empty deps - handlers use refs
 
   // Check if readings are stable (within threshold)
   const areReadingsStable = useCallback((readings: number[]): boolean => {
@@ -113,15 +124,17 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   }, []);
 
   // Handle weight reading from scale (BLE or Classic)
+  // Uses refs to avoid stale closures
   const handleScaleReading = useCallback((newWeight: number, type?: ScaleType) => {
+    console.log(`🎯 handleScaleReading: ${newWeight} kg, type: ${type}`);
     setLastRawWeight(newWeight);
     setLiveWeight(newWeight);
     if (type) setScaleType(type);
     
     // Always update for 0 weight to show empty scale state
     if (newWeight === 0) {
-      onWeightChange(0);
-      onEntryTypeChange('scale');
+      onWeightChangeRef.current(0);
+      onEntryTypeChangeRef.current('scale');
       setIsWaitingForStable(false);
       setStableReadingProgress(0);
       stableReadingsRef.current = [];
@@ -146,8 +159,8 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         const stableWeight = stableReadingsRef.current.slice(-STABLE_READING_COUNT)
           .reduce((a, b) => a + b, 0) / STABLE_READING_COUNT;
         
-        onWeightChange(parseFloat(stableWeight.toFixed(1)));
-        onEntryTypeChange('scale');
+        onWeightChangeRef.current(parseFloat(stableWeight.toFixed(1)));
+        onEntryTypeChangeRef.current('scale');
         setIsWaitingForStable(false);
         setStableReadingProgress(100);
         stableReadingsRef.current = [];
@@ -164,10 +177,10 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
       }
     } else {
       // No stable reading required - use weight directly
-      onWeightChange(newWeight);
-      onEntryTypeChange('scale');
+      onWeightChangeRef.current(newWeight);
+      onEntryTypeChangeRef.current('scale');
     }
-  }, [requireStableReading, areReadingsStable, onWeightChange, onEntryTypeChange]);
+  }, [requireStableReading, areReadingsStable]);
 
   // Handle Classic BT weight update (without type parameter)
   const handleClassicWeightUpdate = useCallback((newWeight: number) => {

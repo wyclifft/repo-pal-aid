@@ -1,6 +1,7 @@
 /**
- * LiveWeightDisplay - Shows scale weight directly in the weight field
- * Simplified display without connection controls (those remain in Settings)
+ * LiveWeightDisplay - Shows scale weight in a high-contrast boxed layout
+ * Layout: "Kgs" label on left, large bold weight value on right
+ * Matches reference design with thick black borders
  */
 
 import { useEffect, useState } from 'react';
@@ -50,25 +51,35 @@ export const LiveWeightDisplay = ({
     }
   }, [scaleConnected]);
 
+  // Display weight: use liveWeight when connected, otherwise use passed weight prop
+  const displayWeight = scaleConnected ? liveWeight : weight;
+
   return (
-    <div className="flex gap-2">
-      {/* Kgs Label Box */}
-      <div className="flex-1 bg-white border-2 border-gray-800 rounded-lg p-4 sm:p-6 flex items-center justify-center">
-        <span className="text-2xl sm:text-3xl font-bold">Kgs</span>
+    <div className="flex">
+      {/* Kgs Label Box - Left side */}
+      <div className="flex-1 bg-white border-[3px] border-gray-900 rounded-l-lg py-6 sm:py-8 flex items-center justify-center">
+        <span className="text-3xl sm:text-4xl font-bold text-gray-900">Kgs</span>
       </div>
       
-      {/* Weight Value Box */}
-      <div className={`flex-1 border-2 rounded-lg p-4 sm:p-6 flex flex-col items-center justify-center transition-colors ${
+      {/* Weight Value Box - Right side with thicker border */}
+      <div className={`flex-1 border-[3px] rounded-r-lg py-6 sm:py-8 flex flex-col items-center justify-center transition-colors ${
         scaleConnected 
-          ? 'bg-green-50 border-green-500' 
+          ? 'bg-white border-gray-900' 
           : isConnecting
           ? 'bg-yellow-50 border-yellow-500'
-          : 'bg-white border-gray-800'
+          : 'bg-white border-gray-900'
       }`}>
-        <span className={`text-2xl sm:text-3xl font-bold ${
-          scaleConnected ? 'text-green-700' : isConnecting ? 'text-yellow-600' : 'text-gray-400'
+        <span className={`text-4xl sm:text-5xl font-black ${
+          scaleConnected ? 'text-gray-900' : isConnecting ? 'text-yellow-600' : 'text-gray-400'
         }`}>
-          {scaleConnected ? liveWeight.toFixed(1) : isConnecting ? '...' : '--'}
+          {isConnecting 
+            ? '...' 
+            : scaleConnected 
+              ? displayWeight.toFixed(1) 
+              : displayWeight > 0 
+                ? displayWeight.toFixed(1) 
+                : '--'
+          }
         </span>
         {isConnecting ? (
           <span className="text-xs text-yellow-600 mt-1 flex items-center gap-1">
@@ -80,11 +91,7 @@ export const LiveWeightDisplay = ({
             <Scale className="h-3 w-3" />
             {hasReceivedData ? 'Live' : 'Waiting...'}
           </span>
-        ) : (
-          <span className="text-xs text-gray-400 mt-1">
-            No scale connected
-          </span>
-        )}
+        ) : null}
       </div>
     </div>
   );
