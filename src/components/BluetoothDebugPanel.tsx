@@ -48,21 +48,21 @@ export const BluetoothDebugPanel = () => {
   // Listen for all Bluetooth-related events
   useEffect(() => {
     const handleScaleWeightUpdate = (e: CustomEvent<{ weight: number; scaleType: string }>) => {
-      addLog('event', 'Scale', `Weight update: ${e.detail.weight} kg`, e.detail);
+      addLog('event', 'Weight', `📊 ${e.detail.weight} kg (${e.detail.scaleType})`, e.detail);
     };
 
     const handleScaleConnectionChange = (e: CustomEvent<{ connected: boolean }>) => {
       addLog(e.detail.connected ? 'success' : 'warning', 'Scale', 
-        e.detail.connected ? 'Scale connected' : 'Scale disconnected');
+        e.detail.connected ? '✅ Scale connected' : '❌ Scale disconnected');
     };
 
     const handlePrinterConnectionChange = (e: CustomEvent<{ connected: boolean }>) => {
       addLog(e.detail.connected ? 'success' : 'warning', 'Printer', 
-        e.detail.connected ? 'Printer connected' : 'Printer disconnected');
+        e.detail.connected ? '✅ Printer connected' : '❌ Printer disconnected');
     };
 
     const handleEntryTypeChange = (e: CustomEvent<{ entryType: string }>) => {
-      addLog('info', 'Scale', `Entry type changed: ${e.detail.entryType}`, e.detail);
+      addLog('info', 'Entry', `Entry type: ${e.detail.entryType}`, e.detail);
     };
 
     // Intercept console logs with Bluetooth-related content
@@ -71,16 +71,19 @@ export const BluetoothDebugPanel = () => {
     const originalError = console.error;
     const originalInfo = console.info;
 
+    const btKeywords = [
+      '🔌', '📡', '🎯', '📺', '🔄', '📊', '✅', '⚠️', '❌', '📋', '📱', '📤',
+      'bluetooth', 'Bluetooth', 'scale', 'Scale', 'weight', 'Weight', 
+      'BLE', 'Classic', 'SPP', 'HC-05', 'HC-06', 'notify', 'characteristic',
+      'connect', 'Connect', 'broadcast', 'Broadcast', 'parsed', 'Parsed',
+      'dataReceived', 'reconnect', 'Reconnect'
+    ];
+
     const filterBluetoothLog = (args: any[], type: LogEntry['type']) => {
       const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
       // Filter for Bluetooth-related logs
-      if (msg.includes('🔌') || msg.includes('📡') || msg.includes('🎯') || 
-          msg.includes('📺') || msg.includes('🔄') || msg.includes('bluetooth') ||
-          msg.includes('Bluetooth') || msg.includes('scale') || msg.includes('Scale') ||
-          msg.includes('weight') || msg.includes('Weight') || msg.includes('BLE') ||
-          msg.includes('Classic') || msg.includes('SPP') || msg.includes('HC-05') ||
-          msg.includes('notify') || msg.includes('characteristic')) {
-        addLog(type, 'Console', msg.substring(0, 200));
+      if (btKeywords.some(kw => msg.includes(kw))) {
+        addLog(type, 'Console', msg.substring(0, 300));
       }
     };
 
@@ -110,10 +113,18 @@ export const BluetoothDebugPanel = () => {
     window.addEventListener('entryTypeChange', handleEntryTypeChange as EventListener);
 
     // Initial log
-    addLog('info', 'Debug', 'Bluetooth debug panel initialized');
-    addLog('info', 'Status', `Scale connected: ${isScaleConnected()}, Printer connected: ${isPrinterConnected()}`);
+    addLog('info', 'Debug', '🚀 Bluetooth debug panel initialized');
+    addLog('info', 'Status', `Scale: ${isScaleConnected() ? '✅' : '❌'}, Printer: ${isPrinterConnected() ? '✅' : '❌'}`);
+
+    // Periodic status check every 5 seconds
+    const statusInterval = setInterval(() => {
+      const scaleNow = isScaleConnected();
+      const printerNow = isPrinterConnected();
+      addLog('info', 'Poll', `Scale: ${scaleNow ? '✅' : '❌'}, Printer: ${printerNow ? '✅' : '❌'} (${new Date().toLocaleTimeString()})`);
+    }, 5000);
 
     return () => {
+      clearInterval(statusInterval);
       console.log = originalLog;
       console.warn = originalWarn;
       console.error = originalError;

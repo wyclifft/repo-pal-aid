@@ -26,22 +26,28 @@ export const LiveWeightDisplay = ({
     liveWeight,
     autoReconnect,
     isConnecting,
-  } = useScaleConnection({ onWeightChange, onEntryTypeChange });
+  } = useScaleConnection({ 
+    onWeightChange: (w) => {
+      console.log(`📺 LiveWeightDisplay onWeightChange callback fired: ${w} kg`);
+      onWeightChange(w);
+    }, 
+    onEntryTypeChange 
+  });
   
   const [hasReceivedData, setHasReceivedData] = useState(false);
 
   // Auto-reconnect on mount ONLY if not already connected and we have a stored device
   useEffect(() => {
-    console.log(`📺 LiveWeightDisplay mount: scaleConnected=${scaleConnected}, digitalDisabled=${digitalDisabled}`);
+    console.log(`📺 LiveWeightDisplay mount: scaleConnected=${scaleConnected}, digitalDisabled=${digitalDisabled}, isConnecting=${isConnecting}`);
     if (!scaleConnected && !digitalDisabled && !isConnecting) {
       console.log('📺 LiveWeightDisplay: attempting autoReconnect...');
       autoReconnect();
     }
   }, []); // Only on mount
   
-  // Track when we receive data from scale
+  // Track when we receive data from scale - log all changes
   useEffect(() => {
-    console.log(`📺 LiveWeightDisplay state: scaleConnected=${scaleConnected}, liveWeight=${liveWeight}, weight=${weight}`);
+    console.log(`📺 LiveWeightDisplay render state: scaleConnected=${scaleConnected}, liveWeight=${liveWeight}, weight prop=${weight}`);
     if (scaleConnected && liveWeight !== undefined && liveWeight !== 0) {
       setHasReceivedData(true);
     }
