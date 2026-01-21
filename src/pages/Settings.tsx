@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
-import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2, Link } from "lucide-react";
+import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2 } from "lucide-react";
 import { BluetoothDebugPanel } from "@/components/BluetoothDebugPanel";
 import { BluetoothConnectionDialog } from "@/components/BluetoothConnectionDialog";
 import { useAppSettings } from "@/hooks/useAppSettings";
@@ -25,7 +25,7 @@ import {
   isPrinterConnected,
   ScaleType 
 } from "@/services/bluetooth";
-import { connectClassicScale } from "@/services/bluetoothClassic";
+
 import { runBluetoothDiagnostics, logConnectionTips } from "@/utils/bluetoothDiagnostics";
 import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 
@@ -63,7 +63,6 @@ const Settings = () => {
   
   // Bluetooth connection dialog state
   const [showConnectionDialog, setShowConnectionDialog] = useState(false);
-  const [isForceConnecting, setIsForceConnecting] = useState(false);
 
   useEffect(() => {
     const deviceInfo = getStoredDeviceInfo();
@@ -173,37 +172,6 @@ const Settings = () => {
     if (scaleType) setScaleType(scaleType);
   };
   
-  // Force connect to specific Classic Bluetooth scale (04:23:09:06:0A:64)
-  const handleForceConnectClassic = async () => {
-    const targetMac = '04:23:09:06:0A:64';
-    setIsForceConnecting(true);
-    toast.info(`Force connecting to Classic scale: ${targetMac}`);
-    
-    try {
-      const result = await connectClassicScale(
-        { address: targetMac, name: 'Force-Connected Scale', bonded: true },
-        (weight) => {
-          console.log(`📡 Force Classic BT Weight: ${weight} kg`);
-          setLastWeight(weight);
-          setScaleType('Classic-SPP');
-        }
-      );
-      
-      if (result.success) {
-        setScaleConnected(true);
-        setScaleType('Classic-SPP');
-        toast.success(`Connected to Classic scale: ${targetMac}`);
-      } else {
-        toast.error(result.error || 'Failed to force connect');
-      }
-    } catch (error) {
-      console.error('Force connect error:', error);
-      toast.error('Force connection failed');
-    }
-    
-    setIsForceConnecting(false);
-  };
-
   const handleDisconnectScale = async () => {
     await disconnectBluetoothScale(false);
     setScaleConnected(false);
@@ -366,35 +334,23 @@ const Settings = () => {
 
             <div className="flex flex-col gap-2">
               {!scaleConnected ? (
-                <>
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={handleConnectScale}
-                      disabled={!isBluetoothAvailable || isConnectingScale}
-                      className="flex-1"
-                    >
-                      {isConnectingScale ? "Connecting..." : "Connect Scale (BLE/Classic)"}
-                    </Button>
-                    <Button
-                      onClick={handleRunDiagnostics}
-                      variant="outline"
-                      size="icon"
-                      title="Run Diagnostics"
-                    >
-                      <Bug className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  {/* Force connect button for specific Classic scale */}
+                <div className="flex gap-2">
                   <Button
-                    onClick={handleForceConnectClassic}
-                    disabled={isForceConnecting}
-                    variant="secondary"
-                    className="w-full gap-2"
+                    onClick={handleConnectScale}
+                    disabled={!isBluetoothAvailable || isConnectingScale}
+                    className="flex-1"
                   >
-                    <Link className="h-4 w-4" />
-                    {isForceConnecting ? "Force Connecting..." : "Force Connect Classic (04:23:09:06:0A:64)"}
+                    {isConnectingScale ? "Connecting..." : "Connect Scale (BLE/Classic)"}
                   </Button>
-                </>
+                  <Button
+                    onClick={handleRunDiagnostics}
+                    variant="outline"
+                    size="icon"
+                    title="Run Diagnostics"
+                  >
+                    <Bug className="h-4 w-4" />
+                  </Button>
+                </div>
               ) : (
                 <>
                   <Button
