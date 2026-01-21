@@ -1,26 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  connectBluetoothScale, 
   type ScaleType, 
   type ConnectionType,
 } from '@/services/bluetooth';
 import {
   isClassicBluetoothAvailable,
-  getPairedScales,
-  connectClassicScale,
-  type ClassicBluetoothDevice,
 } from '@/services/bluetoothClassic';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { toast } from 'sonner';
-import { Scale, CheckCircle2, AlertCircle, Bluetooth, BluetoothSearching, List, Lightbulb } from 'lucide-react';
+import { Scale, CheckCircle2, AlertCircle, Bluetooth, Lightbulb } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { BluetoothConnectionDialog } from '@/components/BluetoothConnectionDialog';
 
 interface WeightInputProps {
   weight: number;
@@ -41,13 +31,10 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
   const [scaleConnected, setScaleConnected] = useState(false);
   const [scaleType, setScaleType] = useState<ScaleType>('Unknown');
   const [connectionType, setConnectionType] = useState<ConnectionType>('ble');
-  const [isConnecting, setIsConnecting] = useState(false);
   
-  // Classic Bluetooth state
+  // Bluetooth connection dialog state
+  const [showConnectionDialog, setShowConnectionDialog] = useState(false);
   const [classicBtAvailable, setClassicBtAvailable] = useState(false);
-  const [showPairedDevices, setShowPairedDevices] = useState(false);
-  const [pairedDevices, setPairedDevices] = useState<ClassicBluetoothDevice[]>([]);
-  const [isLoadingPaired, setIsLoadingPaired] = useState(false);
   
   // Stable reading state
   const [isWaitingForStable, setIsWaitingForStable] = useState(false);
@@ -85,6 +72,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
 
   // Handle weight reading from scale (BLE or Classic)
   const handleScaleReading = useCallback((newWeight: number, type?: ScaleType) => {
+    console.log(`📡 WeightInput handleScaleReading: ${newWeight} kg from ${type}`);
     setLastRawWeight(newWeight);
     if (type) setScaleType(type);
     
@@ -118,121 +106,34 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
           clearTimeout(stableTimeoutRef.current);
           stableTimeoutRef.current = null;
         }
-        
-        // Silent - no toast notification for stable reading
       } else {
         setIsWaitingForStable(true);
       }
     } else {
-      // No stable reading required - use weight directly
+      // No stable reading required - use weight directly (including 0)
       onWeightChange(newWeight);
-      setManualWeight(newWeight.toFixed(1));
+      setManualWeight(newWeight > 0 ? newWeight.toFixed(1) : '');
       onEntryTypeChange('scale');
     }
   }, [requireStableReading, areReadingsStable, onWeightChange, onEntryTypeChange]);
 
-  // Handle Classic BT weight update (without type parameter)
-  const handleClassicWeightUpdate = useCallback((newWeight: number) => {
-    handleScaleReading(newWeight, 'Classic-SPP');
-  }, [handleScaleReading]);
-
-  // Connect via BLE (scan for devices)
-  const handleConnectBLE = async () => {
-    setIsConnecting(true);
+  // Handle connection from dialog
+  const handleConnected = useCallback((type: 'ble' | 'classic-spp', sType: ScaleType) => {
+    setScaleConnected(true);
+    setScaleType(sType);
+    setConnectionType(type === 'ble' ? 'ble' : 'classic-spp');
     stableReadingsRef.current = [];
     setStableReadingProgress(0);
     
-    try {
-      const result = await connectBluetoothScale(handleScaleReading);
-
-      if (result.success) {
-        setScaleConnected(true);
-        setScaleType(result.type);
-        setConnectionType('ble');
-        toast.success(`Scale connected: ${result.type}`);
-        
-        // Start stable reading timeout if enabled
-        if (requireStableReading) {
-          stableTimeoutRef.current = setTimeout(() => {
-            if (isWaitingForStable) {
-              toast.warning('Waiting for stable reading - keep container still');
-            }
-          }, STABLE_READING_TIMEOUT);
+    // Start stable reading timeout if enabled
+    if (requireStableReading) {
+      stableTimeoutRef.current = setTimeout(() => {
+        if (isWaitingForStable) {
+          toast.warning('Waiting for stable reading - keep container still');
         }
-      } else {
-        // Provide helpful error message with suggestion
-        const errorMsg = result.error || 'Failed to connect to scale';
-        if (errorMsg.includes('notification') || errorMsg.includes('CCCD')) {
-          toast.error('Scale notification failed. Try Classic Bluetooth from Settings.', { duration: 5000 });
-        } else {
-          toast.error(errorMsg);
-        }
-      }
-    } catch (error: any) {
-      console.error('BLE connection error:', error);
-      const errorMsg = error?.message || String(error);
-      
-      if (errorMsg.includes('notification') || errorMsg.includes('CCCD') || errorMsg.includes('Settings')) {
-        toast.error('BLE notification failed. Try Classic Bluetooth connection.', { duration: 5000 });
-      } else if (errorMsg.includes('cancelled') || errorMsg.includes('canceled')) {
-        // User cancelled - no toast needed
-      } else {
-        toast.error('Connection failed. Please try again.');
-      }
+      }, STABLE_READING_TIMEOUT);
     }
-    setIsConnecting(false);
-  };
-
-  // Show paired devices dialog for Classic BT
-  const handleShowPairedDevices = async () => {
-    setIsLoadingPaired(true);
-    setShowPairedDevices(true);
-    
-    try {
-      const scales = await getPairedScales();
-      setPairedDevices(scales);
-      
-      // Silent - no toast notification for empty device list
-    } catch (error) {
-      console.error('Error getting paired devices:', error);
-    }
-    
-    setIsLoadingPaired(false);
-  };
-
-  // Connect to a specific Classic BT device
-  const handleConnectClassicDevice = async (device: ClassicBluetoothDevice) => {
-    setShowPairedDevices(false);
-    setIsConnecting(true);
-    stableReadingsRef.current = [];
-    setStableReadingProgress(0);
-
-    try {
-      const result = await connectClassicScale(device, handleClassicWeightUpdate);
-
-      if (result.success) {
-        setScaleConnected(true);
-        setScaleType('Classic-SPP');
-        setConnectionType('classic-spp');
-        toast.success(`Connected to ${device.name}`);
-        
-        if (requireStableReading) {
-          stableTimeoutRef.current = setTimeout(() => {
-            if (isWaitingForStable) {
-              toast.warning('Waiting for stable reading - keep container still');
-            }
-          }, STABLE_READING_TIMEOUT);
-        }
-      } else {
-        toast.error(result.error || 'Failed to connect to Classic BT device');
-      }
-    } catch (error) {
-      console.error('Classic BT connection error:', error);
-      toast.error('Classic BT connection failed. Ensure device is paired.');
-    }
-    
-    setIsConnecting(false);
-  };
+  }, [requireStableReading, isWaitingForStable]);
 
   const handleManualWeight = () => {
     if (autoWeightOnly) {
@@ -244,7 +145,6 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
     if (!isNaN(manual) && manual > 0) {
       onWeightChange(manual);
       onEntryTypeChange('manual');
-      // Silent - no toast notification for manual weight
     } else {
       toast.error('Enter valid weight');
     }
@@ -268,8 +168,8 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
   const showScaleStatus = lastSavedWeight > 0;
 
   return (
-    <div className="bg-white rounded-xl p-6 shadow-lg">
-      <h3 className="text-xl font-bold mb-4 text-[#667eea] flex items-center gap-2">
+    <div className="bg-card rounded-xl p-6 shadow-lg">
+      <h3 className="text-xl font-bold mb-4 text-primary flex items-center gap-2">
         <Scale className="h-6 w-6" />
         {produceLabel} Weight
       </h3>
@@ -278,15 +178,15 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
       {showScaleStatus && (
         <div className={`mb-4 p-3 rounded-lg border-2 ${
           isScaleReady 
-            ? 'bg-green-50 border-green-500' 
-            : 'bg-amber-50 border-amber-500'
+            ? 'bg-green-50 border-green-500 dark:bg-green-950/30 dark:border-green-600' 
+            : 'bg-amber-50 border-amber-500 dark:bg-amber-950/30 dark:border-amber-600'
         }`}>
           <div className="flex items-center gap-2">
             <div className={`w-3 h-3 rounded-full ${
               isScaleReady ? 'bg-green-500 animate-pulse' : 'bg-amber-500'
             }`} />
             <p className={`font-semibold ${
-              isScaleReady ? 'text-green-700' : 'text-amber-700'
+              isScaleReady ? 'text-green-700 dark:text-green-400' : 'text-amber-700 dark:text-amber-400'
             }`}>
               {isScaleReady ? '✓ Scale Ready - Clear for Next Collection' : '⚠ Scale Not Ready - Remove Container'}
             </p>
@@ -296,63 +196,50 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
 
       {/* Stable Reading Progress (when stableopt=1) */}
       {requireStableReading && isWaitingForStable && (
-        <div className="mb-4 p-3 rounded-lg border-2 bg-blue-50 border-blue-500">
+        <div className="mb-4 p-3 rounded-lg border-2 bg-blue-50 border-blue-500 dark:bg-blue-950/30 dark:border-blue-600">
           <div className="flex items-center gap-2 mb-2">
             {stableReadingProgress < 100 ? (
-              <AlertCircle className="h-5 w-5 text-blue-600 animate-pulse" />
+              <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-pulse" />
             ) : (
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
+              <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
             )}
-            <p className="font-semibold text-blue-700">
+            <p className="font-semibold text-blue-700 dark:text-blue-400">
               {stableReadingProgress < 100 ? 'Waiting for stable reading...' : 'Reading stable!'}
             </p>
           </div>
-          <div className="w-full bg-blue-200 rounded-full h-2">
+          <div className="w-full bg-blue-200 dark:bg-blue-900 rounded-full h-2">
             <div 
               className="bg-blue-600 h-2 rounded-full transition-all duration-300"
               style={{ width: `${stableReadingProgress}%` }}
             />
           </div>
-          <p className="text-xs text-blue-600 mt-1">
+          <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
             Raw: {lastRawWeight.toFixed(1)} Kg • Keep container still
           </p>
         </div>
       )}
 
       <div className="mb-6">
-        <p className="text-3xl font-bold text-[#667eea] mb-4">
+        <p className="text-3xl font-bold text-primary mb-4">
           Weight: {weight.toFixed(1)} Kg
         </p>
         
         {isBluetoothAvailable && (
           <div className="space-y-2">
-            {/* BLE Connection Button */}
+            {/* Single Connect Button - Opens Type Selector Dialog */}
             <button
-              onClick={handleConnectBLE}
-              disabled={isConnecting}
-              className="w-full py-3 bg-[#667eea] text-white rounded-lg font-semibold hover:bg-[#5568d3] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              onClick={() => setShowConnectionDialog(true)}
+              className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
             >
-              <BluetoothSearching className="h-5 w-5" />
-              {isConnecting ? 'Connecting...' : 'Connect via BLE (Scan)'}
+              <Bluetooth className="h-5 w-5" />
+              Connect Bluetooth Scale
             </button>
             
-            {/* Classic BT Button - Only show on native with availability */}
-            {isNative && (
-              <button
-                onClick={handleShowPairedDevices}
-                disabled={isConnecting || isLoadingPaired}
-                className="w-full py-3 bg-gray-700 text-white rounded-lg font-semibold hover:bg-gray-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                <List className="h-5 w-5" />
-                {isLoadingPaired ? 'Loading...' : 'Connect via Classic BT (Paired)'}
-              </button>
-            )}
-            
             {/* Connection Status */}
-            <div className="text-sm text-gray-600 text-center space-y-1">
+            <div className="text-sm text-muted-foreground text-center space-y-1">
               <p className="flex items-center justify-center gap-1">
                 Scale: {scaleConnected ? (
-                  <span className="text-green-600 font-medium flex items-center gap-1">
+                  <span className="text-green-600 dark:text-green-400 font-medium flex items-center gap-1">
                     Connected ({scaleType}) via {connectionType === 'ble' ? 'BLE' : 'Classic BT'}
                     <CheckCircle2 className="h-4 w-4" />
                   </span>
@@ -362,9 +249,9 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
               </p>
               {requireStableReading && <p className="text-xs">• Stable reading required</p>}
               {isNative && (
-                <p className="text-xs text-gray-500 flex items-center justify-center gap-1">
+                <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
                   <Lightbulb className="h-3 w-3" />
-                  BLE: DR Series, BTM modules | Classic BT: Paired SPP devices
+                  BLE: DR Series, BTM modules | Classic: Paired SPP devices
                 </p>
               )}
             </div>
@@ -372,10 +259,10 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
         )}
       </div>
 
-      <div className={`mb-6 p-4 rounded-lg ${autoWeightOnly ? 'bg-gray-100 opacity-60' : 'bg-gray-50'}`}>
-        <p className="text-sm font-semibold text-gray-700 mb-2">
+      <div className={`mb-6 p-4 rounded-lg ${autoWeightOnly ? 'bg-muted/60 opacity-60' : 'bg-muted/30'}`}>
+        <p className="text-sm font-semibold text-foreground mb-2">
           Manual Weight Entry
-          {autoWeightOnly && <span className="text-red-500 ml-2">(Disabled)</span>}
+          {autoWeightOnly && <span className="text-destructive ml-2">(Disabled)</span>}
         </p>
         <div className="flex gap-2">
           <input
@@ -387,8 +274,8 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
             value={manualWeight}
             onChange={(e) => setManualWeight(e.target.value)}
             disabled={autoWeightOnly}
-            className={`flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-[#667eea] ${
-              autoWeightOnly ? 'bg-gray-200 cursor-not-allowed' : ''
+            className={`flex-1 px-4 py-2 border border-input rounded-lg focus:outline-none focus:border-primary bg-background ${
+              autoWeightOnly ? 'bg-muted cursor-not-allowed' : ''
             }`}
           />
           <button
@@ -396,62 +283,27 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
             disabled={autoWeightOnly}
             className={`px-6 py-2 rounded-lg font-semibold transition-colors ${
               autoWeightOnly 
-                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                ? 'bg-muted text-muted-foreground cursor-not-allowed' 
+                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
             }`}
           >
             Apply
           </button>
         </div>
         {autoWeightOnly && (
-          <p className="text-xs text-red-500 mt-2">
+          <p className="text-xs text-destructive mt-2">
             Manual entry is disabled. Use the digital scale.
           </p>
         )}
       </div>
 
-      {/* Paired Devices Dialog */}
-      <Dialog open={showPairedDevices} onOpenChange={setShowPairedDevices}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Bluetooth className="h-5 w-5" />
-              Paired Scale Devices
-            </DialogTitle>
-            <DialogDescription>
-              Select a paired Bluetooth scale to connect via Classic SPP
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="max-h-80 overflow-y-auto">
-            {isLoadingPaired ? (
-              <div className="text-center py-8 text-gray-500">
-                Loading paired devices...
-              </div>
-            ) : pairedDevices.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <p>No paired scale devices found.</p>
-                <p className="text-sm mt-2">
-                  Pair your scale in Android Bluetooth settings first.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {pairedDevices.map((device) => (
-                  <button
-                    key={device.address}
-                    onClick={() => handleConnectClassicDevice(device)}
-                    className="w-full p-3 text-left border rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    <p className="font-medium">{device.name || 'Unknown Device'}</p>
-                    <p className="text-xs text-gray-500">{device.address}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Bluetooth Connection Dialog with Type Selector */}
+      <BluetoothConnectionDialog
+        open={showConnectionDialog}
+        onOpenChange={setShowConnectionDialog}
+        onConnected={handleConnected}
+        onWeightUpdate={handleScaleReading}
+      />
     </div>
   );
 };

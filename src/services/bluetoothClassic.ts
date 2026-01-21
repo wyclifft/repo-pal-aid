@@ -201,6 +201,14 @@ export const getPairedScales = async (): Promise<ClassicBluetoothDevice[]> => {
   return devices.filter(d => isLikelyClassicDevice(d.name));
 };
 
+/**
+ * Get ALL paired devices (including unnamed/unknown ones)
+ * Useful for connecting to devices that don't have recognizable names
+ */
+export const getAllPairedDevices = async (): Promise<ClassicBluetoothDevice[]> => {
+  return getPairedDevices();
+};
+
 // ============================================================================
 // WEIGHT PARSING
 // ============================================================================
@@ -208,17 +216,22 @@ export const getPairedScales = async (): Promise<ClassicBluetoothDevice[]> => {
 /**
  * Parse weight data from raw serial data
  * Supports multiple formats used by DR/BTM series scales
+ * Enhanced with detailed raw data logging
  */
 export const parseSerialWeightData = (data: string): number | null => {
+  // Log raw hex bytes for debugging
+  const hexBytes = Array.from(data).map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ');
   console.log(`📊 Raw Classic BT data: "${data}" (${data.length} chars)`);
+  console.log(`📊 Raw hex bytes: [${hexBytes}]`);
   
   // Clean the data
   const cleanData = data.trim().replace(/[\x00-\x1F\x7F]/g, '');
+  console.log(`📊 Cleaned data: "${cleanData}"`);
   
   // Check for negative values - return 0
   const negativeMatch = cleanData.match(/-\s*(\d+\.?\d*)/);
   if (negativeMatch) {
-    console.log(`⚠️ Negative weight detected, returning 0`);
+    console.log(`⚠️ Negative weight detected (-${negativeMatch[1]}), returning 0`);
     return 0;
   }
   
