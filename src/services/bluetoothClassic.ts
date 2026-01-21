@@ -311,12 +311,22 @@ export const connectClassicScale = async (
       return { success: false, error: 'Failed to connect to device' };
     }
 
-    // Set up data listener
+    // Set up data listener - uses global broadcast as primary, callback as secondary
     dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (data) => {
       const weight = parseSerialWeightData(data.value);
       if (weight !== null) {
+        // Always broadcast globally - this is the app-level persistent mechanism
         broadcastScaleWeightUpdate(weight, 'Classic-SPP');
-        onWeightUpdate(weight);
+        
+        // Try calling the callback, but wrap in try-catch in case it's stale
+        // (e.g., component that passed the callback has unmounted)
+        try {
+          onWeightUpdate(weight);
+        } catch (callbackError) {
+          // Stale callback - this is expected when navigating away from Settings
+          // Global broadcast already handled the update
+          console.log('📡 Classic BT: Callback stale (component unmounted), global broadcast sent');
+        }
       }
     });
 

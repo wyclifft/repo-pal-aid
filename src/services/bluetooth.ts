@@ -547,7 +547,13 @@ export const resubscribeScaleNotifications = async (
 
 // Verify if scale is actually connected by checking BLE state
 // Uses debouncing to prevent Android Bluetooth stack issues from frequent calls
+// NOTE: Does NOT clear state on timeout - only on definitive disconnection evidence
 export const verifyScaleConnection = async (): Promise<boolean> => {
+  // First check if Classic scale is connected
+  if (isClassicScaleConnected()) {
+    return true;
+  }
+  
   if (!scale.deviceId || !scale.isConnected) {
     return false;
   }
@@ -561,15 +567,19 @@ export const verifyScaleConnection = async (): Promise<boolean> => {
     try {
       // Try to get services - this will fail if disconnected
       // Use a timeout to prevent hanging on some Android devices
-      const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('BLE verification timeout')), 3000)
+      const timeoutPromise = new Promise<boolean>((resolve) => 
+        setTimeout(() => resolve(true), 3000) // On timeout, assume still connected
       );
-      await Promise.race([BleClient.getServices(scale.deviceId), timeoutPromise]);
-      return true;
+      const verifyPromise = BleClient.getServices(scale.deviceId).then(() => true).catch(() => false);
+      const result = await Promise.race([verifyPromise, timeoutPromise]);
+      if (!result) {
+        console.warn('⚠️ Scale verification failed but not clearing state');
+      }
+      return result;
     } catch (error) {
-      console.warn('⚠️ Scale connection verification failed:', error);
-      clearScaleState();
-      return false;
+      console.warn('⚠️ Scale connection verification error:', error);
+      // Don't clear state aggressively - let actual operations fail gracefully
+      return scale.isConnected;
     }
   }
   
@@ -578,13 +588,24 @@ export const verifyScaleConnection = async (): Promise<boolean> => {
     return true;
   }
   
-  clearScaleState();
-  return false;
+  // Only clear on definitive web bluetooth disconnection
+  if (scale.device?.gatt && !scale.device.gatt.connected) {
+    clearScaleState();
+    return false;
+  }
+  
+  return scale.isConnected;
 };
 
 // Verify if printer is actually connected
 // Uses debouncing to prevent Android Bluetooth stack issues from frequent calls
+// NOTE: Does NOT clear state on timeout - only on definitive disconnection evidence
 export const verifyPrinterConnection = async (): Promise<boolean> => {
+  // First check if Classic printer is connected
+  if (isClassicPrinterConnected()) {
+    return true;
+  }
+  
   if (!printer.deviceId || !printer.isConnected) {
     return false;
   }
@@ -597,15 +618,19 @@ export const verifyPrinterConnection = async (): Promise<boolean> => {
   if (Capacitor.isNativePlatform()) {
     try {
       // Use a timeout to prevent hanging on some Android devices
-      const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('BLE verification timeout')), 3000)
+      const timeoutPromise = new Promise<boolean>((resolve) => 
+        setTimeout(() => resolve(true), 3000) // On timeout, assume still connected
       );
-      await Promise.race([BleClient.getServices(printer.deviceId), timeoutPromise]);
-      return true;
+      const verifyPromise = BleClient.getServices(printer.deviceId).then(() => true).catch(() => false);
+      const result = await Promise.race([verifyPromise, timeoutPromise]);
+      if (!result) {
+        console.warn('⚠️ Printer verification failed but not clearing state');
+      }
+      return result;
     } catch (error) {
-      console.warn('⚠️ Printer connection verification failed:', error);
-      clearPrinterState();
-      return false;
+      console.warn('⚠️ Printer connection verification error:', error);
+      // Don't clear state - let the actual print operation fail gracefully
+      return printer.isConnected;
     }
   }
   
@@ -613,8 +638,13 @@ export const verifyPrinterConnection = async (): Promise<boolean> => {
     return true;
   }
   
-  clearPrinterState();
-  return false;
+  // Only clear on definitive web bluetooth disconnection
+  if (printer.device?.gatt && !printer.device.gatt.connected) {
+    clearPrinterState();
+    return false;
+  }
+  
+  return printer.isConnected;
 };
 
 export const connectBluetoothScale = async (
@@ -1373,9 +1403,13 @@ export const quickReconnect = async (
   return { success: false, type: 'Unknown', error: lastError?.message || 'Failed to reconnect after multiple attempts' };
 };
 
-// Check if scale is currently connected
+// Check if scale is currently connected (BLE or Classic SPP)
 export const isScaleConnected = (): boolean => {
-  return scale.isConnected && scale.deviceId !== null;
+  // Check BLE connection first
+  const bleConnected = scale.isConnected && scale.deviceId !== null;
+  // Also check Classic SPP connection
+  const classicConnected = isClassicScaleConnected();
+  return bleConnected || classicConnected;
 };
 
 // Get current scale info
@@ -1710,9 +1744,13 @@ export const quickReconnectPrinter = async (deviceId: string, retries: number = 
   return { success: false, error: lastError?.message || 'Failed to reconnect after multiple attempts' };
 };
 
-// Check if printer is currently connected
+// Check if printer is currently connected (BLE or Classic SPP)
 export const isPrinterConnected = (): boolean => {
-  return printer.isConnected && printer.deviceId !== null;
+  // Check BLE connection first
+  const bleConnected = printer.isConnected && printer.deviceId !== null;
+  // Also check Classic SPP connection
+  const classicConnected = isClassicPrinterConnected();
+  return bleConnected || classicConnected;
 };
 
 // Get current printer info
@@ -1775,14 +1813,33 @@ const stringToBytes = (str: string): number[] => {
 
 export const printToBluetoothPrinter = async (content: string): Promise<{ success: boolean; error?: string }> => {
   try {
+    // Check for Classic printer first - if connected, delegate to Classic printer
+    if (isClassicPrinterConnected()) {
+      console.log('🖨️ Using Classic Bluetooth printer...');
+      return await printToClassicPrinter(content);
+    }
+    
+    // Check BLE printer connection
     if (!printer.isConnected || !printer.deviceId) {
       return { success: false, error: 'No printer connected' };
     }
 
-    // Verify connection before printing
-    const isConnected = await verifyPrinterConnection();
-    if (!isConnected) {
-      return { success: false, error: 'Printer connection lost. Please reconnect.' };
+    // Verify BLE connection before printing (skip aggressive verification)
+    // Only verify if we have time - don't clear state on timeout
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const timeoutPromise = new Promise<boolean>((resolve) => 
+          setTimeout(() => resolve(true), 2000) // Return true on timeout - assume still connected
+        );
+        const verifyPromise = BleClient.getServices(printer.deviceId).then(() => true).catch(() => false);
+        const stillConnected = await Promise.race([verifyPromise, timeoutPromise]);
+        if (!stillConnected) {
+          console.warn('⚠️ Printer verification failed, but attempting print anyway');
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Printer verification error:', e);
+      // Don't fail - try to print anyway
     }
 
     console.log('🖨️ Starting print job...');
