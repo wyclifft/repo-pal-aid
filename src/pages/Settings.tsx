@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
-import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2 } from "lucide-react";
+import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2, Link } from "lucide-react";
 import { BluetoothDebugPanel } from "@/components/BluetoothDebugPanel";
+import { BluetoothConnectionDialog } from "@/components/BluetoothConnectionDialog";
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -24,6 +25,7 @@ import {
   isPrinterConnected,
   ScaleType 
 } from "@/services/bluetooth";
+import { connectClassicScale } from "@/services/bluetoothClassic";
 import { runBluetoothDiagnostics, logConnectionTips } from "@/utils/bluetoothDiagnostics";
 import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 
@@ -58,6 +60,10 @@ const Settings = () => {
     return localStorage.getItem('device_company_name') || '';
   });
   const [isRefreshingCompany, setIsRefreshingCompany] = useState(false);
+  
+  // Bluetooth connection dialog state
+  const [showConnectionDialog, setShowConnectionDialog] = useState(false);
+  const [isForceConnecting, setIsForceConnecting] = useState(false);
 
   useEffect(() => {
     const deviceInfo = getStoredDeviceInfo();
@@ -149,21 +155,53 @@ const Settings = () => {
     }
   };
 
-  const handleConnectScale = async () => {
-    setIsConnectingScale(true);
-    const result = await connectBluetoothScale((weight, type) => {
-      setLastWeight(weight);
-      // Silent - no toast notification for weight updates
-    });
-
-    setIsConnectingScale(false);
-    if (result.success) {
-      setScaleConnected(true);
-      setScaleType(result.type);
-      toast.success(`Connected to ${result.type} scale`);
-    } else {
-      toast.error(result.error || "Failed to connect to scale");
+  const handleConnectScale = () => {
+    // Open the new BLE/Classic selector dialog
+    setShowConnectionDialog(true);
+  };
+  
+  // Handle connection success from dialog
+  const handleScaleConnected = (type: 'ble' | 'classic-spp', scaleType: ScaleType) => {
+    setScaleConnected(true);
+    setScaleType(scaleType);
+    setStoredDevice(getStoredDeviceInfo());
+  };
+  
+  // Handle weight updates from dialog connection
+  const handleDialogWeightUpdate = (weight: number, scaleType?: ScaleType) => {
+    setLastWeight(weight);
+    if (scaleType) setScaleType(scaleType);
+  };
+  
+  // Force connect to specific Classic Bluetooth scale (04:23:09:06:0A:64)
+  const handleForceConnectClassic = async () => {
+    const targetMac = '04:23:09:06:0A:64';
+    setIsForceConnecting(true);
+    toast.info(`Force connecting to Classic scale: ${targetMac}`);
+    
+    try {
+      const result = await connectClassicScale(
+        { address: targetMac, name: 'Force-Connected Scale', bonded: true },
+        (weight) => {
+          console.log(`📡 Force Classic BT Weight: ${weight} kg`);
+          setLastWeight(weight);
+          setScaleType('Classic-SPP');
+        }
+      );
+      
+      if (result.success) {
+        setScaleConnected(true);
+        setScaleType('Classic-SPP');
+        toast.success(`Connected to Classic scale: ${targetMac}`);
+      } else {
+        toast.error(result.error || 'Failed to force connect');
+      }
+    } catch (error) {
+      console.error('Force connect error:', error);
+      toast.error('Force connection failed');
     }
+    
+    setIsForceConnecting(false);
   };
 
   const handleDisconnectScale = async () => {
@@ -326,23 +364,35 @@ const Settings = () => {
 
             <Separator />
 
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2">
               {!scaleConnected ? (
                 <>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleConnectScale}
+                      disabled={!isBluetoothAvailable || isConnectingScale}
+                      className="flex-1"
+                    >
+                      {isConnectingScale ? "Connecting..." : "Connect Scale (BLE/Classic)"}
+                    </Button>
+                    <Button
+                      onClick={handleRunDiagnostics}
+                      variant="outline"
+                      size="icon"
+                      title="Run Diagnostics"
+                    >
+                      <Bug className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  {/* Force connect button for specific Classic scale */}
                   <Button
-                    onClick={handleConnectScale}
-                    disabled={!isBluetoothAvailable || isConnectingScale}
-                    className="flex-1"
+                    onClick={handleForceConnectClassic}
+                    disabled={isForceConnecting}
+                    variant="secondary"
+                    className="w-full gap-2"
                   >
-                    {isConnectingScale ? "Connecting..." : "Search for Scale"}
-                  </Button>
-                  <Button
-                    onClick={handleRunDiagnostics}
-                    variant="outline"
-                    size="icon"
-                    title="Run Diagnostics"
-                  >
-                    <Bug className="h-4 w-4" />
+                    <Link className="h-4 w-4" />
+                    {isForceConnecting ? "Force Connecting..." : "Force Connect Classic (04:23:09:06:0A:64)"}
                   </Button>
                 </>
               ) : (
@@ -682,6 +732,14 @@ Date: ${new Date().toLocaleString()}
           </CardContent>
         </Card>
       </div>
+      
+      {/* Bluetooth Connection Dialog (BLE/Classic selector) */}
+      <BluetoothConnectionDialog
+        open={showConnectionDialog}
+        onOpenChange={setShowConnectionDialog}
+        onConnected={handleScaleConnected}
+        onWeightUpdate={handleDialogWeightUpdate}
+      />
     </div>
   );
 };
