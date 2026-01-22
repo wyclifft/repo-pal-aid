@@ -145,6 +145,7 @@ const server = http.createServer(async (req, res) => {
         const [seasonRows] = await pool.query(
           `SELECT 
             id,
+            SCODE,
             descript, 
             ccode,
             DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, 
@@ -164,6 +165,7 @@ const server = http.createServer(async (req, res) => {
         // Map rows with enabled flag calculated by backend - include all season details
         const processedSeasons = seasonRows.map(row => ({
           id: row.id,
+          SCODE: row.SCODE,
           descript: row.descript,
           ccode: row.ccode,
           datefrom: row.datefrom,

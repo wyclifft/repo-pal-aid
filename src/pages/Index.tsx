@@ -457,8 +457,8 @@ const Index = () => {
       product_name: selectedProduct?.descript,
       // Entry type: 'scale' for Bluetooth readings, 'manual' for manual input
       entry_type: entryType,
-      // Season ID for coffee orgtypes - saved to transactions.CAN column (use id instead of descript)
-      season: isCoffee && activeSession?.id ? String(activeSession.id) : undefined,
+      // Season SCODE for coffee orgtypes - saved to transactions.CAN column
+      season: isCoffee && activeSession?.SCODE ? activeSession.SCODE : undefined,
     };
 
     console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Local capture only (not submitted)');
