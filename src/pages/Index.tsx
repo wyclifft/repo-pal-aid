@@ -457,8 +457,8 @@ const Index = () => {
       product_name: selectedProduct?.descript,
       // Entry type: 'scale' for Bluetooth readings, 'manual' for manual input
       entry_type: entryType,
-      // Season description for coffee orgtypes - saved to transactions.CAN column
-      season: isCoffee ? activeSession?.descript : undefined,
+      // Season ID for coffee orgtypes - saved to transactions.CAN column (use id instead of descript)
+      season: isCoffee && activeSession?.id ? String(activeSession.id) : undefined,
     };
 
     console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Local capture only (not submitted)');
@@ -559,7 +559,7 @@ const Index = () => {
             device_fingerprint: deviceFingerprint, // CRITICAL: Required for authorization
             entry_type: capture.entry_type, // Pass entry_type to backend
             product_code: capture.product_code, // Pass selected product icode
-            season: isCoffee ? activeSession?.descript : undefined, // Pass season for coffee orgtypes
+            season: capture.season, // Pass season ID for coffee orgtypes (from capture)
           });
 
           console.log(`📨 Submit result for ${referenceNo}:`, result);
