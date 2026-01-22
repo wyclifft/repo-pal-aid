@@ -863,7 +863,7 @@ const server = http.createServer(async (req, res) => {
             // Transtype = 1 for all produce purchases (milk/coffee collections)
             // Get product_code (icode) and season (CAN) from request body
             const productCode = body.product_code || '';
-            const seasonCAN = body.season || ''; // For coffee orgtypes, this contains the season description
+            const seasonCAN = body.season || ''; // For coffee orgtypes, this contains the season ID
             
             await pool.query(
               `INSERT INTO transactions 
@@ -1391,16 +1391,19 @@ const server = http.createServer(async (req, res) => {
           }
         }
         
-        // Insert into transactions table (including photo columns and AI cow details)
+        // Insert into transactions table (including photo columns, AI cow details, season, and icode)
         // Column names match EXACTLY the transactions table schema:
-        // cowname, cowbreed, noofcalfs, aibreed
+        // cowname, cowbreed, noofcalfs, aibreed, CAN (season)
+        // Get season (CAN) from request body for consistency across all transaction types
+        const seasonCAN = body.season || '';
+        
         await conn.query(
           `INSERT INTO transactions 
             (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
              transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-             amount, icode, time, capType, milk_session_id, photo_filename, photo_directory,
+             amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
              cowname, cowbreed, noofcalfs, aibreed)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             transrefno,                         // transrefno (from frontend)
             uploadrefno,                        // Uploadrefno (from frontend)
@@ -1420,7 +1423,8 @@ const server = http.createServer(async (req, res) => {
             0,                                  // ivat
             body.price || 0,                    // iprice
             amount,                             // amount
-            body.item_code || '',               // icode
+            body.item_code || '',               // icode (from body)
+            seasonCAN,                          // CAN (season ID for coffee orgtypes)
             timestamp,                          // time
             0,                                  // capType
             '',                                 // milk_session_id
@@ -1563,6 +1567,9 @@ const server = http.createServer(async (req, res) => {
         const insertedRefs = [];
         
         // Insert each item with its unique transrefno
+        // Get season (CAN) from request body for consistency across all transaction types
+        const seasonCAN = body.season || '';
+        
         for (const item of body.items) {
           const transrefno = item.transrefno;
           const amount = (item.quantity || 0) * (item.price || 0);
@@ -1571,9 +1578,9 @@ const server = http.createServer(async (req, res) => {
             `INSERT INTO transactions 
               (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
                transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-               amount, icode, time, capType, milk_session_id, photo_filename, photo_directory,
+               amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
                cowname, cowbreed, noofcalfs, aibreed)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               transrefno,
               uploadrefno,
@@ -1594,6 +1601,7 @@ const server = http.createServer(async (req, res) => {
               item.price || 0,
               amount,
               item.item_code || '',
+              seasonCAN,                        // CAN (season ID for coffee orgtypes)
               timestamp,
               0,
               '',
