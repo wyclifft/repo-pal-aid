@@ -89,7 +89,8 @@ const Store = () => {
     autoReconnect();
   }, []);
 
-  // Clerk info
+  // Clerk info - user_id for tracking, clerkName for display
+  const userId = currentUser?.user_id || 'unknown';
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
 
   const { getFarmers, saveSale, getUnsyncedSales, deleteSale, getItems, isReady } = useIndexedDB();
@@ -491,7 +492,8 @@ const Store = () => {
         transtype: 2, // Store transaction
         farmer_id: selectedFarmer.farmer_id,
         farmer_name: selectedFarmer.name,
-        sold_by: clerkName,
+        user_id: userId, // Login user_id for DB userId column
+        sold_by: clerkName, // Display name for DB clerk column
         device_fingerprint: deviceFingerprint,
         photo: photoBase64, // ONE photo for all items
         items: batchItems,
@@ -517,7 +519,8 @@ const Store = () => {
             item_name: item.item_name,
             quantity: item.quantity,
             price: item.price,
-            sold_by: clerkName,
+            user_id: userId, // Login user_id for DB userId column
+            sold_by: clerkName, // Display name for DB clerk column
             device_fingerprint: deviceFingerprint,
             photo: photoBase64, // Include photo for offline sync
           };

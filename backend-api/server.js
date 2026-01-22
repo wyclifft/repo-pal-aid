@@ -723,6 +723,9 @@ const server = http.createServer(async (req, res) => {
       console.log('⚖️ Weight:', body.weight, 'Kg');
       console.log('📅 Session:', body.session);
       
+      // user_id maps to userId column (login user_id for tracking)
+      // clerk_name maps to clerk column (display name/username)
+      const userId = body.user_id || body.clerk_name || 'unknown';
       const clerk = body.clerk_name || 'unknown';
       const deviceserial = body.device_fingerprint || 'web';
       
@@ -876,7 +879,7 @@ const server = http.createServer(async (req, res) => {
               [
                 attemptTransrefno,
                 attemptUploadrefno ? String(attemptUploadrefno) : '',
-                clerk,
+                userId,
                 clerk,
                 deviceserial,
                 cleanFarmerId,
@@ -1409,8 +1412,8 @@ const server = http.createServer(async (req, res) => {
           [
             transrefno,                         // transrefno (from frontend)
             uploadrefno,                        // Uploadrefno (from frontend)
-            body.sold_by || '',                 // userId
-            body.sold_by || '',                 // clerk
+            body.user_id || body.sold_by || '', // userId (login user_id for tracking)
+            body.sold_by || '',                 // clerk (display name/username)
             body.device_fingerprint || '',      // deviceserial
             body.farmer_id || '',               // memberno
             '',                                 // route (empty for store/AI sales)
@@ -1586,8 +1589,8 @@ const server = http.createServer(async (req, res) => {
             [
               transrefno,
               uploadrefno,
-              body.sold_by || '',
-              body.sold_by || '',
+              body.user_id || body.sold_by || '', // userId (login user_id for tracking)
+              body.sold_by || '',                 // clerk (display name/username)
               body.device_fingerprint || '',
               body.farmer_id || '',
               '',

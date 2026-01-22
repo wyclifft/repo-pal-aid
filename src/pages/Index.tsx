@@ -447,7 +447,8 @@ const Index = () => {
       route: route.trim(),
       session: currentSessionType, // Use already-computed session
       weight: parseFloat(Number(weight).toFixed(2)),
-      clerk_name: currentUser ? (currentUser.username || currentUser.user_id) : 'unknown',
+      user_id: currentUser?.user_id || 'unknown', // Login user_id for DB userId column
+      clerk_name: currentUser ? (currentUser.username || currentUser.user_id) : 'unknown', // Display name for clerk column
       collection_date: new Date(),
       multOpt: farmerMultOpt,
       orderId: Date.now(),
@@ -554,7 +555,8 @@ const Index = () => {
             route: capture.route.trim(),
             session: normalizedSession,
             weight: capture.weight,
-            clerk_name: capture.clerk_name,
+            user_id: capture.user_id, // Login user_id for DB userId column
+            clerk_name: capture.clerk_name, // Display name for clerk column
             collection_date: capture.collection_date,
             device_fingerprint: deviceFingerprint, // CRITICAL: Required for authorization
             entry_type: capture.entry_type, // Pass entry_type to backend

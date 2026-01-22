@@ -345,6 +345,8 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           <div className="relative">
             <input
               type="text"
+              id="userid"
+              name="userid"
               inputMode="text"
               autoComplete="username"
               placeholder="User ID"
@@ -359,6 +361,8 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           <div className="relative">
             <input
               type={showPassword ? 'text' : 'password'}
+              id="password"
+              name="password"
               autoComplete="current-password"
               placeholder="Password"
               value={password}

@@ -65,7 +65,8 @@ const AIPage = () => {
   const [showReceipt, setShowReceipt] = useState(false);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
 
-  // Clerk info
+  // Clerk info - user_id for tracking, clerkName for display
+  const userId = currentUser?.user_id || 'unknown';
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
 
   const { getFarmers, getItems, isReady } = useIndexedDB();
@@ -381,7 +382,8 @@ const AIPage = () => {
           item_name: cartItem.item.descript,
           quantity: cartItem.quantity,
           price: cartItem.item.sprice,
-          sold_by: clerkName,
+          user_id: userId, // Login user_id for DB userId column
+          sold_by: clerkName, // Display name for DB clerk column
           device_fingerprint: deviceFingerprint,
           // Cow details for AI
           cow_name: cartItem.cowDetails?.cowName || '',
