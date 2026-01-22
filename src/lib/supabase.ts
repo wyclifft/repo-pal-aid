@@ -77,7 +77,8 @@ export interface MilkCollection {
   route: string;              // → DB: route
   session: string;            // → DB: session - AM/PM for dairy, season name for coffee
   weight: number;             // → DB: weight
-  clerk_name: string;         // → DB: clerk
+  user_id?: string;           // → DB: userId (login user_id for tracking)
+  clerk_name: string;         // → DB: clerk (display name/username)
   collection_date: Date;      // → DB: transdate
   /**
    * Snapshot of member multOpt at the time of capture.

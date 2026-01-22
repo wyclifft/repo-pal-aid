@@ -311,7 +311,8 @@ export const farmersApi = {
 // route → route
 // session → session (AM/PM for dairy, season name for coffee)
 // weight → weight
-// clerk_name → clerk
+// user_id → userId (login user_id)
+// clerk_name → clerk (display name/username)
 // collection_date → transdate
 
 export interface MilkCollection {
@@ -323,7 +324,8 @@ export interface MilkCollection {
   route: string;              // → DB: route
   session: string;            // → DB: session - AM/PM for dairy, season name for coffee
   weight: number;             // → DB: weight
-  clerk_name: string;         // → DB: clerk
+  user_id?: string;           // → DB: userId (login user_id for tracking)
+  clerk_name: string;         // → DB: clerk (display name/username)
   collection_date: Date | string; // → DB: transdate
   created_at?: string;
   updated_at?: string;
@@ -702,7 +704,8 @@ export interface Sale {
   quantity: number;     // → DB: weight
   price: number;        // → DB: iprice
   total_amount?: number; // → DB: amount
-  sold_by: string;      // → DB: userId, clerk
+  user_id?: string;     // → DB: userId (login user_id for tracking)
+  sold_by: string;      // → DB: clerk (display name/username)
   sale_date?: string;   // → DB: transdate
   remarks?: string;
   device_fingerprint?: string; // → DB: deviceserial
@@ -720,7 +723,8 @@ export interface BatchSaleRequest {
   transtype: number;
   farmer_id: string;
   farmer_name: string;
-  sold_by: string;
+  user_id?: string;     // → DB: userId (login user_id for tracking)
+  sold_by: string;      // → DB: clerk (display name/username)
   device_fingerprint: string;
   photo?: string;  // ONE photo for entire batch
   items: Array<{

@@ -108,7 +108,8 @@ export const useSalesSync = () => {
             transtype: 2,
             farmer_id: String(firstSale.farmer_id || '').replace(/^#/, '').trim(),
             farmer_name: String(firstSale.farmer_name || '').trim(),
-            sold_by: String(firstSale.sold_by || '').trim(),
+            user_id: String(firstSale.user_id || '').trim(), // Login user_id for DB userId column
+            sold_by: String(firstSale.sold_by || '').trim(), // Display name for DB clerk column
             device_fingerprint: deviceFingerprint,
             photo: firstSale.photo, // ONE photo for batch
             items: batchSales.map(sale => ({
@@ -173,7 +174,8 @@ export const useSalesSync = () => {
             item_name: String(saleRecord.item_name || '').trim(),
             quantity: Number(saleRecord.quantity) || 0,
             price: Number(saleRecord.price) || 0,
-            sold_by: String(saleRecord.sold_by || '').trim(),
+            user_id: String(saleRecord.user_id || '').trim(), // Login user_id for DB userId column
+            sold_by: String(saleRecord.sold_by || '').trim(), // Display name for DB clerk column
             device_fingerprint: deviceFingerprint,
             ...(saleRecord.photo && { photo: saleRecord.photo }),
             ...(saleRecord.transrefno && { transrefno: saleRecord.transrefno }),

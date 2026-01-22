@@ -150,7 +150,8 @@ export const useDataSync = () => {
             route: String(receipt.route || '').trim(),
             session: normalizedSession,
             weight: receipt.weight,
-            clerk_name: receipt.clerk_name,
+            user_id: receipt.user_id, // Login user_id for DB userId column
+            clerk_name: receipt.clerk_name, // Display name for clerk column
             collection_date: receipt.collection_date,
             device_fingerprint: deviceFingerprint,
             entry_type: receipt.entry_type, // Pass entry_type to backend
