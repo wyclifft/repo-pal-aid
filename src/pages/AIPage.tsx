@@ -381,7 +381,7 @@ const AIPage = () => {
           item_name: cartItem.item.descript,
           quantity: cartItem.quantity,
           price: cartItem.item.sprice,
-          sold_by: currentUser?.user_id || 'Unknown',
+          sold_by: clerkName,
           device_fingerprint: deviceFingerprint,
           // Cow details for AI
           cow_name: cartItem.cowDetails?.cowName || '',

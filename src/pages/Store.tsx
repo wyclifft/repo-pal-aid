@@ -491,7 +491,7 @@ const Store = () => {
         transtype: 2, // Store transaction
         farmer_id: selectedFarmer.farmer_id,
         farmer_name: selectedFarmer.name,
-        sold_by: currentUser?.user_id || 'Unknown',
+        sold_by: clerkName,
         device_fingerprint: deviceFingerprint,
         photo: photoBase64, // ONE photo for all items
         items: batchItems,
@@ -550,7 +550,7 @@ const Store = () => {
         farmerId: selectedFarmer.farmer_id,
         farmerName: selectedFarmer.name,
         memberRoute: selectedFarmer.route,
-        clerkName: currentUser?.user_id || 'Unknown',
+        clerkName: clerkName,
         uploadrefno: refs.uploadrefno,
         items: reprintItems,
         totalAmount: cartTotal,

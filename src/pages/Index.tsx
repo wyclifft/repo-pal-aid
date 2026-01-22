@@ -447,7 +447,7 @@ const Index = () => {
       route: route.trim(),
       session: currentSessionType, // Use already-computed session
       weight: parseFloat(Number(weight).toFixed(2)),
-      clerk_name: currentUser ? currentUser.user_id : 'unknown',
+      clerk_name: currentUser ? (currentUser.username || currentUser.user_id) : 'unknown',
       collection_date: new Date(),
       multOpt: farmerMultOpt,
       orderId: Date.now(),
