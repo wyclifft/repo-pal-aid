@@ -861,12 +861,16 @@ const server = http.createServer(async (req, res) => {
           try {
             // Attempt the insert with current reference
             // Transtype = 1 for all produce purchases (milk/coffee collections)
+            // Get product_code (icode) and season (CAN) from request body
+            const productCode = body.product_code || '';
+            const seasonCAN = body.season || ''; // For coffee orgtypes, this contains the season description
+            
             await pool.query(
               `INSERT INTO transactions 
                 (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-                 amount, icode, time, capType, entry_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, 0, 0, 0, '', ?, 0, ?)`,
+                 amount, icode, CAN, time, capType, entry_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?)`,
               [
                 attemptTransrefno,
                 attemptUploadrefno ? String(attemptUploadrefno) : '',
@@ -880,6 +884,8 @@ const server = http.createServer(async (req, res) => {
                 transdate,
                 transtime,
                 ccode,
+                productCode,
+                seasonCAN,
                 timestamp,
                 body.entry_type || 'manual',
               ]
