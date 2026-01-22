@@ -91,6 +91,6 @@ export interface MilkCollection {
   product_name?: string;      // Display only, derived from fm_items.descript
   // Entry type: 'scale' for Bluetooth scale readings, 'manual' for manual input
   entry_type?: 'scale' | 'manual';
-  // Season ID for coffee (orgtype C) - saved to transactions.CAN column
-  season?: string;            // → DB: CAN (stores session.id for coffee orgtypes)
+  // Season SCODE for coffee (orgtype C) - saved to transactions.CAN column
+  season?: string;            // → DB: CAN (stores session.SCODE for coffee orgtypes)
 }

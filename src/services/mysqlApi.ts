@@ -126,6 +126,7 @@ async function apiRequest<T>(
 
 export interface Session {
   id?: number;        // Season ID (only for orgtype = 'C')
+  SCODE?: string;     // Season code - saved to transactions.CAN column
   descript: string;
   time_from: number;  // Hour in 24-hour format (0-24)
   time_to: number;    // Hour in 24-hour format (0-24)
@@ -338,8 +339,8 @@ export interface MilkCollection {
   product_name?: string;      // → Not stored, derived from fm_items.descript
   // Entry type: 'scale' for Bluetooth scale readings, 'manual' for manual input
   entry_type?: 'scale' | 'manual';
-  // Season ID for coffee (orgtype C) - saved to transactions.CAN column
-  season?: string;            // → DB: CAN (stores session.id for coffee orgtypes)
+  // Season SCODE for coffee (orgtype C) - saved to transactions.CAN column
+  season?: string;            // → DB: CAN (stores session.SCODE for coffee orgtypes)
 }
 
 export const milkCollectionApi = {
