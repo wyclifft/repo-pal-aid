@@ -26,10 +26,12 @@ import { toast } from "sonner";
 import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 import { useIndexedDB } from "@/hooks/useIndexedDB";
 import { DeviceAuthStatus } from "@/components/DeviceAuthStatus";
+import { useAppSettings } from "@/hooks/useAppSettings";
 
 export default function PeriodicReport() {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const { produceLabel, routeLabel, weightUnit, weightLabel } = useAppSettings();
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
 
@@ -133,9 +135,9 @@ export default function PeriodicReport() {
         console.log('✅ Periodic report synced and cached');
         
         if (data.length === 0) {
-          toast.warning("No milk collections found for the selected date range");
+          toast.warning(`No ${produceLabel.toLowerCase()} collections found for the selected date range`);
         } else {
-          toast.success(`Found ${data.length} farmer(s) with milk collections`);
+          toast.success(`Found ${data.length} farmer(s) with ${produceLabel.toLowerCase()} collections`);
         }
       } catch (error) {
         console.error("Error syncing report:", error);
@@ -162,11 +164,11 @@ export default function PeriodicReport() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#1e3a8a] via-[#3b82f6] to-[#60a5fa] p-4" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
       <div className="max-w-7xl mx-auto">
-        <div className="bg-white/95 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-6">
+          <div className="bg-white/95 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-6">
           <div className="flex items-center justify-between gap-3 mb-6">
             <div className="flex items-center gap-3">
               <FileText className="h-8 w-8 text-primary" />
-              <h1 className="text-3xl font-bold text-gray-900">Periodic Report</h1>
+              <h1 className="text-3xl font-bold text-gray-900">{produceLabel} Periodic Report</h1>
             </div>
             <DeviceAuthStatus />
           </div>
@@ -259,7 +261,7 @@ export default function PeriodicReport() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold">Report Results</h2>
               <div className="text-sm text-muted-foreground">
-                {reportData.length} Farmer{reportData.length !== 1 ? 's' : ''} | {totalCollections} Collection{totalCollections !== 1 ? 's' : ''} | {totalWeight.toFixed(2)} kg Total
+                {reportData.length} Farmer{reportData.length !== 1 ? 's' : ''} | {totalCollections} Collection{totalCollections !== 1 ? 's' : ''} | {totalWeight.toFixed(2)} {weightUnit} Total
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -268,9 +270,9 @@ export default function PeriodicReport() {
                   <TableRow>
                     <TableHead>Farmer ID</TableHead>
                     <TableHead>Farmer Name</TableHead>
-                    <TableHead>Route</TableHead>
+                    <TableHead>{routeLabel}</TableHead>
                     <TableHead>Total Collections</TableHead>
-                    <TableHead>Total Weight (kg)</TableHead>
+                    <TableHead>Total Weight ({weightUnit})</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

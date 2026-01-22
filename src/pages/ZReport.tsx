@@ -27,7 +27,7 @@ const ZReport = () => {
   const [hasPrinted, setHasPrinted] = useState(false);
   
   // App settings
-  const { sessionPrintOnly, routeLabel, produceLabel } = useAppSettings();
+  const { sessionPrintOnly, routeLabel, produceLabel, isCoffee, weightUnit, weightLabel, periodLabel } = useAppSettings();
   
   // Sync status tracking for sessprint enforcement
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
@@ -315,26 +315,28 @@ const ZReport = () => {
             <div className="thermal-section">
               <div className="thermal-line">Total Entries: {reportData.totals.entries}</div>
               <div className="thermal-line">Total Farmers: {reportData.totals.farmers}</div>
-              <div className="thermal-line">Total Litres: {reportData.totals.liters.toFixed(2)}</div>
+              <div className="thermal-line">Total {weightLabel}: {reportData.totals.liters.toFixed(2)}</div>
             </div>
             <div className="thermal-divider">--------------------------------</div>
+            {!isCoffee && (
+              <div className="thermal-section">
+                <div className="thermal-line thermal-bold">BY SESSION:</div>
+                <div className="thermal-line">Morning: {reportData.bySession.AM.entries} ({reportData.bySession.AM.liters.toFixed(2)}{weightUnit})</div>
+                <div className="thermal-line">Evening: {reportData.bySession.PM.entries} ({reportData.bySession.PM.liters.toFixed(2)}{weightUnit})</div>
+              </div>
+            )}
+            {!isCoffee && <div className="thermal-divider">--------------------------------</div>}
             <div className="thermal-section">
-              <div className="thermal-line thermal-bold">BY SESSION:</div>
-              <div className="thermal-line">Morning: {reportData.bySession.AM.entries} ({reportData.bySession.AM.liters.toFixed(2)}L)</div>
-              <div className="thermal-line">Evening: {reportData.bySession.PM.entries} ({reportData.bySession.PM.liters.toFixed(2)}L)</div>
-            </div>
-            <div className="thermal-divider">--------------------------------</div>
-            <div className="thermal-section">
-              <div className="thermal-line thermal-bold">BY ROUTE:</div>
+              <div className="thermal-line thermal-bold">BY {routeLabel.toUpperCase()}:</div>
               {Object.entries(reportData.byRoute).map(([route, data]) => (
-                <div key={route} className="thermal-line">{route}: {data.total.toFixed(2)}L</div>
+                <div key={route} className="thermal-line">{route}: {data.total.toFixed(2)}{weightUnit}</div>
               ))}
             </div>
             <div className="thermal-divider">--------------------------------</div>
             <div className="thermal-section">
               <div className="thermal-line thermal-bold">BY COLLECTOR:</div>
               {Object.entries(reportData.byCollector).map(([collector, data]) => (
-                <div key={collector} className="thermal-line">{collector}: {data.liters.toFixed(2)}L</div>
+                <div key={collector} className="thermal-line">{collector}: {data.liters.toFixed(2)}{weightUnit}</div>
               ))}
             </div>
             <div className="thermal-divider">--------------------------------</div>
@@ -370,11 +372,11 @@ const ZReport = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-lg">Total Liters</CardTitle>
+                  <CardTitle className="text-lg">Total {weightLabel}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-3xl font-bold text-[#667eea]">
-                    {reportData.totals.liters.toFixed(2)} L
+                    {reportData.totals.liters.toFixed(2)} {weightUnit}
                   </div>
                 </CardContent>
               </Card>
@@ -402,35 +404,37 @@ const ZReport = () => {
               </Card>
             </div>
 
-            {/* By Session */}
-            <Card>
-              <CardHeader>
-                <CardTitle>By Session</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Session</TableHead>
-                      <TableHead className="text-right">Entries</TableHead>
-                      <TableHead className="text-right">Liters</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow>
-                      <TableCell className="font-medium">Morning (AM)</TableCell>
-                      <TableCell className="text-right">{reportData.bySession.AM.entries}</TableCell>
-                      <TableCell className="text-right">{reportData.bySession.AM.liters.toFixed(2)} L</TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="font-medium">Evening (PM)</TableCell>
-                      <TableCell className="text-right">{reportData.bySession.PM.entries}</TableCell>
-                      <TableCell className="text-right">{reportData.bySession.PM.liters.toFixed(2)} L</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            {/* By Session - Only show for dairy (non-coffee) */}
+            {!isCoffee && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>By {periodLabel}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{periodLabel}</TableHead>
+                        <TableHead className="text-right">Entries</TableHead>
+                        <TableHead className="text-right">{weightLabel}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell className="font-medium">Morning (AM)</TableCell>
+                        <TableCell className="text-right">{reportData.bySession.AM.entries}</TableCell>
+                        <TableCell className="text-right">{reportData.bySession.AM.liters.toFixed(2)} {weightUnit}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell className="font-medium">Evening (PM)</TableCell>
+                        <TableCell className="text-right">{reportData.bySession.PM.entries}</TableCell>
+                        <TableCell className="text-right">{reportData.bySession.PM.liters.toFixed(2)} {weightUnit}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
 
             {/* By Route */}
             <Card>
@@ -442,18 +446,20 @@ const ZReport = () => {
                   <TableHeader>
                     <TableRow>
                       <TableHead>{routeLabel}</TableHead>
-                      <TableHead className="text-right">AM Entries</TableHead>
-                      <TableHead className="text-right">PM Entries</TableHead>
-                      <TableHead className="text-right">Total Liters</TableHead>
+                      {!isCoffee && <TableHead className="text-right">AM Entries</TableHead>}
+                      {!isCoffee && <TableHead className="text-right">PM Entries</TableHead>}
+                      {isCoffee && <TableHead className="text-right">Entries</TableHead>}
+                      <TableHead className="text-right">Total {weightLabel}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {Object.entries(reportData.byRoute).map(([route, data]) => (
                       <TableRow key={route}>
                         <TableCell className="font-medium">{route}</TableCell>
-                        <TableCell className="text-right">{data.AM.length}</TableCell>
-                        <TableCell className="text-right">{data.PM.length}</TableCell>
-                        <TableCell className="text-right">{data.total.toFixed(2)} L</TableCell>
+                        {!isCoffee && <TableCell className="text-right">{data.AM.length}</TableCell>}
+                        {!isCoffee && <TableCell className="text-right">{data.PM.length}</TableCell>}
+                        {isCoffee && <TableCell className="text-right">{data.AM.length + data.PM.length}</TableCell>}
+                        <TableCell className="text-right">{data.total.toFixed(2)} {weightUnit}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -473,7 +479,7 @@ const ZReport = () => {
                       <TableHead>Collector</TableHead>
                       <TableHead className="text-right">Farmers</TableHead>
                       <TableHead className="text-right">Entries</TableHead>
-                      <TableHead className="text-right">Total Liters</TableHead>
+                      <TableHead className="text-right">Total {weightLabel}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -482,7 +488,7 @@ const ZReport = () => {
                         <TableCell className="font-medium">{collector}</TableCell>
                         <TableCell className="text-right">{data.farmers}</TableCell>
                         <TableCell className="text-right">{data.entries}</TableCell>
-                        <TableCell className="text-right">{data.liters.toFixed(2)} L</TableCell>
+                        <TableCell className="text-right">{data.liters.toFixed(2)} {weightUnit}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

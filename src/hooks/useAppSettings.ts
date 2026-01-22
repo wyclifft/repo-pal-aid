@@ -104,6 +104,8 @@ interface AppSettingsContextType {
   centerLabel: string;
   produceLabel: string;
   periodLabel: string;
+  weightUnit: string;  // 'kg' for coffee, 'L' for dairy
+  weightLabel: string; // 'Kilograms' for coffee, 'Liters' for dairy
   requireStableReading: boolean;
   requireZeroScale: boolean;
   autoWeightOnly: boolean;
@@ -525,6 +527,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const produceLabel = isDairy ? 'Milk' : 'Coffee';
   // Period label: use backend value if available, otherwise derive from orgtype
   const periodLabel = settings.periodLabel || (isCoffee ? 'Season' : 'Session');
+  // Weight unit: kg for coffee, L for dairy
+  const weightUnit = isCoffee ? 'kg' : 'L';
+  const weightLabel = isCoffee ? 'Kilograms' : 'Liters';
   // CRITICAL: Use strict equality with number 1 for boolean conversion
   const requireStableReading = settings.stableopt === 1;
   const requireZeroScale = settings.zeroOpt === 1;
@@ -548,6 +553,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     centerLabel,
     produceLabel,
     periodLabel,
+    weightUnit,
+    weightLabel,
     requireStableReading,
     requireZeroScale,
     autoWeightOnly,
