@@ -517,7 +517,7 @@ const Store = () => {
             item_name: item.item_name,
             quantity: item.quantity,
             price: item.price,
-            sold_by: currentUser?.user_id || 'Unknown',
+            sold_by: clerkName,
             device_fingerprint: deviceFingerprint,
             photo: photoBase64, // Include photo for offline sync
           };
@@ -531,7 +531,7 @@ const Store = () => {
       const receipt = createStoreReceiptData(
         cart,
         { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
-        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName: currentUser?.user_id || 'Unknown' },
+        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
         companyName
       );
       setReceiptData(receipt);

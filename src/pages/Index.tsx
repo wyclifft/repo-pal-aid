@@ -938,7 +938,7 @@ const Index = () => {
   return (
     <>
       <Dashboard
-        userName={currentUser?.user_id || 'User'}
+        userName={currentUser?.username || currentUser?.user_id || 'User'}
         companyName={companyName}
         isOnline={navigator.onLine}
         pendingCount={pendingCount}
@@ -999,7 +999,7 @@ const Index = () => {
         <BuyProduceScreen
           route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
           session={activeSession!}
-          userName={currentUser?.user_id || 'User'}
+          userName={currentUser?.username || currentUser?.user_id || 'User'}
           weight={weight}
           capturedCollections={capturedCollections}
           onBack={handleBackToDashboard}
@@ -1026,7 +1026,7 @@ const Index = () => {
         <SellProduceScreen
           route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
           session={activeSession!}
-          userName={currentUser?.user_id || 'User'}
+          userName={currentUser?.username || currentUser?.user_id || 'User'}
           weight={weight}
           capturedCollections={capturedCollections}
           onBack={handleBackToDashboard}
