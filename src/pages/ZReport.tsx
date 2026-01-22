@@ -163,6 +163,7 @@ const ZReport = () => {
 
   // Handle print button click
   const handlePrintClick = () => {
+    console.log('🖨️ Print button clicked', { sessionPrintOnly, isSyncComplete, pendingSyncCount, reportData: !!reportData });
     handlePrint();
     setHasPrinted(true);
   };
@@ -187,24 +188,31 @@ const ZReport = () => {
   };
 
   const handlePrint = () => {
+    console.log('🖨️ handlePrint called', { sessionPrintOnly, isSyncComplete });
     // Enforce sessprint: only print if sync is complete
     if (sessionPrintOnly && !isSyncComplete) {
       toast.error(`Cannot print Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
       return;
     }
+    console.log('🖨️ Triggering window.print()');
     window.print();
     setHasPrinted(true);
   };
 
   const handleDownloadPDF = () => {
+    console.log('📥 PDF button clicked', { sessionPrintOnly, isSyncComplete, reportData: !!reportData });
     // Enforce sessprint: only download if sync is complete
     if (sessionPrintOnly && !isSyncComplete) {
       toast.error(`Cannot download Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
       return;
     }
     if (reportData) {
+      console.log('📥 Generating PDF');
       generateZReportPDF(reportData);
       toast.success('PDF downloaded successfully');
+    } else {
+      console.log('📥 No report data available for PDF');
+      toast.error('No report data available to download');
     }
   };
 
