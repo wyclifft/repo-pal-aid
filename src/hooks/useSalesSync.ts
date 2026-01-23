@@ -102,18 +102,20 @@ export const useSalesSync = () => {
         try {
           const firstSale = batchSales[0];
           
-          // Build batch request - photo only from first item
+          // Build batch request with ALL required fields including user_id, route, season, and transrefno
           const batchRequest: BatchSaleRequest = {
             uploadrefno,
             transtype: 2,
             farmer_id: String(firstSale.farmer_id || '').replace(/^#/, '').trim(),
             farmer_name: String(firstSale.farmer_name || '').trim(),
-            user_id: String(firstSale.user_id || '').trim(), // Login user_id for DB userId column
-            sold_by: String(firstSale.sold_by || '').trim(), // Display name for DB clerk column
+            route: String(firstSale.route || '').trim(), // Include route for DB
+            user_id: String(firstSale.user_id || '').trim(), // Login user_id → DB: userId
+            sold_by: String(firstSale.sold_by || '').trim(), // Display name → DB: clerk
             device_fingerprint: deviceFingerprint,
             photo: firstSale.photo, // ONE photo for batch
+            season: String(firstSale.season || '').trim(), // Session SCODE → DB: CAN
             items: batchSales.map(sale => ({
-              transrefno: sale.transrefno || '',
+              transrefno: sale.transrefno || '', // Preserve original transrefno generated offline
               item_code: String(sale.item_code || '').trim(),
               item_name: String(sale.item_name || '').trim(),
               quantity: Number(sale.quantity) || 0,
@@ -174,11 +176,13 @@ export const useSalesSync = () => {
             item_name: String(saleRecord.item_name || '').trim(),
             quantity: Number(saleRecord.quantity) || 0,
             price: Number(saleRecord.price) || 0,
-            user_id: String(saleRecord.user_id || '').trim(), // Login user_id for DB userId column
-            sold_by: String(saleRecord.sold_by || '').trim(), // Display name for DB clerk column
+            route: String(saleRecord.route || '').trim(), // Include route for DB
+            user_id: String(saleRecord.user_id || '').trim(), // Login user_id → DB: userId
+            sold_by: String(saleRecord.sold_by || '').trim(), // Display name → DB: clerk
             device_fingerprint: deviceFingerprint,
+            season: String(saleRecord.season || '').trim(), // Session SCODE → DB: CAN
             ...(saleRecord.photo && { photo: saleRecord.photo }),
-            ...(saleRecord.transrefno && { transrefno: saleRecord.transrefno }),
+            ...(saleRecord.transrefno && { transrefno: saleRecord.transrefno }), // Preserve original transrefno
             ...(saleRecord.uploadrefno && { uploadrefno: saleRecord.uploadrefno }),
             ...(saleRecord.transtype && { transtype: saleRecord.transtype }),
             // AI-specific fields
