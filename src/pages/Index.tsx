@@ -454,11 +454,12 @@ const Index = () => {
       orderId: Date.now(),
       synced: false, // Not synced - only locally captured
       // Product info from selected produce item (invtype=01)
-      // product_code maps to both icode AND CAN columns in transactions table
-      product_code: selectedProduct?.icode,
+      product_code: selectedProduct?.icode, // → DB: icode column
       product_name: selectedProduct?.descript,
       // Entry type: 'scale' for Bluetooth readings, 'manual' for manual input
       entry_type: entryType,
+      // Season SCODE from active session → DB: CAN column
+      season_code: activeSession?.SCODE || '',
     };
 
     console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Local capture only (not submitted)');
@@ -559,7 +560,8 @@ const Index = () => {
             collection_date: capture.collection_date,
             device_fingerprint: deviceFingerprint, // CRITICAL: Required for authorization
             entry_type: capture.entry_type, // Pass entry_type to backend
-            product_code: capture.product_code, // Pass selected product icode (maps to icode AND CAN)
+            product_code: capture.product_code, // Pass selected product icode → DB: icode column
+            season_code: capture.season_code, // Pass session SCODE → DB: CAN column
           });
 
           console.log(`📨 Submit result for ${referenceNo}:`, result);

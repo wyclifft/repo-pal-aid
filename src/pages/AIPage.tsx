@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { mysqlApi, type Item, type Farmer, type CreditType } from '@/services/mysqlApi';
+import { mysqlApi, type Item, type Farmer, type CreditType, type Session } from '@/services/mysqlApi';
 import { toast } from 'sonner';
 import { ArrowLeft, Search, X, CornerDownLeft, Wifi, WifiOff, Beef } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -69,12 +69,29 @@ const AIPage = () => {
   const userId = currentUser?.user_id || 'unknown';
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
 
+  // Active session state for CAN column
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
+
   const { getFarmers, getItems, isReady } = useIndexedDB();
   const { saveOfflineSale, syncPendingSales } = useSalesSync();
   const { addAIReceipt } = useReprint();
   
   // Online status tracking
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Fetch active session on mount
+  const loadActiveSession = async () => {
+    try {
+      const deviceFingerprint = await generateDeviceFingerprint();
+      const response = await mysqlApi.sessions.getActive(deviceFingerprint);
+      if (response.success && response.data) {
+        setActiveSession(response.data);
+        console.log('[AI] Active session loaded:', response.data.SCODE);
+      }
+    } catch (error) {
+      console.warn('[AI] Failed to load active session:', error);
+    }
+  };
 
   // Check authentication
   useEffect(() => {
@@ -106,6 +123,7 @@ const AIPage = () => {
       checkRoutesAndLoadItems();
       loadFarmers();
       loadCreditTypes();
+      loadActiveSession();
       // Sync any pending AI transactions on load
       if (navigator.onLine) {
         syncPendingSales();
@@ -386,6 +404,7 @@ const AIPage = () => {
           user_id: userId, // Login user_id for DB userId column
           sold_by: clerkName, // Display name for DB clerk column
           device_fingerprint: deviceFingerprint,
+          season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
           // Cow details for AI
           cow_name: cartItem.cowDetails?.cowName || '',
           cow_breed: cartItem.cowDetails?.cowBreed || '',

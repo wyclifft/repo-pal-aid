@@ -341,8 +341,8 @@ export interface MilkCollection {
   product_name?: string;      // → Not stored, derived from fm_items.descript
   // Entry type: 'scale' for Bluetooth scale readings, 'manual' for manual input
   entry_type?: 'scale' | 'manual';
-  // Season SCODE for coffee (orgtype C) - saved to transactions.CAN column
-  season?: string;            // → DB: CAN (stores session.SCODE for coffee orgtypes)
+  // Season SCODE from sessions table - saved to transactions.CAN column
+  season_code?: string;       // → DB: CAN (stores session.SCODE for all orgtypes)
 }
 
 export const milkCollectionApi = {
@@ -711,6 +711,7 @@ export interface Sale {
   remarks?: string;
   device_fingerprint?: string; // → DB: deviceserial
   photo?: string;       // Base64 encoded buyer photo for theft prevention
+  season?: string;      // → DB: CAN (session.SCODE for all orgtypes)
   // AI-specific fields (mapped to DB columns):
   // Frontend field → DB column
   cow_name?: string;          // → DB: cowname
@@ -729,6 +730,7 @@ export interface BatchSaleRequest {
   sold_by: string;      // → DB: clerk (display name/username)
   device_fingerprint: string;
   photo?: string;  // ONE photo for entire batch
+  season?: string; // → DB: CAN (session.SCODE for all orgtypes)
   items: Array<{
     transrefno: string;  // Unique per item
     item_code: string;
