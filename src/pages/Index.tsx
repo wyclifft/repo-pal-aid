@@ -345,61 +345,36 @@ const Index = () => {
     const currentSessionType = isCoffee ? (activeSession.descript || amPmSession) : amPmSession;
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
-    // ========== multOpt=0 DUPLICATE SESSION CHECK (works online & offline) ==========
-    // If farmer has multOpt=0, only ONE delivery per session per day is allowed
+    // ========== multOpt=0 CAPTURE BEHAVIOR ==========
+    // NOTE: Capture ONLY stores locally. No DB writes or online checks here.
+    // Multiple captures are allowed (e.g., farmer brings 3 buckets = 3 captures).
+    // All duplicate/multiOpt validation happens at SUBMIT time only.
+    // This ensures no premature member flagging or incorrect DB state.
     const farmerMultOpt = selectedFarmer?.multOpt ?? 1; // Default to 1 (allow multiple)
     
+    // For multOpt=0 farmers, check if they've ALREADY SUBMITTED this session
+    // We check: 1) local sessionSubmittedFarmers set, 2) blacklist (already submitted online/offline)
     if (farmerMultOpt === 0) {
       const cleanFarmerIdCheck = farmerId.replace(/^#/, '').trim();
       
-      // NOTE: We NO LONGER block duplicate captures here.
-      // Multiple captures are allowed (e.g., farmer brings 3 buckets = 3 captures).
-      // Blocking only happens at SUBMIT time (once per session).
-      
-      // 1. Check IndexedDB for unsynced receipts (already SUBMITTED offline)
-      try {
-        const unsyncedReceipts = await getUnsyncedReceipts();
-        const offlineDuplicate = unsyncedReceipts.some((r: MilkCollection) => {
-          const receiptDate = new Date(r.collection_date).toISOString().split('T')[0];
-          return (
-            r.farmer_id === cleanFarmerIdCheck &&
-            r.session === currentSessionType &&
-            receiptDate === today
-          );
-        });
-        if (offlineDuplicate) {
-          toast.error(
-            `${farmerName} already submitted in ${currentSessionType} session. Found in pending sync.`,
-            { duration: 5000 }
-          );
-          return;
-        }
-      } catch (e) {
-        console.warn('Could not check IndexedDB for duplicates:', e);
+      // Check local session-scoped tracking (handles edge case where IndexedDB hasn't synced yet)
+      if (sessionSubmittedFarmers.has(cleanFarmerIdCheck)) {
+        toast.error(
+          `${farmerName} has already submitted in ${currentSessionType} session. Use Reprint for previous slip.`,
+          { duration: 5000 }
+        );
+        setReprintModalOpen(true);
+        return;
       }
-
-      // 2. Check online API if connected (already SUBMITTED online)
-      if (navigator.onLine) {
-        try {
-          const deviceFingerprint = await generateDeviceFingerprint();
-          const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-            cleanFarmerIdCheck,
-            currentSessionType,
-            today,
-            today,
-            deviceFingerprint
-          );
-          if (existing) {
-            toast.error(
-              `${farmerName} already delivered in ${currentSessionType} session today. Use Reprint for previous slip.`,
-              { duration: 6000 }
-            );
-            setReprintModalOpen(true);
-            return;
-          }
-        } catch (apiErr) {
-          console.warn('Online duplicate check failed, proceeding:', apiErr);
-        }
+      
+      // Check blacklist (populated from IndexedDB unsynced + online synced submissions)
+      if (isBlacklisted(cleanFarmerIdCheck)) {
+        toast.error(
+          `${farmerName} has already delivered in ${currentSessionType} session today. Use Reprint for previous slip.`,
+          { duration: 6000 }
+        );
+        setReprintModalOpen(true);
+        return;
       }
     }
     // ========== END multOpt CHECK ==========
