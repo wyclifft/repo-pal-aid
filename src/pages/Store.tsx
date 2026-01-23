@@ -18,6 +18,7 @@ import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/
 import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
+import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
 
 interface CartItem {
   item: Item;
@@ -95,6 +96,7 @@ const Store = () => {
 
   const { getFarmers, saveSale, getUnsyncedSales, deleteSale, getItems, isReady } = useIndexedDB();
   const { addStoreReceipt } = useReprint();
+  const { queuePhotoUpload } = useBackgroundPhotoUpload();
 
   // Check authentication
   useEffect(() => {
@@ -483,31 +485,36 @@ const Store = () => {
         });
       }
 
-      // Convert photo to base64 ONCE
-      const photoBase64 = await blobToBase64(capturedPhoto.blob);
-
-      // Build batch request
+      // Build batch request - submit transaction immediately, photo uploads in background
       const batchRequest: BatchSaleRequest = {
         uploadrefno: refs.uploadrefno,
         transtype: 2, // Store transaction
         farmer_id: selectedFarmer.farmer_id,
         farmer_name: selectedFarmer.name,
+        route: selectedFarmer.route || '', // Pass farmer's route (fm_tanks.tcode)
         user_id: userId, // Login user_id for DB userId column
         sold_by: clerkName, // Display name for DB clerk column
         device_fingerprint: deviceFingerprint,
-        photo: photoBase64, // ONE photo for all items
         items: batchItems,
+        // Photo excluded - will upload in background after transaction
       };
 
       if (navigator.onLine) {
-        // Online: use batch endpoint
+        // Online: submit transaction first, queue photo for background upload
         const result = await mysqlApi.sales.createBatch(batchRequest);
         if (!result.success) {
           throw new Error(result.error || 'Batch sale failed');
         }
         console.log(`✅ Batch sale complete: ${batchItems.length} items, uploadrefno=${refs.uploadrefno}`);
+        
+        // Queue photo for background upload - doesn't block transaction
+        queuePhotoUpload(refs.uploadrefno, capturedPhoto.blob);
+        console.log(`📷 Photo queued for background upload: ${refs.uploadrefno}`);
       } else {
-        // Offline: save each item individually for later sync
+        // Offline: convert photo to base64 for storage (will sync later)
+        const photoBase64 = await blobToBase64(capturedPhoto.blob);
+        
+        // Save each item individually for later sync
         for (const item of batchItems) {
           const sale: Sale = {
             transrefno: item.transrefno,
@@ -515,6 +522,7 @@ const Store = () => {
             transtype: 2,
             farmer_id: selectedFarmer.farmer_id,
             farmer_name: selectedFarmer.name,
+            route: selectedFarmer.route || '', // Include route for offline sync
             item_code: item.item_code,
             item_name: item.item_name,
             quantity: item.quantity,
