@@ -215,15 +215,18 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           return;
         }
         
-        // Recreate user object from cached credentials
+        // Recreate user object from cached credentials (includes all fields for full offline support)
         const user: AppUser = {
           user_id: cachedCreds.user_id,
-          role: cachedCreds.role,
-          username: cachedCreds.username,
-          email: cachedCreds.email,
-          ccode: cachedCreds.ccode,
-          admin: cachedCreds.admin,
-          supervisor: cachedCreds.supervisor
+          role: cachedCreds.role || (cachedCreds.admin ? 'admin' : 'user'),
+          username: cachedCreds.username || cachedCreds.user_id,
+          email: cachedCreds.email || '',
+          ccode: cachedCreds.ccode || '',
+          admin: cachedCreds.admin ?? false,
+          supervisor: cachedCreds.supervisor ?? 0,
+          dcode: cachedCreds.dcode || '',
+          groupid: cachedCreds.groupid || '',
+          depart: cachedCreds.depart || ''
         };
         
         console.log('👤 Offline login - Cached user data:', {

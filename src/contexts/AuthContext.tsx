@@ -54,19 +54,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setIsOffline(offline);
       
       // Cache credentials for offline login (only when password is provided)
+      // CRITICAL: Always store credentials on online login for offline use
       if (password) {
         const cachedCreds = {
           user_id: user.user_id,
           password: password,
-          role: user.role,
-          username: user.username,
-          email: user.email,
-          ccode: user.ccode,
-          admin: user.admin,
-          supervisor: user.supervisor,
+          role: user.role || (user.admin ? 'admin' : 'user'),
+          username: user.username || user.user_id, // Fallback to user_id if username is empty
+          email: user.email || '',
+          ccode: user.ccode || '',
+          admin: user.admin ?? false,
+          supervisor: user.supervisor ?? 0,
+          dcode: user.dcode || '',
+          groupid: user.groupid || '',
+          depart: user.depart || '',
           timestamp: Date.now()
         };
         localStorage.setItem(CACHED_CREDENTIALS_KEY, JSON.stringify(cachedCreds));
+        console.log('[AUTH] Credentials cached for offline use:', user.user_id);
       }
       
       console.log('✅ User logged in:', user.user_id);
