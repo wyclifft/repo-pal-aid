@@ -49,7 +49,7 @@ export const SessionSelector = ({
     return null;
   };
 
-  // Check if a session/season is enabled based on date range
+  // Check if a session/season is enabled based on date range (current date within range)
   // Uses backend-provided dateEnabled flag for accurate validation
   const isDateEnabled = useCallback((session: Session): boolean => {
     // Backend provides dateEnabled flag - use it directly (most reliable)
@@ -65,6 +65,30 @@ export const SessionSelector = ({
     // Manual date check as fallback for seasons
     const today = new Date().toISOString().split('T')[0];
     return today >= session.datefrom && today <= session.dateto;
+  }, []);
+
+  // Check if a session/season is a PAST season (date range has ended)
+  // Past seasons should be selectable for historical data entry
+  const isPastSeason = useCallback((session: Session): boolean => {
+    // No date fields = regular session, not a past season
+    if (!session.datefrom || !session.dateto) {
+      return false;
+    }
+    
+    const today = new Date().toISOString().split('T')[0];
+    return session.dateto < today;
+  }, []);
+
+  // Check if a session/season is a FUTURE season (hasn't started yet)
+  // Future seasons should be disabled
+  const isFutureSeason = useCallback((session: Session): boolean => {
+    // No date fields = regular session, not a future season
+    if (!session.datefrom || !session.dateto) {
+      return false;
+    }
+    
+    const today = new Date().toISOString().split('T')[0];
+    return session.datefrom > today;
   }, []);
 
   // Check if a session is active based on current hour AND date range
@@ -91,6 +115,24 @@ export const SessionSelector = ({
     
     return currentHour >= timeFrom && currentHour < timeTo;
   }, [currentTime, isDateEnabled]);
+
+  // Check if a session is SELECTABLE (can be chosen by user)
+  // Allows: current active sessions AND past seasons
+  // Disables: future seasons only
+  const isSessionSelectable = useCallback((session: Session): boolean => {
+    // Future seasons are always disabled
+    if (isFutureSeason(session)) {
+      return false;
+    }
+    
+    // Past seasons are always selectable (for historical data entry)
+    if (isPastSeason(session)) {
+      return true;
+    }
+    
+    // For current/regular sessions, check if active (date + time)
+    return isSessionActive(session);
+  }, [isFutureSeason, isPastSeason, isSessionActive]);
 
   // Find the currently active session from loaded sessions
   const findActiveSession = useCallback((sessionList: Session[]): Session | null => {
@@ -246,6 +288,16 @@ export const SessionSelector = ({
 
   // Get session status text
   const getSessionStatus = (session: Session): string => {
+    // Check if future (not started yet)
+    if (isFutureSeason(session)) {
+      return '- Not started';
+    }
+    
+    // Check if past season (already ended)
+    if (isPastSeason(session)) {
+      return '○ Past';
+    }
+    
     const dateOk = isDateEnabled(session);
     const timeOk = isSessionActive(session);
     
@@ -314,9 +366,9 @@ export const SessionSelector = ({
         onChange={(e) => {
           const selected = sessions.find(s => s.descript === e.target.value);
           if (selected) {
-            // Check if selected session is active (date + time)
-            if (!isSessionActive(selected)) {
-              return; // Prevent selection of inactive sessions
+            // Check if selected session is selectable (past or active, not future)
+            if (!isSessionSelectable(selected)) {
+              return; // Prevent selection of future sessions
             }
             onSessionChange(selected);
           }
@@ -330,12 +382,12 @@ export const SessionSelector = ({
       >
         <option value="">Select {periodLabel.toLowerCase()}...</option>
         {sessions.map((session) => {
-          const isActive = isSessionActive(session);
+          const selectable = isSessionSelectable(session);
           return (
             <option 
               key={session.id ? `season-${session.id}` : session.descript} 
               value={session.descript}
-              disabled={!isActive}
+              disabled={!selectable}
             >
               {session.descript} ({formatTime(session.time_from)} - {formatTime(session.time_to)})
               {session.datefrom && session.dateto && ` [${formatDate(session.datefrom)} - ${formatDate(session.dateto)}]`}
