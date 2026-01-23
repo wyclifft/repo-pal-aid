@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { mysqlApi, type Item, type Sale, type Farmer, type CreditType, type BatchSaleRequest } from '@/services/mysqlApi';
+import { mysqlApi, type Item, type Sale, type Farmer, type CreditType, type BatchSaleRequest, type Session } from '@/services/mysqlApi';
 import { toast } from 'sonner';
 import { ArrowLeft, Search, X, CornerDownLeft, Camera, Scale, Wifi, WifiOff, Image } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -71,6 +71,9 @@ const Store = () => {
   // Photo audit viewer state
   const [showPhotoAudit, setShowPhotoAudit] = useState(false);
 
+  // Active session state for CAN column
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
+
   // Scale weight state
   const [weight, setWeight] = useState(0);
   const [entryType, setEntryType] = useState<'scale' | 'manual'>('manual');
@@ -98,6 +101,20 @@ const Store = () => {
   const { addStoreReceipt } = useReprint();
   const { queuePhotoUpload } = useBackgroundPhotoUpload();
 
+  // Fetch active session on mount
+  const loadActiveSession = async () => {
+    try {
+      const deviceFingerprint = await generateDeviceFingerprint();
+      const response = await mysqlApi.sessions.getActive(deviceFingerprint);
+      if (response.success && response.data) {
+        setActiveSession(response.data);
+        console.log('[Store] Active session loaded:', response.data.SCODE);
+      }
+    } catch (error) {
+      console.warn('[Store] Failed to load active session:', error);
+    }
+  };
+
   // Check authentication
   useEffect(() => {
     if (!isAuthenticated) {
@@ -111,6 +128,7 @@ const Store = () => {
       checkRoutesAndLoadItems();
       loadFarmers();
       loadCreditTypes();
+      loadActiveSession();
       syncPendingSales();
     }, 100);
     return () => clearTimeout(timer);
@@ -496,6 +514,7 @@ const Store = () => {
         sold_by: clerkName, // Display name for DB clerk column
         device_fingerprint: deviceFingerprint,
         items: batchItems,
+        season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
         // Photo excluded - will upload in background after transaction
       };
 
@@ -531,6 +550,7 @@ const Store = () => {
             sold_by: clerkName, // Display name for DB clerk column
             device_fingerprint: deviceFingerprint,
             photo: photoBase64, // Include photo for offline sync
+            season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
           };
           await saveSale(sale);
         }
