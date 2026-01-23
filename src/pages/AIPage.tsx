@@ -378,6 +378,7 @@ const AIPage = () => {
           transtype: 3, // AI transaction type
           farmer_id: selectedFarmer.farmer_id,
           farmer_name: selectedFarmer.name,
+          route: selectedFarmer.route || '', // Pass farmer's route (fm_tanks.tcode)
           item_code: cartItem.item.icode,
           item_name: cartItem.item.descript,
           quantity: cartItem.quantity,

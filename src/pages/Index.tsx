@@ -444,7 +444,7 @@ const Index = () => {
       uploadrefno: uploadRefNo, // Type-specific ID for approval workflow
       farmer_id: cleanFarmerId,
       farmer_name: farmerName.trim(),
-      route: route.trim(),
+      route: selectedRouteCode.trim(), // Use fm_tanks.tcode, not farmer.route
       session: currentSessionType, // Use already-computed session
       weight: parseFloat(Number(weight).toFixed(2)),
       user_id: currentUser?.user_id || 'unknown', // Login user_id for DB userId column

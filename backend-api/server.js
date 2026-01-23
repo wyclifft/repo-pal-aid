@@ -1416,7 +1416,7 @@ const server = http.createServer(async (req, res) => {
             body.sold_by || '',                 // clerk (display name/username)
             body.device_fingerprint || '',      // deviceserial
             body.farmer_id || '',               // memberno
-            '',                                 // route (empty for store/AI sales)
+            body.route || '',                   // route (from frontend - farmer's route)
             body.quantity || 0,                 // weight (using quantity)
             '',                                 // session (empty for store/AI sales)
             transdate,                          // transdate
@@ -1593,7 +1593,7 @@ const server = http.createServer(async (req, res) => {
               body.sold_by || '',                 // clerk (display name/username)
               body.device_fingerprint || '',
               body.farmer_id || '',
-              '',
+              body.route || '',                   // route (from frontend - farmer's route)
               item.quantity || 0,
               '',
               transdate,
@@ -1645,6 +1645,83 @@ const server = http.createServer(async (req, res) => {
         await conn.rollback();
         conn.release();
         throw error;
+      }
+    }
+
+    // Background Photo Upload endpoint - for uploading photos after transaction is saved
+    // This endpoint is called asynchronously and doesn't block the transaction
+    if (path === '/api/photos/upload' && method === 'POST') {
+      const body = await parseBody(req);
+      
+      if (!body.uploadrefno || !body.photo) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'uploadrefno and photo are required' 
+        }, 400);
+      }
+      
+      try {
+        const fs = require('fs');
+        const pathModule = require('path');
+        
+        // Extract base64 data from data URL
+        const matches = body.photo.match(/^data:image\/(\w+);base64,(.+)$/);
+        if (!matches) {
+          return sendJSON(res, { 
+            success: false, 
+            error: 'Invalid photo format' 
+          }, 400);
+        }
+        
+        const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+        const base64Data = matches[2];
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        // Create directory structure: uploads/store-photos/YYYY/MM
+        const now = new Date();
+        const uploadsDir = pathModule.join(__dirname, 'uploads', 'store-photos');
+        const yearDir = String(now.getFullYear());
+        const monthDir = String(now.getMonth() + 1).padStart(2, '0');
+        const fullDir = pathModule.join(uploadsDir, yearDir, monthDir);
+        
+        // Create directories if they don't exist
+        if (!fs.existsSync(fullDir)) {
+          fs.mkdirSync(fullDir, { recursive: true });
+        }
+        
+        // Generate filename using uploadrefno
+        const timestamp = Math.floor(now.getTime() / 1000);
+        const photoFilename = `${body.uploadrefno}_${timestamp}.${ext}`;
+        const photoDirectory = `uploads/store-photos/${yearDir}/${monthDir}`;
+        
+        // Write file
+        const filePath = pathModule.join(fullDir, photoFilename);
+        fs.writeFileSync(filePath, buffer);
+        
+        console.log(`📷 Background photo saved: ${photoDirectory}/${photoFilename}`);
+        
+        // Update ALL transaction records with this uploadrefno to include photo path
+        await pool.query(
+          `UPDATE transactions 
+           SET photo_filename = ?, photo_directory = ? 
+           WHERE Uploadrefno = ? AND (photo_filename IS NULL OR photo_filename = '')`,
+          [photoFilename, photoDirectory, body.uploadrefno]
+        );
+        
+        return sendJSON(res, { 
+          success: true, 
+          message: 'Photo uploaded',
+          photo_filename: photoFilename,
+          photo_directory: photoDirectory,
+          photo_path: `${photoDirectory}/${photoFilename}`
+        }, 201);
+        
+      } catch (error) {
+        console.error('❌ Background photo upload error:', error);
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Failed to save photo' 
+        }, 500);
       }
     }
 
