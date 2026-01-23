@@ -866,9 +866,8 @@ const server = http.createServer(async (req, res) => {
           try {
             // Attempt the insert with current reference
             // Transtype = 1 for all produce purchases (milk/coffee collections)
-            // Get product_code (icode) and season (CAN) from request body
+            // Get product_code (icode) from request body - maps to both icode AND CAN columns
             const productCode = body.product_code || '';
-            const seasonCAN = body.season || ''; // For coffee orgtypes, this contains the season ID
             
             await pool.query(
               `INSERT INTO transactions 
@@ -890,7 +889,7 @@ const server = http.createServer(async (req, res) => {
                 transtime,
                 ccode,
                 productCode,
-                seasonCAN,
+                productCode, // CAN column now stores fm_items.icode (product code)
                 timestamp,
                 body.entry_type || 'manual',
               ]
