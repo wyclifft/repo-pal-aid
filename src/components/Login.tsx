@@ -195,11 +195,14 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         toast.error('Login failed. Check credentials.');
       }
     } else {
-      console.log('🔒 Offline login attempt...');
+      console.log('[OFFLINE] Offline login attempt for user:', userId);
       
-      // Check cached credentials from localStorage (stored on first login)
+      // Check cached credentials from localStorage (stored on first online login)
       const cachedCredsStr = localStorage.getItem('cachedCredentials');
+      console.log('[OFFLINE] Cached credentials found:', !!cachedCredsStr);
+      
       if (!cachedCredsStr) {
+        console.log('[OFFLINE] No cached credentials - first login must be online');
         toast.error('First-time login must be done online. Connect to internet and try again.');
         setLoading(false);
         return;
@@ -207,9 +210,15 @@ export const Login = memo(({ onLogin }: LoginProps) => {
       
       try {
         const cachedCreds = JSON.parse(cachedCredsStr);
+        console.log('[OFFLINE] Cached user_id:', cachedCreds.user_id, 'Input user_id:', userId);
+        console.log('[OFFLINE] Password match:', cachedCreds.password === password);
         
-        // Verify credentials match
-        if (cachedCreds.user_id !== userId || cachedCreds.password !== password) {
+        // Verify credentials match (case-insensitive user ID, exact password)
+        const userIdMatch = cachedCreds.user_id?.toLowerCase().trim() === userId.toLowerCase().trim();
+        const passwordMatch = cachedCreds.password === password;
+        
+        if (!userIdMatch || !passwordMatch) {
+          console.log('[OFFLINE] Credential mismatch - userIdMatch:', userIdMatch, 'passwordMatch:', passwordMatch);
           toast.error('Invalid credentials (offline)');
           setLoading(false);
           return;
