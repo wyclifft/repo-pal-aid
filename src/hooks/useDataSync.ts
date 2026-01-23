@@ -155,8 +155,7 @@ export const useDataSync = () => {
             collection_date: receipt.collection_date,
             device_fingerprint: deviceFingerprint,
             entry_type: receipt.entry_type, // Pass entry_type to backend
-            product_code: receipt.product_code, // Pass selected product icode
-            season: receipt.season, // Pass season for coffee orgtypes (saved to CAN column)
+            product_code: receipt.product_code, // Pass selected product icode (maps to icode AND CAN)
           });
 
           console.log(`[API] Response for ${receipt.reference_no}:`, result);
