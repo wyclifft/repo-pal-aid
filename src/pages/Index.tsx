@@ -346,37 +346,11 @@ const Index = () => {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
     // ========== multOpt=0 CAPTURE BEHAVIOR ==========
-    // NOTE: Capture ONLY stores locally. No DB writes or online checks here.
+    // IMPORTANT: Capture phase does NOT check for duplicates or blacklist.
     // Multiple captures are allowed (e.g., farmer brings 3 buckets = 3 captures).
-    // All duplicate/multiOpt validation happens at SUBMIT time only.
-    // This ensures no premature member flagging or incorrect DB state.
+    // ALL duplicate/multiOpt validation happens ONLY at SUBMIT time.
+    // This ensures no premature member flagging, no incorrect DB state, and no reprint popups during capture.
     const farmerMultOpt = selectedFarmer?.multOpt ?? 1; // Default to 1 (allow multiple)
-    
-    // For multOpt=0 farmers, check if they've ALREADY SUBMITTED this session
-    // We check: 1) local sessionSubmittedFarmers set, 2) blacklist (already submitted online/offline)
-    if (farmerMultOpt === 0) {
-      const cleanFarmerIdCheck = farmerId.replace(/^#/, '').trim();
-      
-      // Check local session-scoped tracking (handles edge case where IndexedDB hasn't synced yet)
-      if (sessionSubmittedFarmers.has(cleanFarmerIdCheck)) {
-        toast.error(
-          `${farmerName} has already submitted in ${currentSessionType} session. Use Reprint for previous slip.`,
-          { duration: 5000 }
-        );
-        setReprintModalOpen(true);
-        return;
-      }
-      
-      // Check blacklist (populated from IndexedDB unsynced + online synced submissions)
-      if (isBlacklisted(cleanFarmerIdCheck)) {
-        toast.error(
-          `${farmerName} has already delivered in ${currentSessionType} session today. Use Reprint for previous slip.`,
-          { duration: 6000 }
-        );
-        setReprintModalOpen(true);
-        return;
-      }
-    }
     // ========== END multOpt CHECK ==========
 
     // Generate reference number for this capture
@@ -468,6 +442,37 @@ const Index = () => {
     }
 
     const deviceFingerprint = await generateDeviceFingerprint();
+    
+    // ========== PRE-SUBMIT VALIDATION for multOpt=0 ==========
+    // Check if ANY captured collection is from a farmer who has already submitted
+    // This is the ONLY place where blacklist/sessionSubmittedFarmers checks occur
+    for (const capture of capturedCollections) {
+      if (capture.multOpt === 0) {
+        const cleanFarmerId = capture.farmer_id.replace(/^#/, '').trim();
+        
+        // Check local session tracking first (immediate feedback)
+        if (sessionSubmittedFarmers.has(cleanFarmerId)) {
+          toast.error(
+            `${capture.farmer_name} has already submitted in this session. Clear captures and try again.`,
+            { duration: 5000 }
+          );
+          setCapturedCollections([]);
+          return;
+        }
+        
+        // Check blacklist (populated from IndexedDB + online records)
+        if (isBlacklisted(cleanFarmerId)) {
+          toast.error(
+            `${capture.farmer_name} has already delivered in this session today. Clear captures and try again.`,
+            { duration: 5000 }
+          );
+          setCapturedCollections([]);
+          return;
+        }
+      }
+    }
+    // ========== END PRE-SUBMIT VALIDATION ==========
+
     let successCount = 0;
     let offlineCount = 0;
 
@@ -507,11 +512,10 @@ const Index = () => {
 
             if (existing) {
               toast.error(
-                `${capture.farmer_name} has already delivered in the ${normalizedSession} session today. Use Reprint for previous slip.`,
+                `${capture.farmer_name} has already delivered in the ${normalizedSession} session today.`,
                 { duration: 6000 }
               );
               setCapturedCollections([]);
-              setReprintModalOpen(true);
               window.dispatchEvent(new CustomEvent('syncComplete'));
               return;
             }
@@ -549,12 +553,10 @@ const Index = () => {
             if (result.error === 'DUPLICATE_SESSION_DELIVERY') {
               console.warn(`⚠️ Member already delivered in ${capture.session} session`);
               toast.error(
-                `${capture.farmer_name} has already delivered in the ${capture.session} session today. Open Reprint to print the previous slip.`,
+                `${capture.farmer_name} has already delivered in the ${capture.session} session today.`,
                 { duration: 6000 }
               );
-              // Clear this capture and open reprint modal
               setCapturedCollections([]);
-              setReprintModalOpen(true);
               window.dispatchEvent(new CustomEvent('syncComplete'));
               return; // Stop processing
             }
@@ -569,12 +571,10 @@ const Index = () => {
           if (errorData?.error === 'DUPLICATE_SESSION_DELIVERY') {
             console.warn(`⚠️ Member already delivered in ${capture.session} session`);
             toast.error(
-              `${capture.farmer_name} has already delivered in the ${capture.session} session today. Open Reprint to print the previous slip.`,
+              `${capture.farmer_name} has already delivered in the ${capture.session} session today.`,
               { duration: 6000 }
             );
-            // Clear this capture and open reprint modal
             setCapturedCollections([]);
-            setReprintModalOpen(true);
             window.dispatchEvent(new CustomEvent('syncComplete'));
             return; // Stop processing
           }
