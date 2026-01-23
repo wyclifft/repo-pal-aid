@@ -53,9 +53,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setCurrentUser(user);
       setIsOffline(offline);
       
-      // Cache credentials for offline login (only when password is provided)
+      console.log('[AUTH] Login called - offline:', offline, 'password provided:', !!password);
+      
+      // Cache credentials for offline login (only when password is provided during ONLINE login)
       // CRITICAL: Always store credentials on online login for offline use
-      if (password) {
+      if (password && !offline) {
         const cachedCreds = {
           user_id: user.user_id,
           password: password,
@@ -72,6 +74,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         };
         localStorage.setItem(CACHED_CREDENTIALS_KEY, JSON.stringify(cachedCreds));
         console.log('[AUTH] Credentials cached for offline use:', user.user_id);
+        
+        // Also store device approval for offline fallback
+        localStorage.setItem('device_approved', 'true');
+        localStorage.setItem('device_user_id', user.user_id);
+        console.log('[AUTH] Device approval cached for offline fallback');
+      } else if (password) {
+        console.log('[AUTH] Skipping credential cache - already offline login');
+      } else {
+        console.log('[AUTH] No password provided - cannot cache credentials');
       }
       
       console.log('✅ User logged in:', user.user_id);
