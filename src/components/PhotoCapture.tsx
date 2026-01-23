@@ -1,19 +1,22 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Camera, X, RotateCcw, Check } from 'lucide-react';
+import { Camera, X, RotateCcw, Check, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
 import { Camera as CapacitorCamera, CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';
+import { compressImage } from '@/utils/imageCompression';
 
 interface PhotoCaptureProps {
   open: boolean;
   onClose: () => void;
   onCapture: (imageBlob: Blob, previewUrl: string) => void;
   title?: string;
+  /** Target compressed size in KB (default: 100) */
+  targetSizeKB?: number;
 }
 
-const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' }: PhotoCaptureProps) => {
+const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo', targetSizeKB = 100 }: PhotoCaptureProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -21,6 +24,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [capturedBlob, setCapturedBlob] = useState<Blob | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [useNativeCamera, setUseNativeCamera] = useState(false);
@@ -92,11 +96,24 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
           byteNumbers[i] = byteCharacters.charCodeAt(i);
         }
         const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+        const originalBlob = new Blob([byteArray], { type: 'image/jpeg' });
         
-        const previewUrl = `data:image/jpeg;base64,${photo.base64String}`;
-        setCapturedBlob(blob);
-        setCapturedImage(previewUrl);
+        // Compress the image to target size
+        setIsCompressing(true);
+        try {
+          const compressedBlob = await compressImage(originalBlob, targetSizeKB);
+          const previewUrl = URL.createObjectURL(compressedBlob);
+          setCapturedBlob(compressedBlob);
+          setCapturedImage(previewUrl);
+          console.log(`📷 Photo compressed: ${(originalBlob.size / 1024).toFixed(1)}KB → ${(compressedBlob.size / 1024).toFixed(1)}KB`);
+        } catch (compressError) {
+          console.warn('Compression failed, using original:', compressError);
+          const previewUrl = `data:image/jpeg;base64,${photo.base64String}`;
+          setCapturedBlob(originalBlob);
+          setCapturedImage(previewUrl);
+        } finally {
+          setIsCompressing(false);
+        }
       }
     } catch (error: any) {
       console.error('Native camera error:', error);
@@ -163,7 +180,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
     setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
   };
 
-  const capturePhoto = useCallback(() => {
+  const capturePhoto = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
@@ -179,16 +196,30 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
     // Draw the video frame to canvas
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Convert to blob
-    canvas.toBlob((blob) => {
-      if (blob) {
-        setCapturedBlob(blob);
-        const previewUrl = URL.createObjectURL(blob);
-        setCapturedImage(previewUrl);
+    // Convert to blob first at high quality
+    canvas.toBlob(async (originalBlob) => {
+      if (originalBlob) {
         stopCamera();
+        
+        // Compress the image
+        setIsCompressing(true);
+        try {
+          const compressedBlob = await compressImage(originalBlob, targetSizeKB);
+          const previewUrl = URL.createObjectURL(compressedBlob);
+          setCapturedBlob(compressedBlob);
+          setCapturedImage(previewUrl);
+          console.log(`📷 Photo compressed: ${(originalBlob.size / 1024).toFixed(1)}KB → ${(compressedBlob.size / 1024).toFixed(1)}KB`);
+        } catch (compressError) {
+          console.warn('Compression failed, using original:', compressError);
+          const previewUrl = URL.createObjectURL(originalBlob);
+          setCapturedBlob(originalBlob);
+          setCapturedImage(previewUrl);
+        } finally {
+          setIsCompressing(false);
+        }
       }
-    }, 'image/jpeg', 0.85);
-  }, []);
+    }, 'image/jpeg', 0.92);
+  }, [targetSizeKB]);
 
   const retakePhoto = () => {
     if (capturedImage) {
@@ -251,12 +282,12 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo' 
                 style={{ transform: facingMode === 'user' ? 'scaleX(-1)' : 'none' }}
               />
               
-              {/* Loading overlay */}
-              {isLoading && (
+              {/* Loading/compressing overlay */}
+              {(isLoading || isCompressing) && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/50">
                   <div className="text-white text-center">
-                    <div className="animate-spin rounded-full h-10 w-10 border-2 border-white border-t-transparent mx-auto mb-2"></div>
-                    <p>Starting camera...</p>
+                    <Loader2 className="h-10 w-10 animate-spin mx-auto mb-2" />
+                    <p>{isCompressing ? 'Optimizing photo...' : 'Starting camera...'}</p>
                   </div>
                 </div>
               )}
