@@ -499,27 +499,10 @@ const Index = () => {
             normalizedSession = 'PM';
           }
 
-          // Client-side FINAL GUARD for multOpt=0 (works even if backend is not enforcing yet)
-          if (capture.multOpt === 0) {
-            const captureDate = new Date(capture.collection_date).toISOString().split('T')[0];
-            const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-              capture.farmer_id.replace(/^#/, '').trim(),
-              normalizedSession,
-              captureDate,
-              captureDate,
-              deviceFingerprint
-            );
-
-            if (existing) {
-              toast.error(
-                `${capture.farmer_name} has already delivered in the ${normalizedSession} session today.`,
-                { duration: 6000 }
-              );
-              setCapturedCollections([]);
-              window.dispatchEvent(new CustomEvent('syncComplete'));
-              return;
-            }
-          }
+          // NOTE: We intentionally do NOT check the database here for duplicates.
+          // All multOpt=0 validation was done in pre-submit validation BEFORE the loop.
+          // Checking inside the loop would cause race conditions where the first capture
+          // gets submitted, then subsequent captures for the same farmer see it as a duplicate.
 
           // Use the reference number generated during capture
           // This ensures the receipt reference matches the database reference
