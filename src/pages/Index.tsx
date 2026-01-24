@@ -433,8 +433,8 @@ const Index = () => {
   };
 
   // SUBMIT: Saves all captured collections to database (online) or IndexedDB (offline)
-  // For multOpt=0 farmers: ALL captures are SUMMED into ONE submission
-  // For multOpt=1 farmers: Each capture is submitted separately
+  // Rule: Each capture is its own DB transaction with its own transrefno (reference_no).
+  // Related captures (same farmer workflow) share the same uploadrefno.
   const handleSubmit = async () => {
     if (capturedCollections.length === 0) {
       toast.error('No collections captured yet');
@@ -475,6 +475,7 @@ const Index = () => {
 
     let successCount = 0;
     let offlineCount = 0;
+    let hardStopped = false;
 
     // Check network status first
     const isOnline = navigator.onLine;
@@ -539,9 +540,11 @@ const Index = () => {
                 `${capture.farmer_name} has already delivered in the ${capture.session} session today.`,
                 { duration: 6000 }
               );
-              setCapturedCollections([]);
-              window.dispatchEvent(new CustomEvent('syncComplete'));
-              return; // Stop processing
+              // Do NOT clear captures and do NOT blacklist here.
+              // We hard-stop so we don't accidentally mark this farmer as submitted
+              // when the server is rejecting inserts.
+              hardStopped = true;
+              break;
             }
             // API returned failure, save locally for retry
             console.warn('⚠️ Submit returned failure, saving locally');
@@ -557,9 +560,9 @@ const Index = () => {
               `${capture.farmer_name} has already delivered in the ${capture.session} session today.`,
               { duration: 6000 }
             );
-            setCapturedCollections([]);
-            window.dispatchEvent(new CustomEvent('syncComplete'));
-            return; // Stop processing
+            // Do NOT clear captures and do NOT blacklist here.
+            hardStopped = true;
+            break;
           }
           console.error('❌ Submit error, saving locally:', err);
           // Network error or other failure - save to IndexedDB for later sync
@@ -577,6 +580,15 @@ const Index = () => {
     // Dispatch sync complete event
     window.dispatchEvent(new CustomEvent('syncComplete'));
 
+    // If the server rejected inserts as duplicates, do not proceed with receipt saving or blacklisting.
+    // Keep captures intact so the user can review/clear intentionally.
+    if (hardStopped) {
+      toast.error('Submission stopped: server reports this farmer already submitted for this session.', {
+        duration: 6000,
+      });
+      return;
+    }
+
     // Show appropriate feedback
     if (successCount > 0) {
       toast.success(`Submitted ${successCount} collection${successCount !== 1 ? 's' : ''} to database`);
@@ -589,9 +601,11 @@ const Index = () => {
       }
     }
 
-    // After successful submission, add multOpt=0 farmers to blacklist and local tracking
-    // This ensures they cannot submit again in this session
-    if (successCount > 0 || offlineCount > 0) {
+    // After processing ALL captures, add multOpt=0 farmers to blacklist and local tracking.
+    // Critical: only do this when every capture was either submitted online or saved for retry.
+    // This prevents "first record submitted => farmer blacklisted => remaining captures lost".
+    const processedCount = successCount + offlineCount;
+    if (processedCount === capturedCollections.length && processedCount > 0) {
       const newlySubmittedFarmers = new Set<string>();
       
       capturedCollections.forEach(capture => {
