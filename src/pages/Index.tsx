@@ -359,8 +359,17 @@ const Index = () => {
     let referenceNo = '';
     let uploadRefNo: string | undefined;
     
-    // Check if we already have captures for this farmer (same session) - reuse their uploadrefno
-    const existingFarmerCapture = capturedCollections.find(c => c.farmer_id === farmerId.replace(/^#/, '').trim());
+    // Check if we already have captures for this farmer *for this same session and date*
+    // and reuse their uploadrefno to group related rows.
+    const todayStr = new Date().toISOString().split('T')[0];
+    const existingFarmerCapture = capturedCollections.find(c => {
+      const captureDate = new Date(c.collection_date).toISOString().split('T')[0];
+      return (
+        c.farmer_id === farmerId.replace(/^#/, '').trim() &&
+        c.session === currentSessionType &&
+        captureDate === todayStr
+      );
+    });
     
     if (existingFarmerCapture && existingFarmerCapture.uploadrefno) {
       // Reuse existing uploadrefno, generate only new transrefno

@@ -830,30 +830,66 @@ const server = http.createServer(async (req, res) => {
       console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
 
       if (multOpt === 0) {
-        // Check if member already has a produce transaction (Transtype = 1) in this session today
+        // multOpt=0 means: only ONE "workflow" per session/day.
+        // However, a workflow may include multiple bucket rows.
+        // Rule:
+        // - If a row already exists for this farmer+session+date, then ONLY allow inserts that
+        //   share the SAME Uploadrefno (i.e., same workflow/batch).
+        // - Any different Uploadrefno is treated as a duplicate session delivery.
         const [existingTransRows] = await pool.query(
-          `SELECT transrefno FROM transactions 
+          `SELECT transrefno, Uploadrefno FROM transactions 
            WHERE memberno = ?
              AND UPPER(TRIM(session)) = ?
              AND transdate = ?
              AND Transtype = 1
              AND ccode = ?
+           ORDER BY transrefno ASC
            LIMIT 1`,
           [cleanFarmerId, normalizedSession, transdate, ccode]
         );
 
         if (existingTransRows.length > 0) {
           const existingRef = existingTransRows[0].transrefno;
-          console.log(`⚠️ Member ${cleanFarmerId} already delivered in ${normalizedSession} session today. Existing ref: ${existingRef}`);
-          return sendJSON(res, { 
-            success: false, 
-            error: 'DUPLICATE_SESSION_DELIVERY',
-            message: `Member already delivered in ${normalizedSession} session today`,
-            existing_reference: existingRef,
-            farmer_id: cleanFarmerId,
-            session: normalizedSession,
-            date: transdate
-          }, 409); // 409 Conflict
+          const existingUploadRef = existingTransRows[0].Uploadrefno;
+
+          // If client didn't send uploadrefno, we cannot safely group; treat as duplicate.
+          if (!uploadrefno) {
+            console.log(
+              `⚠️ multOpt=0: existing delivery found but request has no uploadrefno. Rejecting. existingUploadRef=${existingUploadRef}`
+            );
+            return sendJSON(res, {
+              success: false,
+              error: 'DUPLICATE_SESSION_DELIVERY',
+              message: `Member already delivered in ${normalizedSession} session today`,
+              existing_reference: existingRef,
+              existing_uploadrefno: existingUploadRef,
+              farmer_id: cleanFarmerId,
+              session: normalizedSession,
+              date: transdate,
+            }, 409);
+          }
+
+          // Allow only if uploadrefno matches the already-open workflow for the day/session.
+          if (String(uploadrefno) !== String(existingUploadRef)) {
+            console.log(
+              `⚠️ Member ${cleanFarmerId} already delivered in ${normalizedSession} today with Uploadrefno=${existingUploadRef}. ` +
+              `Rejecting new Uploadrefno=${uploadrefno}. Existing ref: ${existingRef}`
+            );
+            return sendJSON(res, {
+              success: false,
+              error: 'DUPLICATE_SESSION_DELIVERY',
+              message: `Member already delivered in ${normalizedSession} session today`,
+              existing_reference: existingRef,
+              existing_uploadrefno: existingUploadRef,
+              farmer_id: cleanFarmerId,
+              session: normalizedSession,
+              date: transdate,
+            }, 409);
+          }
+
+          console.log(
+            `✅ multOpt=0: existing delivery found, but Uploadrefno matches (${uploadrefno}). Allowing additional row.`
+          );
         }
       }
 
