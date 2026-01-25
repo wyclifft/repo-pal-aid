@@ -26,6 +26,7 @@ interface BuyProduceScreenProps {
   onWeightChange?: (weight: number) => void;
   onEntryTypeChange?: (entryType: 'scale' | 'manual') => void;
   blacklistedFarmerIds?: Set<string>; // Farmers who already delivered (multOpt=0)
+  sessionSubmittedFarmerIds?: Set<string>; // Local tracking of submitted farmers this session
   onFarmersLoaded?: (farmers: Farmer[]) => void;
   captureDisabled?: boolean;
   submitDisabled?: boolean; // Disable submit for multOpt=0 farmers who already submitted
@@ -51,6 +52,7 @@ export const BuyProduceScreen = ({
   onWeightChange,
   onEntryTypeChange,
   blacklistedFarmerIds,
+  sessionSubmittedFarmerIds,
   onFarmersLoaded,
   captureDisabled,
   submitDisabled,
@@ -120,42 +122,62 @@ export const BuyProduceScreen = ({
     ? cachedFarmers.filter(f => !blacklistedFarmerIds.has(f.farmer_id.replace(/^#/, '').trim()))
     : cachedFarmers;
 
+  // Check if a farmer is blocked (blacklisted OR submitted this session)
+  const isFarmerBlocked = (farmerId: string): boolean => {
+    const cleanId = farmerId.replace(/^#/, '').trim();
+    if (blacklistedFarmerIds?.has(cleanId)) return true;
+    if (sessionSubmittedFarmerIds?.has(cleanId)) return true;
+    return false;
+  };
+
   // Resolve numeric input to full farmer ID (only from available farmers)
   const resolveFarmerId = (input: string): Farmer | null => {
     if (!input.trim()) return null;
     
     const numericInput = input.replace(/\D/g, '');
     
-    // Search by exact farmer_id first
-    const exactMatch = availableFarmers.find(
+    // Search by exact farmer_id first (in ALL cached farmers to detect blocked ones)
+    const exactMatch = cachedFarmers.find(
       f => f.farmer_id.toLowerCase() === input.toLowerCase()
     );
-    if (exactMatch) return exactMatch;
+    if (exactMatch) {
+      // Check if this farmer is blocked (multOpt=0 and already submitted)
+      const cleanId = exactMatch.farmer_id.replace(/^#/, '').trim();
+      if (exactMatch.multOpt === 0 && isFarmerBlocked(cleanId)) {
+        toast.error(`${exactMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+        return null;
+      }
+      return exactMatch;
+    }
     
     // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
     if (numericInput && numericInput === input.trim()) {
       const paddedId = `M${numericInput.padStart(5, '0')}`;
-      const paddedMatch = availableFarmers.find(
+      const paddedMatch = cachedFarmers.find(
         f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
       );
-      if (paddedMatch) return paddedMatch;
+      if (paddedMatch) {
+        const cleanId = paddedMatch.farmer_id.replace(/^#/, '').trim();
+        if (paddedMatch.multOpt === 0 && isFarmerBlocked(cleanId)) {
+          toast.error(`${paddedMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+          return null;
+        }
+        return paddedMatch;
+      }
       
       // Also try matching by numeric portion
-      const numericMatch = availableFarmers.find(f => {
+      const numericMatch = cachedFarmers.find(f => {
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
         return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
       });
-      if (numericMatch) return numericMatch;
-    }
-    
-    // Check if farmer is blacklisted
-    const blacklisted = cachedFarmers.find(
-      f => f.farmer_id.toLowerCase() === input.toLowerCase() || 
-           f.farmer_id.replace(/\D/g, '') === numericInput
-    );
-    if (blacklisted && blacklistedFarmerIds?.has(blacklisted.farmer_id.replace(/^#/, '').trim())) {
-      toast.error(`${blacklisted.name} has already delivered this session`);
-      return null;
+      if (numericMatch) {
+        const cleanId = numericMatch.farmer_id.replace(/^#/, '').trim();
+        if (numericMatch.multOpt === 0 && isFarmerBlocked(cleanId)) {
+          toast.error(`${numericMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+          return null;
+        }
+        return numericMatch;
+      }
     }
     
     return null;
@@ -200,12 +222,32 @@ export const BuyProduceScreen = ({
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
-    // Strip any leading # from farmer_id for display
+    // Check if farmer is blocked before allowing selection
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
+    if (farmer.multOpt === 0 && isFarmerBlocked(cleanId)) {
+      toast.error(`${farmer.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+      return;
+    }
     setMemberNo(cleanId);
     setShowSearchModal(false);
     onSelectFarmer(farmer);
   };
+  
+  // Focus input when member is cleared (for post-submit flow)
+  const focusMemberInput = () => {
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 100);
+  };
+  
+  // When capturedCollections becomes empty (after submit clears it), clear member input and focus
+  useEffect(() => {
+    if (capturedCollections.length === 0 && selectedFarmer !== null) {
+      // Collections were cleared (submit completed) - clear and focus
+      setMemberNo('');
+      focusMemberInput();
+    }
+  }, [capturedCollections.length, selectedFarmer]);
 
   // Calculate total captured weight for current farmer
   const totalCapturedWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);

@@ -193,9 +193,34 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
   });
 };
 
-// Fallback download method with verification
-const downloadWithFallback = (blob: Blob, fileName: string, resolve: (success: boolean) => void) => {
+// Fallback download method with verification - uses Web Share API on mobile
+const downloadWithFallback = async (blob: Blob, fileName: string, resolve: (success: boolean) => void) => {
   try {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    // On mobile, use Web Share API if available - this is the most reliable way
+    if (isMobile && 'share' in navigator && 'canShare' in navigator) {
+      try {
+        const file = new File([blob], fileName, { type: blob.type });
+        const shareData = { files: [file], title: fileName };
+        
+        if (navigator.canShare(shareData)) {
+          await navigator.share(shareData);
+          console.log('✅ File shared/saved via Web Share API');
+          resolve(true);
+          return;
+        }
+      } catch (shareErr: any) {
+        // User cancelled share or not supported - fall through to other methods
+        if (shareErr.name === 'AbortError') {
+          console.log('User cancelled share dialog');
+          resolve(false);
+          return;
+        }
+        console.log('Web Share API failed, trying other methods:', shareErr.message);
+      }
+    }
+    
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -203,43 +228,35 @@ const downloadWithFallback = (blob: Blob, fileName: string, resolve: (success: b
     a.style.display = 'none';
     document.body.appendChild(a);
     
-    // Add click handler to detect if download was triggered
-    let downloadTriggered = false;
-    
-    // For mobile, we need to handle this differently
-    // Check if we're on mobile/Capacitor
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    
     if (isMobile) {
       // On mobile, try to open in new tab which triggers download
       const newWindow = window.open(url, '_blank');
       if (newWindow) {
-        downloadTriggered = true;
-        // Give time for download to start
         setTimeout(() => {
           URL.revokeObjectURL(url);
+          console.log('✅ File opened in new tab for download');
           resolve(true);
         }, 1000);
       } else {
-        // Fallback: try the click method anyway
+        // Fallback: try the click method
         a.click();
-        downloadTriggered = true;
         setTimeout(() => {
           URL.revokeObjectURL(url);
           document.body.removeChild(a);
+          console.log('✅ File download triggered via click');
           resolve(true);
         }, 500);
       }
     } else {
       // Desktop: standard click approach
       a.click();
-      downloadTriggered = true;
       
       // Cleanup after a short delay
       setTimeout(() => {
         URL.revokeObjectURL(url);
         document.body.removeChild(a);
-        resolve(downloadTriggered);
+        console.log('✅ File download triggered via click (desktop)');
+        resolve(true);
       }, 500);
     }
   } catch (err) {

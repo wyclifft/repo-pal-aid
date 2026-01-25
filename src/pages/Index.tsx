@@ -999,6 +999,7 @@ const Index = () => {
           onWeightChange={setWeight}
           onEntryTypeChange={setEntryType}
           blacklistedFarmerIds={blacklistedFarmerIds}
+          sessionSubmittedFarmerIds={sessionSubmittedFarmers}
           onFarmersLoaded={handleFarmersLoaded}
           captureDisabled={captureDisabledForSelectedFarmer}
           submitDisabled={submitDisabledForSelectedFarmer}
@@ -1025,6 +1026,8 @@ const Index = () => {
           }}
           onWeightChange={setWeight}
           onEntryTypeChange={setEntryType}
+          blacklistedFarmerIds={blacklistedFarmerIds}
+          sessionSubmittedFarmerIds={sessionSubmittedFarmers}
           captureDisabled={captureDisabledForSelectedFarmer}
           submitDisabled={submitDisabledForSelectedFarmer}
           allowDigital={captureMode.allowDigital}
@@ -1041,6 +1044,8 @@ const Index = () => {
           setReceiptModalOpen(false);
           setCapturedCollections([]);
           setCumulativeFrequency(undefined);
+          // Clear farmer selection after submit to prepare for next farmer
+          handleClearFarmer();
         }}
         cumulativeFrequency={cumulativeFrequency}
         showCumulativeFrequency={showCumulative && Number(selectedFarmer?.currqty) === 1}
