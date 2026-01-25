@@ -30,6 +30,7 @@ subprojects { subProj ->
     subProj.tasks.withType(JavaCompile).configureEach {
         sourceCompatibility = JavaVersion.VERSION_17.toString()
         targetCompatibility = JavaVersion.VERSION_17.toString()
+        options.release.set(17)
     }
 
     // 2) Ensure Kotlin compiles to JVM 17
@@ -49,6 +50,15 @@ subprojects { subProj ->
                 compileOptions {
                     sourceCompatibility JavaVersion.VERSION_17
                     targetCompatibility JavaVersion.VERSION_17
+                }
+            }
+            
+            // Force Java toolchain to 17 if defined
+            if (subProj.hasProperty('java')) {
+                subProj.java {
+                    toolchain {
+                        languageVersion = JavaLanguageVersion.of(17)
+                    }
                 }
             }
         }
