@@ -5,13 +5,14 @@ import { mysqlApi, type ZReportData } from '@/services/mysqlApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Download, Printer, Calendar, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Download, Printer, Calendar, AlertTriangle, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
+import { ZReportReceipt } from '@/components/ZReportReceipt';
 
 const ZReport = () => {
   const navigate = useNavigate();
@@ -32,6 +33,9 @@ const ZReport = () => {
   // Sync status tracking for sessprint enforcement
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isSyncComplete, setIsSyncComplete] = useState(true);
+
+  // Receipt preview state
+  const [showReceiptPreview, setShowReceiptPreview] = useState(false);
 
   // Check authentication - but don't redirect during session close flow
   useEffect(() => {
@@ -161,10 +165,24 @@ const ZReport = () => {
     }
   }, [autoPrint, reportData, loading]);
 
-  // Handle print button click
+  // Handle print button click - show preview first
   const handlePrintClick = () => {
     console.log('🖨️ Print button clicked', { sessionPrintOnly, isSyncComplete, pendingSyncCount, reportData: !!reportData });
-    handlePrint();
+    // Enforce sessprint: only show preview if sync is complete
+    if (sessionPrintOnly && !isSyncComplete) {
+      toast.error(`Cannot print Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
+      return;
+    }
+    setShowReceiptPreview(true);
+  };
+
+  // Handle receipt preview close
+  const handleReceiptPreviewClose = () => {
+    setShowReceiptPreview(false);
+  };
+
+  // Handle print from receipt preview
+  const handleReceiptPrint = () => {
     setHasPrinted(true);
   };
 
@@ -255,21 +273,13 @@ const ZReport = () => {
           <div className="flex gap-2">
             <Button 
               onClick={handlePrintClick} 
-              variant="outline" 
+              variant="default" 
               size="sm"
               disabled={sessionPrintOnly && !isSyncComplete}
+              className="bg-primary"
             >
-              <Printer className="mr-2 h-4 w-4" />
-              Print
-            </Button>
-            <Button 
-              onClick={handleDownloadPDF} 
-              variant="outline" 
-              size="sm"
-              disabled={sessionPrintOnly && !isSyncComplete}
-            >
-              <Download className="mr-2 h-4 w-4" />
-              PDF
+              <Eye className="mr-2 h-4 w-4" />
+              View & Print
             </Button>
           </div>
         </div>
@@ -514,6 +524,20 @@ const ZReport = () => {
         )}
         </div>
       </div>
+
+      {/* Receipt Preview Modal - matches TransactionReceipt styling */}
+      <ZReportReceipt
+        data={reportData}
+        open={showReceiptPreview}
+        onClose={handleReceiptPreviewClose}
+        onPrint={handleReceiptPrint}
+        produceLabel={produceLabel}
+        routeLabel={routeLabel}
+        periodLabel={periodLabel}
+        weightLabel={weightLabel}
+        weightUnit={weightUnit}
+        isCoffee={isCoffee}
+      />
     </div>
   );
 };
