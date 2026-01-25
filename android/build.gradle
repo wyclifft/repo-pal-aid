@@ -30,7 +30,6 @@ subprojects { subProj ->
     subProj.tasks.withType(JavaCompile).configureEach {
         sourceCompatibility = JavaVersion.VERSION_17.toString()
         targetCompatibility = JavaVersion.VERSION_17.toString()
-        options.release.set(17)
     }
 
     // 2) Ensure Kotlin compiles to JVM 17
