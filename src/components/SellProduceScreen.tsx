@@ -25,6 +25,8 @@ interface SellProduceScreenProps {
   onManualWeightChange?: (weight: number) => void;
   onWeightChange?: (weight: number) => void;
   onEntryTypeChange?: (entryType: 'scale' | 'manual') => void;
+  blacklistedFarmerIds?: Set<string>; // Farmers who already delivered (multOpt=0)
+  sessionSubmittedFarmerIds?: Set<string>; // Local tracking of submitted farmers this session
   captureDisabled?: boolean;
   submitDisabled?: boolean; // Disable submit for multOpt=0 farmers who already submitted
   // Supervisor mode capture restrictions
@@ -50,6 +52,8 @@ export const SellProduceScreen = ({
   onEntryTypeChange,
   captureDisabled,
   submitDisabled,
+  blacklistedFarmerIds,
+  sessionSubmittedFarmerIds,
   allowDigital = true,
   allowManual = true,
 }: SellProduceScreenProps) => {
@@ -103,6 +107,14 @@ export const SellProduceScreen = ({
     loadFarmers();
   }, [getFarmers, route?.tcode, route?.mprefix, useRouteFilter]);
 
+  // Check if a farmer is blocked (blacklisted OR submitted this session)
+  const isFarmerBlocked = (farmerId: string): boolean => {
+    const cleanId = farmerId.replace(/^#/, '').trim();
+    if (blacklistedFarmerIds?.has(cleanId)) return true;
+    if (sessionSubmittedFarmerIds?.has(cleanId)) return true;
+    return false;
+  };
+
   // Resolve numeric input to full farmer ID
   const resolveFarmerId = (input: string): Farmer | null => {
     if (!input.trim()) return null;
@@ -113,7 +125,14 @@ export const SellProduceScreen = ({
     const exactMatch = cachedFarmers.find(
       f => f.farmer_id.toLowerCase() === input.toLowerCase()
     );
-    if (exactMatch) return exactMatch;
+    if (exactMatch) {
+      const cleanId = exactMatch.farmer_id.replace(/^#/, '').trim();
+      if (exactMatch.multOpt === 0 && isFarmerBlocked(cleanId)) {
+        toast.error(`${exactMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+        return null;
+      }
+      return exactMatch;
+    }
     
     // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
     if (numericInput && numericInput === input.trim()) {
@@ -121,14 +140,28 @@ export const SellProduceScreen = ({
       const paddedMatch = cachedFarmers.find(
         f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
       );
-      if (paddedMatch) return paddedMatch;
+      if (paddedMatch) {
+        const cleanId = paddedMatch.farmer_id.replace(/^#/, '').trim();
+        if (paddedMatch.multOpt === 0 && isFarmerBlocked(cleanId)) {
+          toast.error(`${paddedMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+          return null;
+        }
+        return paddedMatch;
+      }
       
       // Also try matching by numeric portion
       const numericMatch = cachedFarmers.find(f => {
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
         return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
       });
-      if (numericMatch) return numericMatch;
+      if (numericMatch) {
+        const cleanId = numericMatch.farmer_id.replace(/^#/, '').trim();
+        if (numericMatch.multOpt === 0 && isFarmerBlocked(cleanId)) {
+          toast.error(`${numericMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+          return null;
+        }
+        return numericMatch;
+      }
     }
     
     return null;
@@ -173,12 +206,32 @@ export const SellProduceScreen = ({
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
-    // Strip any leading # from farmer_id for display
+    // Check if farmer is blocked before allowing selection
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
+    if (farmer.multOpt === 0 && isFarmerBlocked(cleanId)) {
+      toast.error(`${farmer.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+      return;
+    }
     setMemberNo(cleanId);
     setShowSearchModal(false);
     onSelectFarmer(farmer);
   };
+  
+  // Focus input when member is cleared (for post-submit flow)
+  const focusMemberInput = () => {
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 100);
+  };
+  
+  // When capturedCollections becomes empty (after submit clears it), clear member input and focus
+  useEffect(() => {
+    if (capturedCollections.length === 0 && selectedFarmer !== null) {
+      // Collections were cleared (submit completed) - clear and focus
+      setMemberNo('');
+      focusMemberInput();
+    }
+  }, [capturedCollections.length, selectedFarmer]);
 
   // Calculate total captured weight for current farmer
   const totalCapturedWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
