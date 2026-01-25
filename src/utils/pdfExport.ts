@@ -1,4 +1,4 @@
-import type { ZReportData } from '@/services/mysqlApi';
+import type { ZReportData, DeviceZReportData } from '@/services/mysqlApi';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -319,4 +319,132 @@ const downloadWithFallback = async (blob: Blob, fileName: string, resolve: (succ
     console.error('Fallback download failed:', err);
     resolve(false);
   }
+};
+
+/**
+ * Generate Device-specific Z Report PDF (matches handwritten layout)
+ * Header: Company, Summary Type, Season, Date, Factory, Produce
+ * Body: Transaction list (MNO, REFNO, QTY, TIME)
+ * Footer: Totals, Clerk, Print Time, Device Code
+ */
+export const generateDeviceZReportPDF = (reportData: DeviceZReportData): Promise<boolean> => {
+  return new Promise((resolve) => {
+    try {
+      const weightUnit = reportData.isCoffee ? 'KG' : 'L';
+      const formattedDate = new Date(reportData.date).toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
+      const formattedTime = new Date().toLocaleTimeString('en-GB', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true
+      }).toUpperCase();
+      
+      // Build monospaced lines matching handwritten layout
+      const lines: string[] = [];
+      
+      // Header
+      lines.push(reportData.companyName.toUpperCase());
+      lines.push('');
+      lines.push(`* ${reportData.produceLabel.toUpperCase()} SUMMARY`);
+      lines.push(`* ${reportData.periodLabel.toUpperCase()}: ${reportData.seasonName}`);
+      lines.push(`* DATE: ${formattedDate}`);
+      lines.push('');
+      lines.push(`* ${reportData.routeLabel.toUpperCase()} FACTORY`);
+      lines.push('');
+      lines.push(`* PRODUCE: ${reportData.produceName || reportData.produceLabel.toUpperCase()}`);
+      lines.push('');
+      
+      // Transaction header
+      lines.push('='.repeat(48));
+      lines.push(padColumns(['MNO', 'REFNO', 'QTY', 'TIME'], [12, 12, 8, 10]));
+      lines.push('='.repeat(48));
+      
+      // Transaction rows
+      for (const tx of reportData.transactions) {
+        lines.push(padColumns([
+          tx.farmer_id.substring(0, 10),
+          tx.refno.substring(0, 10),
+          tx.weight.toFixed(1),
+          tx.time
+        ], [12, 12, 8, 10]));
+      }
+      
+      if (reportData.transactions.length === 0) {
+        lines.push('         No transactions');
+      }
+      
+      // Totals
+      lines.push('');
+      lines.push('='.repeat(48));
+      lines.push(`TOTAL                         ${reportData.totals.weight.toFixed(2)} ${weightUnit}`);
+      lines.push('');
+      
+      // Footer
+      lines.push(`CLERK:      ${reportData.clerkName}`);
+      lines.push(`PRINTED ON: ${formattedDate} - ${formattedTime}`);
+      lines.push('');
+      lines.push(`DEVICE CODE: ${reportData.deviceCode}`);
+      
+      if (reportData.isLocked && reportData.zReportId) {
+        lines.push(`Z REPORT ID: ${reportData.zReportId}`);
+      }
+
+      const fileName = `z-report-${reportData.deviceCode}-${reportData.date}.pdf`;
+
+      // Create PDF
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(10);
+      const marginX = 12;
+      const marginY = 14;
+      const lineHeight = 4.5;
+      const pageHeight = doc.internal.pageSize.getHeight();
+
+      let y = marginY;
+      for (const line of lines) {
+        if (y > pageHeight - marginY) {
+          doc.addPage();
+          y = marginY;
+        }
+        doc.text(line, marginX, y);
+        y += lineHeight;
+      }
+
+      const pdfBlob = doc.output('blob');
+      
+      // Use existing download logic
+      if ('showSaveFilePicker' in window) {
+        (window as any).showSaveFilePicker({
+          suggestedName: fileName,
+          types: [{
+            description: 'PDF file',
+            accept: { 'application/pdf': ['.pdf'] }
+          }]
+        }).then((handle: any) => {
+          return handle.createWritable();
+        }).then((writable: any) => {
+          return writable.write(pdfBlob).then(() => writable.close());
+        }).then(() => {
+          console.log('✅ Device Z Report saved via File System Access API');
+          resolve(true);
+        }).catch((err: any) => {
+          console.log('File System Access failed, trying fallback:', err.message);
+          downloadWithFallback(pdfBlob, fileName, resolve);
+        });
+      } else {
+        downloadWithFallback(pdfBlob, fileName, resolve);
+      }
+    } catch (err) {
+      console.error('Device Z Report PDF generation error:', err);
+      resolve(false);
+    }
+  });
+};
+
+// Helper to pad columns for fixed-width layout
+const padColumns = (values: string[], widths: number[]): string => {
+  return values.map((val, i) => val.padEnd(widths[i] || 10)).join('');
 };
