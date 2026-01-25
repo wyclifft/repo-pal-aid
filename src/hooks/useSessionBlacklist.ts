@@ -29,7 +29,12 @@ export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
   // Derive session from activeSession's time_from if provided, otherwise use current time
   const getSessionType = useCallback((): 'AM' | 'PM' => {
     if (activeSessionTimeFrom !== undefined) {
-      return activeSessionTimeFrom >= 12 ? 'PM' : 'AM';
+      // Some backends store session time_from as HHMM (e.g., 600, 1400) while others store hour (e.g., 6, 14).
+      // Normalize to an hour before deciding AM/PM to avoid false PM classification.
+      const hour = activeSessionTimeFrom >= 100
+        ? Math.floor(activeSessionTimeFrom / 100)
+        : activeSessionTimeFrom;
+      return hour >= 12 ? 'PM' : 'AM';
     }
     return getCurrentSessionType();
   }, [activeSessionTimeFrom]);
