@@ -239,6 +239,16 @@ export const SellProduceScreen = ({
     prevCapturedLenRef.current = next;
   }, [capturedCollections.length]);
 
+  // Listen for receipt modal close event to focus input
+  useEffect(() => {
+    const handleReceiptModalClosed = () => {
+      setMemberNo('');
+      focusMemberInput();
+    };
+    window.addEventListener('receiptModalClosed', handleReceiptModalClosed);
+    return () => window.removeEventListener('receiptModalClosed', handleReceiptModalClosed);
+  }, []);
+
   // Calculate total captured weight for current farmer
   const totalCapturedWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
 
