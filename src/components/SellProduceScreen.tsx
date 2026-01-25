@@ -61,6 +61,7 @@ export const SellProduceScreen = ({
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers } = useIndexedDB();
   const { light: hapticLight, medium: hapticMedium, success: hapticSuccess } = useHaptics();
   
@@ -224,14 +225,19 @@ export const SellProduceScreen = ({
     }, 100);
   };
   
-  // When capturedCollections becomes empty (after submit clears it), clear member input and focus
+  // When capturedCollections transitions from >0 to 0 (submit completed), clear member input and focus.
+  // NOTE: selectedFarmer prop can be a new object on each parent re-render; do NOT depend on it.
   useEffect(() => {
-    if (capturedCollections.length === 0 && selectedFarmer !== null) {
-      // Collections were cleared (submit completed) - clear and focus
+    const prev = prevCapturedLenRef.current;
+    const next = capturedCollections.length;
+
+    if (prev > 0 && next === 0) {
       setMemberNo('');
       focusMemberInput();
     }
-  }, [capturedCollections.length, selectedFarmer]);
+
+    prevCapturedLenRef.current = next;
+  }, [capturedCollections.length]);
 
   // Calculate total captured weight for current farmer
   const totalCapturedWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
