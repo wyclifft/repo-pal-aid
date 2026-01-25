@@ -69,6 +69,9 @@ export const useDataSync = () => {
       return { synced: 0, failed: 0 };
     }
 
+    let synced = 0;
+    let failed = 0;
+
     try {
       const rawReceipts = await getUnsyncedReceipts();
       
@@ -94,22 +97,26 @@ export const useDataSync = () => {
         return { synced: 0, failed: 0 };
       }
 
-      console.log(`[SYNC] Syncing ${unsyncedReceipts.length} offline receipts...`);
+      console.log(`[SYNC] Starting sync of ${unsyncedReceipts.length} offline receipts...`);
       
       // Dispatch sync start event
       window.dispatchEvent(new CustomEvent('syncStart'));
       
-      let synced = 0;
-      let failed = 0;
-
       const deviceFingerprint = await generateDeviceFingerprint();
       
-      for (const receipt of unsyncedReceipts) {
-        if (!mountedRef.current) break; // Stop if unmounted
+      // Process each receipt independently - continue even if one fails
+      for (let i = 0; i < unsyncedReceipts.length; i++) {
+        const receipt = unsyncedReceipts[i];
+        
+        // Check if component is still mounted
+        if (!mountedRef.current) {
+          console.warn(`[SYNC] Component unmounted at receipt ${i + 1}/${unsyncedReceipts.length}, stopping sync`);
+          break;
+        }
+
+        console.log(`[SYNC] Processing ${i + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
 
         try {
-          console.log(`[SYNC] Attempting to sync: ${receipt.reference_no}`);
-
           // Normalize session to AM/PM - handle legacy data that might have description
           let normalizedSession: 'AM' | 'PM' = 'AM';
           const sessionVal = String(receipt.session || '').trim().toUpperCase();
@@ -132,10 +139,14 @@ export const useDataSync = () => {
               if (existing) {
                 console.log(`[SKIP] Skipping multOpt=0 duplicate (already exists): ${receipt.reference_no}`);
                 if (receipt.orderId && typeof receipt.orderId === 'number') {
-                  await deleteReceipt(receipt.orderId);
+                  try {
+                    await deleteReceipt(receipt.orderId);
+                  } catch (deleteErr) {
+                    console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+                  }
                 }
                 synced++;
-                continue;
+                continue; // Move to next receipt
               }
             } catch (checkErr) {
               console.warn('[SYNC] Duplicate check failed, proceeding with sync:', checkErr);
@@ -159,34 +170,61 @@ export const useDataSync = () => {
             season_code: receipt.season_code, // Pass session SCODE → DB: CAN column
           });
 
-          console.log(`[API] Response for ${receipt.reference_no}:`, result);
+          console.log(`[API] Response for ${receipt.reference_no}:`, JSON.stringify(result));
 
           // Check if sync was successful - API returns { success: true/false, reference_no: string }
           if (result.success) {
             if (receipt.orderId && typeof receipt.orderId === 'number') {
-              await deleteReceipt(receipt.orderId);
-              console.log(`[DB] Deleted local receipt: ${receipt.orderId}`);
+              try {
+                await deleteReceipt(receipt.orderId);
+                console.log(`[DB] Deleted local receipt: ${receipt.orderId}`);
+              } catch (deleteErr) {
+                console.warn(`[WARN] Failed to delete synced receipt ${receipt.orderId}:`, deleteErr);
+              }
             }
             synced++;
-            console.log(`[SUCCESS] Synced successfully: ${receipt.reference_no}`);
+            console.log(`[SUCCESS] Synced ${i + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
           } else {
-            failed++;
-            console.warn(`[WARN] Sync failed for: ${receipt.reference_no}`, result);
+            // Check if it's a duplicate error - treat as success
+            const errorMsg = (result.error || result.message || '').toLowerCase();
+            if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+              console.log(`[SKIP] Already synced (server duplicate): ${receipt.reference_no}`);
+              if (receipt.orderId && typeof receipt.orderId === 'number') {
+                try {
+                  await deleteReceipt(receipt.orderId);
+                } catch (deleteErr) {
+                  console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+                }
+              }
+              synced++;
+            } else {
+              failed++;
+              console.warn(`[WARN] Sync failed for ${receipt.reference_no}: ${result.error || result.message || 'Unknown error'}`);
+            }
           }
         } catch (err: any) {
           console.error(`[ERROR] Exception syncing ${receipt.reference_no}:`, err);
           
           // Check if it's a duplicate error (already exists in DB)
-          const errorMsg = err?.message?.toLowerCase() || '';
+          const errorMsg = (err?.message || '').toLowerCase();
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
-            console.log(`[SKIP] Already synced (duplicate): ${receipt.reference_no}`);
+            console.log(`[SKIP] Already synced (exception duplicate): ${receipt.reference_no}`);
             if (receipt.orderId && typeof receipt.orderId === 'number') {
-              await deleteReceipt(receipt.orderId);
+              try {
+                await deleteReceipt(receipt.orderId);
+              } catch (deleteErr) {
+                console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+              }
             }
             synced++;
           } else {
             failed++;
           }
+        }
+        
+        // Small delay between requests to avoid overwhelming the server
+        if (i < unsyncedReceipts.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
       
@@ -197,12 +235,12 @@ export const useDataSync = () => {
         setPendingCount(failed);
       }
       
-      console.log(`[SYNC] Sync complete: ${synced} synced, ${failed} failed`);
+      console.log(`[SYNC] Sync complete: ${synced} synced, ${failed} failed out of ${unsyncedReceipts.length} total`);
       return { synced, failed };
     } catch (err) {
-      console.error('[SYNC] Sync failed:', err);
+      console.error('[SYNC] Fatal sync error:', err);
       window.dispatchEvent(new CustomEvent('syncComplete'));
-      return { synced: 0, failed: 0 };
+      return { synced, failed };
     }
   }, [isReady, getUnsyncedReceipts, deleteReceipt]);
 
