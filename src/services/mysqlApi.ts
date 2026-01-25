@@ -650,14 +650,74 @@ export interface ZReportData {
   collections: MilkCollection[];
 }
 
+// Device-specific Z Report data structure (matches handwritten layout)
+export interface DeviceZReportTransaction {
+  transrefno: string;
+  refno: string;          // Short ref number for display
+  farmer_id: string;
+  weight: number;
+  time: string;           // HH:MM AM/PM format
+  session: string;
+}
+
+export interface DeviceZReportData {
+  date: string;
+  deviceCode: string;     // Device code shown in header/footer
+  companyName: string;    // Company name header
+  produceLabel: string;   // "MILK" or "COFFEE"
+  produceName?: string;   // Specific produce name (e.g., "CHERRY")
+  periodLabel: string;    // "Season" or "Session"
+  seasonName: string;     // Season/session name
+  routeLabel: string;     // "Route" or "Center"
+  clerkName: string;      // Collector/clerk name
+  totals: {
+    weight: number;
+    entries: number;
+    farmers: number;
+  };
+  transactions: DeviceZReportTransaction[];
+  isLocked: boolean;      // Whether transactions are locked
+  zReportId?: string;     // Z Report ID if locked
+  isCoffee: boolean;      // For weight unit display
+}
+
 export const zReportApi = {
   /**
-   * Get Z Report for a specific date
+   * Get Z Report for a specific date (legacy - company-wide)
    */
   get: async (date: string, uniquedevcode: string): Promise<ZReportData | null> => {
     const response = await apiRequest<ZReportData>(`/z-report?date=${date}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`);
     return response.data || null;
   },
+
+  /**
+   * Get device-specific Z Report (per device, not mixed)
+   * Filters by deviceserial (device code) and date
+   */
+  getByDevice: async (date: string, uniquedevcode: string, seasonCode?: string): Promise<DeviceZReportData | null> => {
+    let url = `/z-report/device?date=${date}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+    if (seasonCode) {
+      url += `&season=${encodeURIComponent(seasonCode)}`;
+    }
+    const response = await apiRequest<DeviceZReportData>(url);
+    return response.data || null;
+  },
+
+  /**
+   * Lock Z Report - assigns z_report_id to all included transactions
+   * Prevents re-use or editing of locked transactions
+   */
+  lock: async (zReportId: string, transactionRefs: string[], uniquedevcode: string): Promise<{ success: boolean; error?: string }> => {
+    const response = await apiRequest<{ success: boolean }>('/z-report/lock', {
+      method: 'POST',
+      body: JSON.stringify({
+        z_report_id: zReportId,
+        transrefnos: transactionRefs,
+        uniquedevcode
+      })
+    });
+    return { success: response.success, error: response.error };
+  }
 };
 
 // ==================== ITEMS API ====================

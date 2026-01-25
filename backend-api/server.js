@@ -1269,7 +1269,205 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // Items endpoints
+    // ==================== DEVICE-SPECIFIC Z-REPORT API ====================
+    // GET /api/z-report/device - Get Z Report filtered by device (not company-wide)
+    // This ensures Z Reports are per-device only, never mixing devices
+    if (path === '/api/z-report/device' && method === 'GET') {
+      const date = parsedUrl.query.date || new Date().toISOString().split('T')[0];
+      const uniquedevcode = parsedUrl.query.uniquedevcode;
+      const seasonFilter = parsedUrl.query.season; // Optional season/session filter
+
+      if (!uniquedevcode) {
+        return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400, origin);
+      }
+
+      // Get device info including devcode, ccode, and company name
+      const [deviceRows] = await pool.query(
+        `SELECT d.ccode, d.devcode, p.cname as company_name, p.orgtype, p.rdesc
+         FROM devsettings d
+         LEFT JOIN psettings p ON d.ccode = p.ccode
+         WHERE d.uniquedevcode = ? AND d.authorized = 1`,
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized or not found' 
+        }, 401, origin);
+      }
+      
+      const { ccode, devcode, company_name, orgtype, rdesc } = deviceRows[0];
+      const isCoffee = orgtype === 'C';
+      const periodLabel = isCoffee ? 'Season' : 'Session';
+      const routeLabel = rdesc || (isCoffee ? 'Center' : 'Route');
+      const produceLabel = isCoffee ? 'COFFEE' : 'MILK';
+      
+      // Get the device's unique identifier (deviceserial) from the fingerprint
+      // The deviceserial in transactions matches the uniquedevcode from devsettings
+      const deviceSerial = uniquedevcode;
+
+      // Build query - filter by deviceserial to ensure per-device reporting
+      let query = `
+        SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, 
+               t.route, t.weight, t.session, t.transdate as collection_date, 
+               t.transtime, t.clerk as clerk_name, t.icode as product_code, 
+               t.entry_type, t.CAN as season_code, t.z_report_id,
+               i.descript as product_name
+        FROM transactions t
+        LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
+        WHERE t.transdate = ? AND t.Transtype = 1 AND t.deviceserial = ?
+      `;
+      const queryParams = [ccode, date, deviceSerial];
+
+      // Add season filter if provided
+      if (seasonFilter) {
+        query += ` AND t.session = ?`;
+        queryParams.push(seasonFilter);
+      }
+
+      query += ` ORDER BY t.transtime ASC, t.memberno`;
+
+      const [collections] = await pool.query(query, queryParams);
+
+      // Get season/session name for header
+      let seasonName = '';
+      if (collections.length > 0 && collections[0].season_code) {
+        const seasonCode = collections[0].season_code;
+        const [seasonRows] = await pool.query(
+          `SELECT descript FROM sessions WHERE SCODE = ? AND ccode = ?`,
+          [seasonCode, ccode]
+        );
+        if (seasonRows.length > 0) {
+          seasonName = seasonRows[0].descript;
+        } else {
+          seasonName = seasonCode;
+        }
+      } else if (collections.length > 0) {
+        seasonName = collections[0].session || 'AM';
+      }
+
+      // Get clerk name (from first transaction or device user)
+      const clerkName = collections.length > 0 ? (collections[0].clerk_name || 'Unknown') : 'Unknown';
+
+      // Get produce name (from first transaction if available)
+      const produceName = collections.length > 0 && collections[0].product_name 
+        ? collections[0].product_name 
+        : produceLabel;
+
+      // Calculate totals
+      const totalWeight = collections.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0);
+      const totalFarmers = new Set(collections.map(c => c.farmer_id)).size;
+      const totalEntries = collections.length;
+
+      // Check if any transactions are already locked
+      const isLocked = collections.some(c => c.z_report_id);
+      const existingZReportId = collections.find(c => c.z_report_id)?.z_report_id;
+
+      // Format transactions for frontend display
+      const transactions = collections.map(c => {
+        // Extract short ref number (last 6 chars of transrefno)
+        const refno = c.transrefno ? c.transrefno.slice(-6) : '';
+        
+        // Format time as HH:MM AM/PM
+        let timeStr = '';
+        if (c.transtime) {
+          const timeParts = String(c.transtime).split(':');
+          if (timeParts.length >= 2) {
+            const hour = parseInt(timeParts[0], 10);
+            const minute = timeParts[1];
+            const ampm = hour >= 12 ? 'PM' : 'AM';
+            const hour12 = hour % 12 || 12;
+            timeStr = `${hour12}:${minute} ${ampm}`;
+          }
+        }
+
+        return {
+          transrefno: c.transrefno,
+          refno,
+          farmer_id: c.farmer_id,
+          weight: parseFloat(c.weight || 0),
+          time: timeStr,
+          session: c.session
+        };
+      });
+
+      return sendJSON(res, {
+        success: true,
+        data: {
+          date,
+          deviceCode: devcode || deviceSerial.substring(0, 8),
+          companyName: company_name || 'Company',
+          produceLabel,
+          produceName,
+          periodLabel,
+          seasonName,
+          routeLabel,
+          clerkName,
+          totals: {
+            weight: parseFloat(totalWeight.toFixed(2)),
+            entries: totalEntries,
+            farmers: totalFarmers
+          },
+          transactions,
+          isLocked,
+          zReportId: existingZReportId || null,
+          isCoffee
+        }
+      }, 200, origin);
+    }
+
+    // POST /api/z-report/lock - Lock transactions by assigning z_report_id
+    if (path === '/api/z-report/lock' && method === 'POST') {
+      const body = await parseBody(req);
+      const { z_report_id, transrefnos, uniquedevcode } = body;
+
+      if (!z_report_id || !transrefnos || !Array.isArray(transrefnos) || transrefnos.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'z_report_id and transrefnos array are required' 
+        }, 400, origin);
+      }
+
+      if (!uniquedevcode) {
+        return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400, origin);
+      }
+
+      // Verify device authorization
+      const [deviceRows] = await pool.query(
+        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized' 
+        }, 401, origin);
+      }
+
+      // Lock transactions - only lock those that aren't already locked
+      const placeholders = transrefnos.map(() => '?').join(',');
+      const [result] = await pool.query(
+        `UPDATE transactions 
+         SET z_report_id = ? 
+         WHERE transrefno IN (${placeholders}) 
+         AND z_report_id IS NULL 
+         AND deviceserial = ?`,
+        [z_report_id, ...transrefnos, uniquedevcode]
+      );
+
+      const lockedCount = result.affectedRows;
+      console.log(`[Z-REPORT] Locked ${lockedCount} transactions with z_report_id=${z_report_id}`);
+
+      return sendJSON(res, {
+        success: true,
+        message: `Locked ${lockedCount} transactions`,
+        locked_count: lockedCount,
+        z_report_id
+      }, 200, origin);
+    }
+
     // Items endpoint with invtype filtering
     // invtype values: '01' = produce (milk, cherry), '05' = store items, '06' = AI items
     if (path === '/api/items' && method === 'GET') {

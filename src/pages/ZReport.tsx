@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { mysqlApi, type ZReportData } from '@/services/mysqlApi';
+import { mysqlApi, type ZReportData, type DeviceZReportData } from '@/services/mysqlApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Download, Printer, Calendar, AlertTriangle, Eye } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ArrowLeft, Download, Printer, Calendar, AlertTriangle, Eye, Lock, Smartphone } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -13,11 +14,12 @@ import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { ZReportReceipt } from '@/components/ZReportReceipt';
+import { DeviceZReportReceipt } from '@/components/DeviceZReportReceipt';
 
 const ZReport = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, currentUser } = useAuth();
   
   // Get date from URL or use today
   const dateFromUrl = searchParams.get('date');
@@ -27,6 +29,9 @@ const ZReport = () => {
   const autoPrintTriggeredRef = useRef(false);
   const [hasPrinted, setHasPrinted] = useState(false);
   
+  // Tab state - default to device report
+  const [activeTab, setActiveTab] = useState<'device' | 'summary'>('device');
+  
   // App settings
   const { sessionPrintOnly, routeLabel, produceLabel, isCoffee, weightUnit, weightLabel, periodLabel, companyName } = useAppSettings();
   
@@ -34,8 +39,13 @@ const ZReport = () => {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isSyncComplete, setIsSyncComplete] = useState(true);
 
-  // Receipt preview state
+  // Receipt preview states
   const [showReceiptPreview, setShowReceiptPreview] = useState(false);
+  const [showDeviceReceiptPreview, setShowDeviceReceiptPreview] = useState(false);
+  
+  // Device Z Report state
+  const [deviceReportData, setDeviceReportData] = useState<DeviceZReportData | null>(null);
+  const [isLocking, setIsLocking] = useState(false);
 
   // Check authentication - but don't redirect during session close flow
   useEffect(() => {
@@ -93,7 +103,53 @@ const ZReport = () => {
 
   useEffect(() => {
     fetchReport();
+    fetchDeviceReport();
   }, [selectedDate, deviceFingerprint]);
+
+  // Fetch device-specific Z Report
+  const fetchDeviceReport = useCallback(async () => {
+    if (!deviceFingerprint || !navigator.onLine) return;
+    
+    try {
+      const data = await mysqlApi.zReport.getByDevice(selectedDate, deviceFingerprint);
+      if (data) {
+        // Add clerk name from current user if not set
+        if (!data.clerkName || data.clerkName === 'Unknown') {
+          data.clerkName = currentUser?.username || 'Clerk';
+        }
+        setDeviceReportData(data);
+        console.log('[Z-REPORT] Device report loaded:', data.transactions.length, 'transactions');
+      }
+    } catch (err) {
+      console.error('[Z-REPORT] Failed to fetch device report:', err);
+    }
+  }, [selectedDate, deviceFingerprint, currentUser]);
+
+  // Lock Z Report transactions
+  const handleLockReport = async () => {
+    if (!deviceReportData || deviceReportData.transactions.length === 0) return;
+    
+    setIsLocking(true);
+    try {
+      const zReportId = `ZR-${deviceReportData.deviceCode}-${selectedDate}-${Date.now()}`;
+      const transrefnos = deviceReportData.transactions.map(tx => tx.transrefno);
+      
+      const result = await mysqlApi.zReport.lock(zReportId, transrefnos, deviceFingerprint);
+      
+      if (result.success) {
+        toast.success('Z Report locked successfully');
+        // Refresh to show locked status
+        await fetchDeviceReport();
+      } else {
+        toast.error(result.error || 'Failed to lock Z Report');
+      }
+    } catch (err) {
+      console.error('[Z-REPORT] Lock failed:', err);
+      toast.error('Failed to lock Z Report');
+    } finally {
+      setIsLocking(false);
+    }
+  };
 
   const fetchReport = async () => {
     if (!deviceFingerprint) {
@@ -108,7 +164,7 @@ const ZReport = () => {
       if (cached) {
         setReportData(cached);
         setLoading(false);
-        console.log('📦 Loaded Z Report from cache');
+        console.log('[Z-REPORT] Loaded from cache');
       }
     } catch (cacheError) {
       console.error('Cache read error:', cacheError);
@@ -119,7 +175,6 @@ const ZReport = () => {
       try {
         const data = await mysqlApi.zReport.get(selectedDate, deviceFingerprint);
         if (data) {
-          // Ensure data has valid structure before using
           const safeData: ZReportData = {
             date: data.date || selectedDate,
             totals: data.totals || { liters: 0, farmers: 0, entries: 0 },
@@ -129,21 +184,14 @@ const ZReport = () => {
             collections: data.collections || []
           };
           setReportData(safeData);
-          // Cache in IndexedDB for offline access
           try {
             await saveZReport(selectedDate, safeData);
-            console.log('✅ Z Report synced and cached');
           } catch (saveErr) {
             console.warn('Failed to cache Z Report:', saveErr);
           }
         }
       } catch (error) {
         console.error('Error syncing report:', error);
-        // Data already loaded from cache, just log the error
-        if (!reportData) {
-          // Only show toast if no data at all
-          console.log('No data available for this date');
-        }
       }
     }
     
