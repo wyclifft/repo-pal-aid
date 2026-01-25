@@ -108,11 +108,36 @@ export const SellProduceScreen = ({
     loadFarmers();
   }, [getFarmers, route?.tcode, route?.mprefix, useRouteFilter]);
 
-  // Check if a farmer is blocked (blacklisted OR submitted this session)
-  const isFarmerBlocked = (farmerId: string): boolean => {
+  // Derive session type (AM/PM) from session time_from
+  const getSessionType = (): 'AM' | 'PM' => {
+    const hour = session.time_from >= 100
+      ? Math.floor(session.time_from / 100)
+      : session.time_from;
+    return hour >= 12 ? 'PM' : 'AM';
+  };
+
+  // Check if a farmer is blocked (blacklisted OR submitted this session OR already in capture queue with multOpt=0)
+  const isFarmerBlocked = (farmerId: string, checkMultOpt: boolean = false): boolean => {
     const cleanId = farmerId.replace(/^#/, '').trim();
     if (blacklistedFarmerIds?.has(cleanId)) return true;
     if (sessionSubmittedFarmerIds?.has(cleanId)) return true;
+    
+    // Check if farmer with multOpt=0 is already in capturedCollections
+    if (checkMultOpt) {
+      const today = new Date().toISOString().split('T')[0];
+      const currentSessionType = getSessionType();
+      const alreadyCaptured = capturedCollections.some(c => {
+        const captureDate = new Date(c.collection_date).toISOString().split('T')[0];
+        return (
+          c.farmer_id.replace(/^#/, '').trim() === cleanId &&
+          c.session === currentSessionType &&
+          captureDate === today &&
+          c.multOpt === 0
+        );
+      });
+      if (alreadyCaptured) return true;
+    }
+    
     return false;
   };
 
@@ -128,7 +153,7 @@ export const SellProduceScreen = ({
     );
     if (exactMatch) {
       const cleanId = exactMatch.farmer_id.replace(/^#/, '').trim();
-      if (exactMatch.multOpt === 0 && isFarmerBlocked(cleanId)) {
+      if (exactMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
         toast.error(`${exactMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
         return null;
       }
@@ -143,7 +168,7 @@ export const SellProduceScreen = ({
       );
       if (paddedMatch) {
         const cleanId = paddedMatch.farmer_id.replace(/^#/, '').trim();
-        if (paddedMatch.multOpt === 0 && isFarmerBlocked(cleanId)) {
+        if (paddedMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
           toast.error(`${paddedMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
           return null;
         }
@@ -157,7 +182,7 @@ export const SellProduceScreen = ({
       });
       if (numericMatch) {
         const cleanId = numericMatch.farmer_id.replace(/^#/, '').trim();
-        if (numericMatch.multOpt === 0 && isFarmerBlocked(cleanId)) {
+        if (numericMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
           toast.error(`${numericMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
           return null;
         }
@@ -207,9 +232,9 @@ export const SellProduceScreen = ({
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
-    // Check if farmer is blocked before allowing selection
+    // Check if farmer is blocked before allowing selection (includes queue check)
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
-    if (farmer.multOpt === 0 && isFarmerBlocked(cleanId)) {
+    if (farmer.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
       toast.error(`${farmer.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
       return;
     }
