@@ -125,6 +125,9 @@ export const useDataSync = () => {
           }
 
           // Client-side FINAL GUARD for multOpt=0 during background sync
+          // IMPORTANT: multOpt=0 means only one *workflow* per session/day, but a workflow may include
+          // multiple rows (multiple buckets) that share the same uploadrefno.
+          // So: only skip if an existing server record is found AND it belongs to a DIFFERENT uploadrefno.
           if (receipt.multOpt === 0) {
             const receiptDate = new Date(receipt.collection_date).toISOString().split('T')[0];
             try {
@@ -137,16 +140,34 @@ export const useDataSync = () => {
               );
 
               if (existing) {
-                console.log(`[SKIP] Skipping multOpt=0 duplicate (already exists): ${receipt.reference_no}`);
-                if (receipt.orderId && typeof receipt.orderId === 'number') {
-                  try {
-                    await deleteReceipt(receipt.orderId);
-                  } catch (deleteErr) {
-                    console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+                const existingUploadRef = (existing as any)?.uploadrefno;
+                const incomingUploadRef = (receipt as any)?.uploadrefno;
+
+                // If uploadrefno matches, this is part of the same workflow; do NOT skip.
+                if (
+                  incomingUploadRef &&
+                  existingUploadRef &&
+                  String(incomingUploadRef) === String(existingUploadRef)
+                ) {
+                  console.log(
+                    `[SYNC] multOpt=0: existing workflow found and uploadrefno matches (${incomingUploadRef}); proceeding: ${receipt.reference_no}`
+                  );
+                } else {
+                  // Different (or unknown) workflow: treat as duplicate-session-delivery guard.
+                  // Attempting to sync will likely return a 409, but skipping here avoids extra calls.
+                  console.log(
+                    `[SKIP] multOpt=0 duplicate workflow detected (existingUploadRef=${existingUploadRef ?? 'unknown'}, incomingUploadRef=${incomingUploadRef ?? 'missing'}): ${receipt.reference_no}`
+                  );
+                  if (receipt.orderId && typeof receipt.orderId === 'number') {
+                    try {
+                      await deleteReceipt(receipt.orderId);
+                    } catch (deleteErr) {
+                      console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+                    }
                   }
+                  synced++;
+                  continue; // Move to next receipt
                 }
-                synced++;
-                continue; // Move to next receipt
               }
             } catch (checkErr) {
               console.warn('[SYNC] Duplicate check failed, proceeding with sync:', checkErr);
