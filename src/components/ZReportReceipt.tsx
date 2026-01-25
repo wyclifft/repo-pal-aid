@@ -10,6 +10,8 @@ interface ZReportReceiptProps {
   open: boolean;
   onClose: () => void;
   onPrint?: () => void;
+  // Company info
+  companyName?: string;
   // App settings
   produceLabel?: string;
   routeLabel?: string;
@@ -24,6 +26,7 @@ export const ZReportReceipt = ({
   open, 
   onClose, 
   onPrint,
+  companyName,
   produceLabel = 'MILK',
   routeLabel = 'Route',
   periodLabel = 'Session',
@@ -69,8 +72,8 @@ export const ZReportReceipt = ({
         <div className="space-y-2">
           {/* Header */}
           <div className="text-center border-b border-dashed pb-2">
-            <h3 className="font-bold text-base">{produceLabel.toUpperCase()} COLLECTION</h3>
-            <p className="text-xs text-muted-foreground">Z REPORT</p>
+            <h3 className="font-bold text-base">{companyName || 'Z REPORT'}</h3>
+            <p className="text-xs text-muted-foreground">{produceLabel.toUpperCase()} COLLECTION Z REPORT</p>
           </div>
 
           {/* Date/Time Info */}
