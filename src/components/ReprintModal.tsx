@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
 import type { MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Check, Square, CheckSquare, ShoppingCart, Bot, Milk } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -63,10 +65,26 @@ export const ReprintModal = ({
   const [isPrinting, setIsPrinting] = useState<string | null>(null);
   const [isDeleteMode, setIsDeleteMode] = useState(false);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
+  const [activeTab, setActiveTab] = useState<'recent' | 'search'>('recent');
+  const [searchQuery, setSearchQuery] = useState('');
   
-  const totalPages = Math.ceil(receipts.length / ITEMS_PER_PAGE);
+  // Filter receipts based on search query
+  const filteredReceipts = useMemo(() => {
+    if (!searchQuery.trim()) return receipts;
+    const query = searchQuery.toLowerCase().trim();
+    return receipts.filter(receipt => 
+      receipt.farmerId.toLowerCase().includes(query) ||
+      receipt.farmerName.toLowerCase().includes(query) ||
+      (receipt.uploadrefno && receipt.uploadrefno.toLowerCase().includes(query))
+    );
+  }, [receipts, searchQuery]);
+
+  // Use filtered receipts for search tab, all receipts for recent tab
+  const displayReceipts = activeTab === 'search' ? filteredReceipts : receipts;
+  
+  const totalPages = Math.ceil(displayReceipts.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-  const paginatedReceipts = receipts.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  const paginatedReceipts = displayReceipts.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
   const handleReprint = async (receipt: PrintedReceipt) => {
     // For Store/AI receipts, check items; for milk, check collections
@@ -228,6 +246,8 @@ export const ReprintModal = ({
       setCurrentPage(1);
       setIsDeleteMode(false);
       setSelectedForDelete(new Set());
+      setActiveTab('recent');
+      setSearchQuery('');
       onClose();
     }
   };
@@ -290,38 +310,63 @@ export const ReprintModal = ({
           </DialogTitle>
         </DialogHeader>
 
-        {/* Delete mode toolbar */}
-        {isDeleteMode && (
-          <div className="flex items-center justify-between p-2 bg-destructive/10 rounded-lg mb-2">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={selectAllOnPage}
-                className="text-xs px-2 py-1 bg-secondary rounded hover:bg-secondary/80"
-              >
-                Select Page
-              </button>
-              <span className="text-sm text-muted-foreground">
-                {selectedForDelete.size} selected
-              </span>
-            </div>
-            <button
-              onClick={handleDeleteSelected}
-              disabled={selectedForDelete.size === 0}
-              className="px-3 py-1 bg-destructive text-destructive-foreground rounded text-sm font-medium
-                       hover:bg-destructive/90 disabled:opacity-50"
-            >
-              Delete
-            </button>
-          </div>
-        )}
+        {/* Tabs for Recent / Search */}
+        <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v as 'recent' | 'search'); setCurrentPage(1); }} className="flex-1 flex flex-col min-h-0">
+          <TabsList className="grid w-full grid-cols-2 mb-2 flex-shrink-0">
+            <TabsTrigger value="recent" className="flex items-center gap-1.5">
+              <List className="h-4 w-4" />
+              Recent
+            </TabsTrigger>
+            <TabsTrigger value="search" className="flex items-center gap-1.5">
+              <Search className="h-4 w-4" />
+              Search
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Scrollable receipt list */}
-        <div className="flex-1 overflow-y-auto min-h-0 space-y-2 sm:space-y-3 -mx-1 px-1">
-          {receipts.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground text-sm">
-              No recent receipts to display
+          {/* Search input - only visible on search tab */}
+          {activeTab === 'search' && (
+            <div className="mb-2 flex-shrink-0">
+              <Input
+                placeholder="Search by ID, name, or reference..."
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+                className="w-full"
+              />
             </div>
-          ) : (
+          )}
+
+          {/* Delete mode toolbar */}
+          {isDeleteMode && (
+            <div className="flex items-center justify-between p-2 bg-destructive/10 rounded-lg mb-2 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={selectAllOnPage}
+                  className="text-xs px-2 py-1 bg-secondary rounded hover:bg-secondary/80"
+                >
+                  Select Page
+                </button>
+                <span className="text-sm text-muted-foreground">
+                  {selectedForDelete.size} selected
+                </span>
+              </div>
+              <button
+                onClick={handleDeleteSelected}
+                disabled={selectedForDelete.size === 0}
+                className="px-3 py-1 bg-destructive text-destructive-foreground rounded text-sm font-medium
+                         hover:bg-destructive/90 disabled:opacity-50"
+              >
+                Delete
+              </button>
+            </div>
+          )}
+
+          {/* Scrollable receipt list */}
+          <div className="flex-1 overflow-y-auto min-h-0 space-y-2 sm:space-y-3 -mx-1 px-1">
+            {displayReceipts.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground text-sm">
+                {activeTab === 'search' && searchQuery ? 'No receipts match your search' : 'No recent receipts to display'}
+              </div>
+            ) : (
             paginatedReceipts.map((receipt, index) => {
               const globalIndex = startIndex + index;
               const isSelected = selectedForDelete.has(globalIndex);
@@ -405,7 +450,8 @@ export const ReprintModal = ({
               );
             })
           )}
-        </div>
+          </div>
+        </Tabs>
 
         {/* Pagination Controls */}
         {totalPages > 1 && (

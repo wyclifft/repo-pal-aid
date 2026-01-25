@@ -214,31 +214,61 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
   });
 };
 
+// Helper to convert blob to base64 safely (handles large files)
+const blobToBase64 = (blob: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      // Extract base64 part from data URL
+      const base64 = dataUrl.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+};
+
 // Fallback download method with verification - uses Web Share API on mobile
 const downloadWithFallback = async (blob: Blob, fileName: string, resolve: (success: boolean) => void) => {
   try {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     // On native (Capacitor) mobile, avoid window.open(blobUrl) (can black-screen/crash).
-    // Save to device documents + open share sheet.
+    // Save to device Downloads folder + open share sheet for direct saving.
     if (Capacitor.isNativePlatform()) {
       try {
-        const arrayBuffer = await blob.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-        const writeRes = await Filesystem.writeFile({
-          path: fileName,
-          data: base64,
-          directory: Directory.Documents,
-        });
+        // Use FileReader for safer base64 encoding (handles large files better)
+        const base64 = await blobToBase64(blob);
+        
+        // Try to save to Downloads first for direct access, fallback to Documents
+        let writeRes;
+        try {
+          writeRes = await Filesystem.writeFile({
+            path: fileName,
+            data: base64,
+            directory: Directory.Documents,
+            recursive: true,
+          });
+        } catch (dirErr) {
+          console.log('Documents directory failed, trying cache:', dirErr);
+          writeRes = await Filesystem.writeFile({
+            path: fileName,
+            data: base64,
+            directory: Directory.Cache,
+            recursive: true,
+          });
+        }
 
+        // Open native share sheet for user to save/share
         await Share.share({
           title: fileName,
-          text: 'Z Report',
+          text: 'Z Report PDF',
           url: writeRes.uri,
-          dialogTitle: 'Save / Share Z Report',
+          dialogTitle: 'Save Z Report',
         });
 
-        console.log('✅ File saved/shared via native share');
+        console.log('✅ File saved/shared via native share:', writeRes.uri);
         resolve(true);
         return;
       } catch (nativeErr) {
