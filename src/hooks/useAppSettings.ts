@@ -106,6 +106,7 @@ interface AppSettingsContextType {
   periodLabel: string;
   weightUnit: string;  // 'kg' for coffee, 'L' for dairy
   weightLabel: string; // 'Kilograms' for coffee, 'Liters' for dairy
+  companyName: string; // Dynamic company name
   requireStableReading: boolean;
   requireZeroScale: boolean;
   autoWeightOnly: boolean;
@@ -539,6 +540,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const offlineFirstMode = settings.online === 1;
   const sessionPrintOnly = settings.sessprint === 1;
   const useRouteFilter = settings.chkroute === 1;
+  const companyName = settings.company_name || localStorage.getItem('device_company_name') || '';
 
   return {
     settings,
@@ -555,6 +557,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     periodLabel,
     weightUnit,
     weightLabel,
+    companyName,
     requireStableReading,
     requireZeroScale,
     autoWeightOnly,
