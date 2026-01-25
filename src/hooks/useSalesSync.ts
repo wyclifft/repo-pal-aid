@@ -74,7 +74,7 @@ export const useSalesSync = () => {
         return { synced: 0, failed: 0 };
       }
 
-      console.log(`[SYNC] Syncing ${pendingSales.length} pending sales/AI transactions...`);
+      console.log(`[SYNC] Starting sync of ${pendingSales.length} pending sales/AI transactions...`);
       const deviceFingerprint = await generateDeviceFingerprint();
 
       // Group store sales by uploadrefno for batch sync
@@ -95,9 +95,18 @@ export const useSalesSync = () => {
         }
       }
 
+      const batchEntries = Object.entries(storeBatches);
+      
       // Sync store batches (grouped by uploadrefno)
-      for (const [uploadrefno, batchSales] of Object.entries(storeBatches)) {
-        if (!mountedRef.current) break;
+      for (let i = 0; i < batchEntries.length; i++) {
+        const [uploadrefno, batchSales] = batchEntries[i];
+        
+        if (!mountedRef.current) {
+          console.warn(`[SYNC] Component unmounted at batch ${i + 1}/${batchEntries.length}, stopping sync`);
+          break;
+        }
+
+        console.log(`[SYNC] Processing batch ${i + 1}/${batchEntries.length}: ${uploadrefno} (${batchSales.length} items)`);
 
         try {
           const firstSale = batchSales[0];
@@ -129,32 +138,46 @@ export const useSalesSync = () => {
             // Delete all items in this batch
             for (const sale of batchSales) {
               if (sale.orderId) {
-                await deleteSale(sale.orderId);
+                try {
+                  await deleteSale(sale.orderId);
+                } catch (deleteErr) {
+                  console.warn(`[WARN] Failed to delete synced sale ${sale.orderId}:`, deleteErr);
+                }
               }
             }
             synced += batchSales.length;
-            console.log(`[SUCCESS] Synced batch: ${uploadrefno} (${batchSales.length} items)`);
+            console.log(`[SUCCESS] Synced batch ${i + 1}/${batchEntries.length}: ${uploadrefno} (${batchSales.length} items)`);
           } else {
             // Check for duplicate - if so, still delete local
-            const errorMsg = result.error?.toLowerCase() || '';
+            const errorMsg = (result.error || '').toLowerCase();
             if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
               for (const sale of batchSales) {
                 if (sale.orderId) {
-                  await deleteSale(sale.orderId);
+                  try {
+                    await deleteSale(sale.orderId);
+                  } catch (deleteErr) {
+                    console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, deleteErr);
+                  }
                 }
               }
               synced += batchSales.length;
+              console.log(`[SKIP] Batch already synced (duplicate): ${uploadrefno}`);
             } else {
               failed += batchSales.length;
+              console.warn(`[WARN] Batch sync failed for ${uploadrefno}: ${result.error || 'Unknown error'}`);
             }
           }
         } catch (error: any) {
-          console.error('[SYNC] Batch sync error:', error);
-          const errorMsg = error?.message?.toLowerCase() || '';
+          console.error(`[ERROR] Batch sync exception for ${uploadrefno}:`, error);
+          const errorMsg = (error?.message || '').toLowerCase();
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
             for (const sale of batchSales) {
               if (sale.orderId) {
-                await deleteSale(sale.orderId);
+                try {
+                  await deleteSale(sale.orderId);
+                } catch (deleteErr) {
+                  console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, deleteErr);
+                }
               }
             }
             synced += batchSales.length;
@@ -162,11 +185,23 @@ export const useSalesSync = () => {
             failed += batchSales.length;
           }
         }
+        
+        // Small delay between batches
+        if (i < batchEntries.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
       }
 
       // Sync AI sales individually
-      for (const saleRecord of aiSales) {
-        if (!mountedRef.current) break;
+      for (let i = 0; i < aiSales.length; i++) {
+        const saleRecord = aiSales[i];
+        
+        if (!mountedRef.current) {
+          console.warn(`[SYNC] Component unmounted at AI sale ${i + 1}/${aiSales.length}, stopping sync`);
+          break;
+        }
+
+        console.log(`[SYNC] Processing AI sale ${i + 1}/${aiSales.length}: ${saleRecord.transrefno || saleRecord.orderId}`);
 
         try {
           const cleanSale: Sale = {
@@ -194,34 +229,45 @@ export const useSalesSync = () => {
 
           const success = await mysqlApi.sales.create(cleanSale);
           if (success && saleRecord.orderId) {
-            await deleteSale(saleRecord.orderId);
+            try {
+              await deleteSale(saleRecord.orderId);
+            } catch (deleteErr) {
+              console.warn(`[WARN] Failed to delete synced AI sale ${saleRecord.orderId}:`, deleteErr);
+            }
             synced++;
-            console.log(`[SUCCESS] Synced AI: ${saleRecord.transrefno || saleRecord.orderId}`);
+            console.log(`[SUCCESS] Synced AI ${i + 1}/${aiSales.length}: ${saleRecord.transrefno || saleRecord.orderId}`);
           } else {
             failed++;
+            console.warn(`[WARN] AI sync failed for ${saleRecord.transrefno || saleRecord.orderId}`);
           }
         } catch (error: any) {
-          console.error('[SYNC] AI sync error:', error);
-          const errorMsg = error?.message?.toLowerCase() || '';
+          console.error(`[ERROR] AI sync exception for ${saleRecord.transrefno || saleRecord.orderId}:`, error);
+          const errorMsg = (error?.message || '').toLowerCase();
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
             if (saleRecord.orderId) {
-              await deleteSale(saleRecord.orderId);
+              try {
+                await deleteSale(saleRecord.orderId);
+              } catch (deleteErr) {
+                console.warn(`[WARN] Failed to delete duplicate AI sale ${saleRecord.orderId}:`, deleteErr);
+              }
             }
             synced++;
           } else {
             failed++;
           }
         }
+        
+        // Small delay between AI sales
+        if (i < aiSales.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
       }
 
-      if (synced > 0) {
-        console.log(`[SYNC] Sales sync complete: ${synced} synced, ${failed} failed`);
-      }
-
+      console.log(`[SYNC] Sales sync complete: ${synced} synced, ${failed} failed out of ${pendingSales.length} total`);
       return { synced, failed };
     } catch (error) {
-      console.error('[SYNC] Failed to sync sales:', error);
-      return { synced: 0, failed: 0 };
+      console.error('[SYNC] Fatal sales sync error:', error);
+      return { synced, failed };
     } finally {
       releaseLock();
     }
