@@ -217,7 +217,7 @@ const ZReport = () => {
     setHasPrinted(true);
   };
 
-  const handleDownloadPDF = () => {
+  const handleDownloadPDF = async () => {
     console.log('📥 PDF button clicked', { sessionPrintOnly, isSyncComplete, reportData: !!reportData });
     // Enforce sessprint: only download if sync is complete
     if (sessionPrintOnly && !isSyncComplete) {
@@ -226,8 +226,12 @@ const ZReport = () => {
     }
     if (reportData) {
       console.log('📥 Generating PDF');
-      generateZReportPDF(reportData);
-      toast.success('PDF downloaded successfully');
+      const success = await generateZReportPDF(reportData);
+      if (success) {
+        toast.success('Report file saved');
+      } else {
+        toast.error('Failed to save report file');
+      }
     } else {
       console.log('📥 No report data available for PDF');
       toast.error('No report data available to download');

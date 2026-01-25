@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Printer, Download, X } from 'lucide-react';
-import { printReceipt } from '@/services/bluetooth';
+import { Printer, Download, X, Loader2 } from 'lucide-react';
+import { isPrinterConnected, verifyPrinterConnection } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import type { ZReportData } from '@/services/mysqlApi';
@@ -34,6 +35,9 @@ export const ZReportReceipt = ({
   weightUnit = 'L',
   isCoffee = false
 }: ZReportReceiptProps) => {
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  
   if (!data) return null;
 
   const formattedDate = new Date(data.date).toLocaleDateString('en-CA');
@@ -44,21 +48,56 @@ export const ZReportReceipt = ({
   });
 
   const handlePrint = async () => {
-    // Try thermal print first, then fallback to browser
+    setIsPrinting(true);
+    
     try {
-      window.print();
-      toast.success('Z-report printed');
-      onPrint?.();
+      // First verify if a printer is actually connected
+      const printerConnected = isPrinterConnected();
+      
+      if (printerConnected) {
+        // Double-check with verification
+        const verified = await verifyPrinterConnection();
+        if (verified) {
+          window.print();
+          toast.success('Z-report sent to printer');
+          onPrint?.();
+        } else {
+          // Printer was connected but verification failed - still try browser print
+          window.print();
+          toast.info('Sent to system print dialog');
+          onPrint?.();
+        }
+      } else {
+        // No Bluetooth printer - use browser print dialog
+        window.print();
+        toast.info('Opened print dialog (no Bluetooth printer connected)');
+        onPrint?.();
+      }
     } catch (err) {
       console.error('Print failed:', err);
       toast.error('Failed to print Z-report');
+    } finally {
+      setIsPrinting(false);
     }
   };
 
-  const handleDownloadPDF = () => {
-    if (data) {
-      generateZReportPDF(data, produceLabel);
-      toast.success('PDF downloaded');
+  const handleDownloadPDF = async () => {
+    if (!data) return;
+    
+    setIsDownloading(true);
+    
+    try {
+      const success = await generateZReportPDF(data, produceLabel);
+      if (success) {
+        toast.success('Report file saved');
+      } else {
+        toast.error('Failed to save report file');
+      }
+    } catch (err) {
+      console.error('Download failed:', err);
+      toast.error('Failed to download report');
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -162,16 +201,26 @@ export const ZReportReceipt = ({
         <div className="flex gap-2 pt-2">
           <button
             onClick={handlePrint}
-            className="flex-1 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+            disabled={isPrinting}
+            className="flex-1 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            <Printer className="h-4 w-4" />
-            Print
+            {isPrinting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Printer className="h-4 w-4" />
+            )}
+            {isPrinting ? 'Printing...' : 'Print'}
           </button>
           <button
             onClick={handleDownloadPDF}
-            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:bg-secondary/80 transition-colors flex items-center justify-center gap-2"
+            disabled={isDownloading}
+            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:bg-secondary/80 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            <Download className="h-4 w-4" />
+            {isDownloading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
           </button>
           <button
             onClick={onClose}
