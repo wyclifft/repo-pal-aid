@@ -387,10 +387,6 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData): Promise
       lines.push(`PRINTED ON: ${formattedDate} - ${formattedTime}`);
       lines.push('');
       lines.push(`DEVICE CODE: ${reportData.deviceCode}`);
-      
-      if (reportData.isLocked && reportData.zReportId) {
-        lines.push(`Z REPORT ID: ${reportData.zReportId}`);
-      }
 
       const fileName = `z-report-${reportData.deviceCode}-${reportData.date}.pdf`;
 

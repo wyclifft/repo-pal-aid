@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Printer, Download, X, Loader2, Lock } from 'lucide-react';
+import { Printer, Download, X, Loader2 } from 'lucide-react';
 import { isPrinterConnected, verifyPrinterConnection } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { generateDeviceZReportPDF } from '@/utils/pdfExport';
@@ -17,17 +17,13 @@ interface DeviceZReportReceiptProps {
   open: boolean;
   onClose: () => void;
   onPrint?: () => void;
-  onLock?: () => void;
-  isLocking?: boolean;
 }
 
 export const DeviceZReportReceipt = ({ 
   data, 
   open, 
   onClose, 
-  onPrint,
-  onLock,
-  isLocking = false
+  onPrint
 }: DeviceZReportReceiptProps) => {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -199,14 +195,6 @@ export const DeviceZReportReceipt = ({
               <span className="ml-2">{data.deviceCode}</span>
             </div>
           </div>
-
-          {/* Lock Status */}
-          {data.isLocked && (
-            <div className="bg-secondary border border-border rounded p-2 text-center text-secondary-foreground">
-              <Lock className="h-4 w-4 inline mr-1" />
-              Report Locked (ID: {data.zReportId})
-            </div>
-          )}
         </div>
 
         {/* Action Buttons */}
@@ -234,19 +222,6 @@ export const DeviceZReportReceipt = ({
               <Download className="h-4 w-4" />
             )}
           </button>
-          {!data.isLocked && onLock && (
-            <button
-              onClick={onLock}
-              disabled={isLocking || data.transactions.length === 0}
-              className="px-4 py-2 bg-accent text-accent-foreground rounded-md font-medium hover:bg-accent/80 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {isLocking ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Lock className="h-4 w-4" />
-              )}
-            </button>
-          )}
           <button
             onClick={onClose}
             className="px-4 py-2 bg-muted text-muted-foreground rounded-md font-medium hover:bg-muted/80 transition-colors"

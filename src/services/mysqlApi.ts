@@ -676,8 +676,6 @@ export interface DeviceZReportData {
     farmers: number;
   };
   transactions: DeviceZReportTransaction[];
-  isLocked: boolean;      // Whether transactions are locked
-  zReportId?: string;     // Z Report ID if locked
   isCoffee: boolean;      // For weight unit display
 }
 
@@ -703,21 +701,6 @@ export const zReportApi = {
     return response.data || null;
   },
 
-  /**
-   * Lock Z Report - assigns z_report_id to all included transactions
-   * Prevents re-use or editing of locked transactions
-   */
-  lock: async (zReportId: string, transactionRefs: string[], uniquedevcode: string): Promise<{ success: boolean; error?: string }> => {
-    const response = await apiRequest<{ success: boolean }>('/z-report/lock', {
-      method: 'POST',
-      body: JSON.stringify({
-        z_report_id: zReportId,
-        transrefnos: transactionRefs,
-        uniquedevcode
-      })
-    });
-    return { success: response.success, error: response.error };
-  }
 };
 
 // ==================== ITEMS API ====================

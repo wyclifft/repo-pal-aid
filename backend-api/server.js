@@ -1312,7 +1312,7 @@ const server = http.createServer(async (req, res) => {
         SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, 
                t.route, t.weight, t.session, t.transdate as collection_date, 
                t.transtime, t.clerk as clerk_name, t.icode as product_code, 
-               t.entry_type, t.CAN as season_code, t.z_report_id,
+               t.entry_type, t.CAN as season_code,
                i.descript as product_name
         FROM transactions t
         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
@@ -1360,9 +1360,6 @@ const server = http.createServer(async (req, res) => {
       const totalFarmers = new Set(collections.map(c => c.farmer_id)).size;
       const totalEntries = collections.length;
 
-      // Check if any transactions are already locked
-      const isLocked = collections.some(c => c.z_report_id);
-      const existingZReportId = collections.find(c => c.z_report_id)?.z_report_id;
 
       // Format transactions for frontend display
       const transactions = collections.map(c => {
@@ -1410,61 +1407,8 @@ const server = http.createServer(async (req, res) => {
             farmers: totalFarmers
           },
           transactions,
-          isLocked,
-          zReportId: existingZReportId || null,
           isCoffee
         }
-      }, 200, origin);
-    }
-
-    // POST /api/z-report/lock - Lock transactions by assigning z_report_id
-    if (path === '/api/z-report/lock' && method === 'POST') {
-      const body = await parseBody(req);
-      const { z_report_id, transrefnos, uniquedevcode } = body;
-
-      if (!z_report_id || !transrefnos || !Array.isArray(transrefnos) || transrefnos.length === 0) {
-        return sendJSON(res, { 
-          success: false, 
-          error: 'z_report_id and transrefnos array are required' 
-        }, 400, origin);
-      }
-
-      if (!uniquedevcode) {
-        return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400, origin);
-      }
-
-      // Verify device authorization
-      const [deviceRows] = await pool.query(
-        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
-        [uniquedevcode]
-      );
-      
-      if (deviceRows.length === 0) {
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Device not authorized' 
-        }, 401, origin);
-      }
-
-      // Lock transactions - only lock those that aren't already locked
-      const placeholders = transrefnos.map(() => '?').join(',');
-      const [result] = await pool.query(
-        `UPDATE transactions 
-         SET z_report_id = ? 
-         WHERE transrefno IN (${placeholders}) 
-         AND z_report_id IS NULL 
-         AND deviceserial = ?`,
-        [z_report_id, ...transrefnos, uniquedevcode]
-      );
-
-      const lockedCount = result.affectedRows;
-      console.log(`[Z-REPORT] Locked ${lockedCount} transactions with z_report_id=${z_report_id}`);
-
-      return sendJSON(res, {
-        success: true,
-        message: `Locked ${lockedCount} transactions`,
-        locked_count: lockedCount,
-        z_report_id
       }, 200, origin);
     }
 
