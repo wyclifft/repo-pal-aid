@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Download, Printer, Calendar, AlertTriangle, Eye, Lock, Smartphone } from 'lucide-react';
+import { ArrowLeft, Download, Printer, Calendar, AlertTriangle, Eye, Smartphone } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -45,7 +45,6 @@ const ZReport = () => {
   
   // Device Z Report state
   const [deviceReportData, setDeviceReportData] = useState<DeviceZReportData | null>(null);
-  const [isLocking, setIsLocking] = useState(false);
 
   // Check authentication - but don't redirect during session close flow
   useEffect(() => {
@@ -124,32 +123,6 @@ const ZReport = () => {
       console.error('[Z-REPORT] Failed to fetch device report:', err);
     }
   }, [selectedDate, deviceFingerprint, currentUser]);
-
-  // Lock Z Report transactions
-  const handleLockReport = async () => {
-    if (!deviceReportData || deviceReportData.transactions.length === 0) return;
-    
-    setIsLocking(true);
-    try {
-      const zReportId = `ZR-${deviceReportData.deviceCode}-${selectedDate}-${Date.now()}`;
-      const transrefnos = deviceReportData.transactions.map(tx => tx.transrefno);
-      
-      const result = await mysqlApi.zReport.lock(zReportId, transrefnos, deviceFingerprint);
-      
-      if (result.success) {
-        toast.success('Z Report locked successfully');
-        // Refresh to show locked status
-        await fetchDeviceReport();
-      } else {
-        toast.error(result.error || 'Failed to lock Z Report');
-      }
-    } catch (err) {
-      console.error('[Z-REPORT] Lock failed:', err);
-      toast.error('Failed to lock Z Report');
-    } finally {
-      setIsLocking(false);
-    }
-  };
 
   const fetchReport = async () => {
     if (!deviceFingerprint) {
