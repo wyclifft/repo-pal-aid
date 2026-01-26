@@ -5,8 +5,7 @@ import { mysqlApi, type ZReportData, type DeviceZReportData } from '@/services/m
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Download, Printer, Calendar, AlertTriangle, Eye, Smartphone } from 'lucide-react';
+import { ArrowLeft, Download, Calendar, AlertTriangle, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -29,9 +28,6 @@ const ZReport = () => {
   const autoPrintTriggeredRef = useRef(false);
   const [hasPrinted, setHasPrinted] = useState(false);
   
-  // Tab state - default to device report
-  const [activeTab, setActiveTab] = useState<'device' | 'summary'>('device');
-  
   // App settings
   const { sessionPrintOnly, routeLabel, produceLabel, isCoffee, weightUnit, weightLabel, periodLabel, companyName } = useAppSettings();
   
@@ -43,7 +39,7 @@ const ZReport = () => {
   const [showReceiptPreview, setShowReceiptPreview] = useState(false);
   const [showDeviceReceiptPreview, setShowDeviceReceiptPreview] = useState(false);
   
-  // Device Z Report state
+  // Device Z Report state (for receipt/print only)
   const [deviceReportData, setDeviceReportData] = useState<DeviceZReportData | null>(null);
 
   // Check authentication - but don't redirect during session close flow
@@ -105,7 +101,7 @@ const ZReport = () => {
     fetchDeviceReport();
   }, [selectedDate, deviceFingerprint]);
 
-  // Fetch device-specific Z Report
+  // Fetch device-specific Z Report (for receipt/print output only)
   const fetchDeviceReport = useCallback(async () => {
     if (!deviceFingerprint || !navigator.onLine) return;
     
@@ -186,20 +182,16 @@ const ZReport = () => {
     }
   }, [autoPrint, reportData, loading]);
 
-  // Handle print button click - show preview first
+  // Handle print button click - show device receipt preview
   const handlePrintClick = () => {
-    console.log('🖨️ Print button clicked', { sessionPrintOnly, isSyncComplete, pendingSyncCount, activeTab });
+    console.log('🖨️ Print button clicked', { sessionPrintOnly, isSyncComplete, pendingSyncCount });
     // Enforce sessprint: only show preview if sync is complete
     if (sessionPrintOnly && !isSyncComplete) {
       toast.error(`Cannot print Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
       return;
     }
-    // Show appropriate preview based on active tab
-    if (activeTab === 'device') {
-      setShowDeviceReceiptPreview(true);
-    } else {
-      setShowReceiptPreview(true);
-    }
+    // Show device receipt preview (uses handwritten layout)
+    setShowDeviceReceiptPreview(true);
   };
   
   // Handle device receipt preview close
@@ -399,9 +391,9 @@ const ZReport = () => {
         )}
         
         <div className="screen-only space-y-4">
-        {/* Date Selector and Tab Selector */}
+        {/* Date Selector */}
         <Card className="print:hidden">
-          <CardContent className="pt-6 space-y-4">
+          <CardContent className="pt-6">
             <div className="flex items-center gap-4">
               <Calendar className="h-5 w-5 text-muted-foreground" />
               <input
@@ -416,128 +408,12 @@ const ZReport = () => {
                 </span>
               )}
             </div>
-            
-            {/* Tab Selector */}
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'device' | 'summary')} className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="device" className="flex items-center gap-2">
-                  <Smartphone className="h-4 w-4" />
-                  Device Report
-                </TabsTrigger>
-                <TabsTrigger value="summary" className="flex items-center gap-2">
-                  <Download className="h-4 w-4" />
-                  Summary
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
           </CardContent>
         </Card>
 
-        {/* Device Z Report Tab */}
-        {activeTab === 'device' && deviceReportData && (
+        {/* Summary Totals */}
+        {reportData && (
           <>
-            {/* Device Report Header */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Smartphone className="h-5 w-5" />
-                  Device: {deviceReportData.deviceCode}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{periodLabel}:</span>
-                  <span className="font-medium">{deviceReportData.seasonName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Produce:</span>
-                  <span className="font-medium">{deviceReportData.produceName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Clerk:</span>
-                  <span className="font-medium">{deviceReportData.clerkName}</span>
-                </div>
-              </CardContent>
-            </Card>
-            
-            {/* Totals */}
-            <div className="grid grid-cols-3 gap-4">
-              <Card>
-                <CardContent className="pt-4 text-center">
-                  <div className="text-2xl font-bold text-primary">{deviceReportData.totals.weight.toFixed(2)}</div>
-                  <div className="text-xs text-muted-foreground">{isCoffee ? 'KGS' : 'LTS'}</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-4 text-center">
-                  <div className="text-2xl font-bold text-primary">{deviceReportData.totals.entries}</div>
-                  <div className="text-xs text-muted-foreground">Entries</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-4 text-center">
-                  <div className="text-2xl font-bold text-primary">{deviceReportData.totals.farmers}</div>
-                  <div className="text-xs text-muted-foreground">Farmers</div>
-                </CardContent>
-              </Card>
-            </div>
-            
-            {/* Transaction List */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Transactions ({deviceReportData.transactions.length})</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="max-h-64 overflow-y-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-xs">MNO</TableHead>
-                        <TableHead className="text-xs">REFNO</TableHead>
-                        <TableHead className="text-xs text-right">QTY</TableHead>
-                        <TableHead className="text-xs text-right">TIME</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {deviceReportData.transactions.map((tx, idx) => (
-                        <TableRow key={tx.transrefno || idx}>
-                          <TableCell className="text-xs py-1">{tx.farmer_id}</TableCell>
-                          <TableCell className="text-xs py-1">{tx.refno}</TableCell>
-                          <TableCell className="text-xs text-right py-1">{tx.weight.toFixed(1)}</TableCell>
-                          <TableCell className="text-xs text-right py-1">{tx.time}</TableCell>
-                        </TableRow>
-                      ))}
-                      {deviceReportData.transactions.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={4} className="text-center text-muted-foreground italic py-4">
-                            No transactions for this date
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
-        
-        {activeTab === 'device' && !deviceReportData && !loading && (
-          <Card>
-            <CardContent className="pt-6 text-center text-muted-foreground">
-              <Smartphone className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No device report data available</p>
-              <p className="text-sm mt-2">
-                {isOffline ? 'You are offline. Connect to fetch device report.' : 'Loading device report...'}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Summary Tab - existing reportData display */}
-        {activeTab === 'summary' && reportData && (
-          <>
-            {/* Summary Totals */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card>
                 <CardHeader>
@@ -674,11 +550,11 @@ const ZReport = () => {
           </>
         )}
         
-        {activeTab === 'summary' && !reportData && !loading && (
+        {!reportData && !loading && (
           <Card>
             <CardContent className="pt-6 text-center text-muted-foreground">
               <Download className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No summary report data available</p>
+              <p>No report data available</p>
               <p className="text-sm mt-2">
                 {isOffline ? 'You are offline. Connect to fetch report.' : 'Loading report...'}
               </p>
@@ -688,7 +564,7 @@ const ZReport = () => {
         </div>
       </div>
 
-      {/* Receipt Preview Modal - matches TransactionReceipt styling */}
+      {/* Receipt Preview Modal - Summary style */}
       <ZReportReceipt
         data={reportData}
         open={showReceiptPreview}
@@ -703,7 +579,7 @@ const ZReport = () => {
         isCoffee={isCoffee}
       />
       
-      {/* Device Z Report Receipt Modal */}
+      {/* Device Z Report Receipt Modal - Uses handwritten layout for printing */}
       <DeviceZReportReceipt
         data={deviceReportData}
         open={showDeviceReceiptPreview}
