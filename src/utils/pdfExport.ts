@@ -327,10 +327,10 @@ const downloadWithFallback = async (blob: Blob, fileName: string, resolve: (succ
  * Body: Transaction list (MNO, REFNO, QTY, TIME)
  * Footer: Totals, Clerk, Print Time, Device Code
  */
-export const generateDeviceZReportPDF = (reportData: DeviceZReportData): Promise<boolean> => {
+export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeName?: string): Promise<boolean> => {
   return new Promise((resolve) => {
     try {
-      const weightUnit = reportData.isCoffee ? 'KG' : 'L';
+      const weightUnit = reportData.isCoffee ? 'KGS' : 'LTS';
       const formattedDate = new Date(reportData.date).toLocaleDateString('en-GB', {
         day: '2-digit',
         month: '2-digit',
@@ -342,6 +342,9 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData): Promise
         hour12: true
       }).toUpperCase();
       
+      // Use routeName if provided, otherwise fall back to routeLabel
+      const factoryName = routeName || reportData.routeLabel || 'FACTORY';
+      
       // Build monospaced lines matching handwritten layout
       const lines: string[] = [];
       
@@ -352,7 +355,7 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData): Promise
       lines.push(`* ${reportData.periodLabel.toUpperCase()}: ${reportData.seasonName}`);
       lines.push(`* DATE: ${formattedDate}`);
       lines.push('');
-      lines.push(`* ${reportData.routeLabel.toUpperCase()} FACTORY`);
+      lines.push(`* ${factoryName.toUpperCase().replace(' FACTORY', '')} FACTORY`);
       lines.push('');
       lines.push(`* PRODUCE: ${reportData.produceName || reportData.produceLabel.toUpperCase()}`);
       lines.push('');
@@ -379,7 +382,7 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData): Promise
       // Totals
       lines.push('');
       lines.push('='.repeat(48));
-      lines.push(`TOTAL                         ${reportData.totals.weight.toFixed(2)} ${weightUnit}`);
+      lines.push(`TOTAL                    ${reportData.totals.weight.toFixed(2)} ${weightUnit}`);
       lines.push('');
       
       // Footer
