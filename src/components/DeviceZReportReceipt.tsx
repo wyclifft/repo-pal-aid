@@ -1,7 +1,18 @@
 /**
  * Device-specific Z Report Receipt Component
- * Matches handwritten layout: Company → Summary → Season/Date → Factory → Produce →
- * Transaction List (MNO, REFNO, QTY, TIME) → Total → Clerk → Print Time → Device Code
+ * Matches handwritten layout exactly:
+ * COMPANY NAME
+ * * COFFEE/MILK SUMMARY
+ * * SEASON/SESSION: [name]
+ * * DATE: DD/MM/YYYY
+ * * [FACTORY NAME] FACTORY
+ * * PRODUCE: [produce name]
+ * MNO    REFNO    QTY    TIME
+ * [transaction rows...]
+ * TOTAL           [weight] KGS
+ * CLERK          [clerk name]
+ * PRINTED ON     DD/MM/YYYY - HH:MM AM/PM
+ * DEVICE CODE    [devcode]
  */
 
 import { useState } from 'react';
@@ -17,26 +28,36 @@ interface DeviceZReportReceiptProps {
   open: boolean;
   onClose: () => void;
   onPrint?: () => void;
+  routeName?: string; // Factory name from route selection
 }
 
 export const DeviceZReportReceipt = ({ 
   data, 
   open, 
   onClose, 
-  onPrint
+  onPrint,
+  routeName
 }: DeviceZReportReceiptProps) => {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   
   if (!data) return null;
 
+  // Format date as DD/MM/YYYY
   const formattedDate = new Date(data.date).toLocaleDateString('en-GB', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric'
   });
   
-  const formattedTime = new Date().toLocaleTimeString('en-GB', { 
+  // Format print time as DD/MM/YYYY - HH:MM AM/PM
+  const now = new Date();
+  const printDate = now.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+  const printTime = now.toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
     minute: '2-digit',
     hour12: true
@@ -78,7 +99,7 @@ export const DeviceZReportReceipt = ({
     setIsDownloading(true);
     
     try {
-      const success = await generateDeviceZReportPDF(data);
+      const success = await generateDeviceZReportPDF(data, routeName);
       if (success) {
         toast.success('Report file saved');
       } else {
@@ -92,7 +113,8 @@ export const DeviceZReportReceipt = ({
     }
   };
 
-  const weightUnit = data.isCoffee ? 'KG' : 'L';
+  const weightUnit = data.isCoffee ? 'KGS' : 'LTS';
+  const factoryName = routeName || data.routeLabel || 'FACTORY';
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -101,44 +123,42 @@ export const DeviceZReportReceipt = ({
           <DialogTitle className="sr-only">Device Z Report</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-2 text-xs">
-          {/* Header - Company Name */}
+        <div className="space-y-1 text-xs">
+          {/* Company Name - Header */}
           <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base uppercase">{data.companyName}</h3>
           </div>
 
           {/* Summary Type */}
-          <div className="text-center">
+          <div className="pt-1">
             <p className="font-semibold">* {data.produceLabel.toUpperCase()} SUMMARY</p>
           </div>
 
-          {/* Season/Session & Date */}
-          <div className="space-y-0.5">
-            <div className="flex">
-              <span className="font-semibold">* {data.periodLabel.toUpperCase()}:</span>
-              <span className="ml-2">{data.seasonName}</span>
-            </div>
-            <div className="flex">
-              <span className="font-semibold">* DATE:</span>
-              <span className="ml-2">{formattedDate}</span>
-            </div>
+          {/* Season/Session */}
+          <div className="flex">
+            <span className="font-semibold">* {data.periodLabel.toUpperCase()}:</span>
+            <span className="ml-2">{data.seasonName}</span>
           </div>
 
-          {/* Factory/Route */}
-          <div className="space-y-0.5">
-            <div className="flex">
-              <span className="font-semibold">* {data.routeLabel.toUpperCase()} FACTORY</span>
-            </div>
+          {/* Date */}
+          <div className="flex">
+            <span className="font-semibold">* DATE:</span>
+            <span className="ml-2">{formattedDate}</span>
+          </div>
+
+          {/* Factory Name */}
+          <div className="pt-1">
+            <p className="font-semibold">* {factoryName.toUpperCase().replace(' FACTORY', '')} FACTORY</p>
           </div>
 
           {/* Produce */}
-          <div className="flex">
+          <div className="flex pb-2">
             <span className="font-semibold">* PRODUCE:</span>
             <span className="ml-2">{data.produceName || data.produceLabel.toUpperCase()}</span>
           </div>
 
           {/* Transaction List Header */}
-          <div className="border-t border-b border-dashed py-1 mt-2">
+          <div className="border-t border-b border-dashed py-1">
             <div className="grid grid-cols-4 gap-1 font-bold text-center">
               <span>MNO</span>
               <span>REFNO</span>
@@ -148,9 +168,9 @@ export const DeviceZReportReceipt = ({
           </div>
 
           {/* Transaction List */}
-          <div className="space-y-0.5 max-h-60 overflow-y-auto">
+          <div className="space-y-0.5 max-h-60 overflow-y-auto py-1">
             {data.transactions.map((tx, index) => (
-              <div key={tx.transrefno || index} className="grid grid-cols-4 gap-1 text-center">
+              <div key={tx.transrefno || index} className="grid grid-cols-4 gap-1 text-center text-[11px]">
                 <span className="truncate">{tx.farmer_id}</span>
                 <span className="truncate">{tx.refno}</span>
                 <span>{tx.weight.toFixed(1)}</span>
@@ -165,34 +185,26 @@ export const DeviceZReportReceipt = ({
           </div>
 
           {/* Totals */}
-          <div className="border-t border-dashed pt-2 mt-2">
+          <div className="border-t border-dashed pt-2 mt-1">
             <div className="flex justify-between font-bold text-sm">
               <span>TOTAL</span>
               <span>{data.totals.weight.toFixed(2)} {weightUnit}</span>
             </div>
-            <div className="flex justify-between text-muted-foreground">
-              <span>Entries</span>
-              <span>{data.totals.entries}</span>
-            </div>
-            <div className="flex justify-between text-muted-foreground">
-              <span>Farmers</span>
-              <span>{data.totals.farmers}</span>
-            </div>
           </div>
 
-          {/* Footer */}
-          <div className="border-t border-dashed pt-2 mt-2 space-y-0.5">
-            <div className="flex">
-              <span className="font-semibold">CLERK:</span>
-              <span className="ml-2">{data.clerkName}</span>
+          {/* Footer: Clerk, Print Time, Device Code */}
+          <div className="border-t border-dashed pt-2 mt-2 space-y-1">
+            <div className="flex justify-between">
+              <span className="font-semibold">CLERK</span>
+              <span className="uppercase">{data.clerkName}</span>
             </div>
-            <div className="flex">
-              <span className="font-semibold">PRINTED ON:</span>
-              <span className="ml-2">{formattedDate} - {formattedTime}</span>
+            <div className="flex justify-between">
+              <span className="font-semibold">PRINTED ON</span>
+              <span>{printDate} - {printTime}</span>
             </div>
-            <div className="flex font-bold">
-              <span>DEVICE CODE:</span>
-              <span className="ml-2">{data.deviceCode}</span>
+            <div className="flex justify-between font-bold text-sm pt-1">
+              <span>DEVICE CODE</span>
+              <span>{data.deviceCode}</span>
             </div>
           </div>
         </div>
