@@ -47,10 +47,17 @@ const Index = () => {
   const [selectedProduct, setSelectedProduct] = useState<Item | null>(null); // Selected produce item (invtype=01)
   const [searchValue, setSearchValue] = useState('');
 
-  // Weight
+  // Weight - for dairy: weight is total weight; for coffee: weight is net (after tare deduction)
   const [weight, setWeight] = useState(0);
   const [entryType, setEntryType] = useState<'scale' | 'manual'>('manual');
   const [lastSavedWeight, setLastSavedWeight] = useState(0);
+  
+  // Coffee sack weighing - gross/tare/net (orgtype C only)
+  // Fixed tare weight of 1 kg per sack
+  const COFFEE_SACK_TARE = 1;
+  const [grossWeight, setGrossWeight] = useState(0);
+  const [tareWeight] = useState(COFFEE_SACK_TARE); // Fixed 1 kg
+  // Net weight is calculated: gross - tare (minimum 0)
 
   // Receipt modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
@@ -397,6 +404,10 @@ const Index = () => {
     // Clean farmer_id - reuse currentSessionType computed above
     const cleanFarmerId = farmerId.replace(/^#/, '').trim();
     
+    // For coffee mode: weight = net, also store gross/tare/net
+    // For dairy mode: weight = total weight (no tare deduction)
+    const captureWeight = parseFloat(Number(weight).toFixed(2));
+    
     const captureData: MilkCollection = {
       reference_no: referenceNo,
       uploadrefno: uploadRefNo, // Type-specific ID for approval workflow
@@ -404,7 +415,7 @@ const Index = () => {
       farmer_name: farmerName.trim(),
       route: selectedRouteCode.trim(), // Use fm_tanks.tcode, not farmer.route
       session: currentSessionType, // Use already-computed session
-      weight: parseFloat(Number(weight).toFixed(2)),
+      weight: captureWeight, // Net weight for coffee, total for dairy
       user_id: currentUser?.user_id || 'unknown', // Login user_id for DB userId column
       clerk_name: currentUser ? (currentUser.username || currentUser.user_id) : 'unknown', // Display name for clerk column
       collection_date: new Date(),
@@ -418,12 +429,22 @@ const Index = () => {
       entry_type: entryType,
       // Season SCODE from active session → DB: CAN column
       season_code: activeSession?.SCODE || '',
+      // Coffee sack weighing - gross/tare/net (orgtype C only)
+      ...(isCoffee && {
+        gross_weight: parseFloat(Number(grossWeight).toFixed(2)),
+        tare_weight: tareWeight,
+        net_weight: captureWeight, // Same as weight for coffee
+      }),
     };
 
     console.log('🔵 CAPTURE #' + (capturedCollections.length + 1) + ' - Local capture only (not submitted)');
     console.log('📝 Reference:', referenceNo, 'UploadRef:', uploadRefNo);
     console.log('👤 Farmer:', farmerId, farmerName);
-    console.log('⚖️ Weight:', captureData.weight, 'Kg');
+    if (isCoffee) {
+      console.log('☕ Coffee weighing - Gross:', grossWeight, 'Tare:', tareWeight, 'Net:', captureWeight, 'kg');
+    } else {
+      console.log('⚖️ Weight:', captureData.weight, 'Kg');
+    }
 
     // Add to captured collections for display
     setCapturedCollections(prev => [...prev, captureData]);
@@ -437,8 +458,9 @@ const Index = () => {
 
     // Reset weight for next capture
     setWeight(0);
+    setGrossWeight(0);
     
-    toast.success(`Captured ${captureData.weight} Kg`);
+    toast.success(`Captured ${captureData.weight} Kg${isCoffee ? ' (net)' : ''}`);
   };
 
   // SUBMIT: Saves all captured collections to database (online) or IndexedDB (offline)
@@ -1005,6 +1027,10 @@ const Index = () => {
           submitDisabled={submitDisabledForSelectedFarmer}
           allowDigital={captureMode.allowDigital}
           allowManual={captureMode.allowManual}
+          // Coffee mode: gross/tare/net weight handling
+          grossWeight={grossWeight}
+          onGrossWeightChange={setGrossWeight}
+          onNetWeightChange={setWeight}
         />
       ) : (
         <SellProduceScreen
@@ -1032,6 +1058,10 @@ const Index = () => {
           submitDisabled={submitDisabledForSelectedFarmer}
           allowDigital={captureMode.allowDigital}
           allowManual={captureMode.allowManual}
+          // Coffee mode: gross/tare/net weight handling
+          grossWeight={grossWeight}
+          onGrossWeightChange={setGrossWeight}
+          onNetWeightChange={setWeight}
         />
       )}
 
@@ -1050,6 +1080,7 @@ const Index = () => {
           setSelectedFarmer(null);
           setSearchValue('');
           setWeight(0);
+          setGrossWeight(0); // Reset coffee gross weight
           setLastSavedWeight(0);
           // Dispatch event to notify child components to focus input
           window.dispatchEvent(new CustomEvent('receiptModalClosed'));

@@ -76,7 +76,7 @@ export interface MilkCollection {
   farmer_name: string;        // Display only, not stored directly
   route: string;              // → DB: route
   session: string;            // → DB: session - AM/PM for dairy, season name for coffee
-  weight: number;             // → DB: weight
+  weight: number;             // → DB: weight (net weight for coffee, total weight for dairy)
   user_id?: string;           // → DB: userId (login user_id for tracking)
   clerk_name: string;         // → DB: clerk (display name/username)
   collection_date: Date;      // → DB: transdate
@@ -94,4 +94,8 @@ export interface MilkCollection {
   entry_type?: 'scale' | 'manual';
   // Season SCODE for coffee (orgtype C) - saved to transactions.CAN column
   season_code?: string;       // → DB: CAN (stores session.SCODE for all orgtypes)
+  // Coffee sack weighing - gross/tare/net (orgtype C only)
+  gross_weight?: number;      // Gross weight from scale (before sack deduction)
+  tare_weight?: number;       // Fixed sack weight (1 kg per sack)
+  net_weight?: number;        // Calculated: gross_weight - tare_weight
 }

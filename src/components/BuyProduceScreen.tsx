@@ -7,6 +7,7 @@ import { useAppSettings } from '@/hooks/useAppSettings';
 import { useHaptics } from '@/hooks/useHaptics';
 import { FarmerSearchModal } from './FarmerSearchModal';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
+import { CoffeeWeightDisplay, COFFEE_SACK_TARE_WEIGHT } from './CoffeeWeightDisplay';
 import { toast } from 'sonner';
 
 interface BuyProduceScreenProps {
@@ -33,6 +34,10 @@ interface BuyProduceScreenProps {
   // Supervisor mode capture restrictions
   allowDigital?: boolean;
   allowManual?: boolean;
+  // Coffee mode: gross/tare/net weight handling
+  grossWeight?: number;
+  onGrossWeightChange?: (grossWeight: number) => void;
+  onNetWeightChange?: (netWeight: number) => void;
 }
 
 export const BuyProduceScreen = ({
@@ -58,6 +63,9 @@ export const BuyProduceScreen = ({
   submitDisabled,
   allowDigital = true,
   allowManual = true,
+  grossWeight = 0,
+  onGrossWeightChange,
+  onNetWeightChange,
 }: BuyProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -70,7 +78,7 @@ export const BuyProduceScreen = ({
   // Get psettings for AutoW enforcement and produce labeling
   // These values update automatically when psettings change in the database
   const appSettings = useAppSettings();
-  const { autoWeightOnly: psettingsAutoWeightOnly, produceLabel, routeLabel, useRouteFilter } = appSettings;
+  const { autoWeightOnly: psettingsAutoWeightOnly, produceLabel, routeLabel, useRouteFilter, isCoffee } = appSettings;
   
   // Supervisor mode overrides psettings for capture mode:
   // - If supervisor restricts to digital only (!allowManual), manual is disabled
@@ -313,18 +321,31 @@ export const BuyProduceScreen = ({
 
       {/* Main Content */}
       <div className="flex-1 px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4 overflow-y-auto" style={{ paddingBottom: 'max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))' }}>
-        {/* Live Weight Display with Scale Connection */}
-        <LiveWeightDisplay
-          weight={weight}
-          onWeightChange={onWeightChange || (() => {})}
-          onEntryTypeChange={onEntryTypeChange || (() => {})}
-          digitalDisabled={digitalDisabled}
-        />
+        {/* Weight Display - Coffee mode shows Gross/Sack/Net, Dairy mode shows simple weight */}
+        {isCoffee ? (
+          <CoffeeWeightDisplay
+            grossWeight={grossWeight}
+            onGrossWeightChange={onGrossWeightChange || (() => {})}
+            onNetWeightChange={(net) => {
+              onNetWeightChange?.(net);
+              onWeightChange?.(net); // Also update main weight for capture
+            }}
+            onEntryTypeChange={onEntryTypeChange || (() => {})}
+            digitalDisabled={digitalDisabled}
+          />
+        ) : (
+          <LiveWeightDisplay
+            weight={weight}
+            onWeightChange={onWeightChange || (() => {})}
+            onEntryTypeChange={onEntryTypeChange || (() => {})}
+            digitalDisabled={digitalDisabled}
+          />
+        )}
 
         {/* Manual Weight Entry - enforces supervisor mode and psettings AutoW */}
         <div className={`flex gap-2 items-center ${manualDisabled ? 'opacity-50' : ''}`}>
           <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
-            Manual:
+            {isCoffee ? 'Manual Gross:' : 'Manual:'}
             {manualDisabled && <span className="text-red-500 ml-1">(Disabled)</span>}
           </span>
           <input
@@ -332,14 +353,24 @@ export const BuyProduceScreen = ({
             inputMode="decimal"
             step="0.1"
             min="0"
-            placeholder={manualDisabled ? "Use scale only" : "Enter weight"}
+            placeholder={manualDisabled ? "Use scale only" : (isCoffee ? "Enter gross weight" : "Enter weight")}
             disabled={manualDisabled}
             onChange={(e) => {
               if (manualDisabled) {
                 toast.error('Manual weight entry is disabled. Please use the digital scale.');
                 return;
               }
-              onManualWeightChange?.(parseFloat(e.target.value) || 0);
+              const grossValue = parseFloat(e.target.value) || 0;
+              if (isCoffee) {
+                // For coffee: manual entry is gross weight, calculate net
+                onGrossWeightChange?.(grossValue);
+                const netValue = Math.max(0, grossValue - COFFEE_SACK_TARE_WEIGHT);
+                onNetWeightChange?.(parseFloat(netValue.toFixed(2)));
+                onWeightChange?.(parseFloat(netValue.toFixed(2))); // Main weight is net
+                onEntryTypeChange?.('manual');
+              } else {
+                onManualWeightChange?.(grossValue);
+              }
             }}
             className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 rounded-lg text-base sm:text-lg min-h-[44px] ${
               manualDisabled 
@@ -351,6 +382,11 @@ export const BuyProduceScreen = ({
         {manualDisabled && (
           <p className="text-xs text-red-500 -mt-2 mb-2 px-1">
             Manual entry is disabled. Use the digital scale.
+          </p>
+        )}
+        {isCoffee && !manualDisabled && (
+          <p className="text-xs text-amber-600 -mt-2 mb-2 px-1">
+            Enter gross weight. Net = Gross - 1 kg (sack weight)
           </p>
         )}
 
@@ -468,7 +504,15 @@ export const BuyProduceScreen = ({
                       hour12: true
                     })}
                   </span>
-                  <span className="font-bold text-gray-900">{c.weight.toFixed(1)}</span>
+                  {/* Coffee mode: show Gross/Sack/Net breakdown */}
+                  {isCoffee && c.gross_weight !== undefined ? (
+                    <div className="text-right text-xs">
+                      <div className="text-gray-500">G:{c.gross_weight?.toFixed(1)} S:{c.tare_weight?.toFixed(1)}</div>
+                      <div className="font-bold text-green-700">Net: {c.weight.toFixed(1)}</div>
+                    </div>
+                  ) : (
+                    <span className="font-bold text-gray-900">{c.weight.toFixed(1)}</span>
+                  )}
                 </div>
               ))}
             </div>
