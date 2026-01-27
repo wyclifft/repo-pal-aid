@@ -2189,3 +2189,123 @@ export const printStoreAIReceipt = async (data: {
   // Fall back to BLE printer
   return printToBluetoothPrinter(receipt);
 };
+
+// Print Device Z Report to thermal printer
+// Follows handwritten layout: Company → Summary → Season → Date → Factory → Produce → Transactions (MNO/REFNO/QTY/TIME) → Total → Clerk → Print Time → Device Code
+export const printZReport = async (data: {
+  companyName: string;
+  produceLabel: string;
+  periodLabel: string;
+  seasonName: string;
+  date: string;
+  factoryName: string;
+  produceName?: string;
+  transactions: Array<{
+    farmer_id: string;
+    refno: string;
+    weight: number;
+    time: string;
+  }>;
+  totalWeight: number;
+  clerkName: string;
+  deviceCode: string;
+  isCoffee?: boolean;
+}): Promise<{ success: boolean; error?: string }> => {
+  // 58mm thermal paper = 32 characters per line
+  const W = 32;
+  const sep = '-'.repeat(W);
+  
+  // Format date as DD/MM/YYYY
+  const formattedDate = new Date(data.date).toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+  
+  // Format print time as DD/MM/YYYY - HH:MM AM/PM
+  const now = new Date();
+  const printDate = now.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+  const printTime = now.toLocaleTimeString('en-GB', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: true
+  }).toUpperCase();
+  
+  const weightUnit = data.isCoffee ? 'KGS' : 'LTS';
+  
+  let receipt = '';
+  
+  // Header - Company Name
+  receipt += centerText(data.companyName, W) + '\n';
+  receipt += sep + '\n';
+  
+  // Summary type
+  receipt += `* ${data.produceLabel.toUpperCase()} SUMMARY\n`;
+  
+  // Season/Session
+  receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
+  
+  // Date
+  receipt += `* DATE: ${formattedDate}\n`;
+  
+  // Factory Name
+  receipt += `* ${data.factoryName.toUpperCase().replace(' FACTORY', '')} FACTORY\n`;
+  
+  // Produce
+  receipt += `* PRODUCE: ${data.produceName || data.produceLabel.toUpperCase()}\n`;
+  receipt += sep + '\n';
+  
+  // Transaction header - MNO REFNO QTY TIME
+  const txHeader = 'MNO   REFNO   QTY  TIME';
+  receipt += txHeader + '\n';
+  receipt += sep + '\n';
+  
+  // Transaction rows
+  for (const tx of data.transactions) {
+    const mno = tx.farmer_id.substring(0, 6).padEnd(6);
+    const refno = tx.refno.substring(0, 7).padEnd(7);
+    const qty = tx.weight.toFixed(1).padStart(5);
+    const time = tx.time.substring(0, 5);
+    receipt += `${mno}${refno}${qty} ${time}\n`;
+  }
+  
+  if (data.transactions.length === 0) {
+    receipt += centerText('No transactions', W) + '\n';
+  }
+  
+  receipt += sep + '\n';
+  
+  // Total
+  receipt += formatLine('TOTAL', `${data.totalWeight.toFixed(2)} ${weightUnit}`, W) + '\n';
+  receipt += sep + '\n';
+  
+  // Clerk
+  receipt += formatLine('CLERK', data.clerkName.toUpperCase(), W) + '\n';
+  
+  // Print time
+  receipt += formatLine('PRINTED ON', `${printDate} - ${printTime}`, W) + '\n';
+  
+  // Device Code (footer)
+  receipt += formatLine('DEVICE CODE', data.deviceCode, W) + '\n';
+  receipt += '\n\n\n'; // Feed paper
+  
+  console.log('[ZREPORT] Sending Z Report to printer...');
+  console.log('[ZREPORT] Data:', { 
+    transactions: data.transactions.length, 
+    total: data.totalWeight,
+    device: data.deviceCode 
+  });
+  
+  // Try Classic Bluetooth printer first (for built-in POS printers)
+  if (isClassicPrinterConnected()) {
+    console.log('[ZREPORT] Using Classic Bluetooth printer');
+    return printToClassicPrinter(receipt);
+  }
+  
+  // Fall back to BLE printer
+  return printToBluetoothPrinter(receipt);
+};

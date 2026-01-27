@@ -18,7 +18,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, Download, X, Loader2 } from 'lucide-react';
-import { isPrinterConnected, verifyPrinterConnection } from '@/services/bluetooth';
+import { isPrinterConnected, printZReport } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { generateDeviceZReportPDF } from '@/utils/pdfExport';
 import type { DeviceZReportData } from '@/services/mysqlApi';
@@ -64,25 +64,40 @@ export const DeviceZReportReceipt = ({
   }).toUpperCase();
 
   const handlePrint = async () => {
+    if (!data) return;
+    
     setIsPrinting(true);
     
     try {
       const printerConnected = isPrinterConnected();
       
       if (printerConnected) {
-        const verified = await verifyPrinterConnection();
-        if (verified) {
-          window.print();
+        // Send Z Report data to thermal printer
+        const result = await printZReport({
+          companyName: data.companyName,
+          produceLabel: data.produceLabel,
+          periodLabel: data.periodLabel,
+          seasonName: data.seasonName,
+          date: data.date,
+          factoryName: routeName || data.routeLabel || 'FACTORY',
+          produceName: data.produceName,
+          transactions: data.transactions,
+          totalWeight: data.totals.weight,
+          clerkName: data.clerkName,
+          deviceCode: data.deviceCode,
+          isCoffee: data.isCoffee,
+        });
+        
+        if (result.success) {
           toast.success('Z-report sent to printer');
           onPrint?.();
         } else {
-          window.print();
-          toast.info('Sent to system print dialog');
-          onPrint?.();
+          toast.error(result.error || 'Failed to print Z-report');
         }
       } else {
+        // No Bluetooth printer - use browser print dialog
         window.print();
-        toast.info('Opened print dialog');
+        toast.info('Opened print dialog (no Bluetooth printer connected)');
         onPrint?.();
       }
     } catch (err) {
