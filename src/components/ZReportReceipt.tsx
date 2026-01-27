@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, Download, X, Loader2 } from 'lucide-react';
-import { isPrinterConnected, verifyPrinterConnection } from '@/services/bluetooth';
+import { isPrinterConnected, printToBluetoothPrinter, isClassicPrinterConnected, printToClassicPrinter } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import type { ZReportData } from '@/services/mysqlApi';
@@ -48,24 +48,78 @@ export const ZReportReceipt = ({
   });
 
   const handlePrint = async () => {
+    if (!data) return;
+    
     setIsPrinting(true);
     
     try {
-      // First verify if a printer is actually connected
       const printerConnected = isPrinterConnected();
       
       if (printerConnected) {
-        // Double-check with verification
-        const verified = await verifyPrinterConnection();
-        if (verified) {
-          window.print();
+        // Build summary Z Report receipt text
+        const W = 32;
+        const sep = '-'.repeat(W);
+        const centerText = (text: string, width: number): string => {
+          const padding = Math.max(0, width - text.length);
+          const left = Math.floor(padding / 2);
+          return ' '.repeat(left) + text;
+        };
+        const formatLine = (label: string, value: string, width: number): string => {
+          const spaces = Math.max(1, width - label.length - value.length);
+          return label + ' '.repeat(spaces) + value;
+        };
+        
+        let receipt = '';
+        receipt += centerText(companyName || 'Z REPORT', W) + '\n';
+        receipt += centerText(`${produceLabel.toUpperCase()} COLLECTION`, W) + '\n';
+        receipt += sep + '\n';
+        receipt += formatLine('Date', formattedDate, W) + '\n';
+        receipt += formatLine('Time', formattedTime, W) + '\n';
+        receipt += sep + '\n';
+        receipt += centerText('SUMMARY', W) + '\n';
+        receipt += formatLine(`Total ${weightLabel}`, `${data.totals.liters.toFixed(2)} ${weightUnit}`, W) + '\n';
+        receipt += formatLine('Total Farmers', String(data.totals.farmers), W) + '\n';
+        receipt += formatLine('Total Entries', String(data.totals.entries), W) + '\n';
+        receipt += sep + '\n';
+        
+        // By Session (for dairy only)
+        if (!isCoffee) {
+          receipt += `BY ${periodLabel.toUpperCase()}\n`;
+          receipt += formatLine('Morning (AM)', `${data.bySession.AM.entries} (${data.bySession.AM.liters.toFixed(2)}${weightUnit})`, W) + '\n';
+          receipt += formatLine('Evening (PM)', `${data.bySession.PM.entries} (${data.bySession.PM.liters.toFixed(2)}${weightUnit})`, W) + '\n';
+          receipt += sep + '\n';
+        }
+        
+        // By Route
+        receipt += `BY ${routeLabel.toUpperCase()}\n`;
+        Object.entries(data.byRoute).forEach(([route, routeData]) => {
+          receipt += formatLine(route.substring(0, 20), `${routeData.total.toFixed(2)}${weightUnit}`, W) + '\n';
+        });
+        receipt += sep + '\n';
+        
+        // By Collector
+        receipt += 'BY COLLECTOR\n';
+        Object.entries(data.byCollector).forEach(([collector, collectorData]) => {
+          receipt += formatLine(collector.substring(0, 20), `${collectorData.liters.toFixed(2)}${weightUnit}`, W) + '\n';
+        });
+        receipt += sep + '\n';
+        
+        receipt += formatLine('Generated', `${formattedDate} ${formattedTime}`, W) + '\n';
+        receipt += '\n\n\n';
+        
+        // Send to printer
+        let result: { success: boolean; error?: string };
+        if (isClassicPrinterConnected()) {
+          result = await printToClassicPrinter(receipt);
+        } else {
+          result = await printToBluetoothPrinter(receipt);
+        }
+        
+        if (result.success) {
           toast.success('Z-report sent to printer');
           onPrint?.();
         } else {
-          // Printer was connected but verification failed - still try browser print
-          window.print();
-          toast.info('Sent to system print dialog');
-          onPrint?.();
+          toast.error(result.error || 'Failed to print Z-report');
         }
       } else {
         // No Bluetooth printer - use browser print dialog
