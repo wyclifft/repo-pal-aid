@@ -1,16 +1,14 @@
 /**
  * CoffeeWeightDisplay - Shows Gross, Sack (tare), and Net weight for coffee weighing
- * Fixed sack weight of 1 kg is automatically deducted
- * Net weight = Gross weight - 1 kg
+ * Sack tare weight is configurable via psettings (default 1 kg)
+ * Net weight = Gross weight - Sack tare
+ * allowSackEdit controls whether users can manually adjust sack weight
  */
 
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { Scale, Loader2, RefreshCw, Package } from 'lucide-react';
+import { Scale, Loader2, RefreshCw, Package, Lock, Unlock } from 'lucide-react';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { Button } from '@/components/ui/button';
-
-// Fixed tare weight for coffee sacks (1 kg)
-export const COFFEE_SACK_TARE_WEIGHT = 1;
 
 // Display stabilization - prevents flickering when scale is stable
 const DISPLAY_STABLE_THRESHOLD = 0.15; // Max kg variance to consider "stable"
@@ -21,17 +19,34 @@ interface CoffeeWeightDisplayProps {
   grossWeight: number;
   onGrossWeightChange: (grossWeight: number) => void;
   onNetWeightChange: (netWeight: number) => void;
+  onTareWeightChange?: (tareWeight: number) => void; // Called when user edits sack weight
   onEntryTypeChange: (entryType: 'scale' | 'manual') => void;
   digitalDisabled?: boolean;
+  // Configurable sack tare weight from psettings (default 1 kg)
+  sackTareWeight?: number;
+  // Whether user can edit sack weight (psettings: allowSackEdit)
+  allowSackEdit?: boolean;
 }
 
 export const CoffeeWeightDisplay = ({
   grossWeight,
   onGrossWeightChange,
   onNetWeightChange,
+  onTareWeightChange,
   onEntryTypeChange,
   digitalDisabled = false,
+  sackTareWeight = 1, // Default 1 kg if not provided
+  allowSackEdit = false, // Default: fixed, backend-controlled
 }: CoffeeWeightDisplayProps) => {
+  // Local tare weight state - starts from psettings value but can be edited if allowed
+  const [localTareWeight, setLocalTareWeight] = useState(sackTareWeight);
+  const [isEditingTare, setIsEditingTare] = useState(false);
+  
+  // Sync local tare weight when psettings changes
+  useEffect(() => {
+    setLocalTareWeight(sackTareWeight);
+  }, [sackTareWeight]);
+
   const {
     scaleConnected,
     liveWeight,
@@ -43,8 +58,8 @@ export const CoffeeWeightDisplay = ({
     onWeightChange: (w) => {
       console.log(`☕ CoffeeWeightDisplay onWeightChange callback: ${w} kg gross`);
       onGrossWeightChange(w);
-      // Calculate and propagate net weight
-      const netWeight = Math.max(0, w - COFFEE_SACK_TARE_WEIGHT);
+      // Calculate and propagate net weight using current tare
+      const netWeight = Math.max(0, w - localTareWeight);
       onNetWeightChange(parseFloat(netWeight.toFixed(2)));
     }, 
     onEntryTypeChange 
@@ -61,9 +76,17 @@ export const CoffeeWeightDisplay = ({
 
   // Calculate net weight from gross (gross - sack tare)
   const netWeight = useMemo(() => {
-    const net = Math.max(0, stableDisplayWeight - COFFEE_SACK_TARE_WEIGHT);
+    const net = Math.max(0, stableDisplayWeight - localTareWeight);
     return parseFloat(net.toFixed(1));
-  }, [stableDisplayWeight]);
+  }, [stableDisplayWeight, localTareWeight]);
+
+  // Recalculate net weight when tare changes
+  useEffect(() => {
+    if (stableDisplayWeight > 0) {
+      const newNet = Math.max(0, stableDisplayWeight - localTareWeight);
+      onNetWeightChange(parseFloat(newNet.toFixed(2)));
+    }
+  }, [localTareWeight, stableDisplayWeight, onNetWeightChange]);
 
   // Auto-reconnect on mount ONLY if not already connected
   useEffect(() => {
@@ -159,6 +182,14 @@ export const CoffeeWeightDisplay = ({
     await forceResubscribe();
   };
 
+  // Handle tare weight edit
+  const handleTareChange = (value: string) => {
+    const numValue = parseFloat(value) || 0;
+    const clampedValue = Math.max(0, Math.min(10, numValue)); // Limit 0-10 kg
+    setLocalTareWeight(clampedValue);
+    onTareWeightChange?.(clampedValue);
+  };
+
   // Use stabilized display weight for gross
   const displayGrossWeight = stableDisplayWeight > 0 ? stableDisplayWeight : (grossWeight > 0 ? grossWeight : 0);
 
@@ -190,16 +221,46 @@ export const CoffeeWeightDisplay = ({
           <span className="text-xs text-gray-500">kg</span>
         </div>
         
-        {/* Sack (Tare) Weight Box - Fixed 1kg */}
-        <div className="flex-1 bg-amber-50 border-[3px] border-amber-400 rounded-lg py-4 sm:py-5 flex flex-col items-center justify-center">
+        {/* Sack (Tare) Weight Box - Editable if allowSackEdit=1, otherwise fixed */}
+        <div 
+          className={`flex-1 border-[3px] rounded-lg py-4 sm:py-5 flex flex-col items-center justify-center transition-colors ${
+            allowSackEdit ? 'bg-amber-50 border-amber-500 cursor-pointer' : 'bg-amber-50 border-amber-400'
+          }`}
+          onClick={() => allowSackEdit && setIsEditingTare(true)}
+        >
           <span className="text-xs sm:text-sm font-semibold text-amber-700 uppercase tracking-wide flex items-center gap-1">
             <Package className="h-3 w-3" />
             Sack
+            {allowSackEdit ? (
+              <Unlock className="h-3 w-3 text-amber-600" />
+            ) : (
+              <Lock className="h-3 w-3 text-amber-600" />
+            )}
           </span>
-          <span className="text-2xl sm:text-3xl font-black text-amber-700">
-            {COFFEE_SACK_TARE_WEIGHT.toFixed(1)}
+          
+          {isEditingTare && allowSackEdit ? (
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              min="0"
+              max="10"
+              value={localTareWeight}
+              onChange={(e) => handleTareChange(e.target.value)}
+              onBlur={() => setIsEditingTare(false)}
+              onKeyDown={(e) => e.key === 'Enter' && setIsEditingTare(false)}
+              autoFocus
+              className="w-16 text-center text-2xl sm:text-3xl font-black text-amber-700 bg-white border border-amber-400 rounded"
+            />
+          ) : (
+            <span className="text-2xl sm:text-3xl font-black text-amber-700">
+              {localTareWeight.toFixed(1)}
+            </span>
+          )}
+          
+          <span className="text-xs text-amber-600">
+            kg {allowSackEdit ? '(tap to edit)' : '(fixed)'}
           </span>
-          <span className="text-xs text-amber-600">kg (fixed)</span>
         </div>
         
         {/* Net Weight Box - Calculated automatically */}
@@ -258,3 +319,6 @@ export const CoffeeWeightDisplay = ({
     </div>
   );
 };
+
+// Export the default tare weight for backward compatibility
+export const COFFEE_SACK_TARE_WEIGHT = 1;

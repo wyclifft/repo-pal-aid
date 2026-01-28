@@ -5,7 +5,7 @@ import { API_CONFIG } from '@/config/api';
 
 // App settings interface based on psettings table
 // Maps exactly to database columns: printOptions, chkRoute, rdesc, stableOpt, 
-// sessPrint, AutoW, onlinemode, orgtype, printcumm, zeroopt
+// sessPrint, AutoW, onlinemode, orgtype, printcumm, zeroopt, sackTare, allowSackEdit
 export interface AppSettings {
   // Number of print copies per transaction (DB: printOptions, default: 1)
   printoptions: number;
@@ -39,6 +39,10 @@ export interface AppSettings {
   cumulative_frequency_status: number;
   // Period label: "Season" (coffee) or "Session" (dairy) - derived from orgtype
   periodLabel: string;
+  // Sack tare weight in kg for coffee weighing (DB: sackTare, default: 1)
+  sackTare: number;
+  // Allow frontend users to edit sack weight: 0 = fixed/backend-controlled, 1 = editable (DB: allowSackEdit, default: 0)
+  allowSackEdit: number;
 }
 
 // Default settings - rdesc is empty to force use of dynamic DB value
@@ -58,7 +62,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   tel: null,
   email: null,
   cumulative_frequency_status: 0,
-  periodLabel: 'Session' // Default to Session (dairy)
+  periodLabel: 'Session', // Default to Session (dairy)
+  sackTare: 1, // Default 1 kg sack tare weight for coffee
+  allowSackEdit: 0 // Default: sack weight is fixed/backend-controlled
 };
 
 const SETTINGS_STORAGE_KEY = 'app_settings';
@@ -115,6 +121,9 @@ interface AppSettingsContextType {
   offlineFirstMode: boolean;
   sessionPrintOnly: boolean;
   useRouteFilter: boolean;
+  // Coffee sack weighing
+  sackTareWeight: number; // Configurable sack tare weight in kg
+  allowSackEdit: boolean; // Whether frontend users can edit sack weight
 }
 
 // React context
@@ -341,7 +350,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             tel: deviceData.app_settings?.tel ?? DEFAULT_SETTINGS.tel,
             email: deviceData.app_settings?.email ?? DEFAULT_SETTINGS.email,
             cumulative_frequency_status: parseInt(String(deviceData.cumulative_frequency_status ?? DEFAULT_SETTINGS.cumulative_frequency_status), 10),
-            periodLabel: deviceData.app_settings?.periodLabel ?? DEFAULT_SETTINGS.periodLabel
+            periodLabel: deviceData.app_settings?.periodLabel ?? DEFAULT_SETTINGS.periodLabel,
+            sackTare: parseFloat(String(deviceData.app_settings?.sackTare ?? DEFAULT_SETTINGS.sackTare)),
+            allowSackEdit: parseInt(String(deviceData.app_settings?.allowSackEdit ?? DEFAULT_SETTINGS.allowSackEdit), 10)
           };
           
           // Log settings changes for debugging
@@ -541,6 +552,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const sessionPrintOnly = settings.sessprint === 1;
   const useRouteFilter = settings.chkroute === 1;
   const companyName = settings.company_name || localStorage.getItem('device_company_name') || '';
+  // Coffee sack weighing settings
+  const sackTareWeight = settings.sackTare ?? 1; // Default 1 kg
+  const allowSackEdit = settings.allowSackEdit === 1; // 0 = fixed, 1 = editable
 
   return {
     settings,
@@ -565,7 +579,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     printCopies,
     offlineFirstMode,
     sessionPrintOnly,
-    useRouteFilter
+    useRouteFilter,
+    sackTareWeight,
+    allowSackEdit
   };
 };
 
