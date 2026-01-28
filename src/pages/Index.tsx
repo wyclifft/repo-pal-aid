@@ -53,10 +53,9 @@ const Index = () => {
   const [lastSavedWeight, setLastSavedWeight] = useState(0);
   
   // Coffee sack weighing - gross/tare/net (orgtype C only)
-  // Fixed tare weight of 1 kg per sack
-  const COFFEE_SACK_TARE = 1;
+  // Tare weight comes from psettings.sackTare (default 1 kg)
   const [grossWeight, setGrossWeight] = useState(0);
-  const [tareWeight] = useState(COFFEE_SACK_TARE); // Fixed 1 kg
+  const [tareWeight, setTareWeight] = useState(1); // Will be set from psettings
   // Net weight is calculated: gross - tare (minimum 0)
 
   // Receipt modal
@@ -98,8 +97,17 @@ const Index = () => {
     produceLabel,
     routeLabel,
     periodLabel,
-    isCoffee
+    isCoffee,
+    sackTareWeight,
+    allowSackEdit
   } = useAppSettings();
+
+  // Sync tare weight from psettings when loaded
+  useEffect(() => {
+    if (isCoffee && sackTareWeight > 0) {
+      setTareWeight(sackTareWeight);
+    }
+  }, [isCoffee, sackTareWeight]);
 
   // Session blacklist for farmers with multOpt=0
   const [loadedFarmers, setLoadedFarmers] = useState<Farmer[]>([]);
@@ -1031,6 +1039,9 @@ const Index = () => {
           grossWeight={grossWeight}
           onGrossWeightChange={setGrossWeight}
           onNetWeightChange={setWeight}
+          onTareWeightChange={setTareWeight}
+          sackTareWeight={sackTareWeight}
+          allowSackEdit={allowSackEdit}
         />
       ) : (
         <SellProduceScreen
@@ -1062,6 +1073,9 @@ const Index = () => {
           grossWeight={grossWeight}
           onGrossWeightChange={setGrossWeight}
           onNetWeightChange={setWeight}
+          onTareWeightChange={setTareWeight}
+          sackTareWeight={sackTareWeight}
+          allowSackEdit={allowSackEdit}
         />
       )}
 

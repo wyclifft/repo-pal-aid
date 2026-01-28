@@ -7,7 +7,7 @@ import { useAppSettings } from '@/hooks/useAppSettings';
 import { useHaptics } from '@/hooks/useHaptics';
 import { FarmerSearchModal } from './FarmerSearchModal';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
-import { CoffeeWeightDisplay, COFFEE_SACK_TARE_WEIGHT } from './CoffeeWeightDisplay';
+import { CoffeeWeightDisplay } from './CoffeeWeightDisplay';
 import { toast } from 'sonner';
 
 interface SellProduceScreenProps {
@@ -37,6 +37,11 @@ interface SellProduceScreenProps {
   grossWeight?: number;
   onGrossWeightChange?: (grossWeight: number) => void;
   onNetWeightChange?: (netWeight: number) => void;
+  onTareWeightChange?: (tareWeight: number) => void;
+  // Configurable sack tare weight from psettings (default 1 kg)
+  sackTareWeight?: number;
+  // Whether user can edit sack weight (psettings: allowSackEdit)
+  allowSackEdit?: boolean;
 }
 
 export const SellProduceScreen = ({
@@ -64,6 +69,9 @@ export const SellProduceScreen = ({
   grossWeight = 0,
   onGrossWeightChange,
   onNetWeightChange,
+  onTareWeightChange,
+  sackTareWeight = 1,
+  allowSackEdit = false,
 }: SellProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -310,8 +318,11 @@ export const SellProduceScreen = ({
               onNetWeightChange?.(net);
               onWeightChange?.(net); // Also update main weight for capture
             }}
+            onTareWeightChange={onTareWeightChange}
             onEntryTypeChange={onEntryTypeChange || (() => {})}
             digitalDisabled={digitalDisabled}
+            sackTareWeight={sackTareWeight}
+            allowSackEdit={allowSackEdit}
           />
         ) : (
           <LiveWeightDisplay
@@ -342,9 +353,9 @@ export const SellProduceScreen = ({
               }
               const grossValue = parseFloat(e.target.value) || 0;
               if (isCoffee) {
-                // For coffee: manual entry is gross weight, calculate net
+                // For coffee: manual entry is gross weight, calculate net using configurable tare
                 onGrossWeightChange?.(grossValue);
-                const netValue = Math.max(0, grossValue - COFFEE_SACK_TARE_WEIGHT);
+                const netValue = Math.max(0, grossValue - sackTareWeight);
                 onNetWeightChange?.(parseFloat(netValue.toFixed(2)));
                 onWeightChange?.(parseFloat(netValue.toFixed(2))); // Main weight is net
                 onEntryTypeChange?.('manual');
@@ -366,7 +377,7 @@ export const SellProduceScreen = ({
         )}
         {isCoffee && !manualDisabled && (
           <p className="text-xs text-amber-600 -mt-2 mb-2 px-1">
-            Enter gross weight. Net = Gross - 1 kg (sack weight)
+            Enter gross weight. Net = Gross - {sackTareWeight} kg (sack weight)
           </p>
         )}
 
