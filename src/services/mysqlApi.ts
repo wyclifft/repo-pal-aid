@@ -662,6 +662,7 @@ export interface DeviceZReportTransaction {
   weight: number;
   time: string;           // HH:MM AM/PM format
   session: string;
+  route?: string;         // Route/center code for grouping
 }
 
 export interface DeviceZReportData {

@@ -1,27 +1,26 @@
 /**
  * Device-specific Z Report Receipt Component
- * Matches handwritten layout exactly:
+ * Layout:
  * COMPANY NAME
  * * COFFEE/MILK SUMMARY
  * * SEASON/SESSION: [name]
  * * DATE: DD/MM/YYYY
- * * [FACTORY NAME] FACTORY
- * * PRODUCE: [produce name]
+ * * CENTER: [center name] (displayed below date)
  * MNO    REFNO    QTY    TIME
- * [transaction rows...]
+ * [transaction rows grouped by center...]
  * TOTAL           [weight] KGS
  * CLERK          [clerk name]
  * PRINTED ON     DD/MM/YYYY - HH:MM AM/PM
  * DEVICE CODE    [devcode]
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, Download, X, Loader2 } from 'lucide-react';
 import { isPrinterConnected, printZReport } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { generateDeviceZReportPDF } from '@/utils/pdfExport';
-import type { DeviceZReportData } from '@/services/mysqlApi';
+import type { DeviceZReportData, DeviceZReportTransaction } from '@/services/mysqlApi';
 
 interface DeviceZReportReceiptProps {
   data: DeviceZReportData | null;
@@ -29,6 +28,14 @@ interface DeviceZReportReceiptProps {
   onClose: () => void;
   onPrint?: () => void;
   routeName?: string; // Factory name from route selection
+}
+
+// Helper to group transactions by center (route)
+interface CenterGroup {
+  centerName: string;
+  centerCode: string;
+  transactions: DeviceZReportTransaction[];
+  totalWeight: number;
 }
 
 export const DeviceZReportReceipt = ({ 
@@ -40,6 +47,35 @@ export const DeviceZReportReceipt = ({
 }: DeviceZReportReceiptProps) => {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  
+  // Group transactions by center (route)
+  const centerGroups = useMemo<CenterGroup[]>(() => {
+    if (!data?.transactions?.length) return [];
+    
+    const groupMap = new Map<string, CenterGroup>();
+    
+    for (const tx of data.transactions) {
+      const centerCode = tx.route || 'Unknown';
+      
+      if (!groupMap.has(centerCode)) {
+        groupMap.set(centerCode, {
+          centerCode,
+          centerName: centerCode, // Will be replaced with description if available
+          transactions: [],
+          totalWeight: 0
+        });
+      }
+      
+      const group = groupMap.get(centerCode)!;
+      group.transactions.push(tx);
+      group.totalWeight += tx.weight;
+    }
+    
+    return Array.from(groupMap.values());
+  }, [data?.transactions]);
+  
+  // Check if we have multiple centers
+  const hasMultipleCenters = centerGroups.length > 1;
   
   if (!data) return null;
 
@@ -129,7 +165,63 @@ export const DeviceZReportReceipt = ({
   };
 
   const weightUnit = data.isCoffee ? 'KGS' : 'LTS';
-  const factoryName = routeName || data.routeLabel || 'FACTORY';
+  const routeLabel = data.routeLabel || 'Center';
+
+  // Render a single center's transactions section
+  const renderCenterSection = (group: CenterGroup, showHeader: boolean, isLast: boolean) => (
+    <div key={group.centerCode}>
+      {/* Center Header (only when multiple centers) */}
+      {showHeader && (
+        <div className="border-t border-dashed pt-2 mt-2">
+          <p className="font-semibold text-center">{routeLabel}: {group.centerName}</p>
+        </div>
+      )}
+      
+      {/* Transaction List Header */}
+      <div className="border-t border-b border-dashed py-1 mt-1">
+        <div className="grid grid-cols-4 gap-1 font-bold text-center">
+          <span>MNO</span>
+          <span>REFNO</span>
+          <span>QTY</span>
+          <span>TIME</span>
+        </div>
+      </div>
+
+      {/* Transaction List */}
+      <div className="space-y-0.5 py-1">
+        {group.transactions.map((tx, index) => (
+          <div key={tx.transrefno || index} className="grid grid-cols-4 gap-1 text-center text-[11px]">
+            <span className="truncate">{tx.farmer_id}</span>
+            <span className="truncate">{tx.refno}</span>
+            <span>{tx.weight.toFixed(1)}</span>
+            <span>{tx.time}</span>
+          </div>
+        ))}
+        {group.transactions.length === 0 && (
+          <div className="text-center text-muted-foreground italic py-2">
+            No transactions
+          </div>
+        )}
+      </div>
+
+      {/* Center Subtotal (only when multiple centers) */}
+      {showHeader && (
+        <div className="border-t border-dashed pt-1">
+          <div className="flex justify-between text-sm">
+            <span className="font-semibold">{routeLabel} Total</span>
+            <span className="font-semibold">{group.totalWeight.toFixed(2)} {weightUnit}</span>
+          </div>
+        </div>
+      )}
+      
+      {/* Dotted line separator between centers */}
+      {showHeader && !isLast && (
+        <div className="text-center text-muted-foreground my-1">
+          · · · · · · · · · · · · · · · · · ·
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -161,10 +253,13 @@ export const DeviceZReportReceipt = ({
             <span className="ml-2">{formattedDate}</span>
           </div>
 
-          {/* Factory Name */}
-          <div className="pt-1">
-            <p className="font-semibold">* {factoryName.toUpperCase().replace(' FACTORY', '')} FACTORY</p>
-          </div>
+          {/* Center (displayed only when single center - otherwise shown per group) */}
+          {!hasMultipleCenters && centerGroups.length > 0 && (
+            <div className="flex pb-1">
+              <span className="font-semibold">* {routeLabel.toUpperCase()}:</span>
+              <span className="ml-2">{routeName || centerGroups[0].centerName}</span>
+            </div>
+          )}
 
           {/* Produce */}
           <div className="flex pb-2">
@@ -172,34 +267,47 @@ export const DeviceZReportReceipt = ({
             <span className="ml-2">{data.produceName || data.produceLabel.toUpperCase()}</span>
           </div>
 
-          {/* Transaction List Header */}
-          <div className="border-t border-b border-dashed py-1">
-            <div className="grid grid-cols-4 gap-1 font-bold text-center">
-              <span>MNO</span>
-              <span>REFNO</span>
-              <span>QTY</span>
-              <span>TIME</span>
-            </div>
-          </div>
+          {/* Transaction List - grouped by center if multiple centers */}
+          <div className="max-h-60 overflow-y-auto">
+            {hasMultipleCenters ? (
+              // Multiple centers - show grouped with headers
+              centerGroups.map((group, idx) => 
+                renderCenterSection(group, true, idx === centerGroups.length - 1)
+              )
+            ) : (
+              // Single center - flat list
+              <>
+                {/* Transaction List Header */}
+                <div className="border-t border-b border-dashed py-1">
+                  <div className="grid grid-cols-4 gap-1 font-bold text-center">
+                    <span>MNO</span>
+                    <span>REFNO</span>
+                    <span>QTY</span>
+                    <span>TIME</span>
+                  </div>
+                </div>
 
-          {/* Transaction List */}
-          <div className="space-y-0.5 max-h-60 overflow-y-auto py-1">
-            {data.transactions.map((tx, index) => (
-              <div key={tx.transrefno || index} className="grid grid-cols-4 gap-1 text-center text-[11px]">
-                <span className="truncate">{tx.farmer_id}</span>
-                <span className="truncate">{tx.refno}</span>
-                <span>{tx.weight.toFixed(1)}</span>
-                <span>{tx.time}</span>
-              </div>
-            ))}
-            {data.transactions.length === 0 && (
-              <div className="text-center text-muted-foreground italic py-2">
-                No transactions
-              </div>
+                {/* Transaction List */}
+                <div className="space-y-0.5 py-1">
+                  {data.transactions.map((tx, index) => (
+                    <div key={tx.transrefno || index} className="grid grid-cols-4 gap-1 text-center text-[11px]">
+                      <span className="truncate">{tx.farmer_id}</span>
+                      <span className="truncate">{tx.refno}</span>
+                      <span>{tx.weight.toFixed(1)}</span>
+                      <span>{tx.time}</span>
+                    </div>
+                  ))}
+                  {data.transactions.length === 0 && (
+                    <div className="text-center text-muted-foreground italic py-2">
+                      No transactions
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
 
-          {/* Totals */}
+          {/* Grand Totals */}
           <div className="border-t border-dashed pt-2 mt-1">
             <div className="flex justify-between font-bold text-sm">
               <span>TOTAL</span>

@@ -1385,7 +1385,8 @@ const server = http.createServer(async (req, res) => {
           farmer_id: c.farmer_id,
           weight: parseFloat(c.weight || 0),
           time: timeStr,
-          session: c.session
+          session: c.session,
+          route: c.route || '' // Include route for center grouping
         };
       });
 
@@ -2009,7 +2010,9 @@ const server = http.createServer(async (req, res) => {
         online: 0,
         orgtype: 'D',
         printcumm: 0,
-        zeroOpt: 0
+        zeroOpt: 0,
+        sackTare: 1,
+        sackEdit: 0
       };
       
       if (deviceData.ccode) {
@@ -2029,10 +2032,11 @@ const server = http.createServer(async (req, res) => {
             IFNULL(onlinemode, 0) as onlinemode,
             IFNULL(orgtype, 'D') as orgtype,
             IFNULL(printcumm, 0) as printcumm,
-            IFNULL(zeroopt, 0) as zeroopt
+            IFNULL(zeroopt, 0) as zeroopt,
+            IFNULL(sackTare, 1) as sackTare,
+            IFNULL(sackEdit, 0) as sackEdit
           FROM psettings WHERE ccode = ?`,
-          [deviceData.ccode]
-        );
+          [deviceData.ccode]);
         
         if (companyRows.length > 0) {
           companyName = companyRows[0].cname;
@@ -2049,6 +2053,8 @@ const server = http.createServer(async (req, res) => {
             orgtype: orgtype,
             printcumm: companyRows[0].printcumm,
             zeroOpt: companyRows[0].zeroopt,
+            sackTare: companyRows[0].sackTare,
+            sackEdit: companyRows[0].sackEdit,
             // Derived labels from orgtype
             periodLabel: orgtype === 'C' ? 'Season' : 'Session',
             // Additional company info
