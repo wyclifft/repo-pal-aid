@@ -1308,17 +1308,20 @@ const server = http.createServer(async (req, res) => {
       const deviceSerial = uniquedevcode;
 
       // Build query - filter by deviceserial to ensure per-device reporting
+      // Join fm_tanks to get route description and fm_items for product name
       let query = `
         SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, 
                t.route, t.weight, t.session, t.transdate as collection_date, 
                t.transtime, t.clerk as clerk_name, t.icode as product_code, 
                t.entry_type, t.CAN as season_code,
-               i.descript as product_name
+               i.descript as product_name,
+               TRIM(r.descript) as route_name
         FROM transactions t
         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
+        LEFT JOIN fm_tanks r ON t.route = r.tcode AND r.ccode = ?
         WHERE t.transdate = ? AND t.Transtype = 1 AND t.deviceserial = ?
       `;
-      const queryParams = [ccode, date, deviceSerial];
+      const queryParams = [ccode, ccode, date, deviceSerial];
 
       // Add season filter if provided
       if (seasonFilter) {
@@ -1326,7 +1329,7 @@ const server = http.createServer(async (req, res) => {
         queryParams.push(seasonFilter);
       }
 
-      query += ` ORDER BY t.transtime ASC, t.memberno`;
+      query += ` ORDER BY t.icode ASC, t.route ASC, t.transtime ASC, t.memberno`;
 
       const [collections] = await pool.query(query, queryParams);
 
@@ -1386,7 +1389,10 @@ const server = http.createServer(async (req, res) => {
           weight: parseFloat(c.weight || 0),
           time: timeStr,
           session: c.session,
-          route: c.route || '' // Include route for center grouping
+          route: c.route || '', // Route code for grouping
+          route_name: c.route_name || c.route || '', // Full descriptive center name
+          product_code: c.product_code || '', // Product code for produce grouping
+          product_name: c.product_name || '' // Product name for produce grouping
         };
       });
 
