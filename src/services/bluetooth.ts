@@ -2191,20 +2191,26 @@ export const printStoreAIReceipt = async (data: {
 };
 
 // Print Device Z Report to thermal printer
-// Follows handwritten layout: Company → Summary → Season → Date → Factory → Produce → Transactions (MNO/REFNO/QTY/TIME) → Total → Clerk → Print Time → Device Code
+// Follows layout: Company → Summary → Season → Date → Center → Produce → Transactions (MNO/REFNO/QTY/TIME) → Total → Clerk → Print Time → Device Code
+// Supports grouping by produce type and center with dotted separators
 export const printZReport = async (data: {
   companyName: string;
   produceLabel: string;
   periodLabel: string;
   seasonName: string;
   date: string;
-  factoryName: string;
+  factoryName: string; // Main center name (used for single-center reports)
+  routeLabel?: string; // Dynamic "Center" or "Route" label
   produceName?: string;
   transactions: Array<{
     farmer_id: string;
     refno: string;
     weight: number;
     time: string;
+    route?: string; // Route code for grouping
+    route_name?: string; // Full center descriptive name
+    product_code?: string;
+    product_name?: string;
   }>;
   totalWeight: number;
   clerkName: string;
@@ -2214,6 +2220,7 @@ export const printZReport = async (data: {
   // 58mm thermal paper = 32 characters per line
   const W = 32;
   const sep = '-'.repeat(W);
+  const dotSep = '. '.repeat(16);
   
   // Format date as DD/MM/YYYY
   const formattedDate = new Date(data.date).toLocaleDateString('en-GB', {
@@ -2236,6 +2243,39 @@ export const printZReport = async (data: {
   }).toUpperCase();
   
   const weightUnit = data.isCoffee ? 'KGS' : 'LTS';
+  const routeLabel = data.routeLabel || (data.isCoffee ? 'CENTER' : 'ROUTE');
+  
+  // Group transactions by produce type, then by center
+  const produceMap = new Map<string, { 
+    produceName: string; 
+    centerMap: Map<string, { centerName: string; txs: typeof data.transactions; total: number }>; 
+    total: number 
+  }>();
+  
+  for (const tx of data.transactions) {
+    const productCode = tx.product_code || 'DEFAULT';
+    const productName = tx.product_name || data.produceName || data.produceLabel;
+    
+    if (!produceMap.has(productCode)) {
+      produceMap.set(productCode, { produceName: productName, centerMap: new Map(), total: 0 });
+    }
+    const produceGroup = produceMap.get(productCode)!;
+    produceGroup.total += tx.weight;
+    
+    const centerCode = tx.route || 'Unknown';
+    const centerName = tx.route_name || data.factoryName || centerCode;
+    
+    if (!produceGroup.centerMap.has(centerCode)) {
+      produceGroup.centerMap.set(centerCode, { centerName, txs: [], total: 0 });
+    }
+    const centerGroup = produceGroup.centerMap.get(centerCode)!;
+    centerGroup.txs.push(tx);
+    centerGroup.total += tx.weight;
+  }
+  
+  const hasMultipleProduces = produceMap.size > 1;
+  const hasMultipleCenters = Array.from(produceMap.values()).some(p => p.centerMap.size > 1) ||
+    (produceMap.size === 1 && Array.from(produceMap.values())[0].centerMap.size > 1);
   
   let receipt = '';
   
@@ -2252,32 +2292,98 @@ export const printZReport = async (data: {
   // Date
   receipt += `* DATE: ${formattedDate}\n`;
   
-  // Factory Name
-  receipt += `* ${data.factoryName.toUpperCase().replace(' FACTORY', '')} FACTORY\n`;
-  
-  // Produce
-  receipt += `* PRODUCE: ${data.produceName || data.produceLabel.toUpperCase()}\n`;
-  receipt += sep + '\n';
-  
-  // Transaction header - MNO REFNO QTY TIME
-  const txHeader = 'MNO   REFNO   QTY  TIME';
-  receipt += txHeader + '\n';
-  receipt += sep + '\n';
-  
-  // Transaction rows
-  for (const tx of data.transactions) {
-    const mno = tx.farmer_id.substring(0, 6).padEnd(6);
-    const refno = tx.refno.substring(0, 7).padEnd(7);
-    const qty = tx.weight.toFixed(1).padStart(5);
-    const time = tx.time.substring(0, 5);
-    receipt += `${mno}${refno}${qty} ${time}\n`;
+  // For single center, show center name in header
+  if (!hasMultipleCenters) {
+    const firstProduce = Array.from(produceMap.values())[0];
+    const firstCenter = firstProduce ? Array.from(firstProduce.centerMap.values())[0] : null;
+    const centerName = firstCenter?.centerName || data.factoryName || '';
+    if (centerName) {
+      receipt += `* ${routeLabel}: ${centerName.trim()}\n`;
+    }
   }
   
-  if (data.transactions.length === 0) {
-    receipt += centerText('No transactions', W) + '\n';
+  // For single produce, show produce name in header
+  if (!hasMultipleProduces) {
+    const firstProduce = Array.from(produceMap.values())[0];
+    receipt += `* PRODUCE: ${firstProduce?.produceName || data.produceName || data.produceLabel.toUpperCase()}\n`;
   }
   
   receipt += sep + '\n';
+  
+  // Print transactions grouped by produce then by center
+  if (hasMultipleProduces || hasMultipleCenters) {
+    // Grouped layout
+    let produceIdx = 0;
+    for (const [productCode, produceGroup] of produceMap) {
+      // Produce header (if multiple produces)
+      if (hasMultipleProduces) {
+        if (produceIdx > 0) {
+          receipt += dotSep + '\n';
+        }
+        receipt += centerText(produceGroup.produceName.toUpperCase(), W) + '\n';
+      }
+      
+      let centerIdx = 0;
+      for (const [centerCode, centerGroup] of produceGroup.centerMap) {
+        // Center header (if multiple centers)
+        if (hasMultipleCenters) {
+          if (centerIdx > 0) {
+            receipt += dotSep + '\n';
+          }
+          receipt += `${routeLabel}: ${centerGroup.centerName.trim()}\n`;
+        }
+        
+        // Transaction table header
+        receipt += 'MNO   REFNO   QTY  TIME\n';
+        receipt += sep + '\n';
+        
+        // Transaction rows for this center
+        for (const tx of centerGroup.txs) {
+          const mno = tx.farmer_id.substring(0, 6).padEnd(6);
+          const refno = tx.refno.substring(0, 7).padEnd(7);
+          const qty = tx.weight.toFixed(1).padStart(5);
+          const time = tx.time.substring(0, 5);
+          receipt += `${mno}${refno}${qty} ${time}\n`;
+        }
+        
+        // Center subtotal (if multiple centers)
+        if (hasMultipleCenters) {
+          receipt += formatLine(`${routeLabel} TOTAL`, `${centerGroup.total.toFixed(2)} ${weightUnit}`, W) + '\n';
+        }
+        
+        centerIdx++;
+      }
+      
+      // Produce subtotal (if multiple produces)
+      if (hasMultipleProduces) {
+        receipt += sep + '\n';
+        receipt += formatLine(`${produceGroup.produceName.toUpperCase()} TOTAL`, `${produceGroup.total.toFixed(2)} ${weightUnit}`, W) + '\n';
+      }
+      
+      produceIdx++;
+    }
+    receipt += sep + '\n';
+  } else {
+    // Simple flat layout
+    const txHeader = 'MNO   REFNO   QTY  TIME';
+    receipt += txHeader + '\n';
+    receipt += sep + '\n';
+    
+    // Transaction rows
+    for (const tx of data.transactions) {
+      const mno = tx.farmer_id.substring(0, 6).padEnd(6);
+      const refno = tx.refno.substring(0, 7).padEnd(7);
+      const qty = tx.weight.toFixed(1).padStart(5);
+      const time = tx.time.substring(0, 5);
+      receipt += `${mno}${refno}${qty} ${time}\n`;
+    }
+    
+    if (data.transactions.length === 0) {
+      receipt += centerText('No transactions', W) + '\n';
+    }
+    
+    receipt += sep + '\n';
+  }
   
   // Total
   receipt += formatLine('TOTAL', `${data.totalWeight.toFixed(2)} ${weightUnit}`, W) + '\n';

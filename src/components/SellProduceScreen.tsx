@@ -79,6 +79,9 @@ export const SellProduceScreen = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers } = useIndexedDB();
+  
+  // Track current effective tare weight (starts from psettings, can be edited by user)
+  const [currentTareWeight, setCurrentTareWeight] = useState(sackTareWeight);
   const { light: hapticLight, medium: hapticMedium, success: hapticSuccess } = useHaptics();
   
   // Get psettings for produce labeling - updates automatically when psettings change
@@ -95,6 +98,11 @@ export const SellProduceScreen = ({
   useEffect(() => {
     console.log('📱 SellProduceScreen - Supervisor mode:', { allowDigital, allowManual }, '| manualDisabled:', manualDisabled, 'digitalDisabled:', digitalDisabled, 'psettingsAutoWeightOnly:', psettingsAutoWeightOnly);
   }, [allowDigital, allowManual, manualDisabled, digitalDisabled, psettingsAutoWeightOnly]);
+
+  // Sync currentTareWeight when psettings value changes
+  useEffect(() => {
+    setCurrentTareWeight(sackTareWeight);
+  }, [sackTareWeight]);
 
   // Load cached farmers with chkroute logic
   // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
@@ -318,7 +326,10 @@ export const SellProduceScreen = ({
               onNetWeightChange?.(net);
               onWeightChange?.(net); // Also update main weight for capture
             }}
-            onTareWeightChange={onTareWeightChange}
+            onTareWeightChange={(tare) => {
+              setCurrentTareWeight(tare); // Update local state for manual entry
+              onTareWeightChange?.(tare); // Also notify parent
+            }}
             onEntryTypeChange={onEntryTypeChange || (() => {})}
             digitalDisabled={digitalDisabled}
             sackTareWeight={sackTareWeight}
@@ -353,9 +364,9 @@ export const SellProduceScreen = ({
               }
               const grossValue = parseFloat(e.target.value) || 0;
               if (isCoffee) {
-                // For coffee: manual entry is gross weight, calculate net using configurable tare
+                // For coffee: manual entry is gross weight, calculate net using CURRENT tare (may be edited)
                 onGrossWeightChange?.(grossValue);
-                const netValue = Math.max(0, grossValue - sackTareWeight);
+                const netValue = Math.max(0, grossValue - currentTareWeight);
                 onNetWeightChange?.(parseFloat(netValue.toFixed(2)));
                 onWeightChange?.(parseFloat(netValue.toFixed(2))); // Main weight is net
                 onEntryTypeChange?.('manual');
@@ -377,7 +388,7 @@ export const SellProduceScreen = ({
         )}
         {isCoffee && !manualDisabled && (
           <p className="text-xs text-amber-600 -mt-2 mb-2 px-1">
-            Enter gross weight. Net = Gross - {sackTareWeight} kg (sack weight)
+            Enter gross weight. Net = Gross - {currentTareWeight} kg (sack weight)
           </p>
         )}
 

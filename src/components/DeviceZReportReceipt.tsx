@@ -141,16 +141,26 @@ export const DeviceZReportReceipt = ({
       const printerConnected = isPrinterConnected();
       
       if (printerConnected) {
-        // Send Z Report data to thermal printer
+        // Send Z Report data to thermal printer - include route_name for grouping
         const result = await printZReport({
           companyName: data.companyName,
           produceLabel: data.produceLabel,
           periodLabel: data.periodLabel,
           seasonName: data.seasonName,
           date: data.date,
-          factoryName: routeName || data.routeLabel || 'FACTORY',
+          factoryName: singleCenterName || routeName || data.routeLabel || 'FACTORY',
+          routeLabel: data.routeLabel || 'Center',
           produceName: data.produceName,
-          transactions: data.transactions,
+          transactions: data.transactions.map(tx => ({
+            farmer_id: tx.farmer_id,
+            refno: tx.refno,
+            weight: tx.weight,
+            time: tx.time,
+            route: tx.route,
+            route_name: tx.route_name, // Pass full center name
+            product_code: tx.product_code,
+            product_name: tx.product_name,
+          })),
           totalWeight: data.totals.weight,
           clerkName: data.clerkName,
           deviceCode: data.deviceCode,
