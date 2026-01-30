@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import { Printer, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,17 +33,29 @@ export function PeriodicReportReceipt({
   deviceFingerprint,
   weightUnit,
 }: PeriodicReportReceiptProps) {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [printing, setPrinting] = useState(false);
   const [data, setData] = useState<FarmerDetailReportData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load data when dialog opens
+  useEffect(() => {
+    if (open && deviceFingerprint && farmerId) {
+      loadData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, farmerId, deviceFingerprint]);
 
   const loadData = async () => {
-    if (!deviceFingerprint) return;
-    
     setLoading(true);
+    setError(null);
+    setData(null);
+    
     try {
       const formattedStartDate = format(startDate, "yyyy-MM-dd");
       const formattedEndDate = format(endDate, "yyyy-MM-dd");
+      
+      console.log('📄 Fetching farmer detail:', { farmerId, formattedStartDate, formattedEndDate });
       
       const response = await mysqlApi.periodicReport.getFarmerDetail(
         formattedStartDate,
@@ -52,29 +64,28 @@ export function PeriodicReportReceipt({
         deviceFingerprint
       );
 
+      console.log('📄 Farmer detail response:', response);
+
       if (response.success && response.data) {
         setData(response.data);
       } else {
+        setError(response.error || "Failed to load farmer details");
         toast.error(response.error || "Failed to load farmer details");
-        onClose();
       }
-    } catch (error) {
-      console.error("Error loading farmer detail:", error);
+    } catch (err) {
+      console.error("Error loading farmer detail:", err);
+      setError("Failed to load farmer details");
       toast.error("Failed to load farmer details");
-      onClose();
     } finally {
       setLoading(false);
     }
   };
 
-  // Load data when dialog opens
-  const handleOpenChange = (isOpen: boolean) => {
-    if (isOpen) {
-      loadData();
-    } else {
-      setData(null);
-      onClose();
-    }
+  const handleClose = () => {
+    setData(null);
+    setError(null);
+    setLoading(true);
+    onClose();
   };
 
   const handlePrint = async () => {
@@ -82,6 +93,8 @@ export function PeriodicReportReceipt({
     
     setPrinting(true);
     try {
+      console.log('🖨️ Printing member statement:', data);
+      
       const result = await printMemberProduceStatement({
         companyName: data.company_name,
         farmerId: data.farmer_id,
@@ -97,13 +110,15 @@ export function PeriodicReportReceipt({
         totalWeight: data.total_weight,
       });
 
+      console.log('🖨️ Print result:', result);
+
       if (result.success) {
         toast.success("Statement printed successfully");
       } else {
         toast.error(result.error || "Failed to print statement");
       }
-    } catch (error) {
-      console.error("Print error:", error);
+    } catch (err) {
+      console.error("Print error:", err);
       toast.error("Failed to print statement");
     } finally {
       setPrinting(false);
@@ -116,7 +131,7 @@ export function PeriodicReportReceipt({
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -126,8 +141,16 @@ export function PeriodicReportReceipt({
         </DialogHeader>
 
         {loading ? (
-          <div className="flex items-center justify-center py-12">
+          <div className="flex flex-col items-center justify-center py-12 gap-2">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Loading statement...</p>
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-4">
+            <p className="text-destructive text-center">{error}</p>
+            <Button variant="outline" onClick={handleClose}>
+              Close
+            </Button>
           </div>
         ) : data ? (
           <div className="space-y-4">
@@ -171,13 +194,19 @@ export function PeriodicReportReceipt({
               
               {/* Transactions */}
               <div className="space-y-1 max-h-[200px] overflow-y-auto">
-                {data.transactions.map((tx, idx) => (
-                  <div key={idx} className="grid grid-cols-3 text-[10px]">
-                    <span>{formatDisplayDate(tx.date)}</span>
-                    <span className="text-center">{tx.rec_no?.slice(-5) || '-----'}</span>
-                    <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
+                {data.transactions.length > 0 ? (
+                  data.transactions.map((tx, idx) => (
+                    <div key={idx} className="grid grid-cols-3 text-[10px]">
+                      <span>{formatDisplayDate(tx.date)}</span>
+                      <span className="text-center">{tx.rec_no?.slice(-5) || '-----'}</span>
+                      <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center text-muted-foreground py-2">
+                    No transactions found
                   </div>
-                ))}
+                )}
               </div>
               <div className="border-t border-dashed border-muted-foreground/40" />
               
@@ -199,7 +228,7 @@ export function PeriodicReportReceipt({
               <Button
                 variant="outline"
                 className="flex-1"
-                onClick={onClose}
+                onClick={handleClose}
               >
                 <X className="h-4 w-4 mr-1" />
                 Close
@@ -207,7 +236,7 @@ export function PeriodicReportReceipt({
               <Button
                 className="flex-1"
                 onClick={handlePrint}
-                disabled={printing}
+                disabled={printing || data.transactions.length === 0}
               >
                 {printing ? (
                   <Loader2 className="h-4 w-4 mr-1 animate-spin" />
