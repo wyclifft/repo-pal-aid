@@ -1166,6 +1166,100 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, data: rows });
     }
 
+    // Farmer Detail Report endpoint - individual transactions for a farmer in date range
+    if (path === '/api/periodic-report/farmer-detail' && method === 'GET') {
+      const startDate = parsedUrl.query.start_date;
+      const endDate = parsedUrl.query.end_date;
+      const farmerId = parsedUrl.query.farmer_id;
+      const uniquedevcode = parsedUrl.query.uniquedevcode;
+
+      if (!startDate || !endDate) {
+        return sendJSON(res, { success: false, error: 'start_date and end_date are required' }, 400);
+      }
+
+      if (!farmerId) {
+        return sendJSON(res, { success: false, error: 'farmer_id is required' }, 400);
+      }
+
+      if (!uniquedevcode) {
+        return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400);
+      }
+
+      // Get device's company code and company name
+      const [deviceRows] = await pool.query(
+        `SELECT d.ccode, c.descript as company_name 
+         FROM devsettings d
+         LEFT JOIN cm_companys c ON d.ccode = c.ccode
+         WHERE d.uniquedevcode = ? AND d.authorized = 1`,
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized or not found' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      const companyName = deviceRows[0].company_name || 'Company';
+
+      // Get farmer info
+      const [farmerRows] = await pool.query(
+        'SELECT mcode, descript, route FROM cm_members WHERE mcode = ? AND ccode = ?',
+        [farmerId, ccode]
+      );
+      
+      const farmerName = farmerRows.length > 0 ? farmerRows[0].descript : 'Unknown';
+      const farmerRoute = farmerRows.length > 0 ? farmerRows[0].route : '';
+
+      // Get produce type name from fm_items
+      const [produceRows] = await pool.query(
+        `SELECT DISTINCT i.descript as produce_name 
+         FROM transactions t
+         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
+         WHERE t.memberno = ? AND t.transdate BETWEEN ? AND ? AND t.Transtype = 1 AND t.ccode = ?
+         LIMIT 1`,
+        [ccode, farmerId, startDate, endDate, ccode]
+      );
+      
+      const produceName = produceRows.length > 0 && produceRows[0].produce_name ? produceRows[0].produce_name : 'PRODUCE';
+
+      // Get all individual transactions for this farmer in the date range
+      const [transactions] = await pool.query(
+        `SELECT 
+          t.transdate as date,
+          t.transrefno as rec_no,
+          t.weight as quantity,
+          t.transtime as time
+        FROM transactions t
+        WHERE t.memberno = ? 
+          AND t.Transtype = 1 
+          AND t.transdate BETWEEN ? AND ?
+          AND t.ccode = ?
+        ORDER BY t.transdate ASC, t.transtime ASC`,
+        [farmerId, startDate, endDate, ccode]
+      );
+
+      // Calculate total weight
+      const totalWeight = transactions.reduce((sum, t) => sum + (parseFloat(t.quantity) || 0), 0);
+
+      return sendJSON(res, { 
+        success: true, 
+        data: {
+          company_name: companyName,
+          farmer_id: farmerId,
+          farmer_name: farmerName,
+          farmer_route: farmerRoute,
+          produce_name: produceName,
+          start_date: startDate,
+          end_date: endDate,
+          total_weight: totalWeight,
+          transactions: transactions
+        }
+      });
+    }
+
     // Z-Report endpoint - now using transactions table
     if (path === '/api/z-report' && method === 'GET') {
       const date = parsedUrl.query.date || new Date().toISOString().split('T')[0];

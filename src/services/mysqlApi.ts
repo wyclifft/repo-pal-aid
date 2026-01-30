@@ -857,6 +857,23 @@ export interface PeriodicReportData {
   collection_count: number;
 }
 
+export interface FarmerDetailReportData {
+  company_name: string;
+  farmer_id: string;
+  farmer_name: string;
+  farmer_route: string;
+  produce_name: string;
+  start_date: string;
+  end_date: string;
+  total_weight: number;
+  transactions: Array<{
+    date: string;
+    rec_no: string;
+    quantity: number;
+    time: string;
+  }>;
+}
+
 const periodicReportApi = {
   async get(startDate: string, endDate: string, uniquedevcode: string, farmerSearch?: string): Promise<ApiResponse<PeriodicReportData[]>> {
     let endpoint = `/periodic-report?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
@@ -864,6 +881,11 @@ const periodicReportApi = {
       endpoint += `&farmer_search=${encodeURIComponent(farmerSearch)}`;
     }
     return apiRequest<PeriodicReportData[]>(endpoint);
+  },
+  
+  async getFarmerDetail(startDate: string, endDate: string, farmerId: string, uniquedevcode: string): Promise<ApiResponse<FarmerDetailReportData>> {
+    const endpoint = `/periodic-report/farmer-detail?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+    return apiRequest<FarmerDetailReportData>(endpoint);
   },
 };
 
