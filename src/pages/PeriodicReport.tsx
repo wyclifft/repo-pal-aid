@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { format } from "date-fns";
-import { CalendarIcon, FileText } from "lucide-react";
+import { CalendarIcon, FileText, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +27,7 @@ import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 import { useIndexedDB } from "@/hooks/useIndexedDB";
 import { DeviceAuthStatus } from "@/components/DeviceAuthStatus";
 import { useAppSettings } from "@/hooks/useAppSettings";
+import { PeriodicReportReceipt } from "@/components/PeriodicReportReceipt";
 
 export default function PeriodicReport() {
   const navigate = useNavigate();
@@ -46,6 +47,9 @@ export default function PeriodicReport() {
   const [loading, setLoading] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  
+  // Receipt modal state
+  const [selectedFarmer, setSelectedFarmer] = useState<{ id: string; name: string } | null>(null);
   
   const { saveFarmers, savePeriodicReport, getPeriodicReport } = useIndexedDB();
 
@@ -273,6 +277,7 @@ export default function PeriodicReport() {
                     <TableHead>{routeLabel}</TableHead>
                     <TableHead>Total Collections</TableHead>
                     <TableHead>Total Weight ({weightUnit})</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -283,12 +288,37 @@ export default function PeriodicReport() {
                       <TableCell>{item.route}</TableCell>
                       <TableCell>{item.collection_count}</TableCell>
                       <TableCell>{item.total_weight.toFixed(2)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSelectedFarmer({ id: item.farmer_id, name: item.farmer_name })}
+                          disabled={!startDate || !endDate}
+                        >
+                          <Printer className="h-4 w-4 mr-1" />
+                          View & Print
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
           </div>
+        )}
+        
+        {/* Receipt Modal */}
+        {selectedFarmer && startDate && endDate && (
+          <PeriodicReportReceipt
+            open={!!selectedFarmer}
+            onClose={() => setSelectedFarmer(null)}
+            farmerId={selectedFarmer.id}
+            farmerName={selectedFarmer.name}
+            startDate={startDate}
+            endDate={endDate}
+            deviceFingerprint={deviceFingerprint}
+            weightUnit={weightUnit}
+          />
         )}
       </div>
     </div>

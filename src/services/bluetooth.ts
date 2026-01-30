@@ -2415,3 +2415,104 @@ export const printZReport = async (data: {
   // Fall back to BLE printer
   return printToBluetoothPrinter(receipt);
 };
+
+// Member Produce Statement print function (for Periodic Report)
+export const printMemberProduceStatement = async (data: {
+  companyName: string;
+  farmerId: string;
+  farmerName: string;
+  produceName: string;      // e.g., "CHERRY", "MILK"
+  startDate: string;        // YYYY-MM-DD
+  endDate: string;          // YYYY-MM-DD
+  transactions: Array<{
+    date: string;           // YYYY-MM-DD
+    rec_no: string;         // Reference number (last 5 chars)
+    quantity: number;       // Weight in Kgs
+  }>;
+  totalWeight: number;
+}): Promise<{ success: boolean; error?: string }> => {
+  // 58mm thermal paper = 32 characters per line
+  const W = 32;
+  const dotLine = '.'.repeat(W);
+  const dashLine = '-'.repeat(W);
+  
+  const formatDate = (dateStr: string) => {
+    // Convert YYYY-MM-DD to DD/MM/YYYY
+    const [year, month, day] = dateStr.split('-');
+    return `${day}/${month}/${year}`;
+  };
+  
+  const now = new Date();
+  const printedOn = now.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  let receipt = '';
+  
+  // Company Header
+  receipt += centerText(data.companyName.toUpperCase(), W) + '\n';
+  receipt += dashLine + '\n';
+  receipt += '\n';
+  
+  // Title
+  receipt += centerText('MEMBER PRODUCE STATEMENT', W) + '\n';
+  receipt += centerText(`From ${formatDate(data.startDate)} - To ${formatDate(data.endDate)}`, W) + '\n';
+  receipt += dashLine + '\n';
+  receipt += '\n';
+  
+  // Produce Type (e.g., CHERRY RECORD)
+  receipt += centerText(`${data.produceName.toUpperCase()} RECORD`, W) + '\n';
+  receipt += dashLine + '\n';
+  receipt += '\n';
+  
+  // Member Info
+  receipt += `MEMBER NO: ${data.farmerId}\n`;
+  receipt += dotLine + '\n';
+  receipt += `MEMBER NAME: ${data.farmerName.substring(0, W - 13)}\n`;
+  receipt += dotLine + '\n';
+  receipt += '\n';
+  
+  // Transaction Header
+  const dateColW = 10;
+  const recColW = 7;
+  const qtyColW = W - dateColW - recColW;
+  receipt += 'DATE'.padEnd(dateColW) + 'REC NO'.padEnd(recColW) + 'QUANTITY'.padStart(qtyColW) + '\n';
+  receipt += dashLine + '\n';
+  
+  // Transaction Rows
+  data.transactions.forEach(tx => {
+    const dateStr = formatDate(tx.date);
+    // Get last 5 characters of ref number
+    const refNo = tx.rec_no ? tx.rec_no.slice(-5) : '-----';
+    const qty = tx.quantity.toFixed(1);
+    
+    receipt += dateStr.padEnd(dateColW) + refNo.padEnd(recColW) + qty.padStart(qtyColW) + '\n';
+  });
+  
+  receipt += dashLine + '\n';
+  receipt += '\n';
+  
+  // Total
+  const totalLabel = 'TOTAL:';
+  const totalVal = `${data.totalWeight.toFixed(2)} Kgs`;
+  receipt += totalLabel + totalVal.padStart(W - totalLabel.length) + '\n';
+  receipt += dashLine + '\n';
+  receipt += '\n';
+  
+  // Footer
+  receipt += `Report printed on ${printedOn}\n`;
+  receipt += '\n\n\n';
+
+  // Try Classic Bluetooth printer first
+  if (isClassicPrinterConnected()) {
+    console.log('[PERIODIC] Using Classic Bluetooth printer');
+    return printToClassicPrinter(receipt);
+  }
+  
+  // Fall back to BLE printer
+  return printToBluetoothPrinter(receipt);
+};
