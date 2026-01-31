@@ -69,7 +69,8 @@ Updated the milk collection system to save receipts to the existing `transaction
 | collection_date | transdate | varchar(20) | Date (YYYY-MM-DD) |
 | collection_date | transtime | varchar(20) | Time (HH:MM:SS) |
 | collection_date | time | bigint(11) | Unix timestamp |
-| - | Transtype | int/varchar(20) | 1 for produce purchases (milk/coffee) |
+| transtype | Transtype | int/varchar(20) | 1 = Buy Produce, 2 = Sell Produce |
+| - | processed | tinyint(4) | Always 0 |
 | - | processed | tinyint(4) | Always 0 |
 | - | uploaded | tinyint(4) | Always 0 |
 

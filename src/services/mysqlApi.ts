@@ -343,6 +343,8 @@ export interface MilkCollection {
   entry_type?: 'scale' | 'manual';
   // Season SCODE from sessions table - saved to transactions.CAN column
   season_code?: string;       // → DB: CAN (stores session.SCODE for all orgtypes)
+  // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
+  transtype?: number;         // → DB: Transtype (default: 1)
   // Coffee sack weighing - gross/tare/net (orgtype C only)
   gross_weight?: number;      // Gross weight from scale (before sack deduction)
   tare_weight?: number;       // Fixed sack weight (1 kg per sack)
