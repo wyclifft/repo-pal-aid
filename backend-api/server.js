@@ -353,6 +353,45 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, data: rows, ccode });
     }
     
+    // Sell members endpoint - members with mcode starting with 'D' for Sell Portal
+    // These are debtors/customers who buy produce from the cooperative
+    if (path.startsWith('/api/sell-members/by-device/') && method === 'GET') {
+      const uniquedevcode = decodeURIComponent(path.split('/')[4]);
+      const search = parsedUrl.query.search;
+      
+      // Get device and check authorization
+      const [deviceRows] = await pool.query(
+        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+        return sendJSON(res, { 
+          success: false, 
+          message: 'Device not authorized' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      // Get members where mcode starts with 'D' (debtors/customers for sell portal)
+      let query = `SELECT mcode as farmer_id, descript as name, route, ccode, 
+                   IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty 
+                   FROM cm_members 
+                   WHERE ccode = ? AND mcode LIKE 'D%'`;
+      let params = [ccode];
+      
+      if (search) {
+        query += ' AND (mcode LIKE ? OR descript LIKE ?)';
+        params.push(`%${search}%`, `%${search}%`);
+      }
+      
+      query += ' ORDER BY mcode, descript';
+      const [rows] = await pool.query(query, params);
+      console.log(`[SELL-MEMBERS] Fetched ${rows.length} sell members for ccode ${ccode}`);
+      return sendJSON(res, { success: true, data: rows, ccode });
+    }
+    
     // Original farmers endpoint (kept for backward compatibility)
     if (path === '/api/farmers' && method === 'GET') {
       const search = parsedUrl.query.search;
@@ -906,18 +945,21 @@ const server = http.createServer(async (req, res) => {
           attempt++;
           try {
             // Attempt the insert with current reference
-            // Transtype = 1 for all produce purchases (milk/coffee collections)
+            // Transtype = 1 for produce purchases (milk/coffee collections BUY mode)
+            // Transtype = 2 for produce sales (SELL mode - selling to D-members)
             // Get product_code (icode) from request body - maps to icode column
             const productCode = body.product_code || '';
             // Get season_code (SCODE) from request body - maps to CAN column
             const seasonCAN = body.season_code || '';
+            // Get transtype from body - default to 1 (buy), use 2 for sell
+            const transtype = body.transtype === 2 ? 2 : 1;
             
             await pool.query(
               `INSERT INTO transactions 
                 (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
                  amount, icode, CAN, time, capType, entry_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?)`,
               [
                 attemptTransrefno,
                 attemptUploadrefno ? String(attemptUploadrefno) : '',
@@ -930,6 +972,7 @@ const server = http.createServer(async (req, res) => {
                 normalizedSession,
                 transdate,
                 transtime,
+                transtype,    // Transtype - 1 for buy, 2 for sell
                 ccode,
                 productCode,  // icode column - stores fm_items.icode (product code)
                 seasonCAN,    // CAN column - stores session.SCODE (season code)

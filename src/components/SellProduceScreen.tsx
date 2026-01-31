@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
-import { CornerDownLeft, Search, X } from 'lucide-react';
+import { X, ChevronDown } from 'lucide-react';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
-import { type Route, type Session } from '@/services/mysqlApi';
+import { type Route, type Session, farmersApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { useHaptics } from '@/hooks/useHaptics';
-import { FarmerSearchModal } from './FarmerSearchModal';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
 import { CoffeeWeightDisplay } from './CoffeeWeightDisplay';
 import { toast } from 'sonner';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 
 interface SellProduceScreenProps {
   route: Route;
@@ -44,6 +44,16 @@ interface SellProduceScreenProps {
   allowSackEdit?: boolean;
 }
 
+// Sell member interface (mcode starts with 'D')
+interface SellMember {
+  farmer_id: string;
+  name: string;
+  route?: string;
+  ccode?: string;
+  multOpt?: number;
+  currqty?: number;
+}
+
 export const SellProduceScreen = ({
   route,
   session,
@@ -73,12 +83,12 @@ export const SellProduceScreen = ({
   sackTareWeight = 1,
   allowSackEdit = false,
 }: SellProduceScreenProps) => {
-  const [memberNo, setMemberNo] = useState('');
-  const [showSearchModal, setShowSearchModal] = useState(false);
-  const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [sellMembers, setSellMembers] = useState<SellMember[]>([]);
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+  const [selectedMemberId, setSelectedMemberId] = useState('');
+  const selectRef = useRef<HTMLSelectElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
-  const { getFarmers } = useIndexedDB();
+  const { saveFarmers, getFarmers } = useIndexedDB();
   
   // Track current effective tare weight (starts from psettings, can be edited by user)
   const [currentTareWeight, setCurrentTareWeight] = useState(sackTareWeight);
@@ -86,7 +96,7 @@ export const SellProduceScreen = ({
   
   // Get psettings for produce labeling - updates automatically when psettings change
   const appSettings = useAppSettings();
-  const { produceLabel, autoWeightOnly: psettingsAutoWeightOnly, useRouteFilter, isCoffee } = appSettings;
+  const { produceLabel, autoWeightOnly: psettingsAutoWeightOnly, isCoffee } = appSettings;
   
   // Supervisor mode overrides psettings for capture mode
   const manualDisabled = !allowManual || psettingsAutoWeightOnly;
@@ -104,33 +114,66 @@ export const SellProduceScreen = ({
     setCurrentTareWeight(sackTareWeight);
   }, [sackTareWeight]);
 
-  // Load cached farmers with chkroute logic
-  // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
+  // Load sell members (mcode starts with 'D') from API with offline fallback
   useEffect(() => {
-    const loadFarmers = async () => {
+    const loadSellMembers = async () => {
+      setIsLoadingMembers(true);
+      
       try {
-        const farmers = await getFarmers();
-        let filtered: Farmer[];
+        // First, try to load from local cache for instant UI
+        const cachedFarmers = await getFarmers();
+        const cachedSellMembers = cachedFarmers.filter(f => 
+          f.farmer_id && f.farmer_id.toUpperCase().startsWith('D')
+        );
         
-        if (useRouteFilter && route?.tcode) {
-          // chkroute=1: Filter by exact route match
-          filtered = farmers.filter(f => f.route === route.tcode);
-        } else if (!useRouteFilter && route?.mprefix) {
-          // chkroute=0: Filter by mprefix (farmer_id starts with mprefix)
-          filtered = farmers.filter(f => 
-            f.farmer_id && f.farmer_id.startsWith(route.mprefix!)
-          );
-        } else {
-          filtered = farmers;
+        if (cachedSellMembers.length > 0) {
+          console.log(`[SELL] Loaded ${cachedSellMembers.length} sell members from cache`);
+          setSellMembers(cachedSellMembers.map(f => ({
+            farmer_id: f.farmer_id,
+            name: f.name,
+            route: f.route,
+            ccode: f.ccode,
+            multOpt: f.multOpt,
+            currqty: f.currqty,
+          })));
         }
         
-        setCachedFarmers(filtered);
+        // If online, fetch fresh data from API
+        if (navigator.onLine) {
+          const deviceFingerprint = await generateDeviceFingerprint();
+          const response = await farmersApi.getSellMembers(deviceFingerprint);
+          
+          if (response.success && response.data) {
+            console.log(`[SELL] Fetched ${response.data.length} sell members from API`);
+            const apiMembers = response.data.map(f => ({
+              farmer_id: f.farmer_id,
+              name: f.name,
+              route: f.route,
+              ccode: f.ccode,
+              multOpt: f.multOpt,
+              currqty: f.currqty,
+            }));
+            setSellMembers(apiMembers);
+            
+            // Cache the D-members along with existing farmers
+            // We merge to avoid overwriting non-D members
+            const nonDFarmers = cachedFarmers.filter(f => 
+              !f.farmer_id || !f.farmer_id.toUpperCase().startsWith('D')
+            );
+            const allFarmers = [...nonDFarmers, ...response.data];
+            saveFarmers(allFarmers);
+          }
+        }
       } catch (err) {
-        console.error('Failed to load farmers:', err);
+        console.error('Failed to load sell members:', err);
+        toast.error('Failed to load members. Using cached data.');
+      } finally {
+        setIsLoadingMembers(false);
       }
     };
-    loadFarmers();
-  }, [getFarmers, route?.tcode, route?.mprefix, useRouteFilter]);
+    
+    loadSellMembers();
+  }, [getFarmers, saveFarmers]);
 
   // Derive session type (AM/PM) from session time_from
   const getSessionType = (): 'AM' | 'PM' => {
@@ -140,102 +183,54 @@ export const SellProduceScreen = ({
     return hour >= 12 ? 'PM' : 'AM';
   };
 
-  // Check if a farmer is blocked (blacklisted OR submitted this session OR already in capture queue with multOpt=0)
-  const isFarmerBlocked = (farmerId: string, checkMultOpt: boolean = false): boolean => {
+  // Check if a farmer is blocked (blacklisted OR submitted this session)
+  const isFarmerBlocked = (farmerId: string): boolean => {
     const cleanId = farmerId.replace(/^#/, '').trim();
     if (blacklistedFarmerIds?.has(cleanId)) return true;
     if (sessionSubmittedFarmerIds?.has(cleanId)) return true;
-    
-    // Check if farmer with multOpt=0 is already in capturedCollections
-    if (checkMultOpt) {
-      const today = new Date().toISOString().split('T')[0];
-      const currentSessionType = getSessionType();
-      const alreadyCaptured = capturedCollections.some(c => {
-        const captureDate = new Date(c.collection_date).toISOString().split('T')[0];
-        return (
-          c.farmer_id.replace(/^#/, '').trim() === cleanId &&
-          c.session === currentSessionType &&
-          captureDate === today &&
-          c.multOpt === 0
-        );
-      });
-      if (alreadyCaptured) return true;
-    }
-    
     return false;
   };
 
-  // Resolve numeric input to full farmer ID
-  const resolveFarmerId = (input: string): Farmer | null => {
-    if (!input.trim()) return null;
-    
-    const numericInput = input.replace(/\D/g, '');
-    
-    // Search by exact farmer_id first
-    const exactMatch = cachedFarmers.find(
-      f => f.farmer_id.toLowerCase() === input.toLowerCase()
-    );
-    if (exactMatch) {
-      const cleanId = exactMatch.farmer_id.replace(/^#/, '').trim();
-      if (exactMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-        toast.error(`${exactMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
-        return null;
-      }
-      return exactMatch;
+  // Handle dropdown selection
+  const handleMemberSelect = (memberId: string) => {
+    if (!memberId) {
+      handleClear();
+      return;
     }
     
-    // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
-    if (numericInput && numericInput === input.trim()) {
-      const paddedId = `M${numericInput.padStart(5, '0')}`;
-      const paddedMatch = cachedFarmers.find(
-        f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
-      );
-      if (paddedMatch) {
-        const cleanId = paddedMatch.farmer_id.replace(/^#/, '').trim();
-        if (paddedMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-          toast.error(`${paddedMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
-          return null;
-        }
-        return paddedMatch;
-      }
-      
-      // Also try matching by numeric portion
-      const numericMatch = cachedFarmers.find(f => {
-        const farmerNumeric = f.farmer_id.replace(/\D/g, '');
-        return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
-      });
-      if (numericMatch) {
-        const cleanId = numericMatch.farmer_id.replace(/^#/, '').trim();
-        if (numericMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-          toast.error(`${numericMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
-          return null;
-        }
-        return numericMatch;
-      }
+    const member = sellMembers.find(m => m.farmer_id === memberId);
+    if (!member) {
+      toast.error('Member not found');
+      return;
     }
     
-    return null;
-  };
-
-  // Handle arrow button - resolve and select farmer
-  const handleEnter = () => {
-    const farmer = resolveFarmerId(memberNo);
-    if (farmer) {
-      handleSelectFarmer(farmer);
-    } else if (memberNo.trim()) {
-      toast.error(`Farmer "${memberNo}" not found`);
+    // Check if member is blocked
+    if (member.multOpt === 0 && isFarmerBlocked(memberId)) {
+      toast.error(`${member.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+      setSelectedMemberId('');
+      return;
     }
-  };
-
-  // Handle search button - open modal
-  const handleSearch = () => {
-    setShowSearchModal(true);
+    
+    setSelectedMemberId(memberId);
+    
+    // Convert to Farmer type for parent component
+    const farmerData: Farmer = {
+      farmer_id: member.farmer_id,
+      name: member.name,
+      route: member.route || '',
+      multOpt: member.multOpt,
+      currqty: member.currqty,
+      ccode: member.ccode,
+    };
+    
+    onSelectFarmer(farmerData);
+    hapticLight();
   };
 
   // Handle clear button with haptic feedback
   const handleClear = () => {
     hapticLight();
-    setMemberNo('');
+    setSelectedMemberId('');
     onClearFarmer();
   };
   
@@ -254,45 +249,32 @@ export const SellProduceScreen = ({
     hapticLight();
     onBack();
   };
-
-  const handleSelectFarmer = (farmer: Farmer) => {
-    // Check if farmer is blocked before allowing selection (includes queue check)
-    const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
-    if (farmer.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-      toast.error(`${farmer.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
-      return;
-    }
-    setMemberNo(cleanId);
-    setShowSearchModal(false);
-    onSelectFarmer(farmer);
-  };
   
-  // Focus input when member is cleared (for post-submit flow)
-  const focusMemberInput = () => {
+  // Focus select when member is cleared (for post-submit flow)
+  const focusMemberSelect = () => {
     setTimeout(() => {
-      inputRef.current?.focus();
+      selectRef.current?.focus();
     }, 100);
   };
   
   // When capturedCollections transitions from >0 to 0 (submit completed), clear member input and focus.
-  // NOTE: selectedFarmer prop can be a new object on each parent re-render; do NOT depend on it.
   useEffect(() => {
     const prev = prevCapturedLenRef.current;
     const next = capturedCollections.length;
 
     if (prev > 0 && next === 0) {
-      setMemberNo('');
-      focusMemberInput();
+      setSelectedMemberId('');
+      focusMemberSelect();
     }
 
     prevCapturedLenRef.current = next;
   }, [capturedCollections.length]);
 
-  // Listen for receipt modal close event to focus input
+  // Listen for receipt modal close event to focus select
   useEffect(() => {
     const handleReceiptModalClosed = () => {
-      setMemberNo('');
-      focusMemberInput();
+      setSelectedMemberId('');
+      focusMemberSelect();
     };
     window.addEventListener('receiptModalClosed', handleReceiptModalClosed);
     return () => window.removeEventListener('receiptModalClosed', handleReceiptModalClosed);
@@ -392,30 +374,27 @@ export const SellProduceScreen = ({
           </p>
         )}
 
-        {/* Member Search */}
+        {/* Member Selection Dropdown - only shows D-members */}
         <div className="flex gap-1.5 sm:gap-2">
-          <input
-            ref={inputRef}
-            type="text"
-            inputMode="text"
-            placeholder="Enter Member No."
-            value={memberNo}
-            onChange={(e) => setMemberNo(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleEnter()}
-            className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-800 bg-white rounded-lg text-base sm:text-lg min-h-[44px] font-semibold"
-          />
-          <button
-            onClick={handleEnter}
-            className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
-          >
-            <CornerDownLeft className="h-5 w-5 sm:h-6 sm:w-6" />
-          </button>
-          <button
-            onClick={handleSearch}
-            className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
-          >
-            <Search className="h-5 w-5 sm:h-6 sm:w-6" />
-          </button>
+          <div className="flex-1 relative">
+            <select
+              ref={selectRef}
+              value={selectedMemberId}
+              onChange={(e) => handleMemberSelect(e.target.value)}
+              disabled={isLoadingMembers}
+              className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-800 bg-white rounded-lg text-base sm:text-lg min-h-[44px] font-semibold appearance-none cursor-pointer pr-10"
+            >
+              <option value="">
+                {isLoadingMembers ? 'Loading members...' : 'Select Member'}
+              </option>
+              {sellMembers.map((member) => (
+                <option key={member.farmer_id} value={member.farmer_id}>
+                  {member.farmer_id} - {member.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-500 pointer-events-none" />
+          </div>
           <button
             onClick={handleClear}
             className="w-11 sm:w-14 bg-red-500 text-white rounded-lg flex items-center justify-center active:bg-red-600 min-h-[44px]"
@@ -423,14 +402,6 @@ export const SellProduceScreen = ({
             <X className="h-5 w-5 sm:h-6 sm:w-6" />
           </button>
         </div>
-
-        {/* Farmer Search Modal */}
-        <FarmerSearchModal
-          isOpen={showSearchModal}
-          onClose={() => setShowSearchModal(false)}
-          onSelectFarmer={handleSelectFarmer}
-          farmers={cachedFarmers}
-        />
 
         {/* Member Info Card */}
         <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 space-y-2">
