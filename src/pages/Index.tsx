@@ -437,8 +437,6 @@ const Index = () => {
       entry_type: entryType,
       // Season SCODE from active session → DB: CAN column
       season_code: activeSession?.SCODE || '',
-      // Transaction type: 1 = Buy (produce collection), 2 = Sell (produce sale to D-members)
-      transtype: collectionMode === 'sell' ? 2 : 1,
       // Coffee sack weighing - gross/tare/net (orgtype C only)
       ...(isCoffee && {
         gross_weight: parseFloat(Number(grossWeight).toFixed(2)),
@@ -566,7 +564,6 @@ const Index = () => {
             entry_type: capture.entry_type, // Pass entry_type to backend
             product_code: capture.product_code, // Pass selected product icode → DB: icode column
             season_code: capture.season_code, // Pass session SCODE → DB: CAN column
-            transtype: capture.transtype || 1, // Pass transtype: 1=buy, 2=sell
           });
 
           console.log(`📨 Submit result for ${referenceNo}:`, result);
@@ -669,61 +666,93 @@ const Index = () => {
     // This ensures receipt is saved even if user closes modal without clicking Print
     await addMilkReceipt(capturedCollections);
     
-    // Open receipt modal IMMEDIATELY - don't block on cumulative fetch
-    setReceiptModalOpen(true);
-    
-    // Trigger refresh
-    setRefreshTrigger(prev => prev + 1);
-    
-    // Calculate cumulative weight in background (non-blocking)
     const shouldShowCumulativeForFarmer =
       showCumulative && Number(selectedFarmer?.currqty) === 1;
 
+    // Calculate cumulative weight if farmer has currqty=1 and global showCumulative is enabled
+    // CLOUD-BASED ACCUMULATION: ALWAYS fetch fresh from backend - never use stale local cache
+    // IMPORTANT: If we submitted online successfully, the cloud ALREADY includes our submission
+    // If we saved offline, we need to add the current weight to the cloud value
     if (shouldShowCumulativeForFarmer && deviceFingerprint) {
-      // Run cumulative fetch in background without blocking UI
-      (async () => {
-        const cleanFarmerId = selectedFarmer!.farmer_id.replace(/^#/, '').trim();
-        const currentCollectionWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
-        const wasSubmittedOnline = successCount > 0;
+      const cleanFarmerId = selectedFarmer!.farmer_id.replace(/^#/, '').trim();
+      const currentCollectionWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
+      
+      // Determine if our collection was synced to cloud (successCount > 0 means it's already in the cloud)
+      const wasSubmittedOnline = successCount > 0;
 
+      // FORCE CLOUD REFRESH: Always fetch fresh cumulative from backend
+      // Retry up to 3 times with timeout to ensure we get the latest cloud value
+      let cloudCumulative: number | null = null;
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      // If submitted online, wait a moment for the database to settle
+      if (wasSubmittedOnline) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      while (attempts < maxAttempts && cloudCumulative === null) {
+        attempts++;
         try {
-          // Single attempt with short timeout for fast response
-          if (wasSubmittedOnline) {
-            await new Promise(resolve => setTimeout(resolve, 200));
-          }
+          console.log(`🔄 Fetching cloud cumulative (attempt ${attempts}/${maxAttempts})...`);
           
+          // Fetch cloud cumulative with timeout
           const freqResult = await Promise.race([
             mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint),
             new Promise<{ success: false }>((_, reject) => 
-              setTimeout(() => reject(new Error('Timeout')), 3000)
+              setTimeout(() => reject(new Error('Timeout')), 5000)
             )
           ]);
 
           if (freqResult.success && freqResult.data) {
-            const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-            const displayTotal = wasSubmittedOnline ? cloudCumulative : cloudCumulative + currentCollectionWeight;
-            await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
-            setCumulativeFrequency(displayTotal);
-            console.log('[CUMULATIVE] Cloud fetch success:', displayTotal);
-          } else {
-            // Use local cache as fallback
-            const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
-            const newTotal = cachedTotal + currentCollectionWeight;
-            await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
-            setCumulativeFrequency(newTotal);
+            cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+            console.log(`✅ Cloud Cumulative fetched: ${cloudCumulative} (attempt ${attempts})`);
           }
         } catch (error) {
-          console.warn('[CUMULATIVE] Background fetch failed, using cache:', error);
-          // Use local cache as fallback
-          const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
-          const newTotal = cachedTotal + currentCollectionWeight;
-          await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
-          setCumulativeFrequency(newTotal);
+          console.warn(`⚠️ Cloud fetch attempt ${attempts} failed:`, error);
+          if (attempts < maxAttempts) {
+            // Wait 500ms before retry
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
         }
-      })();
+      }
+
+      if (cloudCumulative !== null) {
+        // SUCCESS: Got fresh cloud value
+        // CRITICAL FIX: If we submitted ONLINE, the cloud cumulative ALREADY includes our submission
+        // Only add currentCollectionWeight if we saved OFFLINE (it's not in cloud yet)
+        let displayTotal: number;
+        
+        if (wasSubmittedOnline) {
+          // Cloud already has our data, just use cloud value directly
+          displayTotal = cloudCumulative;
+          console.log(`📊 ONLINE: Cloud Cumulative already includes submission: ${cloudCumulative}`);
+        } else {
+          // Offline: cloud doesn't have our data yet, add it
+          displayTotal = cloudCumulative + currentCollectionWeight;
+          console.log(`📊 OFFLINE: Cloud Cumulative: ${cloudCumulative} + Current: ${currentCollectionWeight} = ${displayTotal}`);
+        }
+        
+        await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
+        setCumulativeFrequency(displayTotal);
+      } else {
+        // FAILED after all retries - show toast warning and use local cache as last resort
+        console.error('❌ Failed to fetch cloud cumulative after all retries, using local cache');
+        toast.warning('Could not fetch latest cumulative from cloud - showing cached value');
+        const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
+        const newTotal = cachedTotal + currentCollectionWeight;
+        await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
+        setCumulativeFrequency(newTotal);
+      }
     } else {
       setCumulativeFrequency(undefined);
     }
+
+    // Open receipt modal for printing
+    setReceiptModalOpen(true);
+    
+    // Trigger refresh
+    setRefreshTrigger(prev => prev + 1);
   };
 
   const handlePrintAllCaptures = () => {

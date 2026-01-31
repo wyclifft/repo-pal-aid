@@ -81,7 +81,7 @@ export const printThermalZReport = (reportData: ZReportData, produceLabel?: stri
       <div class="section center bold">
         <div>Total Entries: ${reportData.totals.entries}</div>
         <div>Total Farmers: ${reportData.totals.farmers}</div>
-        <div>Total Kgs: ${reportData.totals.liters.toFixed(2)}</div>
+        <div>Total ${isCoffee ? 'Kgs' : 'Litres'}: ${reportData.totals.liters.toFixed(2)}</div>
       </div>
       <div class="line"></div>
       ${sessionSection}
@@ -330,7 +330,7 @@ const downloadWithFallback = async (blob: Blob, fileName: string, resolve: (succ
 export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeName?: string): Promise<boolean> => {
   return new Promise((resolve) => {
     try {
-      const weightUnit = 'KGS';
+      const weightUnit = reportData.isCoffee ? 'KGS' : 'LTS';
       const formattedDate = new Date(reportData.date).toLocaleDateString('en-GB', {
         day: '2-digit',
         month: '2-digit',

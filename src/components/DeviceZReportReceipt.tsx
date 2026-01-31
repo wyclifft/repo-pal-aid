@@ -207,7 +207,7 @@ export const DeviceZReportReceipt = ({
     }
   };
 
-  const weightUnit = 'KGS';
+  const weightUnit = data.isCoffee ? 'KGS' : 'LTS';
   const routeLabel = data.routeLabel || 'Center';
 
   // Render a single center's transactions section

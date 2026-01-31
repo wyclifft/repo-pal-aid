@@ -2242,7 +2242,7 @@ export const printZReport = async (data: {
     hour12: true
   }).toUpperCase();
   
-  const weightUnit = 'KGS';
+  const weightUnit = data.isCoffee ? 'KGS' : 'LTS';
   const routeLabel = data.routeLabel || (data.isCoffee ? 'CENTER' : 'ROUTE');
   
   // Group transactions by produce type, then by center

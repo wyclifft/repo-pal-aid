@@ -288,14 +288,6 @@ export const farmersApi = {
     });
     return response.data || null;
   },
-  
-  /**
-   * Get sell members (mcode starts with 'D') for sell portal
-   * @param uniquedevcode - Device fingerprint for authorization
-   */
-  getSellMembers: async (uniquedevcode: string): Promise<ApiResponse<Farmer[]>> => {
-    return apiRequest<Farmer[]>(`/sell-members/by-device/${encodeURIComponent(uniquedevcode)}`);
-  },
 
   /**
    * Delete farmer
@@ -426,7 +418,7 @@ export const milkCollectionApi = {
    * Returns both success status and the final reference number (may differ if backend regenerated it)
    * Also returns error details for duplicate session delivery cases
    */
-  create: async (collection: Omit<MilkCollection, 'id' | 'created_at' | 'updated_at'> & { transtype?: 1 | 2 }): Promise<{ 
+  create: async (collection: Omit<MilkCollection, 'id' | 'created_at' | 'updated_at'>): Promise<{ 
     success: boolean; 
     reference_no?: string;
     uploadrefno?: string;
@@ -436,10 +428,7 @@ export const milkCollectionApi = {
   }> => {
     const response = await apiRequest<{ reference_no: string; uploadrefno?: string; existing_reference?: string }>('/milk-collection', {
       method: 'POST',
-      body: JSON.stringify({
-        ...collection,
-        transtype: collection.transtype || 1, // Default to 1 (buy), use 2 for sell
-      }),
+      body: JSON.stringify(collection),
     });
     return { 
       success: response.success || false,

@@ -17,22 +17,21 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
   const { getRoutes, saveRoutes, isReady } = useIndexedDB();
   const { routeLabel, useRouteFilter } = useAppSettings();
 
-  // Load routes on mount - cache-first for instant display
+  // Load routes on mount
   const loadRoutes = useCallback(async () => {
-    // Load from cache FIRST for instant display
+    // First try to load from cache
     if (isReady) {
       try {
         const cachedRoutes = await getRoutes();
         if (cachedRoutes && cachedRoutes.length > 0) {
           setRoutes(cachedRoutes);
-          console.log('[ROUTE] Loaded from cache:', cachedRoutes.length, 'routes');
         }
       } catch (err) {
-        console.warn('[ROUTE] Cache load error:', err);
+        console.warn('Failed to load cached routes:', err);
       }
     }
 
-    // Then sync from server if online (non-blocking)
+    // Then sync from server if online
     if (navigator.onLine) {
       setIsLoading(true);
       try {
@@ -43,20 +42,17 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
           setRoutes(response.data);
           if (isReady) {
             await saveRoutes(response.data);
-            console.log('[ROUTE] Saved to cache:', response.data.length, 'routes');
           }
+          console.log(`✅ Synced ${response.data.length} routes from fm_tanks`);
         } else {
           // No routes for this ccode - that's OK, not an error
-          console.log('[ROUTE] No routes configured for this company code');
+          console.log('No routes configured for this company code');
         }
       } catch (err) {
-        console.warn('[ROUTE] Network sync skipped:', err);
-        // Don't show error if we have cached data
+        console.warn('Route sync skipped:', err);
       } finally {
         setIsLoading(false);
       }
-    } else {
-      console.log('[ROUTE] Offline - using cached routes');
     }
   }, [isReady, getRoutes, saveRoutes]);
 
