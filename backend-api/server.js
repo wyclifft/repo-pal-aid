@@ -805,8 +805,13 @@ const server = http.createServer(async (req, res) => {
       const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
       
       // CHECK multOpt: If member has multOpt = 0, check for existing transaction in this session
+      // NOTE: Sell Portal (transtype=2) is EXEMPT from multOpt restrictions
       const cleanFarmerId = (body.farmer_id || '').replace(/^#/, '').trim();
       const rawSession = (body.session || '').trim();
+      
+      // Parse transtype early to check for Sell Portal exemption
+      // Transtype: 1 = Buy Produce, 2 = Sell Produce (default: 1 for backwards compatibility)
+      const transtype = parseInt(body.transtype) || 1;
 
       // Normalize session to AM/PM for both validation and storage
       let normalizedSession = rawSession.toUpperCase();
@@ -819,82 +824,88 @@ const server = http.createServer(async (req, res) => {
       console.log('🧼 Normalized values:', {
         farmer_id: { raw: body.farmer_id, clean: cleanFarmerId },
         session: { raw: body.session, normalized: normalizedSession },
+        transtype: transtype,
       });
 
-      // Get member's multOpt setting
-      const [memberRows] = await pool.query(
-        'SELECT multOpt FROM cm_members WHERE mcode = ? AND ccode = ?',
-        [cleanFarmerId, ccode]
-      );
-
-      // Default to allowing multiple if member not found or multOpt not set
-      const multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null 
-        ? parseInt(memberRows[0].multOpt) 
-        : 1;
-
-      console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
-
-      if (multOpt === 0) {
-        // multOpt=0 means: only ONE "workflow" per session/day.
-        // However, a workflow may include multiple bucket rows.
-        // Rule:
-        // - If a row already exists for this farmer+session+date, then ONLY allow inserts that
-        //   share the SAME Uploadrefno (i.e., same workflow/batch).
-        // - Any different Uploadrefno is treated as a duplicate session delivery.
-        const [existingTransRows] = await pool.query(
-          `SELECT transrefno, Uploadrefno FROM transactions 
-           WHERE memberno = ?
-             AND UPPER(TRIM(session)) = ?
-             AND transdate = ?
-             AND Transtype = 1
-             AND ccode = ?
-           ORDER BY transrefno ASC
-           LIMIT 1`,
-          [cleanFarmerId, normalizedSession, transdate, ccode]
+      // Skip multOpt check for Sell Portal (transtype=2) - unlimited sells per session allowed
+      if (transtype === 2) {
+        console.log('📦 Sell Portal transaction (transtype=2) - skipping multOpt validation');
+      } else {
+        // Get member's multOpt setting (only for Buy Produce transactions)
+        const [memberRows] = await pool.query(
+          'SELECT multOpt FROM cm_members WHERE mcode = ? AND ccode = ?',
+          [cleanFarmerId, ccode]
         );
 
-        if (existingTransRows.length > 0) {
-          const existingRef = existingTransRows[0].transrefno;
-          const existingUploadRef = existingTransRows[0].Uploadrefno;
+        // Default to allowing multiple if member not found or multOpt not set
+        const multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null 
+          ? parseInt(memberRows[0].multOpt) 
+          : 1;
 
-          // If client didn't send uploadrefno, we cannot safely group; treat as duplicate.
-          if (!uploadrefno) {
-            console.log(
-              `⚠️ multOpt=0: existing delivery found but request has no uploadrefno. Rejecting. existingUploadRef=${existingUploadRef}`
-            );
-            return sendJSON(res, {
-              success: false,
-              error: 'DUPLICATE_SESSION_DELIVERY',
-              message: `Member already delivered in ${normalizedSession} session today`,
-              existing_reference: existingRef,
-              existing_uploadrefno: existingUploadRef,
-              farmer_id: cleanFarmerId,
-              session: normalizedSession,
-              date: transdate,
-            }, 409);
-          }
+        console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
 
-          // Allow only if uploadrefno matches the already-open workflow for the day/session.
-          if (String(uploadrefno) !== String(existingUploadRef)) {
-            console.log(
-              `⚠️ Member ${cleanFarmerId} already delivered in ${normalizedSession} today with Uploadrefno=${existingUploadRef}. ` +
-              `Rejecting new Uploadrefno=${uploadrefno}. Existing ref: ${existingRef}`
-            );
-            return sendJSON(res, {
-              success: false,
-              error: 'DUPLICATE_SESSION_DELIVERY',
-              message: `Member already delivered in ${normalizedSession} session today`,
-              existing_reference: existingRef,
-              existing_uploadrefno: existingUploadRef,
-              farmer_id: cleanFarmerId,
-              session: normalizedSession,
-              date: transdate,
-            }, 409);
-          }
-
-          console.log(
-            `✅ multOpt=0: existing delivery found, but Uploadrefno matches (${uploadrefno}). Allowing additional row.`
+        if (multOpt === 0) {
+          // multOpt=0 means: only ONE "workflow" per session/day.
+          // However, a workflow may include multiple bucket rows.
+          // Rule:
+          // - If a row already exists for this farmer+session+date, then ONLY allow inserts that
+          //   share the SAME Uploadrefno (i.e., same workflow/batch).
+          // - Any different Uploadrefno is treated as a duplicate session delivery.
+          const [existingTransRows] = await pool.query(
+            `SELECT transrefno, Uploadrefno FROM transactions 
+             WHERE memberno = ?
+               AND UPPER(TRIM(session)) = ?
+               AND transdate = ?
+               AND Transtype = 1
+               AND ccode = ?
+             ORDER BY transrefno ASC
+             LIMIT 1`,
+            [cleanFarmerId, normalizedSession, transdate, ccode]
           );
+
+          if (existingTransRows.length > 0) {
+            const existingRef = existingTransRows[0].transrefno;
+            const existingUploadRef = existingTransRows[0].Uploadrefno;
+
+            // If client didn't send uploadrefno, we cannot safely group; treat as duplicate.
+            if (!uploadrefno) {
+              console.log(
+                `⚠️ multOpt=0: existing delivery found but request has no uploadrefno. Rejecting. existingUploadRef=${existingUploadRef}`
+              );
+              return sendJSON(res, {
+                success: false,
+                error: 'DUPLICATE_SESSION_DELIVERY',
+                message: `Member already delivered in ${normalizedSession} session today`,
+                existing_reference: existingRef,
+                existing_uploadrefno: existingUploadRef,
+                farmer_id: cleanFarmerId,
+                session: normalizedSession,
+                date: transdate,
+              }, 409);
+            }
+
+            // Allow only if uploadrefno matches the already-open workflow for the day/session.
+            if (String(uploadrefno) !== String(existingUploadRef)) {
+              console.log(
+                `⚠️ Member ${cleanFarmerId} already delivered in ${normalizedSession} today with Uploadrefno=${existingUploadRef}. ` +
+                `Rejecting new Uploadrefno=${uploadrefno}. Existing ref: ${existingRef}`
+              );
+              return sendJSON(res, {
+                success: false,
+                error: 'DUPLICATE_SESSION_DELIVERY',
+                message: `Member already delivered in ${normalizedSession} session today`,
+                existing_reference: existingRef,
+                existing_uploadrefno: existingUploadRef,
+                farmer_id: cleanFarmerId,
+                session: normalizedSession,
+                date: transdate,
+              }, 409);
+            }
+
+            console.log(
+              `✅ multOpt=0: existing delivery found, but Uploadrefno matches (${uploadrefno}). Allowing additional row.`
+            );
+          }
         }
       }
 
@@ -906,8 +917,7 @@ const server = http.createServer(async (req, res) => {
           attempt++;
           try {
             // Attempt the insert with current reference
-            // Transtype: 1 = Buy Produce, 2 = Sell Produce (default: 1 for backwards compatibility)
-            const transtype = parseInt(body.transtype) || 1;
+            // Note: transtype was already parsed earlier (1 = Buy Produce, 2 = Sell Produce)
             // Get product_code (icode) from request body - maps to icode column
             const productCode = body.product_code || '';
             // Get season_code (SCODE) from request body - maps to CAN column
