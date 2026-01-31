@@ -304,7 +304,9 @@ const Index = () => {
       return;
     }
 
-    if (!farmerId || !route || !weight || !session) {
+    // For debtors (D prefix): they typically have empty route in DB, so use dashboard-selected route
+    const effectiveRoute = route || selectedRouteCode;
+    if (!farmerId || !effectiveRoute || !weight || !session) {
       toast.error('Enter farmer, route, session, and weight');
       return;
     }
