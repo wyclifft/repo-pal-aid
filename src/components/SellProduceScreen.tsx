@@ -76,6 +76,7 @@ export const SellProduceScreen = ({
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
+  const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
   const inputRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers } = useIndexedDB();
@@ -104,7 +105,7 @@ export const SellProduceScreen = ({
     setCurrentTareWeight(sackTareWeight);
   }, [sackTareWeight]);
 
-  // Load cached farmers with chkroute logic
+  // Load cached farmers with chkroute logic + Member/Debtor mode filter
   // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
   useEffect(() => {
     const loadFarmers = async () => {
@@ -124,13 +125,19 @@ export const SellProduceScreen = ({
           filtered = farmers;
         }
         
+        // Apply Member/Debtor mode filter based on mcode prefix
+        const modePrefix = isMemberMode ? 'M' : 'D';
+        filtered = filtered.filter(f => 
+          f.farmer_id && f.farmer_id.toUpperCase().startsWith(modePrefix)
+        );
+        
         setCachedFarmers(filtered);
       } catch (err) {
         console.error('Failed to load farmers:', err);
       }
     };
     loadFarmers();
-  }, [getFarmers, route?.tcode, route?.mprefix, useRouteFilter]);
+  }, [getFarmers, route?.tcode, route?.mprefix, useRouteFilter, isMemberMode]);
 
   // Derive session type (AM/PM) from session time_from
   const getSessionType = (): 'AM' | 'PM' => {
@@ -165,11 +172,12 @@ export const SellProduceScreen = ({
     return false;
   };
 
-  // Resolve numeric input to full farmer ID
+  // Resolve numeric input to full farmer ID based on current mode (M or D prefix)
   const resolveFarmerId = (input: string): Farmer | null => {
     if (!input.trim()) return null;
     
     const numericInput = input.replace(/\D/g, '');
+    const prefix = isMemberMode ? 'M' : 'D';
     
     // Search by exact farmer_id first
     const exactMatch = cachedFarmers.find(
@@ -184,9 +192,9 @@ export const SellProduceScreen = ({
       return exactMatch;
     }
     
-    // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
+    // If pure numeric, resolve to padded format (e.g., 1 -> M00001 or D00001)
     if (numericInput && numericInput === input.trim()) {
-      const paddedId = `M${numericInput.padStart(5, '0')}`;
+      const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
       const paddedMatch = cachedFarmers.find(
         f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
       );
@@ -199,7 +207,7 @@ export const SellProduceScreen = ({
         return paddedMatch;
       }
       
-      // Also try matching by numeric portion
+      // Also try matching by numeric portion within filtered farmers
       const numericMatch = cachedFarmers.find(f => {
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
         return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
@@ -313,6 +321,40 @@ export const SellProduceScreen = ({
       {/* Produce Selling Portal Banner - uses orgtype to switch wording */}
       <div className="bg-teal-500 text-white text-center py-2 font-semibold text-sm sm:text-base">
         {produceLabel} Selling Portal
+      </div>
+
+      {/* Member/Debtor Toggle - identical to Store page */}
+      <div className="flex justify-center py-2 bg-white border-b">
+        <div className="flex bg-gray-200 rounded-lg p-1">
+          <button
+            onClick={() => {
+              setIsMemberMode(true);
+              setMemberNo('');
+              onClearFarmer();
+            }}
+            className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors min-h-[40px] ${
+              isMemberMode
+                ? 'bg-teal-500 text-white shadow'
+                : 'text-gray-600 hover:bg-gray-300'
+            }`}
+          >
+            Members (M)
+          </button>
+          <button
+            onClick={() => {
+              setIsMemberMode(false);
+              setMemberNo('');
+              onClearFarmer();
+            }}
+            className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors min-h-[40px] ${
+              !isMemberMode
+                ? 'bg-teal-500 text-white shadow'
+                : 'text-gray-600 hover:bg-gray-300'
+            }`}
+          >
+            Debtors (D)
+          </button>
+        </div>
       </div>
 
       {/* Main Content */}
