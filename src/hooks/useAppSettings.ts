@@ -539,9 +539,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const produceLabel = isDairy ? 'Milk' : 'Coffee';
   // Period label: use backend value if available, otherwise derive from orgtype
   const periodLabel = settings.periodLabel || (isCoffee ? 'Season' : 'Session');
-  // Weight unit: kg for coffee, L for dairy
-  const weightUnit = isCoffee ? 'kg' : 'L';
-  const weightLabel = isCoffee ? 'Kilograms' : 'Liters';
+  // Weight unit: always kg now
+  const weightUnit = 'kg';
+  const weightLabel = 'Kgs';
   // CRITICAL: Use strict equality with number 1 for boolean conversion
   const requireStableReading = settings.stableopt === 1;
   const requireZeroScale = settings.zeroOpt === 1;
