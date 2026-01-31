@@ -151,31 +151,14 @@ export const SellProduceScreen = ({
   };
 
   // Check if a farmer is blocked (blacklisted OR submitted this session OR already in capture queue with multOpt=0)
+  // NOTE: Sell Portal ignores multOpt - this function always returns false for sell mode
   const isFarmerBlocked = (farmerId: string, checkMultOpt: boolean = false): boolean => {
-    const cleanId = farmerId.replace(/^#/, '').trim();
-    if (blacklistedFarmerIds?.has(cleanId)) return true;
-    if (sessionSubmittedFarmerIds?.has(cleanId)) return true;
-    
-    // Check if farmer with multOpt=0 is already in capturedCollections
-    if (checkMultOpt) {
-      const today = new Date().toISOString().split('T')[0];
-      const currentSessionType = getSessionType();
-      const alreadyCaptured = capturedCollections.some(c => {
-        const captureDate = new Date(c.collection_date).toISOString().split('T')[0];
-        return (
-          c.farmer_id.replace(/^#/, '').trim() === cleanId &&
-          c.session === currentSessionType &&
-          captureDate === today &&
-          c.multOpt === 0
-        );
-      });
-      if (alreadyCaptured) return true;
-    }
-    
+    // Sell Portal allows unlimited deliveries - never block farmers
     return false;
   };
 
   // Resolve numeric input to full farmer ID based on current mode (M or D prefix)
+  // NOTE: Sell Portal allows unlimited deliveries - no multOpt blocking
   const resolveFarmerId = (input: string): Farmer | null => {
     if (!input.trim()) return null;
     
@@ -186,14 +169,7 @@ export const SellProduceScreen = ({
     const exactMatch = cachedFarmers.find(
       f => f.farmer_id.toLowerCase() === input.toLowerCase()
     );
-    if (exactMatch) {
-      const cleanId = exactMatch.farmer_id.replace(/^#/, '').trim();
-      if (exactMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-        toast.error(`${exactMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
-        return null;
-      }
-      return exactMatch;
-    }
+    if (exactMatch) return exactMatch;
     
     // If pure numeric, resolve to padded format (e.g., 1 -> M00001 or D00001)
     if (numericInput && numericInput === input.trim()) {
@@ -201,28 +177,14 @@ export const SellProduceScreen = ({
       const paddedMatch = cachedFarmers.find(
         f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
       );
-      if (paddedMatch) {
-        const cleanId = paddedMatch.farmer_id.replace(/^#/, '').trim();
-        if (paddedMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-          toast.error(`${paddedMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
-          return null;
-        }
-        return paddedMatch;
-      }
+      if (paddedMatch) return paddedMatch;
       
       // Also try matching by numeric portion within filtered farmers
       const numericMatch = cachedFarmers.find(f => {
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
         return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
       });
-      if (numericMatch) {
-        const cleanId = numericMatch.farmer_id.replace(/^#/, '').trim();
-        if (numericMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-          toast.error(`${numericMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
-          return null;
-        }
-        return numericMatch;
-      }
+      if (numericMatch) return numericMatch;
     }
     
     return null;
@@ -267,12 +229,8 @@ export const SellProduceScreen = ({
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
-    // Check if farmer is blocked before allowing selection (includes queue check)
+    // Sell Portal allows unlimited deliveries - no blocking checks needed
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
-    if (farmer.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-      toast.error(`${farmer.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
-      return;
-    }
     setMemberNo(cleanId);
     setShowSearchModal(false);
     onSelectFarmer(farmer);
