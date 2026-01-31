@@ -437,6 +437,8 @@ const Index = () => {
       entry_type: entryType,
       // Season SCODE from active session → DB: CAN column
       season_code: activeSession?.SCODE || '',
+      // Transaction type: 1 = Buy (produce collection), 2 = Sell (produce sale to D-members)
+      transtype: collectionMode === 'sell' ? 2 : 1,
       // Coffee sack weighing - gross/tare/net (orgtype C only)
       ...(isCoffee && {
         gross_weight: parseFloat(Number(grossWeight).toFixed(2)),
@@ -564,6 +566,7 @@ const Index = () => {
             entry_type: capture.entry_type, // Pass entry_type to backend
             product_code: capture.product_code, // Pass selected product icode → DB: icode column
             season_code: capture.season_code, // Pass session SCODE → DB: CAN column
+            transtype: capture.transtype || 1, // Pass transtype: 1=buy, 2=sell
           });
 
           console.log(`📨 Submit result for ${referenceNo}:`, result);

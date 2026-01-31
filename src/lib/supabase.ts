@@ -98,4 +98,6 @@ export interface MilkCollection {
   gross_weight?: number;      // Gross weight from scale (before sack deduction)
   tare_weight?: number;       // Fixed sack weight (1 kg per sack)
   net_weight?: number;        // Calculated: gross_weight - tare_weight
+  // Transaction type: 1 = Buy (produce collection), 2 = Sell (produce sale to D-members)
+  transtype?: 1 | 2;
 }
