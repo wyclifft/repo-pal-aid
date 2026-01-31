@@ -183,16 +183,21 @@ const server = http.createServer(async (req, res) => {
           orgtype
         });
       } else {
-        // Dairy mode: Fetch from sessions table (original behavior)
+        // Dairy mode: Fetch from sessions table (include SCODE for CAN column)
         const [rows] = await pool.query(
-          `SELECT descript, time_from, time_to, ccode 
+          `SELECT id, SCODE, descript, time_from, time_to, ccode 
            FROM sessions WHERE ccode = ? ORDER BY time_from`,
           [ccode]
         );
         
         // Sessions are always dateEnabled (no date range)
         const processedSessions = rows.map(row => ({
-          ...row,
+          id: row.id,
+          SCODE: row.SCODE, // Include SCODE for transactions.CAN
+          descript: row.descript,
+          time_from: row.time_from,
+          time_to: row.time_to,
+          ccode: row.ccode,
           dateEnabled: true
         }));
         
