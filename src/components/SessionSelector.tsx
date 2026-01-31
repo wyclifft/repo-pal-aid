@@ -170,83 +170,110 @@ export const SessionSelector = ({
     }
   }, [findActiveSession, selectedSession, onSessionChange]);
 
-  // Load sessions - optimized to prevent flickering
+  // Load sessions - cache-first with non-blocking network refresh
   useEffect(() => {
     let isMounted = true;
     
     const loadSessions = async () => {
-      // Don't show loading state if we already have data
-      if (!hasLoadedRef.current) {
+      // Try to load from cache FIRST for instant display
+      if (isReady && !hasLoadedRef.current) {
+        try {
+          const cached = await getSessions();
+          if (cached && cached.length > 0 && isMounted) {
+            console.log('[SESSION] Loaded from cache:', cached.length, 'sessions');
+            processSessionData(cached);
+            hasLoadedRef.current = true;
+            setInitialLoadComplete(true);
+            setLoading(false);
+          }
+        } catch (cacheErr) {
+          console.warn('[SESSION] Cache read error:', cacheErr);
+        }
+      }
+      
+      // Only show loading if we have no cached data
+      if (!hasLoadedRef.current && isMounted) {
         setLoading(true);
       }
       setError(null);
       
-      try {
-        const deviceFingerprint = await generateDeviceFingerprint();
-        
-        // Try to load from cache first (only if DB is ready and we haven't loaded yet)
-        if (isReady && !hasLoadedRef.current) {
-          try {
-            const cached = await getSessions();
-            if (cached && cached.length > 0 && isMounted) {
-              processSessionData(cached);
-              // Don't set loading false yet - wait for network
+      // Try to fetch fresh data from network (non-blocking)
+      if (navigator.onLine) {
+        try {
+          const deviceFingerprint = await generateDeviceFingerprint();
+          const response = await mysqlApi.sessions.getByDevice(deviceFingerprint) as SessionsResponse;
+          
+          if (!isMounted) return;
+          
+          if (response.success && response.data && response.data.length > 0) {
+            processSessionData(
+              response.data, 
+              response.periodLabel, 
+              response.orgtype, 
+              true
+            );
+            
+            // Save to cache for future offline use
+            if (isReady) {
+              try {
+                await saveSessions(response.data);
+                console.log('[SESSION] Saved to cache:', response.data.length, 'sessions');
+              } catch (saveErr) {
+                console.warn('[SESSION] Cache save error:', saveErr);
+              }
             }
-          } catch (cacheErr) {
-            console.warn('Cache read error:', cacheErr);
-          }
-        }
-        
-        // Fetch fresh data if online
-        if (navigator.onLine) {
-          try {
-            const response = await mysqlApi.sessions.getByDevice(deviceFingerprint) as SessionsResponse;
-            
-            if (!isMounted) return;
-            
-            if (response.success && response.data && response.data.length > 0) {
-              processSessionData(
-                response.data, 
-                response.periodLabel, 
-                response.orgtype, 
-                true
-              );
-              
-              // Save to cache
-              if (isReady) {
-                try {
-                  await saveSessions(response.data);
-                } catch (saveErr) {
-                  console.warn('Cache save error:', saveErr);
-                }
-              }
-            } else if (response.success) {
-              // No sessions found but request succeeded
-              if (response.periodLabel) {
-                setPeriodLabel(response.periodLabel);
-              }
-              if (response.orgtype) {
-                setOrgtype(response.orgtype);
-              }
+          } else if (response.success) {
+            // No sessions found but request succeeded
+            if (response.periodLabel) {
+              setPeriodLabel(response.periodLabel);
+            }
+            if (response.orgtype) {
+              setOrgtype(response.orgtype);
+            }
+            if (!hasLoadedRef.current) {
               setSessions([]);
               setInitialLoadComplete(true);
               hasLoadedRef.current = true;
             }
-          } catch (fetchErr) {
-            console.warn('Session fetch error:', fetchErr);
-            // Continue with cached data if available
           }
-        } else if (!hasLoadedRef.current && !isReady) {
-          if (isMounted) {
-            setError('Offline - loading sessions...');
+        } catch (fetchErr) {
+          console.warn('[SESSION] Network fetch error (using cache):', fetchErr);
+          // Don't show error if we have cached data
+          if (!hasLoadedRef.current && isMounted) {
+            // Try loading from cache as fallback
+            if (isReady) {
+              try {
+                const cached = await getSessions();
+                if (cached && cached.length > 0) {
+                  processSessionData(cached);
+                  hasLoadedRef.current = true;
+                  setInitialLoadComplete(true);
+                }
+              } catch (cacheErr) {
+                console.warn('[SESSION] Fallback cache error:', cacheErr);
+              }
+            }
           }
         }
-      } catch (err) {
-        console.warn('Error loading sessions:', err);
-      } finally {
-        if (isMounted) {
-          setLoading(false);
+      } else {
+        // Offline - rely on cached data
+        console.log('[SESSION] Offline - using cached sessions');
+        if (!hasLoadedRef.current && isReady) {
+          try {
+            const cached = await getSessions();
+            if (cached && cached.length > 0 && isMounted) {
+              processSessionData(cached);
+              hasLoadedRef.current = true;
+              setInitialLoadComplete(true);
+            }
+          } catch (cacheErr) {
+            console.warn('[SESSION] Offline cache error:', cacheErr);
+          }
         }
+      }
+      
+      if (isMounted) {
+        setLoading(false);
       }
     };
 
