@@ -367,7 +367,8 @@ const Index = () => {
     // Multiple captures are allowed (e.g., farmer brings 3 buckets = 3 captures).
     // ALL duplicate/multiOpt validation happens ONLY at SUBMIT time.
     // This ensures no premature member flagging, no incorrect DB state, and no reprint popups during capture.
-    const farmerMultOpt = selectedFarmer?.multOpt ?? 1; // Default to 1 (allow multiple)
+    // NOTE: Sell Portal (transtype=2) ignores multOpt entirely - farmers can sell unlimited times per session
+    const farmerMultOpt = collectionMode === 'sell' ? 1 : (selectedFarmer?.multOpt ?? 1);
     // ========== END multOpt CHECK ==========
 
     // Generate reference number for this capture
@@ -489,7 +490,11 @@ const Index = () => {
     // ========== PRE-SUBMIT VALIDATION for multOpt=0 ==========
     // Check if ANY captured collection is from a farmer who has already submitted
     // This is the ONLY place where blacklist/sessionSubmittedFarmers checks occur
+    // NOTE: Sell Portal (transtype=2) skips multOpt validation - unlimited sells allowed
     for (const capture of capturedCollections) {
+      // Skip multOpt check for Sell Portal transactions (transtype=2)
+      if (capture.transtype === 2) continue;
+      
       if (capture.multOpt === 0) {
         const cleanFarmerId = capture.farmer_id.replace(/^#/, '').trim();
         
@@ -648,11 +653,15 @@ const Index = () => {
     // After processing ALL captures, add multOpt=0 farmers to blacklist and local tracking.
     // Critical: only do this when every capture was either submitted online or saved for retry.
     // This prevents "first record submitted => farmer blacklisted => remaining captures lost".
+    // NOTE: Sell Portal (transtype=2) skips blacklisting - unlimited sells allowed per session.
     const processedCount = successCount + offlineCount;
     if (processedCount === capturedCollections.length && processedCount > 0) {
       const newlySubmittedFarmers = new Set<string>();
       
       capturedCollections.forEach(capture => {
+        // Skip blacklisting for Sell Portal transactions (transtype=2)
+        if (capture.transtype === 2) return;
+        
         if (capture.multOpt === 0) {
           const cleanId = capture.farmer_id.replace(/^#/, '').trim();
           addToBlacklist(cleanId);
