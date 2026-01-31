@@ -906,7 +906,8 @@ const server = http.createServer(async (req, res) => {
           attempt++;
           try {
             // Attempt the insert with current reference
-            // Transtype = 1 for all produce purchases (milk/coffee collections)
+            // Transtype: 1 = Buy Produce, 2 = Sell Produce (default: 1 for backwards compatibility)
+            const transtype = parseInt(body.transtype) || 1;
             // Get product_code (icode) from request body - maps to icode column
             const productCode = body.product_code || '';
             // Get season_code (SCODE) from request body - maps to CAN column
@@ -917,7 +918,7 @@ const server = http.createServer(async (req, res) => {
                 (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
                  amount, icode, CAN, time, capType, entry_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?)`,
               [
                 attemptTransrefno,
                 attemptUploadrefno ? String(attemptUploadrefno) : '',
@@ -930,6 +931,7 @@ const server = http.createServer(async (req, res) => {
                 normalizedSession,
                 transdate,
                 transtime,
+                transtype, // Use passed transtype (1 = Buy, 2 = Sell)
                 ccode,
                 productCode,  // icode column - stores fm_items.icode (product code)
                 seasonCAN,    // CAN column - stores session.SCODE (season code)

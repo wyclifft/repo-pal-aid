@@ -189,6 +189,7 @@ export const useDataSync = () => {
             entry_type: receipt.entry_type, // Pass entry_type to backend
             product_code: receipt.product_code, // Pass selected product icode → DB: icode column
             season_code: receipt.season_code, // Pass session SCODE → DB: CAN column
+            transtype: receipt.transtype, // Pass transtype: 1 = Buy, 2 = Sell
           });
 
           console.log(`[API] Response for ${receipt.reference_no}:`, JSON.stringify(result));
