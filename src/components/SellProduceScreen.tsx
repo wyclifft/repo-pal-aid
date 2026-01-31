@@ -107,31 +107,34 @@ export const SellProduceScreen = ({
 
   // Load cached farmers with chkroute logic + Member/Debtor mode filter
   // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
+  // NOTE: Debtors (D prefix) typically have empty route values, so route filtering is skipped for them
   useEffect(() => {
     const loadFarmers = async () => {
       try {
         const farmers = await getFarmers();
-        let filtered: Farmer[];
-        
-        if (useRouteFilter && route?.tcode) {
-          // chkroute=1: Filter by exact route match
-          filtered = farmers.filter(f => f.route === route.tcode);
-        } else if (!useRouteFilter && route?.mprefix) {
-          // chkroute=0: Filter by mprefix (farmer_id starts with mprefix)
-          filtered = farmers.filter(f => 
-            f.farmer_id && f.farmer_id.startsWith(route.mprefix!)
-          );
-        } else {
-          filtered = farmers;
-        }
-        
-        // Apply Member/Debtor mode filter based on mcode prefix
         const modePrefix = isMemberMode ? 'M' : 'D';
-        filtered = filtered.filter(f => 
+        
+        // First filter by M/D prefix (mcode)
+        let filtered = farmers.filter(f => 
           f.farmer_id && f.farmer_id.toUpperCase().startsWith(modePrefix)
         );
         
+        // For Members only, apply route filtering (Debtors typically have empty routes)
+        if (isMemberMode) {
+          if (useRouteFilter && route?.tcode) {
+            // chkroute=1: Filter by exact route match
+            filtered = filtered.filter(f => f.route === route.tcode);
+          } else if (!useRouteFilter && route?.mprefix) {
+            // chkroute=0: Filter by mprefix (farmer_id starts with mprefix)
+            filtered = filtered.filter(f => 
+              f.farmer_id && f.farmer_id.startsWith(route.mprefix!)
+            );
+          }
+        }
+        // For Debtors, show all D-prefix farmers without route filtering
+        
         setCachedFarmers(filtered);
+        console.log(`📋 SellProduceScreen: Loaded ${filtered.length} ${isMemberMode ? 'Members' : 'Debtors'}`);
       } catch (err) {
         console.error('Failed to load farmers:', err);
       }
