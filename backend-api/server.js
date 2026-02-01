@@ -1074,6 +1074,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Periodic Report endpoint - aggregated by farmer with date range
+    // CRITICAL: Data is strictly filtered by deviceserial to ensure device isolation
     if (path === '/api/periodic-report' && method === 'GET') {
       const startDate = parsedUrl.query.start_date;
       const endDate = parsedUrl.query.end_date;
@@ -1088,9 +1089,9 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400);
       }
 
-      // Get device's company code
+      // Get device's company code and devcode
       const [deviceRows] = await pool.query(
-        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        'SELECT ccode, devcode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
         [uniquedevcode]
       );
       
@@ -1102,7 +1103,10 @@ const server = http.createServer(async (req, res) => {
       }
       
       const ccode = deviceRows[0].ccode;
+      const devcode = deviceRows[0].devcode;
 
+      // CRITICAL: Filter by deviceserial (uniquedevcode) to ensure strict device isolation
+      // Each device must ONLY see its own collections
       let query = `
         SELECT 
           t.memberno as farmer_id,
@@ -1115,8 +1119,9 @@ const server = http.createServer(async (req, res) => {
         WHERE t.Transtype = 1 
           AND t.transdate BETWEEN ? AND ?
           AND t.ccode = ?
+          AND t.deviceserial = ?
       `;
-      let params = [startDate, endDate, ccode];
+      let params = [startDate, endDate, ccode, uniquedevcode];
 
       if (farmerSearch) {
         query += ` AND (t.memberno LIKE ? OR cm.descript LIKE ?)`;
@@ -1130,6 +1135,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Farmer Detail Report endpoint - individual transactions for a farmer in date range
+    // CRITICAL: Data is strictly filtered by deviceserial to ensure device isolation
     if (path === '/api/periodic-report/farmer-detail' && method === 'GET') {
       const startDate = parsedUrl.query.start_date;
       const endDate = parsedUrl.query.end_date;
@@ -1148,9 +1154,9 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400);
       }
 
-      // Get device's company code and company name
+      // Get device's company code, devcode, and company name
       const [deviceRows] = await pool.query(
-        `SELECT d.ccode, c.descript as company_name 
+        `SELECT d.ccode, d.devcode, c.descript as company_name 
          FROM devsettings d
          LEFT JOIN cm_companys c ON d.ccode = c.ccode
          WHERE d.uniquedevcode = ? AND d.authorized = 1`,
@@ -1176,19 +1182,24 @@ const server = http.createServer(async (req, res) => {
       const farmerName = farmerRows.length > 0 ? farmerRows[0].descript : 'Unknown';
       const farmerRoute = farmerRows.length > 0 ? farmerRows[0].route : '';
 
-      // Get produce type name from fm_items
+      // Get produce type name from fm_items - ALSO filtered by deviceserial
       const [produceRows] = await pool.query(
         `SELECT DISTINCT i.descript as produce_name 
          FROM transactions t
          LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
-         WHERE t.memberno = ? AND t.transdate BETWEEN ? AND ? AND t.Transtype = 1 AND t.ccode = ?
+         WHERE t.memberno = ? 
+           AND t.transdate BETWEEN ? AND ? 
+           AND t.Transtype = 1 
+           AND t.ccode = ?
+           AND t.deviceserial = ?
          LIMIT 1`,
-        [ccode, farmerId, startDate, endDate, ccode]
+        [ccode, farmerId, startDate, endDate, ccode, uniquedevcode]
       );
       
       const produceName = produceRows.length > 0 && produceRows[0].produce_name ? produceRows[0].produce_name : 'PRODUCE';
 
-      // Get all individual transactions for this farmer in the date range
+      // CRITICAL: Get only transactions captured by THIS device (deviceserial = uniquedevcode)
+      // This ensures complete device isolation - no data from other devices
       const [transactions] = await pool.query(
         `SELECT 
           t.transdate as date,
@@ -1200,8 +1211,9 @@ const server = http.createServer(async (req, res) => {
           AND t.Transtype = 1 
           AND t.transdate BETWEEN ? AND ?
           AND t.ccode = ?
+          AND t.deviceserial = ?
         ORDER BY t.transdate ASC, t.transtime ASC`,
-        [farmerId, startDate, endDate, ccode]
+        [farmerId, startDate, endDate, ccode, uniquedevcode]
       );
 
       // Calculate total weight
