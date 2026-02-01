@@ -38,14 +38,14 @@ export const Z_REPORT_PERIODS: ZReportPeriodOption[] = [
     label: 'Afternoon Z',
     description: 'Afternoon session collections only',
     icon: <Sunset className="h-5 w-5 text-orange-600" />,
-    sessionCodes: ['AF', 'PM', 'AFTERNOON', 'EVE'],
+    sessionCodes: ['AF', 'PM', 'AFTERNOON'],
   },
   {
     value: 'evening',
     label: 'Evening Z',
     description: 'Evening session collections only',
     icon: <Moon className="h-5 w-5 text-blue-600" />,
-    sessionCodes: ['EV', 'EVENING', 'NIGHT'],
+    sessionCodes: ['EV', 'EVE', 'EVENING', 'NIGHT'],
   },
   {
     value: 'all',
