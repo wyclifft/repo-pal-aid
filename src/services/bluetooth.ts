@@ -2217,11 +2217,13 @@ export const printZReport = async (data: {
     product_name?: string;
     transtype?: number; // 1=Buy, 2=Sell/Store, 3=AI
     transTypeLabel?: string; // "BUY", "SELL", "AI"
+    session?: string; // Session code for period filtering
   }>;
   totalWeight: number;
   clerkName: string;
   deviceCode: string;
   isCoffee?: boolean;
+  periodFilter?: string; // Display label for selected period (e.g., "Morning Z", "All Z")
 }): Promise<{ success: boolean; error?: string }> => {
   // 58mm thermal paper = 32 characters per line
   const W = 32;
@@ -2275,6 +2277,11 @@ export const printZReport = async (data: {
   
   // Header - Company Name
   receipt += centerText(data.companyName, W) + '\n';
+  
+  // Z Report Period - show prominently if specified
+  if (data.periodFilter) {
+    receipt += centerText(`Z REPORT: ${data.periodFilter.toUpperCase()}`, W) + '\n';
+  }
   receipt += sep + '\n';
   
   // Summary type

@@ -32,6 +32,7 @@ import { isPrinterConnected, printZReport } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { generateDeviceZReportPDF } from '@/utils/pdfExport';
 import type { DeviceZReportData, DeviceZReportTransaction } from '@/services/mysqlApi';
+import { filterTransactionsByPeriod, type ZReportPeriod, getPeriodDisplayLabel } from './ZReportPeriodSelector';
 
 interface DeviceZReportReceiptProps {
   data: DeviceZReportData | null;
@@ -39,6 +40,8 @@ interface DeviceZReportReceiptProps {
   onClose: () => void;
   onPrint?: () => void;
   routeName?: string; // Factory name from route selection
+  selectedPeriod?: ZReportPeriod; // Period filter
+  periodLabel?: string; // Display label for selected period (e.g., "Morning Z")
 }
 
 // Helper to group transactions by transaction type
@@ -54,18 +57,29 @@ export const DeviceZReportReceipt = ({
   open, 
   onClose, 
   onPrint,
-  routeName
+  routeName,
+  selectedPeriod = 'all',
+  periodLabel: periodLabelProp
 }: DeviceZReportReceiptProps) => {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   
-  // Group transactions by transaction type (1=Buy, 2=Sell, 3=AI)
-  const typeGroups = useMemo<TypeGroup[]>(() => {
+  // Get the display label for the period
+  const periodDisplayLabel = periodLabelProp || getPeriodDisplayLabel(selectedPeriod);
+  
+  // Filter transactions by selected period
+  const filteredTransactions = useMemo(() => {
     if (!data?.transactions?.length) return [];
+    return filterTransactionsByPeriod(data.transactions, selectedPeriod);
+  }, [data?.transactions, selectedPeriod]);
+  
+  // Group filtered transactions by transaction type (1=Buy, 2=Sell, 3=AI)
+  const typeGroups = useMemo<TypeGroup[]>(() => {
+    if (!filteredTransactions.length) return [];
     
     const typeMap = new Map<number, TypeGroup>();
     
-    for (const tx of data.transactions) {
+    for (const tx of filteredTransactions) {
       const transtype = tx.transtype || 1;
       const typeLabel = tx.transTypeLabel || (transtype === 2 ? 'SELL' : transtype === 3 ? 'AI' : 'BUY');
       
@@ -85,7 +99,18 @@ export const DeviceZReportReceipt = ({
     
     // Sort by transtype (1=Buy first, then 2=Sell, then 3=AI)
     return Array.from(typeMap.values()).sort((a, b) => a.transtype - b.transtype);
-  }, [data?.transactions]);
+  }, [filteredTransactions]);
+  
+  // Calculate filtered totals
+  const filteredTotals = useMemo(() => {
+    const totalWeight = filteredTransactions.reduce((sum, tx) => sum + tx.weight, 0);
+    const uniqueFarmers = new Set(filteredTransactions.map(tx => tx.farmer_id)).size;
+    return {
+      weight: totalWeight,
+      entries: filteredTransactions.length,
+      farmers: uniqueFarmers
+    };
+  }, [filteredTransactions]);
   
   // Get center name from first transaction if available
   const centerName = useMemo(() => {
@@ -126,7 +151,7 @@ export const DeviceZReportReceipt = ({
       const printerConnected = isPrinterConnected();
       
       if (printerConnected) {
-        // Send Z Report data to thermal printer
+        // Send Z Report data to thermal printer - use filtered transactions
         const result = await printZReport({
           companyName: data.companyName,
           produceLabel: data.produceLabel,
@@ -136,7 +161,7 @@ export const DeviceZReportReceipt = ({
           factoryName: centerName || routeName || data.routeLabel || 'FACTORY',
           routeLabel: data.routeLabel || 'Center',
           produceName: data.produceName,
-          transactions: data.transactions.map(tx => ({
+          transactions: filteredTransactions.map(tx => ({
             farmer_id: tx.farmer_id,
             refno: tx.refno,
             weight: tx.weight,
@@ -147,11 +172,13 @@ export const DeviceZReportReceipt = ({
             product_name: tx.product_name,
             transtype: tx.transtype,
             transTypeLabel: tx.transTypeLabel,
+            session: tx.session,
           })),
-          totalWeight: data.totals.weight,
+          totalWeight: filteredTotals.weight,
           clerkName: data.clerkName,
           deviceCode: data.deviceCode,
           isCoffee: data.isCoffee,
+          periodFilter: periodDisplayLabel, // Pass period label for display on receipt
         });
         
         if (result.success) {
@@ -252,6 +279,8 @@ export const DeviceZReportReceipt = ({
           {/* Company Name - Header */}
           <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base uppercase">{data.companyName}</h3>
+            {/* Z Report Period - shown prominently */}
+            <p className="font-bold text-sm mt-1">Z REPORT: {periodDisplayLabel.toUpperCase()}</p>
           </div>
 
           {/* Summary Type */}
@@ -296,18 +325,18 @@ export const DeviceZReportReceipt = ({
             )}
           </div>
 
-          {/* Grand Total - compact */}
+          {/* Grand Total - compact (uses filtered totals) */}
           <div className="border-t-2 border-double pt-1 mt-1">
             <div className="flex justify-between font-bold text-xs">
               <span>TOTAL</span>
-              <span>{data.totals.weight.toFixed(1)} {weightUnit}</span>
+              <span>{filteredTotals.weight.toFixed(1)} {weightUnit}</span>
             </div>
           </div>
 
-          {/* Entry/Member counts - inline */}
+          {/* Entry/Member counts - inline (uses filtered totals) */}
           <div className="flex justify-between text-[10px] text-muted-foreground">
-            <span>Entries: {data.totals.entries}</span>
-            <span>Members: {data.totals.farmers}</span>
+            <span>Entries: {filteredTotals.entries}</span>
+            <span>Members: {filteredTotals.farmers}</span>
           </div>
 
           {/* Footer: Clerk, Print Time, Device - compact */}
