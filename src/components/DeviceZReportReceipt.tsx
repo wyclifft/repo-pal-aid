@@ -222,22 +222,25 @@ export const DeviceZReportReceipt = ({
       
       {/* Transaction List Header */}
       <div className="border-t border-b border-dashed py-1 mt-1">
-        <div className="grid grid-cols-4 gap-1 font-bold text-center">
+        <div className="grid grid-cols-3 gap-1 font-bold text-center">
           <span>MNO</span>
-          <span>REFNO</span>
           <span>QTY</span>
           <span>TIME</span>
         </div>
       </div>
 
-      {/* Transaction List */}
+      {/* Transaction List - MNO/QTY/TIME on first line, RefNo on second line */}
       <div className="space-y-0.5 py-1">
         {group.transactions.map((tx, index) => (
-          <div key={tx.transrefno || index} className="grid grid-cols-4 gap-1 text-center text-[11px]">
-            <span className="truncate">{tx.farmer_id}</span>
-            <span className="truncate">{tx.refno}</span>
-            <span>{tx.weight.toFixed(1)}</span>
-            <span>{tx.time}</span>
+          <div key={tx.transrefno || index}>
+            <div className="grid grid-cols-3 gap-1 text-center text-[11px]">
+              <span className="truncate">{tx.farmer_id}</span>
+              <span>{tx.weight.toFixed(1)}</span>
+              <span>{tx.time}</span>
+            </div>
+            <div className="text-[10px] text-muted-foreground pl-2">
+              Ref: {tx.refno}
+            </div>
           </div>
         ))}
         {group.transactions.length === 0 && (
@@ -368,22 +371,25 @@ export const DeviceZReportReceipt = ({
               <>
                 {/* Transaction List Header */}
                 <div className="border-t border-b border-dashed py-1">
-                  <div className="grid grid-cols-4 gap-1 font-bold text-center">
+                  <div className="grid grid-cols-3 gap-1 font-bold text-center">
                     <span>MNO</span>
-                    <span>REFNO</span>
                     <span>QTY</span>
                     <span>TIME</span>
                   </div>
                 </div>
 
-                {/* Transaction List */}
+                {/* Transaction List - MNO/QTY/TIME on first line, RefNo on second line */}
                 <div className="space-y-0.5 py-1">
                   {produceGroups[0].centerGroups[0].transactions.map((tx, index) => (
-                    <div key={tx.transrefno || index} className="grid grid-cols-4 gap-1 text-center text-[11px]">
-                      <span className="truncate">{tx.farmer_id}</span>
-                      <span className="truncate">{tx.refno}</span>
-                      <span>{tx.weight.toFixed(1)}</span>
-                      <span>{tx.time}</span>
+                    <div key={tx.transrefno || index}>
+                      <div className="grid grid-cols-3 gap-1 text-center text-[11px]">
+                        <span className="truncate">{tx.farmer_id}</span>
+                        <span>{tx.weight.toFixed(1)}</span>
+                        <span>{tx.time}</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground pl-2">
+                        Ref: {tx.refno}
+                      </div>
                     </div>
                   ))}
                   {produceGroups[0].centerGroups[0].transactions.length === 0 && (

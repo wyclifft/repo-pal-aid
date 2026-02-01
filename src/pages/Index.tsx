@@ -71,6 +71,7 @@ const Index = () => {
   // Receipt modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Cumulative frequency for current farmer (monthly collection count)
   const [cumulativeFrequency, setCumulativeFrequency] = useState<number | undefined>(undefined);
@@ -522,6 +523,10 @@ const Index = () => {
       return;
     }
 
+    // Prevent multiple submissions
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+
     const deviceFingerprint = await generateDeviceFingerprint();
     
     // ========== PRE-SUBMIT VALIDATION for multOpt=0 ==========
@@ -542,6 +547,7 @@ const Index = () => {
             { duration: 5000 }
           );
           setCapturedCollections([]);
+          setIsSubmitting(false);
           return;
         }
         
@@ -552,6 +558,7 @@ const Index = () => {
             { duration: 5000 }
           );
           setCapturedCollections([]);
+          setIsSubmitting(false);
           return;
         }
       }
@@ -672,6 +679,7 @@ const Index = () => {
       toast.error('Submission stopped: server reports this farmer already submitted for this session.', {
         duration: 6000,
       });
+      setIsSubmitting(false);
       return;
     }
 
@@ -804,6 +812,9 @@ const Index = () => {
       // If not in collection view (shouldn't happen), fall back to modal
       setReceiptModalOpen(true);
     }
+    
+    // Reset submitting state after completion
+    setIsSubmitting(false);
   };
 
   const handlePrintAllCaptures = () => {
@@ -1094,6 +1105,7 @@ const Index = () => {
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
           zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
+          isSubmitting={isSubmitting}
         />
       ) : (
         <SellProduceScreen
@@ -1129,6 +1141,7 @@ const Index = () => {
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
           zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
+          isSubmitting={isSubmitting}
         />
       )}
 
