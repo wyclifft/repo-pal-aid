@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type ZReportData, type DeviceZReportData } from '@/services/mysqlApi';
@@ -14,6 +14,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { ZReportReceipt } from '@/components/ZReportReceipt';
 import { DeviceZReportReceipt } from '@/components/DeviceZReportReceipt';
+import { ZReportPeriodSelector, type ZReportPeriod, filterTransactionsByPeriod, getPeriodDisplayLabel } from '@/components/ZReportPeriodSelector';
 
 const ZReport = () => {
   const navigate = useNavigate();
@@ -38,6 +39,9 @@ const ZReport = () => {
   // Receipt preview states
   const [showReceiptPreview, setShowReceiptPreview] = useState(false);
   const [showDeviceReceiptPreview, setShowDeviceReceiptPreview] = useState(false);
+  const [showPeriodSelector, setShowPeriodSelector] = useState(false);
+  const [selectedPeriod, setSelectedPeriod] = useState<ZReportPeriod>('all');
+  const [selectedPeriodLabel, setSelectedPeriodLabel] = useState<string>('All Z');
   
   // Device Z Report state (for receipt/print only)
   const [deviceReportData, setDeviceReportData] = useState<DeviceZReportData | null>(null);
@@ -182,7 +186,7 @@ const ZReport = () => {
     }
   }, [autoPrint, reportData, loading]);
 
-  // Handle print button click - show device receipt preview
+  // Handle print button click - show period selector first
   const handlePrintClick = () => {
     console.log('🖨️ Print button clicked', { sessionPrintOnly, isSyncComplete, pendingSyncCount });
     // Enforce sessprint: only show preview if sync is complete
@@ -190,7 +194,17 @@ const ZReport = () => {
       toast.error(`Cannot print Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
       return;
     }
-    // Show device receipt preview (uses handwritten layout)
+    // Show period selector dialog first
+    setShowPeriodSelector(true);
+  };
+  
+  // Handle period selection - filter data and show receipt preview
+  const handlePeriodSelect = (period: ZReportPeriod, periodLabel: string) => {
+    console.log('📋 Period selected:', period, periodLabel);
+    setSelectedPeriod(period);
+    setSelectedPeriodLabel(periodLabel);
+    setShowPeriodSelector(false);
+    // Show device receipt preview with filtered data
     setShowDeviceReceiptPreview(true);
   };
   
@@ -579,6 +593,13 @@ const ZReport = () => {
         isCoffee={isCoffee}
       />
       
+      {/* Period Selector Dialog */}
+      <ZReportPeriodSelector
+        open={showPeriodSelector}
+        onClose={() => setShowPeriodSelector(false)}
+        onSelect={handlePeriodSelect}
+      />
+      
       {/* Device Z Report Receipt Modal - Uses handwritten layout for printing */}
       <DeviceZReportReceipt
         data={deviceReportData}
@@ -586,6 +607,8 @@ const ZReport = () => {
         onClose={handleDeviceReceiptPreviewClose}
         onPrint={handleReceiptPrint}
         routeName={routeLabel}
+        selectedPeriod={selectedPeriod}
+        periodLabel={selectedPeriodLabel}
       />
     </div>
   );
