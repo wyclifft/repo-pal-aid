@@ -200,54 +200,43 @@ export const DeviceZReportReceipt = ({
   // Get last 5 digits of reference number
   const getShortRef = (refno: string) => (refno || '').slice(-5);
 
-  // Render transactions for a type group
+  // Render transactions for a type group - compact single-row layout
   const renderTypeSection = (group: TypeGroup, isFirst: boolean) => (
-    <div key={group.transtype} className={!isFirst ? 'mt-3' : ''}>
-      {/* Type Header */}
-      <div className="border-t-2 border-double pt-2">
-        <p className="font-bold text-center text-xs bg-muted py-1 rounded">
-          === {group.typeLabel} TRANSACTIONS ===
-        </p>
+    <div key={group.transtype} className={!isFirst ? 'mt-2' : ''}>
+      {/* Type Header - compact */}
+      <div className="bg-muted py-0.5 px-1 rounded">
+        <p className="font-bold text-center text-[10px]">== {group.typeLabel} ==</p>
       </div>
       
-      {/* Transaction List Header with dotted separators */}
-      <div className="border-t border-b border-dashed py-1 mt-1">
-        <div className="grid grid-cols-3 gap-0 font-bold text-center text-[10px]">
-          <span>MNO</span>
-          <span className="border-l border-r border-dotted">QTY</span>
-          <span>TIME</span>
-        </div>
+      {/* Column Headers: MNO|REF|QTY|TIME with dotted separators */}
+      <div className="grid grid-cols-4 gap-0 font-bold text-center text-[9px] border-b border-dotted py-0.5 mt-0.5">
+        <span className="border-r border-dotted">MNO</span>
+        <span className="border-r border-dotted">REF</span>
+        <span className="border-r border-dotted">QTY</span>
+        <span>TIME</span>
       </div>
 
-      {/* Transaction List */}
-      <div className="space-y-0.5 py-1">
+      {/* Transaction List - single row per transaction */}
+      <div className="py-0.5">
         {group.transactions.map((tx, index) => (
-          <div key={tx.transrefno || index} className="border-b border-dotted pb-1">
-            {/* Main row with dotted column separators */}
-            <div className="grid grid-cols-3 gap-0 text-center text-[11px]">
-              <span className="truncate">{tx.farmer_id}</span>
-              <span className="border-l border-r border-dotted">{tx.weight.toFixed(1)}</span>
-              <span>{tx.time}</span>
-            </div>
-            {/* RefNo on separate line - last 5 digits */}
-            <div className="text-[10px] text-muted-foreground pl-2">
-              Ref: {getShortRef(tx.refno)}
-            </div>
+          <div key={tx.transrefno || index} className="grid grid-cols-4 gap-0 text-center text-[10px] border-b border-dotted py-0.5">
+            <span className="truncate border-r border-dotted">{tx.farmer_id.substring(0, 5)}</span>
+            <span className="truncate border-r border-dotted">{getShortRef(tx.refno)}</span>
+            <span className="border-r border-dotted">{tx.weight.toFixed(1)}</span>
+            <span>{tx.time.substring(0, 5)}</span>
           </div>
         ))}
         {group.transactions.length === 0 && (
-          <div className="text-center text-muted-foreground italic py-2">
+          <div className="text-center text-muted-foreground italic text-[10px] py-1">
             No transactions
           </div>
         )}
       </div>
 
-      {/* Type Subtotal */}
-      <div className="border-t border-dashed pt-1">
-        <div className="flex justify-between text-xs font-bold">
-          <span>{group.typeLabel} TOTAL</span>
-          <span>{group.totalWeight.toFixed(2)} {weightUnit}</span>
-        </div>
+      {/* Type Subtotal - compact */}
+      <div className="flex justify-between text-[10px] font-bold pt-0.5">
+        <span>{group.typeLabel}</span>
+        <span>{group.totalWeight.toFixed(1)} {weightUnit}</span>
       </div>
     </div>
   );
@@ -307,36 +296,32 @@ export const DeviceZReportReceipt = ({
             )}
           </div>
 
-          {/* Grand Totals */}
-          <div className="border-t-2 border-double pt-2 mt-2">
-            <div className="flex justify-between font-bold text-sm">
-              <span>GRAND TOTAL</span>
-              <span>{data.totals.weight.toFixed(2)} {weightUnit}</span>
+          {/* Grand Total - compact */}
+          <div className="border-t-2 border-double pt-1 mt-1">
+            <div className="flex justify-between font-bold text-xs">
+              <span>TOTAL</span>
+              <span>{data.totals.weight.toFixed(1)} {weightUnit}</span>
             </div>
           </div>
 
-          {/* Entry Count */}
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Total Entries</span>
-            <span className="font-medium">{data.totals.entries}</span>
-          </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Unique Members</span>
-            <span className="font-medium">{data.totals.farmers}</span>
+          {/* Entry/Member counts - inline */}
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>Entries: {data.totals.entries}</span>
+            <span>Members: {data.totals.farmers}</span>
           </div>
 
-          {/* Footer: Clerk, Print Time, Device Code */}
-          <div className="border-t border-dashed pt-2 mt-2 space-y-1">
+          {/* Footer: Clerk, Print Time, Device - compact */}
+          <div className="border-t border-dashed pt-1 mt-1 space-y-0.5 text-[10px]">
             <div className="flex justify-between">
-              <span className="font-semibold">CLERK</span>
+              <span>CLERK:</span>
               <span className="uppercase">{data.clerkName}</span>
             </div>
             <div className="flex justify-between">
-              <span className="font-semibold">PRINTED ON</span>
-              <span>{printDate} - {printTime}</span>
+              <span>{printDate}</span>
+              <span>{printTime}</span>
             </div>
-            <div className="flex justify-between font-bold text-sm pt-1">
-              <span>DEVICE CODE</span>
+            <div className="flex justify-between font-bold">
+              <span>DEV:</span>
               <span>{data.deviceCode}</span>
             </div>
           </div>

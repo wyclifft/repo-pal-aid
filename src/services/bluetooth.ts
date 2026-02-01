@@ -2294,55 +2294,45 @@ export const printZReport = async (data: {
   for (const [transtype, typeGroup] of typeGroups) {
     // Type header section
     if (typeIdx > 0) {
-      receipt += dotSep + '\n';
+      receipt += '\n';
     }
-    receipt += centerText(`=== ${typeGroup.typeLabel} TRANSACTIONS ===`, W) + '\n';
-    receipt += sep + '\n';
+    receipt += `== ${typeGroup.typeLabel} ==\n`;
     
-    // Column headers with dotted separators
-    receipt += 'MNO     :.:QTY:.: TIME\n';
-    receipt += sep + '\n';
+    // Column headers: MNO|REF|QTY|TIME (compact with dotted separators)
+    receipt += 'MNO..:REF..:QTY.:TIME\n';
     
-    // Transaction rows - MNO on first line with columns, RefNo on second line
+    // Transaction rows - all on single line with dotted separators
     for (const tx of typeGroup.transactions) {
-      // Get last 5 digits of refno
       const shortRef = (tx.refno || '').slice(-5);
-      const mno = tx.farmer_id.substring(0, 7).padEnd(7);
-      const qty = tx.weight.toFixed(1).padStart(5);
+      const mno = tx.farmer_id.substring(0, 5).padEnd(5);
+      const ref = shortRef.padEnd(5);
+      const qty = tx.weight.toFixed(1).padStart(4);
       const time = tx.time.substring(0, 5);
       
-      // Main row with dotted column separators
-      receipt += `${mno}:.:${qty}:.: ${time}\n`;
-      // RefNo on separate line, indented with last 5 digits
-      receipt += `  Ref: ${shortRef}\n`;
+      // Single row: MNO..:REF..:QTY.:TIME
+      receipt += `${mno}:${ref}:${qty}:${time}\n`;
     }
     
     if (typeGroup.transactions.length === 0) {
-      receipt += centerText('No transactions', W) + '\n';
+      receipt += 'No transactions\n';
     }
     
-    // Type subtotal
-    receipt += sep + '\n';
-    receipt += formatLine(`${typeGroup.typeLabel} TOTAL`, `${typeGroup.total.toFixed(2)} ${weightUnit}`, W) + '\n';
+    // Type subtotal (compact)
+    receipt += `${typeGroup.typeLabel}: ${typeGroup.total.toFixed(1)} ${weightUnit}\n`;
     
     typeIdx++;
   }
   
   receipt += sep + '\n';
   
-  // Grand Total
-  receipt += formatLine('GRAND TOTAL', `${data.totalWeight.toFixed(2)} ${weightUnit}`, W) + '\n';
-  receipt += sep + '\n';
+  // Grand Total (compact)
+  receipt += `TOTAL: ${data.totalWeight.toFixed(1)} ${weightUnit}\n`;
   
-  // Clerk
-  receipt += formatLine('CLERK', data.clerkName.toUpperCase(), W) + '\n';
-  
-  // Print time
-  receipt += formatLine('PRINTED ON', `${printDate} - ${printTime}`, W) + '\n';
-  
-  // Device Code (footer)
-  receipt += formatLine('DEVICE CODE', data.deviceCode, W) + '\n';
-  receipt += '\n\n\n'; // Feed paper
+  // Clerk & Device (compact, single line each)
+  receipt += `CLERK: ${data.clerkName.toUpperCase()}\n`;
+  receipt += `${printDate} ${printTime}\n`;
+  receipt += `DEV: ${data.deviceCode}\n`;
+  receipt += '\n\n'; // Feed paper
   
   console.log('[ZREPORT] Sending Z Report to printer...');
   console.log('[ZREPORT] Data:', { 
