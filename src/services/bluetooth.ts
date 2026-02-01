@@ -2333,17 +2333,19 @@ export const printZReport = async (data: {
           receipt += `${routeLabel}: ${centerGroup.centerName.trim()}\n`;
         }
         
-        // Transaction table header
-        receipt += 'MNO   REFNO   QTY  TIME\n';
+        // Transaction table header - MNO and RefNo as separate fields
+        receipt += 'MNO      QTY   TIME\n';
         receipt += sep + '\n';
         
-        // Transaction rows for this center
+        // Transaction rows for this center - MNO on first line, RefNo on second line
         for (const tx of centerGroup.txs) {
-          const mno = tx.farmer_id.substring(0, 6).padEnd(6);
-          const refno = tx.refno.substring(0, 7).padEnd(7);
+          const mno = tx.farmer_id.substring(0, 8).padEnd(8);
           const qty = tx.weight.toFixed(1).padStart(5);
           const time = tx.time.substring(0, 5);
-          receipt += `${mno}${refno}${qty} ${time}\n`;
+          receipt += `${mno}${qty} ${time}\n`;
+          // RefNo on separate line, indented
+          const refno = tx.refno || '';
+          receipt += `  Ref: ${refno}\n`;
         }
         
         // Center subtotal (if multiple centers)
@@ -2364,18 +2366,20 @@ export const printZReport = async (data: {
     }
     receipt += sep + '\n';
   } else {
-    // Simple flat layout
-    const txHeader = 'MNO   REFNO   QTY  TIME';
+    // Simple flat layout - MNO and RefNo as separate fields
+    const txHeader = 'MNO      QTY   TIME';
     receipt += txHeader + '\n';
     receipt += sep + '\n';
     
-    // Transaction rows
+    // Transaction rows - MNO on first line, RefNo on second line
     for (const tx of data.transactions) {
-      const mno = tx.farmer_id.substring(0, 6).padEnd(6);
-      const refno = tx.refno.substring(0, 7).padEnd(7);
+      const mno = tx.farmer_id.substring(0, 8).padEnd(8);
       const qty = tx.weight.toFixed(1).padStart(5);
       const time = tx.time.substring(0, 5);
-      receipt += `${mno}${refno}${qty} ${time}\n`;
+      receipt += `${mno}${qty} ${time}\n`;
+      // RefNo on separate line, indented
+      const refno = tx.refno || '';
+      receipt += `  Ref: ${refno}\n`;
     }
     
     if (data.transactions.length === 0) {
