@@ -1365,18 +1365,20 @@ const server = http.createServer(async (req, res) => {
       const deviceSerial = uniquedevcode;
 
       // Build query - filter by deviceserial to ensure per-device reporting
+      // Include ALL transaction types: 1=Buy Produce, 2=Sell/Store, 3=AI
       // Join fm_tanks to get route description and fm_items for product name
       let query = `
         SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, 
                t.route, t.weight, t.session, t.transdate as collection_date, 
                t.transtime, t.clerk as clerk_name, t.icode as product_code, 
-               t.entry_type, t.CAN as season_code,
+               t.entry_type, t.CAN as season_code, t.Transtype as transtype,
+               t.iprice, t.amount,
                i.descript as product_name,
                TRIM(r.descript) as route_name
         FROM transactions t
         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
         LEFT JOIN fm_tanks r ON t.route = r.tcode AND r.ccode = ?
-        WHERE t.transdate = ? AND t.Transtype = 1 AND t.deviceserial = ?
+        WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND t.deviceserial = ?
       `;
       const queryParams = [ccode, ccode, date, deviceSerial];
 
@@ -1386,7 +1388,7 @@ const server = http.createServer(async (req, res) => {
         queryParams.push(seasonFilter);
       }
 
-      query += ` ORDER BY t.icode ASC, t.route ASC, t.transtime ASC, t.memberno`;
+      query += ` ORDER BY t.Transtype ASC, t.icode ASC, t.route ASC, t.transtime ASC, t.memberno`;
 
       const [collections] = await pool.query(query, queryParams);
 
@@ -1423,8 +1425,8 @@ const server = http.createServer(async (req, res) => {
 
       // Format transactions for frontend display
       const transactions = collections.map(c => {
-        // Extract short ref number (last 6 chars of transrefno)
-        const refno = c.transrefno ? c.transrefno.slice(-6) : '';
+        // Extract short ref number (last 5 chars of transrefno for compactness)
+        const refno = c.transrefno ? c.transrefno.slice(-5) : '';
         
         // Format time as HH:MM AM/PM
         let timeStr = '';
@@ -1439,6 +1441,16 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
+        // Determine transaction type label based on Transtype
+        // 1 = Buy Produce, 2 = Sell/Store, 3 = AI
+        let transTypeLabel = 'BUY';
+        const transtype = parseInt(c.transtype) || 1;
+        if (transtype === 2) {
+          transTypeLabel = 'SELL';
+        } else if (transtype === 3) {
+          transTypeLabel = 'AI';
+        }
+
         return {
           transrefno: c.transrefno,
           refno,
@@ -1449,7 +1461,11 @@ const server = http.createServer(async (req, res) => {
           route: c.route || '', // Route code for grouping
           route_name: c.route_name || c.route || '', // Full descriptive center name
           product_code: c.product_code || '', // Product code for produce grouping
-          product_name: c.product_name || '' // Product name for produce grouping
+          product_name: c.product_name || '', // Product name for produce grouping
+          transtype: transtype, // 1=Buy, 2=Sell/Store, 3=AI
+          transTypeLabel: transTypeLabel, // Human readable label
+          price: parseFloat(c.iprice || 0),
+          amount: parseFloat(c.amount || 0)
         };
       });
 
