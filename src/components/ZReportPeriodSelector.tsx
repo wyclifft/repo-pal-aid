@@ -132,7 +132,8 @@ export const ZReportPeriodSelector = ({
 };
 
 // Helper function to filter transactions by period
-export const filterTransactionsByPeriod = <T extends { session?: string }>(
+// Uses season_code (CAN column) as primary filter since session is normalized to AM/PM
+export const filterTransactionsByPeriod = <T extends { session?: string; season_code?: string }>(
   transactions: T[],
   period: ZReportPeriod
 ): T[] => {
@@ -148,9 +149,21 @@ export const filterTransactionsByPeriod = <T extends { session?: string }>(
   const sessionCodes = periodOption.sessionCodes.map(s => s.toUpperCase());
   
   return transactions.filter(tx => {
-    if (!tx.session) return false;
-    const txSession = tx.session.toUpperCase().trim();
-    return sessionCodes.some(code => txSession.includes(code) || code.includes(txSession));
+    // First check season_code (CAN column) - this has the original SCODE (MO, AF, EV)
+    if (tx.season_code) {
+      const txSeasonCode = tx.season_code.toUpperCase().trim();
+      if (sessionCodes.some(code => txSeasonCode === code || txSeasonCode.includes(code) || code.includes(txSeasonCode))) {
+        return true;
+      }
+    }
+    
+    // Fallback to session column (normalized to AM/PM)
+    if (tx.session) {
+      const txSession = tx.session.toUpperCase().trim();
+      return sessionCodes.some(code => txSession.includes(code) || code.includes(txSession));
+    }
+    
+    return false;
   });
 };
 
