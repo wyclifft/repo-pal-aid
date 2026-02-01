@@ -2211,6 +2211,8 @@ export const printZReport = async (data: {
     route_name?: string; // Full center descriptive name
     product_code?: string;
     product_name?: string;
+    transtype?: number; // 1=Buy, 2=Sell/Store, 3=AI
+    transTypeLabel?: string; // "BUY", "SELL", "AI"
   }>;
   totalWeight: number;
   clerkName: string;
@@ -2221,6 +2223,7 @@ export const printZReport = async (data: {
   const W = 32;
   const sep = '-'.repeat(W);
   const dotSep = '. '.repeat(16);
+  const colSep = ':...:'; // Dotted column separator
   
   // Format date as DD/MM/YYYY
   const formattedDate = new Date(data.date).toLocaleDateString('en-GB', {
@@ -2245,37 +2248,24 @@ export const printZReport = async (data: {
   const weightUnit = 'KGS';
   const routeLabel = data.routeLabel || (data.isCoffee ? 'CENTER' : 'ROUTE');
   
-  // Group transactions by produce type, then by center
-  const produceMap = new Map<string, { 
-    produceName: string; 
-    centerMap: Map<string, { centerName: string; txs: typeof data.transactions; total: number }>; 
-    total: number 
+  // Group transactions by transaction type first, then by produce, then by center
+  const typeGroups = new Map<number, {
+    typeLabel: string;
+    transactions: typeof data.transactions;
+    total: number;
   }>();
   
   for (const tx of data.transactions) {
-    const productCode = tx.product_code || 'DEFAULT';
-    const productName = tx.product_name || data.produceName || data.produceLabel;
+    const transtype = tx.transtype || 1;
+    const typeLabel = tx.transTypeLabel || (transtype === 2 ? 'SELL' : transtype === 3 ? 'AI' : 'BUY');
     
-    if (!produceMap.has(productCode)) {
-      produceMap.set(productCode, { produceName: productName, centerMap: new Map(), total: 0 });
+    if (!typeGroups.has(transtype)) {
+      typeGroups.set(transtype, { typeLabel, transactions: [], total: 0 });
     }
-    const produceGroup = produceMap.get(productCode)!;
-    produceGroup.total += tx.weight;
-    
-    const centerCode = tx.route || 'Unknown';
-    const centerName = tx.route_name || data.factoryName || centerCode;
-    
-    if (!produceGroup.centerMap.has(centerCode)) {
-      produceGroup.centerMap.set(centerCode, { centerName, txs: [], total: 0 });
-    }
-    const centerGroup = produceGroup.centerMap.get(centerCode)!;
-    centerGroup.txs.push(tx);
-    centerGroup.total += tx.weight;
+    const group = typeGroups.get(transtype)!;
+    group.transactions.push(tx);
+    group.total += tx.weight;
   }
-  
-  const hasMultipleProduces = produceMap.size > 1;
-  const hasMultipleCenters = Array.from(produceMap.values()).some(p => p.centerMap.size > 1) ||
-    (produceMap.size === 1 && Array.from(produceMap.values())[0].centerMap.size > 1);
   
   let receipt = '';
   
@@ -2292,105 +2282,56 @@ export const printZReport = async (data: {
   // Date
   receipt += `* DATE: ${formattedDate}\n`;
   
-  // For single center, show center name in header
-  if (!hasMultipleCenters) {
-    const firstProduce = Array.from(produceMap.values())[0];
-    const firstCenter = firstProduce ? Array.from(firstProduce.centerMap.values())[0] : null;
-    const centerName = firstCenter?.centerName || data.factoryName || '';
-    if (centerName) {
-      receipt += `* ${routeLabel}: ${centerName.trim()}\n`;
-    }
-  }
-  
-  // For single produce, show produce name in header
-  if (!hasMultipleProduces) {
-    const firstProduce = Array.from(produceMap.values())[0];
-    receipt += `* PRODUCE: ${firstProduce?.produceName || data.produceName || data.produceLabel.toUpperCase()}\n`;
+  // Center (if single)
+  if (data.factoryName) {
+    receipt += `* ${routeLabel}: ${data.factoryName.trim()}\n`;
   }
   
   receipt += sep + '\n';
   
-  // Print transactions grouped by produce then by center
-  if (hasMultipleProduces || hasMultipleCenters) {
-    // Grouped layout
-    let produceIdx = 0;
-    for (const [productCode, produceGroup] of produceMap) {
-      // Produce header (if multiple produces)
-      if (hasMultipleProduces) {
-        if (produceIdx > 0) {
-          receipt += dotSep + '\n';
-        }
-        receipt += centerText(produceGroup.produceName.toUpperCase(), W) + '\n';
-      }
-      
-      let centerIdx = 0;
-      for (const [centerCode, centerGroup] of produceGroup.centerMap) {
-        // Center header (if multiple centers)
-        if (hasMultipleCenters) {
-          if (centerIdx > 0) {
-            receipt += dotSep + '\n';
-          }
-          receipt += `${routeLabel}: ${centerGroup.centerName.trim()}\n`;
-        }
-        
-        // Transaction table header - MNO and RefNo as separate fields
-        receipt += 'MNO      QTY   TIME\n';
-        receipt += sep + '\n';
-        
-        // Transaction rows for this center - MNO on first line, RefNo on second line
-        for (const tx of centerGroup.txs) {
-          const mno = tx.farmer_id.substring(0, 8).padEnd(8);
-          const qty = tx.weight.toFixed(1).padStart(5);
-          const time = tx.time.substring(0, 5);
-          receipt += `${mno}${qty} ${time}\n`;
-          // RefNo on separate line, indented
-          const refno = tx.refno || '';
-          receipt += `  Ref: ${refno}\n`;
-        }
-        
-        // Center subtotal (if multiple centers)
-        if (hasMultipleCenters) {
-          receipt += formatLine(`${routeLabel} TOTAL`, `${centerGroup.total.toFixed(2)} ${weightUnit}`, W) + '\n';
-        }
-        
-        centerIdx++;
-      }
-      
-      // Produce subtotal (if multiple produces)
-      if (hasMultipleProduces) {
-        receipt += sep + '\n';
-        receipt += formatLine(`${produceGroup.produceName.toUpperCase()} TOTAL`, `${produceGroup.total.toFixed(2)} ${weightUnit}`, W) + '\n';
-      }
-      
-      produceIdx++;
+  // Print transactions grouped by transaction type
+  let typeIdx = 0;
+  for (const [transtype, typeGroup] of typeGroups) {
+    // Type header section
+    if (typeIdx > 0) {
+      receipt += dotSep + '\n';
     }
-    receipt += sep + '\n';
-  } else {
-    // Simple flat layout - MNO and RefNo as separate fields
-    const txHeader = 'MNO      QTY   TIME';
-    receipt += txHeader + '\n';
+    receipt += centerText(`=== ${typeGroup.typeLabel} TRANSACTIONS ===`, W) + '\n';
     receipt += sep + '\n';
     
-    // Transaction rows - MNO on first line, RefNo on second line
-    for (const tx of data.transactions) {
-      const mno = tx.farmer_id.substring(0, 8).padEnd(8);
+    // Column headers with dotted separators
+    receipt += 'MNO     :.:QTY:.: TIME\n';
+    receipt += sep + '\n';
+    
+    // Transaction rows - MNO on first line with columns, RefNo on second line
+    for (const tx of typeGroup.transactions) {
+      // Get last 5 digits of refno
+      const shortRef = (tx.refno || '').slice(-5);
+      const mno = tx.farmer_id.substring(0, 7).padEnd(7);
       const qty = tx.weight.toFixed(1).padStart(5);
       const time = tx.time.substring(0, 5);
-      receipt += `${mno}${qty} ${time}\n`;
-      // RefNo on separate line, indented
-      const refno = tx.refno || '';
-      receipt += `  Ref: ${refno}\n`;
+      
+      // Main row with dotted column separators
+      receipt += `${mno}:.:${qty}:.: ${time}\n`;
+      // RefNo on separate line, indented with last 5 digits
+      receipt += `  Ref: ${shortRef}\n`;
     }
     
-    if (data.transactions.length === 0) {
+    if (typeGroup.transactions.length === 0) {
       receipt += centerText('No transactions', W) + '\n';
     }
     
+    // Type subtotal
     receipt += sep + '\n';
+    receipt += formatLine(`${typeGroup.typeLabel} TOTAL`, `${typeGroup.total.toFixed(2)} ${weightUnit}`, W) + '\n';
+    
+    typeIdx++;
   }
   
-  // Total
-  receipt += formatLine('TOTAL', `${data.totalWeight.toFixed(2)} ${weightUnit}`, W) + '\n';
+  receipt += sep + '\n';
+  
+  // Grand Total
+  receipt += formatLine('GRAND TOTAL', `${data.totalWeight.toFixed(2)} ${weightUnit}`, W) + '\n';
   receipt += sep + '\n';
   
   // Clerk
@@ -2407,7 +2348,8 @@ export const printZReport = async (data: {
   console.log('[ZREPORT] Data:', { 
     transactions: data.transactions.length, 
     total: data.totalWeight,
-    device: data.deviceCode 
+    device: data.deviceCode,
+    typeGroups: Array.from(typeGroups.keys())
   });
   
   // Try Classic Bluetooth printer first (for built-in POS printers)

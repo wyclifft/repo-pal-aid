@@ -660,7 +660,7 @@ export interface ZReportData {
 // Device-specific Z Report data structure (matches handwritten layout)
 export interface DeviceZReportTransaction {
   transrefno: string;
-  refno: string;          // Short ref number for display
+  refno: string;          // Short ref number for display (last 5 digits)
   farmer_id: string;
   weight: number;
   time: string;           // HH:MM AM/PM format
@@ -669,6 +669,10 @@ export interface DeviceZReportTransaction {
   route_name?: string;    // Full route/center description from fm_tanks.descript
   product_code?: string;  // Product code for produce grouping
   product_name?: string;  // Product name from fm_items.descript
+  transtype?: number;     // 1=Buy, 2=Sell/Store, 3=AI
+  transTypeLabel?: string; // Human readable: "BUY", "SELL", "AI"
+  price?: number;         // Unit price (for Store/AI)
+  amount?: number;        // Total amount (for Store/AI)
 }
 
 export interface DeviceZReportData {

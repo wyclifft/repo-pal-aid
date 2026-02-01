@@ -6,9 +6,20 @@
  * * SEASON/SESSION: [name]
  * * DATE: DD/MM/YYYY
  * * CENTER: [center name] (displayed below date)
- * MNO    REFNO    QTY    TIME
- * [transaction rows grouped by center...]
- * TOTAL           [weight] KGS
+ * 
+ * === BUY TRANSACTIONS ===
+ * MNO :.: QTY :.: TIME
+ * [transaction rows...]
+ * Ref: [last 5 digits]
+ * BUY TOTAL: [weight] KGS
+ * 
+ * === SELL TRANSACTIONS ===
+ * [similar layout...]
+ * 
+ * === AI TRANSACTIONS ===
+ * [similar layout...]
+ * 
+ * GRAND TOTAL    [weight] KGS
  * CLERK          [clerk name]
  * PRINTED ON     DD/MM/YYYY - HH:MM AM/PM
  * DEVICE CODE    [devcode]
@@ -30,19 +41,11 @@ interface DeviceZReportReceiptProps {
   routeName?: string; // Factory name from route selection
 }
 
-// Helper to group transactions by center (route)
-interface CenterGroup {
-  centerName: string;
-  centerCode: string;
+// Helper to group transactions by transaction type
+interface TypeGroup {
+  transtype: number;
+  typeLabel: string;
   transactions: DeviceZReportTransaction[];
-  totalWeight: number;
-}
-
-// Helper to group by produce type
-interface ProduceGroup {
-  produceName: string;
-  productCode: string;
-  centerGroups: CenterGroup[];
   totalWeight: number;
 }
 
@@ -56,59 +59,41 @@ export const DeviceZReportReceipt = ({
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   
-  // Group transactions by produce type, then by center (route)
-  const produceGroups = useMemo<ProduceGroup[]>(() => {
+  // Group transactions by transaction type (1=Buy, 2=Sell, 3=AI)
+  const typeGroups = useMemo<TypeGroup[]>(() => {
     if (!data?.transactions?.length) return [];
     
-    const produceMap = new Map<string, ProduceGroup>();
+    const typeMap = new Map<number, TypeGroup>();
     
     for (const tx of data.transactions) {
-      const productCode = tx.product_code || 'DEFAULT';
-      const productName = tx.product_name || data.produceName || data.produceLabel;
+      const transtype = tx.transtype || 1;
+      const typeLabel = tx.transTypeLabel || (transtype === 2 ? 'SELL' : transtype === 3 ? 'AI' : 'BUY');
       
-      if (!produceMap.has(productCode)) {
-        produceMap.set(productCode, {
-          productCode,
-          produceName: productName,
-          centerGroups: [],
+      if (!typeMap.has(transtype)) {
+        typeMap.set(transtype, {
+          transtype,
+          typeLabel,
+          transactions: [],
           totalWeight: 0
         });
       }
       
-      const produceGroup = produceMap.get(productCode)!;
-      produceGroup.totalWeight += tx.weight;
-      
-      // Find or create center group within this produce
-      const centerCode = tx.route || 'Unknown';
-      const centerName = tx.route_name || centerCode;
-      
-      let centerGroup = produceGroup.centerGroups.find(g => g.centerCode === centerCode);
-      if (!centerGroup) {
-        centerGroup = {
-          centerCode,
-          centerName,
-          transactions: [],
-          totalWeight: 0
-        };
-        produceGroup.centerGroups.push(centerGroup);
-      }
-      
-      centerGroup.transactions.push(tx);
-      centerGroup.totalWeight += tx.weight;
+      const group = typeMap.get(transtype)!;
+      group.transactions.push(tx);
+      group.totalWeight += tx.weight;
     }
     
-    return Array.from(produceMap.values());
-  }, [data?.transactions, data?.produceName, data?.produceLabel]);
+    // Sort by transtype (1=Buy first, then 2=Sell, then 3=AI)
+    return Array.from(typeMap.values()).sort((a, b) => a.transtype - b.transtype);
+  }, [data?.transactions]);
   
-  // Check if we have multiple produces or multiple centers
-  const hasMultipleProduces = produceGroups.length > 1;
-  const hasMultipleCenters = produceGroups.some(pg => pg.centerGroups.length > 1) || 
-    (produceGroups.length === 1 && produceGroups[0].centerGroups.length > 1);
-  
-  // For single produce single center - get the center name
-  const singleCenterName = !hasMultipleProduces && !hasMultipleCenters && produceGroups.length > 0 && produceGroups[0].centerGroups.length > 0
-    ? produceGroups[0].centerGroups[0].centerName
-    : routeName || '';
+  // Get center name from first transaction if available
+  const centerName = useMemo(() => {
+    if (typeGroups.length > 0 && typeGroups[0].transactions.length > 0) {
+      return typeGroups[0].transactions[0].route_name || routeName || '';
+    }
+    return routeName || '';
+  }, [typeGroups, routeName]);
   
   if (!data) return null;
 
@@ -141,14 +126,14 @@ export const DeviceZReportReceipt = ({
       const printerConnected = isPrinterConnected();
       
       if (printerConnected) {
-        // Send Z Report data to thermal printer - include route_name for grouping
+        // Send Z Report data to thermal printer
         const result = await printZReport({
           companyName: data.companyName,
           produceLabel: data.produceLabel,
           periodLabel: data.periodLabel,
           seasonName: data.seasonName,
           date: data.date,
-          factoryName: singleCenterName || routeName || data.routeLabel || 'FACTORY',
+          factoryName: centerName || routeName || data.routeLabel || 'FACTORY',
           routeLabel: data.routeLabel || 'Center',
           produceName: data.produceName,
           transactions: data.transactions.map(tx => ({
@@ -157,9 +142,11 @@ export const DeviceZReportReceipt = ({
             weight: tx.weight,
             time: tx.time,
             route: tx.route,
-            route_name: tx.route_name, // Pass full center name
+            route_name: tx.route_name,
             product_code: tx.product_code,
             product_name: tx.product_name,
+            transtype: tx.transtype,
+            transTypeLabel: tx.transTypeLabel,
           })),
           totalWeight: data.totals.weight,
           clerkName: data.clerkName,
@@ -210,36 +197,41 @@ export const DeviceZReportReceipt = ({
   const weightUnit = 'KGS';
   const routeLabel = data.routeLabel || 'Center';
 
-  // Render a single center's transactions section
-  const renderCenterSection = (group: CenterGroup, showHeader: boolean, isLast: boolean, showSubtotal: boolean = true) => (
-    <div key={group.centerCode}>
-      {/* Center Header (only when multiple centers) */}
-      {showHeader && (
-        <div className="border-t border-dashed pt-2 mt-2">
-          <p className="font-semibold text-center">{routeLabel}: {group.centerName}</p>
-        </div>
-      )}
+  // Get last 5 digits of reference number
+  const getShortRef = (refno: string) => (refno || '').slice(-5);
+
+  // Render transactions for a type group
+  const renderTypeSection = (group: TypeGroup, isFirst: boolean) => (
+    <div key={group.transtype} className={!isFirst ? 'mt-3' : ''}>
+      {/* Type Header */}
+      <div className="border-t-2 border-double pt-2">
+        <p className="font-bold text-center text-xs bg-muted py-1 rounded">
+          === {group.typeLabel} TRANSACTIONS ===
+        </p>
+      </div>
       
-      {/* Transaction List Header */}
+      {/* Transaction List Header with dotted separators */}
       <div className="border-t border-b border-dashed py-1 mt-1">
-        <div className="grid grid-cols-3 gap-1 font-bold text-center">
+        <div className="grid grid-cols-3 gap-0 font-bold text-center text-[10px]">
           <span>MNO</span>
-          <span>QTY</span>
+          <span className="border-l border-r border-dotted">QTY</span>
           <span>TIME</span>
         </div>
       </div>
 
-      {/* Transaction List - MNO/QTY/TIME on first line, RefNo on second line */}
+      {/* Transaction List */}
       <div className="space-y-0.5 py-1">
         {group.transactions.map((tx, index) => (
-          <div key={tx.transrefno || index}>
-            <div className="grid grid-cols-3 gap-1 text-center text-[11px]">
+          <div key={tx.transrefno || index} className="border-b border-dotted pb-1">
+            {/* Main row with dotted column separators */}
+            <div className="grid grid-cols-3 gap-0 text-center text-[11px]">
               <span className="truncate">{tx.farmer_id}</span>
-              <span>{tx.weight.toFixed(1)}</span>
+              <span className="border-l border-r border-dotted">{tx.weight.toFixed(1)}</span>
               <span>{tx.time}</span>
             </div>
+            {/* RefNo on separate line - last 5 digits */}
             <div className="text-[10px] text-muted-foreground pl-2">
-              Ref: {tx.refno}
+              Ref: {getShortRef(tx.refno)}
             </div>
           </div>
         ))}
@@ -250,66 +242,13 @@ export const DeviceZReportReceipt = ({
         )}
       </div>
 
-      {/* Center Subtotal (only when multiple centers within same produce) */}
-      {showHeader && showSubtotal && (
-        <div className="border-t border-dashed pt-1">
-          <div className="flex justify-between text-sm">
-            <span className="font-semibold">{routeLabel} Total</span>
-            <span className="font-semibold">{group.totalWeight.toFixed(2)} {weightUnit}</span>
-          </div>
+      {/* Type Subtotal */}
+      <div className="border-t border-dashed pt-1">
+        <div className="flex justify-between text-xs font-bold">
+          <span>{group.typeLabel} TOTAL</span>
+          <span>{group.totalWeight.toFixed(2)} {weightUnit}</span>
         </div>
-      )}
-      
-      {/* Dotted line separator between centers */}
-      {showHeader && !isLast && (
-        <div className="text-center text-muted-foreground my-1">
-          · · · · · · · · · · · · · · · · · ·
-        </div>
-      )}
-    </div>
-  );
-
-  // Render a produce group section
-  const renderProduceSection = (produce: ProduceGroup, isFirst: boolean, isLast: boolean) => (
-    <div key={produce.productCode}>
-      {/* Produce Header - shown when multiple produces */}
-      {hasMultipleProduces && (
-        <div className={`${!isFirst ? 'border-t-2 border-double mt-3 pt-2' : ''}`}>
-          <p className="font-bold text-center uppercase">{produce.produceName}</p>
-          <div className="text-center text-muted-foreground my-1">
-            · · · · · · · · · · · · · · · · · ·
-          </div>
-        </div>
-      )}
-      
-      {/* Centers within this produce */}
-      {produce.centerGroups.length > 1 ? (
-        // Multiple centers - show grouped with headers
-        produce.centerGroups.map((group, idx) => 
-          renderCenterSection(group, true, idx === produce.centerGroups.length - 1)
-        )
-      ) : produce.centerGroups.length === 1 ? (
-        // Single center - just show center name once, then flat list
-        <>
-          {hasMultipleProduces && (
-            <div className="flex pb-1">
-              <span className="font-semibold">* {routeLabel.toUpperCase()}:</span>
-              <span className="ml-2">{produce.centerGroups[0].centerName}</span>
-            </div>
-          )}
-          {renderCenterSection(produce.centerGroups[0], false, true, false)}
-        </>
-      ) : null}
-      
-      {/* Produce Subtotal (only when multiple produces) */}
-      {hasMultipleProduces && (
-        <div className="border-t border-dashed pt-1 mt-1">
-          <div className="flex justify-between text-sm font-bold">
-            <span>{produce.produceName} TOTAL</span>
-            <span>{produce.totalWeight.toFixed(2)} {weightUnit}</span>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 
@@ -343,62 +282,24 @@ export const DeviceZReportReceipt = ({
             <span className="ml-2">{formattedDate}</span>
           </div>
 
-          {/* Center (displayed only when single produce & single center - otherwise shown per group) */}
-          {!hasMultipleProduces && !hasMultipleCenters && singleCenterName && (
+          {/* Center */}
+          {centerName && (
             <div className="flex pb-1">
               <span className="font-semibold">* {routeLabel.toUpperCase()}:</span>
-              <span className="ml-2">{singleCenterName}</span>
+              <span className="ml-2">{centerName}</span>
             </div>
           )}
 
-          {/* Produce (displayed only when single produce type - otherwise shown per group) */}
-          {!hasMultipleProduces && (
-            <div className="flex pb-2">
-              <span className="font-semibold">* PRODUCE:</span>
-              <span className="ml-2">{produceGroups.length > 0 ? produceGroups[0].produceName : (data.produceName || data.produceLabel.toUpperCase())}</span>
-            </div>
-          )}
+          {/* Produce */}
+          <div className="flex pb-2">
+            <span className="font-semibold">* PRODUCE:</span>
+            <span className="ml-2">{data.produceName || data.produceLabel.toUpperCase()}</span>
+          </div>
 
-          {/* Transaction List - grouped by produce then by center */}
+          {/* Transaction Groups by Type */}
           <div className="max-h-60 overflow-y-auto">
-            {hasMultipleProduces || hasMultipleCenters ? (
-              // Multiple produces or centers - show grouped
-              produceGroups.map((produce, idx) => 
-                renderProduceSection(produce, idx === 0, idx === produceGroups.length - 1)
-              )
-            ) : produceGroups.length > 0 && produceGroups[0].centerGroups.length > 0 ? (
-              // Single produce, single center - flat list
-              <>
-                {/* Transaction List Header */}
-                <div className="border-t border-b border-dashed py-1">
-                  <div className="grid grid-cols-3 gap-1 font-bold text-center">
-                    <span>MNO</span>
-                    <span>QTY</span>
-                    <span>TIME</span>
-                  </div>
-                </div>
-
-                {/* Transaction List - MNO/QTY/TIME on first line, RefNo on second line */}
-                <div className="space-y-0.5 py-1">
-                  {produceGroups[0].centerGroups[0].transactions.map((tx, index) => (
-                    <div key={tx.transrefno || index}>
-                      <div className="grid grid-cols-3 gap-1 text-center text-[11px]">
-                        <span className="truncate">{tx.farmer_id}</span>
-                        <span>{tx.weight.toFixed(1)}</span>
-                        <span>{tx.time}</span>
-                      </div>
-                      <div className="text-[10px] text-muted-foreground pl-2">
-                        Ref: {tx.refno}
-                      </div>
-                    </div>
-                  ))}
-                  {produceGroups[0].centerGroups[0].transactions.length === 0 && (
-                    <div className="text-center text-muted-foreground italic py-2">
-                      No transactions
-                    </div>
-                  )}
-                </div>
-              </>
+            {typeGroups.length > 0 ? (
+              typeGroups.map((group, idx) => renderTypeSection(group, idx === 0))
             ) : (
               <div className="text-center text-muted-foreground italic py-2">
                 No transactions
@@ -407,11 +308,21 @@ export const DeviceZReportReceipt = ({
           </div>
 
           {/* Grand Totals */}
-          <div className="border-t border-dashed pt-2 mt-1">
+          <div className="border-t-2 border-double pt-2 mt-2">
             <div className="flex justify-between font-bold text-sm">
-              <span>TOTAL</span>
+              <span>GRAND TOTAL</span>
               <span>{data.totals.weight.toFixed(2)} {weightUnit}</span>
             </div>
+          </div>
+
+          {/* Entry Count */}
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">Total Entries</span>
+            <span className="font-medium">{data.totals.entries}</span>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-muted-foreground">Unique Members</span>
+            <span className="font-medium">{data.totals.farmers}</span>
           </div>
 
           {/* Footer: Clerk, Print Time, Device Code */}
