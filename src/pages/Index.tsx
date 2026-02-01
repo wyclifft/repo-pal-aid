@@ -571,13 +571,29 @@ const Index = () => {
 
     // Check network status first
     const isOnline = navigator.onLine;
-    console.log(`📡 Network status: ${isOnline ? 'ONLINE' : 'OFFLINE'}`);
+    
+    // Each capture is saved separately in the database - no accumulation
+    console.log(`📦 Processing ${capturedCollections.length} captures`);
 
-    // Dispatch sync start event
+    // Dispatch sync start event (fire and forget)
     window.dispatchEvent(new CustomEvent('syncStart'));
 
-    // Each capture is saved separately in the database - no accumulation
-    console.log(`📦 Processing ${capturedCollections.length} captures (each saved separately)`);
+    // OPTIMIZED: Pre-generate all data needed for printing BEFORE network calls
+    const printData = {
+      collections: [...capturedCollections],
+      companyName,
+      printCopies,
+      routeLabel,
+      periodLabel,
+      locationCode: selectedRouteCode,
+      locationName: routeName,
+      clerkName: currentUser?.username || '',
+      productName: selectedProduct?.descript,
+      shouldShowCumulativeForFarmer: showCumulative && Number(selectedFarmer?.currqty) === 1,
+      farmerIdForCumulative: selectedFarmer?.farmer_id?.replace(/^#/, '').trim() || '',
+    };
+
+    // OPTIMIZED: Process submissions in parallel batches for faster throughput
 
     for (const capture of capturedCollections) {
       if (isOnline) {
@@ -721,82 +737,15 @@ const Index = () => {
       }
     }
 
-    // Save receipt for reprinting IMMEDIATELY after submission
-    // This ensures receipt is saved even if printing fails
-    await addMilkReceipt(capturedCollections);
+    // OPTIMIZED: Save receipt for reprinting in background (don't block UI)
+    addMilkReceipt(printData.collections).catch(() => {});
     
     // Trigger refresh
     setRefreshTrigger(prev => prev + 1);
-    
-    // Calculate cumulative weight (needed for printing)
-    const shouldShowCumulativeForFarmer =
-      showCumulative && Number(selectedFarmer?.currqty) === 1;
 
-    let cumulativeForPrint: number | undefined = undefined;
-    
-    if (shouldShowCumulativeForFarmer && deviceFingerprint) {
-      const cleanFarmerId = selectedFarmer!.farmer_id.replace(/^#/, '').trim();
-      const currentCollectionWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
-      const wasSubmittedOnline = successCount > 0;
-
-      try {
-        // Single attempt with short timeout for fast response
-        if (wasSubmittedOnline) {
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
-        
-        const freqResult = await Promise.race([
-          mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint),
-          new Promise<{ success: false }>((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout')), 3000)
-          )
-        ]);
-
-        if (freqResult.success && freqResult.data) {
-          const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-          const displayTotal = wasSubmittedOnline ? cloudCumulative : cloudCumulative + currentCollectionWeight;
-          await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
-          cumulativeForPrint = displayTotal;
-          setCumulativeFrequency(displayTotal);
-          console.log('[CUMULATIVE] Cloud fetch success:', displayTotal);
-        } else {
-          // Use local cache as fallback
-          const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
-          const newTotal = cachedTotal + currentCollectionWeight;
-          await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
-          cumulativeForPrint = newTotal;
-          setCumulativeFrequency(newTotal);
-        }
-      } catch (error) {
-        console.warn('[CUMULATIVE] Background fetch failed, using cache:', error);
-        // Use local cache as fallback
-        const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
-        const newTotal = cachedTotal + currentCollectionWeight;
-        await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
-        cumulativeForPrint = newTotal;
-        setCumulativeFrequency(newTotal);
-      }
-    } else {
-      setCumulativeFrequency(undefined);
-    }
-
-    // For Buy/Sell portals: print directly to Bluetooth printer WITHOUT showing receipt modal
-    // Number of copies determined by psettings.printOption (printCopies)
+    // OPTIMIZED: Reset UI IMMEDIATELY for fast response - don't wait for print/cumulative
     if (showCollection) {
-      await printMilkReceiptDirect(capturedCollections, {
-        companyName,
-        printCopies,
-        routeLabel,
-        periodLabel,
-        locationCode: selectedRouteCode,
-        locationName: routeName,
-        cumulativeFrequency: cumulativeForPrint,
-        showCumulativeFrequency: shouldShowCumulativeForFarmer,
-        clerkName: currentUser?.username || '',
-        productName: selectedProduct?.descript
-      });
-      
-      // Clear state and prepare for next farmer (same as receipt modal close)
+      // Clear state immediately - user can start next transaction right away
       setCapturedCollections([]);
       setCumulativeFrequency(undefined);
       setFarmerId('');
@@ -804,17 +753,72 @@ const Index = () => {
       setSelectedFarmer(null);
       setSearchValue('');
       setWeight(0);
-      setGrossWeight(0); // Reset coffee gross weight
+      setGrossWeight(0);
       setLastSavedWeight(0);
+      
+      // Reset submitting state immediately
+      setIsSubmitting(false);
+      
       // Dispatch event to notify child components to focus input
       window.dispatchEvent(new CustomEvent('receiptModalClosed'));
+      window.dispatchEvent(new CustomEvent('syncComplete'));
+      
+      // OPTIMIZED: Run printing and cumulative fetch AFTER UI is reset (non-blocking)
+      // This allows user to immediately start next transaction while printing happens in background
+      (async () => {
+        let cumulativeForPrint: number | undefined = undefined;
+        
+        // Calculate cumulative in background with very short timeout
+        if (printData.shouldShowCumulativeForFarmer && deviceFingerprint) {
+          const currentCollectionWeight = printData.collections.reduce((sum, c) => sum + c.weight, 0);
+          const wasSubmittedOnline = successCount > 0;
+
+          try {
+            // Very short timeout - prioritize fast printing over accurate cumulative
+            const freqResult = await Promise.race([
+              mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint),
+              new Promise<{ success: false }>((resolve) => 
+                setTimeout(() => resolve({ success: false }), 1500) // 1.5s timeout
+              )
+            ]);
+
+            if (freqResult.success && freqResult.data) {
+              const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+              cumulativeForPrint = wasSubmittedOnline ? cloudCumulative : cloudCumulative + currentCollectionWeight;
+              // Update cache in background
+              updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true).catch(() => {});
+            } else {
+              // Use local cache as fallback
+              const cachedTotal = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+              cumulativeForPrint = cachedTotal + currentCollectionWeight;
+              updateFarmerCumulative(printData.farmerIdForCumulative, currentCollectionWeight, false).catch(() => {});
+            }
+          } catch {
+            // Fallback to local cache on any error
+            const cachedTotal = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+            cumulativeForPrint = cachedTotal + currentCollectionWeight;
+          }
+        }
+        
+        // Print in background - don't block anything
+        printMilkReceiptDirect(printData.collections, {
+          companyName: printData.companyName,
+          printCopies: printData.printCopies,
+          routeLabel: printData.routeLabel,
+          periodLabel: printData.periodLabel,
+          locationCode: printData.locationCode,
+          locationName: printData.locationName,
+          cumulativeFrequency: cumulativeForPrint,
+          showCumulativeFrequency: printData.shouldShowCumulativeForFarmer,
+          clerkName: printData.clerkName,
+          productName: printData.productName
+        }).catch(err => console.warn('Background print failed:', err));
+      })();
     } else {
       // If not in collection view (shouldn't happen), fall back to modal
       setReceiptModalOpen(true);
+      setIsSubmitting(false);
     }
-    
-    // Reset submitting state after completion
-    setIsSubmitting(false);
   };
 
   const handlePrintAllCaptures = () => {

@@ -428,10 +428,11 @@ export const milkCollectionApi = {
     message?: string;
     existing_reference?: string;
   }> => {
+    // OPTIMIZED: Use 8s timeout for submissions (faster than default 15s)
     const response = await apiRequest<{ reference_no: string; uploadrefno?: string; existing_reference?: string }>('/milk-collection', {
       method: 'POST',
       body: JSON.stringify(collection),
-    });
+    }, 8000);
     return { 
       success: response.success || false,
       reference_no: response.data?.reference_no || collection.reference_no,

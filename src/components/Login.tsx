@@ -47,13 +47,23 @@ export const Login = memo(({ onLogin }: LoginProps) => {
     
     console.log('Device fingerprint:', deviceFingerprint);
 
-    // Check cached device approval first (works offline and online)
-    const cachedApproval = await getDeviceApproval(deviceFingerprint);
+    // Check cached device approval (fire and forget - don't block)
+    const cachedApprovalPromise = getDeviceApproval(deviceFingerprint).catch(() => null);
     
     if (navigator.onLine) {
       try {
-        // Authenticate with MySQL backend - don't wait for device check
-        const authResponse = await mysqlApi.auth.login(userId, password);
+        // OPTIMIZED: Run auth and device check in PARALLEL with short timeout
+        const authPromise = mysqlApi.auth.login(userId, password);
+        const deviceCheckPromise = Promise.race([
+          mysqlApi.devices.getByFingerprint(deviceFingerprint),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)) // 2s timeout for device
+        ]);
+
+        // Wait for auth (critical) while device check runs in parallel
+        const [authResponse, deviceData] = await Promise.all([
+          authPromise,
+          deviceCheckPromise.catch(() => null) // Don't fail if device check fails
+        ]);
 
         if (!authResponse.success || !authResponse.data) {
           toast.error(authResponse.error || 'Invalid credentials');
@@ -62,67 +72,54 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         }
 
         const userData = authResponse.data;
-
-        // Try to check device approval status from MySQL (non-blocking with timeout)
-        let deviceData = null;
         let needsRegistration = false;
-        
-        try {
-          // Use Promise.race to timeout device check after 3s
-          const deviceCheckPromise = mysqlApi.devices.getByFingerprint(deviceFingerprint);
-          const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
-          
-          deviceData = await Promise.race([deviceCheckPromise, timeoutPromise]);
-          
-          if (deviceData && deviceData.id) {
-            // Device is registered - cache approval asynchronously (don't await)
-            saveDeviceApproval(deviceFingerprint, deviceData.id, userId, deviceData.approved).catch(e => 
-              console.warn('Cache device approval failed:', e)
-            );
-            
-            if (!deviceData.approved) {
-              setDeviceStatus('pending');
-              setCurrentDeviceId(deviceFingerprint);
-              toast.error('Device pending approval. Contact administrator.');
-              setLoading(false);
-              return;
-            }
+        let resolvedDeviceData = deviceData;
 
-            setDeviceStatus('approved');
-            
-            // Store device config and device_ref asynchronously
-            if (deviceData.company_name && deviceData.devcode) {
-              storeDeviceConfig(deviceData.company_name, deviceData.devcode);
-            }
-            // Store devcode and sync all counters for reference generation
-            if (deviceData.devcode) {
-              localStorage.setItem('devcode', deviceData.devcode);
-              // Sync all counters from backend to maintain consistency
-              const lastTrnId = deviceData.trnid ? parseInt(String(deviceData.trnid), 10) : undefined;
-              const lastMilkId = deviceData.milkid ? parseInt(String(deviceData.milkid), 10) : undefined;
-              const lastStoreId = deviceData.storeid ? parseInt(String(deviceData.storeid), 10) : undefined;
-              const lastAiId = deviceData.aiid ? parseInt(String(deviceData.aiid), 10) : undefined;
-              syncOfflineCounter(deviceData.devcode, lastTrnId, lastMilkId, lastStoreId, lastAiId).catch(e => console.warn('Sync counter failed:', e));
-              console.log('📦 Stored devcode:', deviceData.devcode, 'counters: trnid=', lastTrnId, 'milkid=', lastMilkId, 'storeid=', lastStoreId, 'aiid=', lastAiId);
-            }
-            
-            // Update last sync timestamp (fire and forget)
-            mysqlApi.devices.update(deviceData.id, { user_id: userId }).catch(() => {});
-          } else if (deviceData && !deviceData.id) {
-            console.log('Device in devsettings but not approved_devices - needs registration');
-            needsRegistration = true;
-            deviceData = null;
+        // Process device data (already fetched in parallel)
+        if (resolvedDeviceData && resolvedDeviceData.id) {
+          // Device is registered - cache approval asynchronously (fire and forget)
+          saveDeviceApproval(deviceFingerprint, resolvedDeviceData.id, userId, resolvedDeviceData.approved).catch(() => {});
+          
+          if (!resolvedDeviceData.approved) {
+            setDeviceStatus('pending');
+            setCurrentDeviceId(deviceFingerprint);
+            toast.error('Device pending approval. Contact administrator.');
+            setLoading(false);
+            return;
           }
-        } catch (apiError) {
-          console.warn('Device check failed, using cached:', apiError);
-          deviceData = null;
+
+          setDeviceStatus('approved');
+          
+          // Store device config asynchronously (fire and forget - don't block login)
+          if (resolvedDeviceData.company_name && resolvedDeviceData.devcode) {
+            storeDeviceConfig(resolvedDeviceData.company_name, resolvedDeviceData.devcode);
+          }
+          if (resolvedDeviceData.devcode) {
+            localStorage.setItem('devcode', resolvedDeviceData.devcode);
+            // Sync counters in background (fire and forget)
+            const lastTrnId = resolvedDeviceData.trnid ? parseInt(String(resolvedDeviceData.trnid), 10) : undefined;
+            const lastMilkId = resolvedDeviceData.milkid ? parseInt(String(resolvedDeviceData.milkid), 10) : undefined;
+            const lastStoreId = resolvedDeviceData.storeid ? parseInt(String(resolvedDeviceData.storeid), 10) : undefined;
+            const lastAiId = resolvedDeviceData.aiid ? parseInt(String(resolvedDeviceData.aiid), 10) : undefined;
+            syncOfflineCounter(resolvedDeviceData.devcode, lastTrnId, lastMilkId, lastStoreId, lastAiId).catch(() => {});
+          }
+          
+          // Update last sync timestamp (fire and forget)
+          mysqlApi.devices.update(resolvedDeviceData.id, { user_id: userId }).catch(() => {});
+        } else if (resolvedDeviceData && !resolvedDeviceData.id) {
+          console.log('Device in devsettings but not approved_devices - needs registration');
+          needsRegistration = true;
+          resolvedDeviceData = null;
         }
+        
+        // Use cached approval from parallel fetch
+        const cachedApproval = await cachedApprovalPromise;
 
         // If API failed, device not found in backend, or needs registration, handle it
-        if (!deviceData) {
+        if (!resolvedDeviceData) {
           if (cachedApproval) {
-            // Use cached approval status
-            console.log('Using cached device approval (offline mode or API failure)');
+            // Use cached approval status - fast path
+            console.log('Using cached device approval (API timeout or failure)');
             
             if (!cachedApproval.approved) {
               setDeviceStatus('pending');
@@ -134,23 +131,23 @@ export const Login = memo(({ onLogin }: LoginProps) => {
             
             setDeviceStatus('approved');
           } else {
-            // New device - try to register it (only if API is reachable)
+            // New device - register in background with short timeout
             try {
               const deviceName = getDeviceName();
-              const newDevice = await mysqlApi.devices.register({
-                device_fingerprint: deviceFingerprint,
-                user_id: userId,
-                approved: false,
-                device_info: deviceName,
-              });
+              const registerResult = await Promise.race([
+                mysqlApi.devices.register({
+                  device_fingerprint: deviceFingerprint,
+                  user_id: userId,
+                  approved: false,
+                  device_info: deviceName,
+                }),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))
+              ]);
 
-              if (newDevice && newDevice.id) {
-                console.log('Device registered with ID:', newDevice.id);
-                try {
-                  await saveDeviceApproval(deviceFingerprint, newDevice.id, userId, false);
-                } catch (saveError) {
-                  console.error('Failed to cache device approval:', saveError);
-                }
+              if (registerResult && registerResult.id) {
+                console.log('Device registered with ID:', registerResult.id);
+                // Save approval in background
+                saveDeviceApproval(deviceFingerprint, registerResult.id, userId, false).catch(() => {});
                 setDeviceStatus('pending');
                 setCurrentDeviceId(deviceFingerprint);
                 toast.error('New device detected. Awaiting admin approval.');
