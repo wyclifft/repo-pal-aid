@@ -185,12 +185,13 @@ const Index = () => {
     }
   }, [weight, lastSavedWeight]);
 
-  // zeroOpt: Unlock capture when scale weight drops to ≤0.5 kg after a capture
-  // This allows the next capture once the container has been removed from the scale
+  // zeroOpt: Unlock capture when weight drops to ≤0.5 kg after a capture
+  // This applies to BOTH scale readings AND manual weight changes
+  // Allows the next capture once the container has been removed
   useEffect(() => {
     if (requireZeroScale && hasCapturedForCurrentFarmer && weight <= 0.5) {
       setHasCapturedForCurrentFarmer(false);
-      console.log('🔓 zeroOpt: Scale dropped to ≤0.5 kg, capture unlocked');
+      console.log('🔓 zeroOpt: Weight dropped to ≤0.5 kg (scale or manual cleared), capture unlocked');
     }
   }, [weight, requireZeroScale, hasCapturedForCurrentFarmer]);
 
@@ -350,11 +351,11 @@ const Index = () => {
     }
 
     // zeroOpt enforcement (psettings.zeroopt=1):
-    // After a capture for the current farmer, block next capture until scale drops to ≤0.5 kg
-    // This ensures the container is removed before adding the next one
+    // After a capture for the current farmer, block next capture until weight drops to ≤0.5 kg
+    // This applies to BOTH scale readings AND manual weight entry
     // Exception: When a new farmer is selected, allow capture immediately
     if (requireZeroScale && hasCapturedForCurrentFarmer && weight > 0.5) {
-      toast.error('Scale must drop to 0.5 Kg or below before next capture. Remove container from scale.');
+      toast.error('Weight must drop to 0.5 Kg or below before next capture. Clear weight or remove container.');
       return;
     }
     
