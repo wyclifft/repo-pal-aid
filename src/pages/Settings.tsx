@@ -63,8 +63,19 @@ const Settings = () => {
   
   // Bluetooth connection dialog state
   const [showConnectionDialog, setShowConnectionDialog] = useState(false);
+  
+  // Device identification
+  const [deviceFingerprint, setDeviceFingerprint] = useState<string>('');
+  const [devcode, setDevcode] = useState<string>(() => {
+    return localStorage.getItem('devcode') || '';
+  });
 
   useEffect(() => {
+    // Load device fingerprint
+    generateDeviceFingerprint().then(fp => {
+      setDeviceFingerprint(fp);
+    });
+    
     const deviceInfo = getStoredDeviceInfo();
     setStoredDevice(deviceInfo);
     
@@ -683,6 +694,18 @@ Date: ${new Date().toLocaleString()}
               <span className="text-muted-foreground">Bluetooth Available:</span>
               <span className="font-medium">
                 {isBluetoothAvailable ? "Yes" : "No"}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Device Fingerprint:</span>
+              <span className="font-mono font-medium">
+                {deviceFingerprint ? deviceFingerprint.substring(0, 5).toUpperCase() : '...'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Device Code:</span>
+              <span className="font-mono font-medium">
+                {devcode || 'Not assigned'}
               </span>
             </div>
           </CardContent>
