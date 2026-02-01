@@ -664,7 +664,8 @@ export interface DeviceZReportTransaction {
   farmer_id: string;
   weight: number;
   time: string;           // HH:MM AM/PM format
-  session: string;
+  session: string;        // Normalized session (AM/PM)
+  season_code?: string;   // Original session SCODE from CAN column (MO, AF, EV)
   route?: string;         // Route/center code for grouping
   route_name?: string;    // Full route/center description from fm_tanks.descript
   product_code?: string;  // Product code for produce grouping

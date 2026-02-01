@@ -1378,14 +1378,27 @@ const server = http.createServer(async (req, res) => {
       // The deviceserial in transactions matches the uniquedevcode from devsettings
       const deviceSerial = uniquedevcode;
 
-      // Define session codes for each period
-      // Morning: MO, AM, MORNING
-      // Afternoon: AF, PM, AFTERNOON  
-      // Evening: EV, EVE, EVENING, NIGHT
-      const periodSessionCodes = {
+      // Define CAN column codes for each period (original session SCODE values)
+      // These codes match the sessions.SCODE values from the sessions table
+      // Morning: MO (or sometimes just using 'AM')
+      // Afternoon: AF (or sometimes just using 'PM')  
+      // Evening: EV, EVE
+      const periodCANCodes = {
         morning: ['MO', 'AM', 'MORNING'],
         afternoon: ['AF', 'PM', 'AFTERNOON'],
         evening: ['EV', 'EVE', 'EVENING', 'NIGHT']
+      };
+      
+      // Define normalized session column values for each period
+      // The session column is normalized to AM/PM during milk-collection insertion:
+      // - Morning (MO, AM, MORNING) → session='AM'
+      // - Afternoon (AF, PM, AFTERNOON) → session='PM'  
+      // - Evening (EV, EVENING) → session='PM' (because the normalization checks for 'EVENING' → PM)
+      // NOTE: EV sessions are normalized to PM in the session column! So we can't rely on session alone.
+      const periodNormalizedSession = {
+        morning: ['AM'],
+        afternoon: ['PM'],
+        evening: ['PM'] // EV is normalized to PM in session column, so we MUST use CAN
       };
 
       // Build query - filter by deviceserial to ensure per-device reporting
@@ -1406,18 +1419,17 @@ const server = http.createServer(async (req, res) => {
       `;
       const queryParams = [ccode, ccode, date, deviceSerial];
 
-      // Add period filter if provided (uses session column OR CAN column)
-      // Period filter takes precedence over exact season filter
-      if (periodFilter && periodFilter !== 'all' && periodSessionCodes[periodFilter]) {
-        const sessionCodes = periodSessionCodes[periodFilter];
-        // Build OR condition to match session OR CAN column against any of the period codes
+      // Add period filter if provided
+      // CRITICAL: Use CAN column for accurate filtering because session column is normalized
+      // The CAN column stores the original SCODE (MO, AF, EV) from sessions table
+      if (periodFilter && periodFilter !== 'all' && periodCANCodes[periodFilter]) {
+        const canCodes = periodCANCodes[periodFilter];
+        // Build OR condition to match CAN column against period codes
         // Use UPPER() for case-insensitive matching
-        const sessionConditions = sessionCodes.map(() => 'UPPER(TRIM(t.session)) = ?').join(' OR ');
-        const canConditions = sessionCodes.map(() => 'UPPER(TRIM(t.CAN)) = ?').join(' OR ');
-        query += ` AND ((${sessionConditions}) OR (${canConditions}))`;
-        // Add session codes twice - once for session column, once for CAN column
-        queryParams.push(...sessionCodes.map(s => s.toUpperCase()));
-        queryParams.push(...sessionCodes.map(s => s.toUpperCase()));
+        const canConditions = canCodes.map(() => 'UPPER(TRIM(t.CAN)) = ?').join(' OR ');
+        query += ` AND (${canConditions})`;
+        // Add CAN codes for filtering
+        queryParams.push(...canCodes.map(s => s.toUpperCase()));
       } else if (seasonFilter) {
         // Legacy exact session filter
         query += ` AND t.session = ?`;
@@ -1494,6 +1506,7 @@ const server = http.createServer(async (req, res) => {
           weight: parseFloat(c.weight || 0),
           time: timeStr,
           session: c.session,
+          season_code: c.season_code || '', // CAN column - original session SCODE (MO, AF, EV)
           route: c.route || '', // Route code for grouping
           route_name: c.route_name || c.route || '', // Full descriptive center name
           product_code: c.product_code || '', // Product code for produce grouping
