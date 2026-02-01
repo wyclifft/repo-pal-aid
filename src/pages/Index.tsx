@@ -18,6 +18,7 @@ import { useSessionBlacklist } from '@/hooks/useSessionBlacklist';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
+import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
 import { toast } from 'sonner';
 
 const Index = () => {
@@ -712,64 +713,96 @@ const Index = () => {
       }
     }
 
-    // Save receipt for reprinting IMMEDIATELY after submission (before modal opens)
-    // This ensures receipt is saved even if user closes modal without clicking Print
+    // Save receipt for reprinting IMMEDIATELY after submission
+    // This ensures receipt is saved even if printing fails
     await addMilkReceipt(capturedCollections);
-    
-    // Open receipt modal IMMEDIATELY - don't block on cumulative fetch
-    setReceiptModalOpen(true);
     
     // Trigger refresh
     setRefreshTrigger(prev => prev + 1);
     
-    // Calculate cumulative weight in background (non-blocking)
+    // Calculate cumulative weight (needed for printing)
     const shouldShowCumulativeForFarmer =
       showCumulative && Number(selectedFarmer?.currqty) === 1;
 
+    let cumulativeForPrint: number | undefined = undefined;
+    
     if (shouldShowCumulativeForFarmer && deviceFingerprint) {
-      // Run cumulative fetch in background without blocking UI
-      (async () => {
-        const cleanFarmerId = selectedFarmer!.farmer_id.replace(/^#/, '').trim();
-        const currentCollectionWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
-        const wasSubmittedOnline = successCount > 0;
+      const cleanFarmerId = selectedFarmer!.farmer_id.replace(/^#/, '').trim();
+      const currentCollectionWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
+      const wasSubmittedOnline = successCount > 0;
 
-        try {
-          // Single attempt with short timeout for fast response
-          if (wasSubmittedOnline) {
-            await new Promise(resolve => setTimeout(resolve, 200));
-          }
-          
-          const freqResult = await Promise.race([
-            mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint),
-            new Promise<{ success: false }>((_, reject) => 
-              setTimeout(() => reject(new Error('Timeout')), 3000)
-            )
-          ]);
+      try {
+        // Single attempt with short timeout for fast response
+        if (wasSubmittedOnline) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        
+        const freqResult = await Promise.race([
+          mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint),
+          new Promise<{ success: false }>((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 3000)
+          )
+        ]);
 
-          if (freqResult.success && freqResult.data) {
-            const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-            const displayTotal = wasSubmittedOnline ? cloudCumulative : cloudCumulative + currentCollectionWeight;
-            await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
-            setCumulativeFrequency(displayTotal);
-            console.log('[CUMULATIVE] Cloud fetch success:', displayTotal);
-          } else {
-            // Use local cache as fallback
-            const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
-            const newTotal = cachedTotal + currentCollectionWeight;
-            await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
-            setCumulativeFrequency(newTotal);
-          }
-        } catch (error) {
-          console.warn('[CUMULATIVE] Background fetch failed, using cache:', error);
+        if (freqResult.success && freqResult.data) {
+          const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+          const displayTotal = wasSubmittedOnline ? cloudCumulative : cloudCumulative + currentCollectionWeight;
+          await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
+          cumulativeForPrint = displayTotal;
+          setCumulativeFrequency(displayTotal);
+          console.log('[CUMULATIVE] Cloud fetch success:', displayTotal);
+        } else {
           // Use local cache as fallback
           const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
           const newTotal = cachedTotal + currentCollectionWeight;
           await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
+          cumulativeForPrint = newTotal;
           setCumulativeFrequency(newTotal);
         }
-      })();
+      } catch (error) {
+        console.warn('[CUMULATIVE] Background fetch failed, using cache:', error);
+        // Use local cache as fallback
+        const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
+        const newTotal = cachedTotal + currentCollectionWeight;
+        await updateFarmerCumulative(cleanFarmerId, currentCollectionWeight, false);
+        cumulativeForPrint = newTotal;
+        setCumulativeFrequency(newTotal);
+      }
     } else {
       setCumulativeFrequency(undefined);
+    }
+
+    // For Buy/Sell portals: print directly to Bluetooth printer WITHOUT showing receipt modal
+    // Number of copies determined by psettings.printOption (printCopies)
+    if (showCollection) {
+      await printMilkReceiptDirect(capturedCollections, {
+        companyName,
+        printCopies,
+        routeLabel,
+        periodLabel,
+        locationCode: selectedRouteCode,
+        locationName: routeName,
+        cumulativeFrequency: cumulativeForPrint,
+        showCumulativeFrequency: shouldShowCumulativeForFarmer,
+        clerkName: currentUser?.username || '',
+        productName: selectedProduct?.descript
+      });
+      
+      // Clear state and prepare for next farmer (same as receipt modal close)
+      setCapturedCollections([]);
+      setCumulativeFrequency(undefined);
+      setFarmerId('');
+      setFarmerName('');
+      setSelectedFarmer(null);
+      setSearchValue('');
+      setWeight(0);
+      setGrossWeight(0); // Reset coffee gross weight
+      setLastSavedWeight(0);
+      // Dispatch event to notify child components to focus input
+      window.dispatchEvent(new CustomEvent('receiptModalClosed'));
+    } else {
+      // If not in collection view (shouldn't happen), fall back to modal
+      setReceiptModalOpen(true);
     }
   };
 
