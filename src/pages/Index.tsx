@@ -52,6 +52,11 @@ const Index = () => {
   const [entryType, setEntryType] = useState<'scale' | 'manual'>('manual');
   const [lastSavedWeight, setLastSavedWeight] = useState(0);
   
+  // zeroOpt tracking: block capture after a capture until scale drops to ≤0.5
+  // Resets when a new farmer is selected
+  const [hasCapturedForCurrentFarmer, setHasCapturedForCurrentFarmer] = useState(false);
+  const [lastCapturedFarmerId, setLastCapturedFarmerId] = useState<string | null>(null);
+  
   // Coffee sack weighing - gross/tare/net (orgtype C only)
   // Tare weight comes from psettings.sackTare (default 1 kg)
   const [grossWeight, setGrossWeight] = useState(0);
@@ -180,6 +185,15 @@ const Index = () => {
     }
   }, [weight, lastSavedWeight]);
 
+  // zeroOpt: Unlock capture when scale weight drops to ≤0.5 kg after a capture
+  // This allows the next capture once the container has been removed from the scale
+  useEffect(() => {
+    if (requireZeroScale && hasCapturedForCurrentFarmer && weight <= 0.5) {
+      setHasCapturedForCurrentFarmer(false);
+      console.log('🔓 zeroOpt: Scale dropped to ≤0.5 kg, capture unlocked');
+    }
+  }, [weight, requireZeroScale, hasCapturedForCurrentFarmer]);
+
   const handleLogin = (user: AppUser, offline: boolean, password?: string) => {
     login(user, offline, password);
   };
@@ -197,6 +211,13 @@ const Index = () => {
     setRoute(farmer.route);
     setSelectedFarmer(farmer); // Store full farmer object including multOpt
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
+    
+    // zeroOpt: Reset capture blocking when a NEW farmer is selected
+    // This allows immediate capture since the previous weights have been removed
+    if (lastCapturedFarmerId !== cleanFarmerId) {
+      setHasCapturedForCurrentFarmer(false);
+      console.log('🔄 zeroOpt: New farmer selected, capture unlocked');
+    }
   };
 
   const handleRouteChange = (selectedRoute: Route | null) => {
@@ -240,6 +261,8 @@ const Index = () => {
     setWeight(0);
     setCapturedCollections([]);
     setLastSavedWeight(0);
+    // Reset zeroOpt blocking
+    setHasCapturedForCurrentFarmer(false);
     // Keep route selection when clearing farmer
     toast.info('Farmer details cleared');
   };
@@ -326,9 +349,12 @@ const Index = () => {
       }
     }
 
-    // Check if scale reads 0 before next collection (enforced when zeroOpt=1 or for scale entry)
-    if ((requireZeroScale || entryType === 'scale') && lastSavedWeight > 0 && weight > 0) {
-      toast.error('Scale must read 0 before next collection');
+    // zeroOpt enforcement (psettings.zeroopt=1):
+    // After a capture for the current farmer, block next capture until scale drops to ≤0.5 kg
+    // This ensures the container is removed before adding the next one
+    // Exception: When a new farmer is selected, allow capture immediately
+    if (requireZeroScale && hasCapturedForCurrentFarmer && weight > 0.5) {
+      toast.error('Scale must drop to 0.5 Kg or below before next capture. Remove container from scale.');
       return;
     }
     
@@ -461,6 +487,12 @@ const Index = () => {
 
     // Add to captured collections for display
     setCapturedCollections(prev => [...prev, captureData]);
+    
+    // zeroOpt: Mark that we've captured for this farmer
+    // Next capture will be blocked until scale drops to ≤0.5 kg
+    setHasCapturedForCurrentFarmer(true);
+    setLastCapturedFarmerId(farmerId);
+    console.log('🔒 zeroOpt: Capture completed, next capture blocked until scale ≤0.5 kg');
     
     // NOTE: For multOpt=0 farmers, we do NOT add to blacklist on capture.
     // Blacklisting happens ONLY after successful submission in handleSubmit.
@@ -1024,6 +1056,7 @@ const Index = () => {
           onTareWeightChange={setTareWeight}
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
+          zeroOptBlocked={requireZeroScale && hasCapturedForCurrentFarmer && weight > 0.5}
         />
       ) : (
         <SellProduceScreen
@@ -1058,6 +1091,7 @@ const Index = () => {
           onTareWeightChange={setTareWeight}
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
+          zeroOptBlocked={requireZeroScale && hasCapturedForCurrentFarmer && weight > 0.5}
         />
       )}
 

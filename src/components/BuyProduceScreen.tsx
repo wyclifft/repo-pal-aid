@@ -43,6 +43,8 @@ interface BuyProduceScreenProps {
   sackTareWeight?: number;
   // Whether user can edit sack weight (psettings: allowSackEdit)
   allowSackEdit?: boolean;
+  // zeroOpt: capture blocked until scale drops to ≤0.5 kg
+  zeroOptBlocked?: boolean;
 }
 
 export const BuyProduceScreen = ({
@@ -74,6 +76,7 @@ export const BuyProduceScreen = ({
   onTareWeightChange,
   sackTareWeight = 1,
   allowSackEdit = false,
+  zeroOptBlocked = false,
 }: BuyProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -334,6 +337,21 @@ export const BuyProduceScreen = ({
       <div className="bg-teal-500 text-white text-center py-2 font-semibold text-sm sm:text-base">
         {produceLabel} Buying
       </div>
+
+      {/* zeroOpt: Show blocking indicator when capture is blocked until scale drops */}
+      {zeroOptBlocked && (
+        <div className="bg-amber-100 border-2 border-amber-500 text-amber-800 px-4 py-3 mx-3 mt-2 rounded-lg">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
+            <p className="font-semibold text-sm">
+              Remove container from scale to continue
+            </p>
+          </div>
+          <p className="text-xs mt-1 text-amber-700">
+            Scale must drop to ≤0.5 Kg before next capture
+          </p>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4 overflow-y-auto" style={{ paddingBottom: 'max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))' }}>
