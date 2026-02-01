@@ -106,18 +106,20 @@ const ZReport = () => {
   }, [selectedDate, deviceFingerprint]);
 
   // Fetch device-specific Z Report (for receipt/print output only)
-  const fetchDeviceReport = useCallback(async () => {
+  // Now accepts period filter for server-side filtering
+  const fetchDeviceReport = useCallback(async (period?: ZReportPeriod) => {
     if (!deviceFingerprint || !navigator.onLine) return;
     
     try {
-      const data = await mysqlApi.zReport.getByDevice(selectedDate, deviceFingerprint);
+      // Pass period to backend for server-side filtering
+      const data = await mysqlApi.zReport.getByDevice(selectedDate, deviceFingerprint, undefined, period);
       if (data) {
         // Add clerk name from current user if not set
         if (!data.clerkName || data.clerkName === 'Unknown') {
           data.clerkName = currentUser?.username || 'Clerk';
         }
         setDeviceReportData(data);
-        console.log('[Z-REPORT] Device report loaded:', data.transactions.length, 'transactions');
+        console.log('[Z-REPORT] Device report loaded:', data.transactions.length, 'transactions for period:', period || 'all');
       }
     } catch (err) {
       console.error('[Z-REPORT] Failed to fetch device report:', err);
@@ -198,12 +200,17 @@ const ZReport = () => {
     setShowPeriodSelector(true);
   };
   
-  // Handle period selection - filter data and show receipt preview
-  const handlePeriodSelect = (period: ZReportPeriod, periodLabel: string) => {
+  // Handle period selection - fetch filtered data from backend and show receipt preview
+  const handlePeriodSelect = async (period: ZReportPeriod, periodLabel: string) => {
     console.log('📋 Period selected:', period, periodLabel);
     setSelectedPeriod(period);
     setSelectedPeriodLabel(periodLabel);
     setShowPeriodSelector(false);
+    
+    // Fetch device report with period filter from backend
+    // This ensures server-side filtering by session/CAN codes
+    await fetchDeviceReport(period);
+    
     // Show device receipt preview with filtered data
     setShowDeviceReceiptPreview(true);
   };
