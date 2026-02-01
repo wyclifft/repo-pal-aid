@@ -909,134 +909,80 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      // Helper function to attempt insert with auto-regeneration on duplicate
-      // trnid and milkid are ONLY updated after successful insert to prevent duplicates
+      // Helper function to attempt insert - NO LONGER auto-regenerates on duplicate
+      // If duplicate detected, return success acknowledging record exists (idempotent)
+      // This prevents infinite retry loops that create multiple records
       const attemptInsert = async (attemptTransrefno, attemptUploadrefno) => {
-        let attempt = 0;
-        while (true) {
-          attempt++;
-          try {
-            // Attempt the insert with current reference
-            // Note: transtype was already parsed earlier (1 = Buy Produce, 2 = Sell Produce)
-            // Get product_code (icode) from request body - maps to icode column
-            const productCode = body.product_code || '';
-            // Get season_code (SCODE) from request body - maps to CAN column
-            const seasonCAN = body.season_code || '';
-            
-            await pool.query(
-              `INSERT INTO transactions 
-                (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
-                 transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-                 amount, icode, CAN, time, capType, entry_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?)`,
-              [
-                attemptTransrefno,
-                attemptUploadrefno ? String(attemptUploadrefno) : '',
-                userId,
-                clerk,
-                deviceserial,
-                cleanFarmerId,
-                body.route,
-                body.weight,
-                normalizedSession,
-                transdate,
-                transtime,
-                transtype, // Use passed transtype (1 = Buy, 2 = Sell)
-                ccode,
-                productCode,  // icode column - stores fm_items.icode (product code)
-                seasonCAN,    // CAN column - stores session.SCODE (season code)
-                timestamp,
-                body.entry_type || 'manual',
-              ]
-            );
+        try {
+          // Attempt the insert with current reference
+          const productCode = body.product_code || '';
+          const seasonCAN = body.season_code || '';
+          
+          await pool.query(
+            `INSERT INTO transactions 
+              (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+               transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
+               amount, icode, CAN, time, capType, entry_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?)`,
+            [
+              attemptTransrefno,
+              attemptUploadrefno ? String(attemptUploadrefno) : '',
+              userId,
+              clerk,
+              deviceserial,
+              cleanFarmerId,
+              body.route,
+              body.weight,
+              normalizedSession,
+              transdate,
+              transtime,
+              transtype,
+              ccode,
+              productCode,
+              seasonCAN,
+              timestamp,
+              body.entry_type || 'manual',
+            ]
+          );
 
-            // SUCCESS: Now atomically update trnid AND milkid AFTER successful insert
-            // Extract trnid from the reference that was just inserted
-            const [devRows] = await pool.query(
-              'SELECT devcode FROM devsettings WHERE uniquedevcode = ?',
-              [deviceserial]
-            );
-            if (devRows.length > 0 && devRows[0].devcode) {
-              const devcode = devRows[0].devcode;
-              const insertedTrnId = parseInt(attemptTransrefno.substring(devcode.length));
-              if (!isNaN(insertedTrnId)) {
-                // Update both trnid and milkid - only increase, never decrease
-                await pool.query(
-                  `UPDATE devsettings SET 
-                    trnid = GREATEST(IFNULL(trnid, 0), ?),
-                    milkid = GREATEST(IFNULL(milkid, 0), ?)
-                   WHERE uniquedevcode = ?`,
-                  [insertedTrnId, attemptUploadrefno || 0, deviceserial]
-                );
-                console.log(`✅ Updated trnid to ${insertedTrnId}, milkid to ${attemptUploadrefno} for device after successful insert`);
-              }
+          // SUCCESS: Update trnid AND milkid AFTER successful insert
+          const [devRows] = await pool.query(
+            'SELECT devcode FROM devsettings WHERE uniquedevcode = ?',
+            [deviceserial]
+          );
+          if (devRows.length > 0 && devRows[0].devcode) {
+            const devcode = devRows[0].devcode;
+            const insertedTrnId = parseInt(attemptTransrefno.substring(devcode.length));
+            if (!isNaN(insertedTrnId)) {
+              await pool.query(
+                `UPDATE devsettings SET 
+                  trnid = GREATEST(IFNULL(trnid, 0), ?),
+                  milkid = GREATEST(IFNULL(milkid, 0), ?)
+                 WHERE uniquedevcode = ?`,
+                [insertedTrnId, attemptUploadrefno || 0, deviceserial]
+              );
+              console.log(`✅ Updated trnid to ${insertedTrnId}, milkid to ${attemptUploadrefno} for device`);
             }
+          }
 
-            console.log('✅ BACKEND: NEW record INSERTED successfully with reference:', attemptTransrefno, ', uploadrefno:', attemptUploadrefno);
-            return { success: true, reference_no: attemptTransrefno, uploadrefno: attemptUploadrefno };
-          } catch (error) {
-            // Check if it's a duplicate entry error
-            if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
-              console.warn(`⚠️ Duplicate reference ${attemptTransrefno} detected (attempt ${attempt})`);
-              
-              // Add exponential backoff delay to reduce race conditions (max 2 seconds)
-              if (attempt > 1) {
-                const delay = Math.min(100 * Math.pow(2, attempt - 2), 2000);
-                await new Promise(resolve => setTimeout(resolve, delay));
-              }
-              
-              // Regenerate a new reference number using devcode + trnid format
-              // DO NOT update trnid here - only after successful insert
-              const connection = await pool.getConnection();
-              try {
-                await connection.beginTransaction();
-                
-                // Get devcode from devsettings
-                const [devRows] = await connection.query(
-                  'SELECT devcode FROM devsettings WHERE uniquedevcode = ?',
-                  [deviceserial]
-                );
-                
-                if (devRows.length === 0 || !devRows[0].devcode) {
-                  await connection.rollback();
-                  connection.release();
-                  throw new Error('Devcode not found');
-                }
-                
-                const devcode = devRows[0].devcode;
-                
-                // Get the highest transaction number with row lock
-                const [lastTransRows] = await connection.query(
-                  'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
-                  [`${devcode}%`]
-                );
-                
-                let nextNumber = 1;
-                if (lastTransRows.length > 0) {
-                  const lastRef = lastTransRows[0].transrefno;
-                  const lastNumber = parseInt(lastRef.substring(devcode.length));
-                  if (!isNaN(lastNumber)) {
-                    nextNumber = lastNumber + 1;
-                  }
-                }
-                
-                attemptTransrefno = `${devcode}${String(nextNumber).padStart(8, '0')}`;
-                
-                // DO NOT update trnid here - will be updated after successful insert
-                
-                await connection.commit();
-                connection.release();
-                
-                console.log(`🔄 Generated new reference: ${attemptTransrefno} (retry ${attempt})`);
-              } catch (genError) {
-                await connection.rollback();
-                connection.release();
-                throw genError;
-              }
-            } else {
-              // Not a duplicate error
-              throw error;
-            }
+          console.log('✅ BACKEND: NEW record INSERTED with reference:', attemptTransrefno, ', uploadrefno:', attemptUploadrefno);
+          return { success: true, reference_no: attemptTransrefno, uploadrefno: attemptUploadrefno, isNew: true };
+        } catch (error) {
+          // Check if it's a duplicate entry error
+          if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
+            // IDEMPOTENT: Return success acknowledging record already exists
+            // This prevents frontend from retrying and creating duplicate records
+            console.log(`ℹ️ Record with reference ${attemptTransrefno} already exists (idempotent success)`);
+            return { 
+              success: true, 
+              reference_no: attemptTransrefno, 
+              uploadrefno: attemptUploadrefno, 
+              isNew: false,
+              message: 'Record already exists (duplicate reference)'
+            };
+          } else {
+            // Not a duplicate error - rethrow
+            throw error;
           }
         }
       };
