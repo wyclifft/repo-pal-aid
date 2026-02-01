@@ -354,8 +354,8 @@ const ZReport = () => {
           <div className="thermal-print">
             <div className="thermal-header">{produceLabel.toUpperCase()} COLLECTION Z REPORT</div>
             <div className="thermal-divider">--------------------------------</div>
-            <div className="thermal-line">DATE: {new Date(reportData.date).toLocaleDateString()}</div>
-            <div className="thermal-line">TIME: {new Date().toLocaleTimeString()}</div>
+            <div className="thermal-line">DATE: {new Date(reportData.date).toLocaleDateString('en-CA')}</div>
+            <div className="thermal-line">TIME: {new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</div>
             <div className="thermal-divider">--------------------------------</div>
             <div className="thermal-section">
               <div className="thermal-line">Total Entries: {reportData.totals.entries}</div>

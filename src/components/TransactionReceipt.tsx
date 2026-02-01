@@ -111,10 +111,12 @@ export const TransactionReceipt = ({
   } = data;
 
   const formattedDate = transactionDate.toLocaleDateString('en-CA');
+  // Use 24-hour format for time (no AM/PM)
   const formattedTime = transactionDate.toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
     minute: '2-digit',
-    second: '2-digit'
+    second: '2-digit',
+    hour12: false
   });
 
   const handlePrint = async () => {
@@ -347,6 +349,7 @@ export const createMilkReceiptData = (
     farmer_name: string;
     route: string;
     session: string;
+    session_descript?: string; // Full session description for display
     weight: number;
     clerk_name: string;
     collection_date: Date;
@@ -378,7 +381,8 @@ export const createMilkReceiptData = (
     memberRoute: first.route,
     clerkName: first.clerk_name,
     transactionDate: new Date(first.collection_date),
-    session: first.session,
+    // Use session_descript for display if available, otherwise fall back to session code
+    session: first.session_descript || first.session,
     productName: first.product_name,
     items: receipts.map(r => ({
       reference_no: r.reference_no,

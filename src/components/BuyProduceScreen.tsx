@@ -549,11 +549,11 @@ export const BuyProduceScreen = ({
                       day: '2-digit', 
                       month: '2-digit', 
                       year: 'numeric' 
-                    })} {new Date(c.collection_date).toLocaleTimeString('en-US', {
+                    })} {new Date(c.collection_date).toLocaleTimeString('en-GB', {
                       hour: '2-digit',
                       minute: '2-digit',
                       second: '2-digit',
-                      hour12: true
+                      hour12: false
                     })}
                   </span>
                   {/* Coffee mode: show Gross/Sack/Net breakdown */}
