@@ -52,10 +52,14 @@ const Index = () => {
   const [entryType, setEntryType] = useState<'scale' | 'manual'>('manual');
   const [lastSavedWeight, setLastSavedWeight] = useState(0);
   
-  // zeroOpt tracking: block capture after a capture until scale drops to ≤0.5
-  // Resets when a new farmer is selected
-  const [hasCapturedForCurrentFarmer, setHasCapturedForCurrentFarmer] = useState(false);
+  // ========== zeroOpt CAPTURE LOCK (psettings.zeroopt) ==========
+  // If zeroopt=1: After a capture, captureLocked=true blocks next capture until weight ≤0.5 kg
+  // Lock applies to BOTH scale and manual entry
+  // Lock resets when: (1) weight drops to ≤0.5 kg, or (2) new member is selected
+  // If zeroopt=0: Captures allowed normally without zero check
+  const [captureLocked, setCaptureLocked] = useState(false);
   const [lastCapturedFarmerId, setLastCapturedFarmerId] = useState<string | null>(null);
+  // ========== END zeroOpt CAPTURE LOCK ==========
   
   // Coffee sack weighing - gross/tare/net (orgtype C only)
   // Tare weight comes from psettings.sackTare (default 1 kg)
@@ -162,6 +166,7 @@ const Index = () => {
       console.log(`🔄 Session rolled over from ${lastSessionType} to ${currentSessionType} - clearing blacklist and session submitted farmers`);
       clearBlacklist();
       setSessionSubmittedFarmers(new Set()); // Clear local tracking on session change
+      setCaptureLocked(false); // Reset capture lock on session change
     }
     
     setLastSessionType(currentSessionType);
@@ -185,15 +190,14 @@ const Index = () => {
     }
   }, [weight, lastSavedWeight]);
 
-  // zeroOpt: Unlock capture when weight drops to ≤0.5 kg after a capture
+  // zeroOpt: Continuously check weight - unlock when it drops to ≤0.5 kg
   // This applies to BOTH scale readings AND manual weight changes
-  // Allows the next capture once the container has been removed
   useEffect(() => {
-    if (requireZeroScale && hasCapturedForCurrentFarmer && weight <= 0.5) {
-      setHasCapturedForCurrentFarmer(false);
-      console.log('🔓 zeroOpt: Weight dropped to ≤0.5 kg (scale or manual cleared), capture unlocked');
+    if (requireZeroScale && captureLocked && weight <= 0.5) {
+      setCaptureLocked(false);
+      console.log('🔓 zeroOpt: Weight ≤0.5 kg detected, captureLocked=false, next capture allowed');
     }
-  }, [weight, requireZeroScale, hasCapturedForCurrentFarmer]);
+  }, [weight, requireZeroScale, captureLocked]);
 
   const handleLogin = (user: AppUser, offline: boolean, password?: string) => {
     login(user, offline, password);
@@ -213,11 +217,11 @@ const Index = () => {
     setSelectedFarmer(farmer); // Store full farmer object including multOpt
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
     
-    // zeroOpt: Reset capture blocking when a NEW farmer is selected
-    // This allows immediate capture since the previous weights have been removed
+    // zeroOpt: Reset captureLocked when a NEW member is selected
+    // This allows immediate capture for the new farmer
     if (lastCapturedFarmerId !== cleanFarmerId) {
-      setHasCapturedForCurrentFarmer(false);
-      console.log('🔄 zeroOpt: New farmer selected, capture unlocked');
+      setCaptureLocked(false);
+      console.log('🔄 zeroOpt: New member selected, captureLocked=false');
     }
   };
 
@@ -262,8 +266,8 @@ const Index = () => {
     setWeight(0);
     setCapturedCollections([]);
     setLastSavedWeight(0);
-    // Reset zeroOpt blocking
-    setHasCapturedForCurrentFarmer(false);
+    // Reset zeroOpt capture lock when farmer is cleared
+    setCaptureLocked(false);
     // Keep route selection when clearing farmer
     toast.info('Farmer details cleared');
   };
@@ -351,10 +355,9 @@ const Index = () => {
     }
 
     // zeroOpt enforcement (psettings.zeroopt=1):
-    // After a capture for the current farmer, block next capture until weight drops to ≤0.5 kg
-    // This applies to BOTH scale readings AND manual weight entry
-    // Exception: When a new farmer is selected, allow capture immediately
-    if (requireZeroScale && hasCapturedForCurrentFarmer && weight > 0.5) {
+    // While captureLocked=true, do NOT allow capture (scale or manual)
+    // Only one capture per unlock - lock must reset before another record can be captured
+    if (requireZeroScale && captureLocked && weight > 0.5) {
       toast.error('Weight must drop to 0.5 Kg or below before next capture. Clear weight or remove container.');
       return;
     }
@@ -489,11 +492,11 @@ const Index = () => {
     // Add to captured collections for display
     setCapturedCollections(prev => [...prev, captureData]);
     
-    // zeroOpt: Mark that we've captured for this farmer
-    // Next capture will be blocked until scale drops to ≤0.5 kg
-    setHasCapturedForCurrentFarmer(true);
+    // zeroOpt: After capture, set captureLocked=true
+    // Next capture blocked until weight ≤0.5 kg (scale or manual)
+    setCaptureLocked(true);
     setLastCapturedFarmerId(farmerId);
-    console.log('🔒 zeroOpt: Capture completed, next capture blocked until scale ≤0.5 kg');
+    console.log('🔒 zeroOpt: Capture completed, captureLocked=true, next capture blocked until weight ≤0.5 kg');
     
     // NOTE: For multOpt=0 farmers, we do NOT add to blacklist on capture.
     // Blacklisting happens ONLY after successful submission in handleSubmit.
@@ -1057,7 +1060,7 @@ const Index = () => {
           onTareWeightChange={setTareWeight}
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
-          zeroOptBlocked={requireZeroScale && hasCapturedForCurrentFarmer && weight > 0.5}
+          zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
         />
       ) : (
         <SellProduceScreen
@@ -1092,7 +1095,7 @@ const Index = () => {
           onTareWeightChange={setTareWeight}
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
-          zeroOptBlocked={requireZeroScale && hasCapturedForCurrentFarmer && weight > 0.5}
+          zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
         />
       )}
 
