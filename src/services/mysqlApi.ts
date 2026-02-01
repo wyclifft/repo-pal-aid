@@ -706,11 +706,15 @@ export const zReportApi = {
   /**
    * Get device-specific Z Report (per device, not mixed)
    * Filters by deviceserial (device code) and date
+   * @param period - Optional period filter: 'morning', 'afternoon', 'evening', 'all'
    */
-  getByDevice: async (date: string, uniquedevcode: string, seasonCode?: string): Promise<DeviceZReportData | null> => {
+  getByDevice: async (date: string, uniquedevcode: string, seasonCode?: string, period?: string): Promise<DeviceZReportData | null> => {
     let url = `/z-report/device?date=${date}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
     if (seasonCode) {
       url += `&season=${encodeURIComponent(seasonCode)}`;
+    }
+    if (period && period !== 'all') {
+      url += `&period=${encodeURIComponent(period)}`;
     }
     const response = await apiRequest<DeviceZReportData>(url);
     return response.data || null;

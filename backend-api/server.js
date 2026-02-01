@@ -1341,10 +1341,12 @@ const server = http.createServer(async (req, res) => {
     // ==================== DEVICE-SPECIFIC Z-REPORT API ====================
     // GET /api/z-report/device - Get Z Report filtered by device (not company-wide)
     // This ensures Z Reports are per-device only, never mixing devices
+    // Supports period filtering: morning, afternoon, evening, all
     if (path === '/api/z-report/device' && method === 'GET') {
       const date = parsedUrl.query.date || new Date().toISOString().split('T')[0];
       const uniquedevcode = parsedUrl.query.uniquedevcode;
-      const seasonFilter = parsedUrl.query.season; // Optional season/session filter
+      const seasonFilter = parsedUrl.query.season; // Optional exact session filter
+      const periodFilter = parsedUrl.query.period; // Optional period filter: morning, afternoon, evening, all
 
       if (!uniquedevcode) {
         return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400, origin);
@@ -1376,6 +1378,16 @@ const server = http.createServer(async (req, res) => {
       // The deviceserial in transactions matches the uniquedevcode from devsettings
       const deviceSerial = uniquedevcode;
 
+      // Define session codes for each period
+      // Morning: MO, AM, MORNING
+      // Afternoon: AF, PM, AFTERNOON  
+      // Evening: EV, EVE, EVENING, NIGHT
+      const periodSessionCodes = {
+        morning: ['MO', 'AM', 'MORNING'],
+        afternoon: ['AF', 'PM', 'AFTERNOON'],
+        evening: ['EV', 'EVE', 'EVENING', 'NIGHT']
+      };
+
       // Build query - filter by deviceserial to ensure per-device reporting
       // Include ALL transaction types: 1=Buy Produce, 2=Sell/Store, 3=AI
       // Join fm_tanks to get route description and fm_items for product name
@@ -1394,8 +1406,20 @@ const server = http.createServer(async (req, res) => {
       `;
       const queryParams = [ccode, ccode, date, deviceSerial];
 
-      // Add season filter if provided
-      if (seasonFilter) {
+      // Add period filter if provided (uses session column OR CAN column)
+      // Period filter takes precedence over exact season filter
+      if (periodFilter && periodFilter !== 'all' && periodSessionCodes[periodFilter]) {
+        const sessionCodes = periodSessionCodes[periodFilter];
+        // Build OR condition to match session OR CAN column against any of the period codes
+        // Use UPPER() for case-insensitive matching
+        const sessionConditions = sessionCodes.map(() => 'UPPER(TRIM(t.session)) = ?').join(' OR ');
+        const canConditions = sessionCodes.map(() => 'UPPER(TRIM(t.CAN)) = ?').join(' OR ');
+        query += ` AND ((${sessionConditions}) OR (${canConditions}))`;
+        // Add session codes twice - once for session column, once for CAN column
+        queryParams.push(...sessionCodes.map(s => s.toUpperCase()));
+        queryParams.push(...sessionCodes.map(s => s.toUpperCase()));
+      } else if (seasonFilter) {
+        // Legacy exact session filter
         query += ` AND t.session = ?`;
         queryParams.push(seasonFilter);
       }
