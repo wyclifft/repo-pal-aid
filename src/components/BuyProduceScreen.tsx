@@ -338,17 +338,17 @@ export const BuyProduceScreen = ({
         {produceLabel} Buying
       </div>
 
-      {/* zeroOpt: Show blocking indicator when capture is blocked until scale drops */}
+      {/* zeroOpt: Show blocking indicator when capture is blocked until weight drops */}
       {zeroOptBlocked && (
         <div className="bg-amber-100 border-2 border-amber-500 text-amber-800 px-4 py-3 mx-3 mt-2 rounded-lg">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
             <p className="font-semibold text-sm">
-              Remove container from scale to continue
+              Clear weight to continue (scale or manual)
             </p>
           </div>
           <p className="text-xs mt-1 text-amber-700">
-            Scale must drop to ≤0.5 Kg before next capture
+            Weight must drop to ≤0.5 Kg before next capture
           </p>
         </div>
       )}
