@@ -21,7 +21,7 @@
  * 
  * GRAND TOTAL    [weight] KGS
  * CLERK          [clerk name]
- * PRINTED ON     DD/MM/YYYY - HH:MM AM/PM
+ * PRINTED ON     DD/MM/YYYY - HH:MM (24-hour format)
  * DEVICE CODE    [devcode]
  */
 
@@ -104,7 +104,7 @@ export const DeviceZReportReceipt = ({
     year: 'numeric'
   });
   
-  // Format print time as DD/MM/YYYY - HH:MM AM/PM
+  // Format print time as DD/MM/YYYY - HH:MM (24-hour format, no AM/PM)
   const now = new Date();
   const printDate = now.toLocaleDateString('en-GB', {
     day: '2-digit',
@@ -114,8 +114,8 @@ export const DeviceZReportReceipt = ({
   const printTime = now.toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
     minute: '2-digit',
-    hour12: true
-  }).toUpperCase();
+    hour12: false
+  });
 
   const handlePrint = async () => {
     if (!data) return;

@@ -74,8 +74,8 @@ export const printThermalZReport = (reportData: ZReportData, produceLabel?: stri
       <div class="center title">${label} COLLECTION Z REPORT</div>
       <div class="line"></div>
       <div class="section">
-        <div>DATE: ${new Date(reportData.date).toLocaleDateString()}</div>
-        <div>TIME: ${new Date().toLocaleTimeString()}</div>
+        <div>DATE: ${new Date(reportData.date).toLocaleDateString('en-CA')}</div>
+        <div>TIME: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}</div>
       </div>
       <div class="line"></div>
       <div class="section center bold">
@@ -339,8 +339,8 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       const formattedTime = new Date().toLocaleTimeString('en-GB', { 
         hour: '2-digit', 
         minute: '2-digit',
-        hour12: true
-      }).toUpperCase();
+        hour12: false
+      });
       
       // Use routeName if provided, otherwise fall back to routeLabel
       const factoryName = routeName || reportData.routeLabel || 'FACTORY';

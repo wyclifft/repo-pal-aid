@@ -57,7 +57,8 @@ export const printMilkReceiptDirect = async (
         farmerId: first.farmer_id,
         route: first.route,
         routeLabel: options.routeLabel,
-        session: first.session,
+        // Use session_descript for display if available, otherwise fall back to session code
+        session: first.session_descript || first.session,
         periodLabel: options.periodLabel,
         productName: options.productName || first.product_name,
         uploadRefNo: first.uploadrefno || first.reference_no,

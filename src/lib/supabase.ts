@@ -76,6 +76,7 @@ export interface MilkCollection {
   farmer_name: string;        // Display only, not stored directly
   route: string;              // → DB: route
   session: string;            // → DB: session - AM/PM for dairy, season name for coffee
+  session_descript?: string;  // Display only - full session description from sessions.descript
   weight: number;             // → DB: weight (net weight for coffee, total weight for dairy)
   user_id?: string;           // → DB: userId (login user_id for tracking)
   clerk_name: string;         // → DB: clerk (display name/username)

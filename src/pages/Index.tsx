@@ -458,6 +458,7 @@ const Index = () => {
       farmer_name: farmerName.trim(),
       route: selectedRouteCode.trim(), // Use fm_tanks.tcode, not farmer.route
       session: currentSessionType, // Use already-computed session
+      session_descript: activeSession?.descript || currentSessionType, // Full session description for display
       weight: captureWeight, // Net weight for coffee, total for dairy
       user_id: currentUser?.user_id || 'unknown', // Login user_id for DB userId column
       clerk_name: currentUser ? (currentUser.username || currentUser.user_id) : 'unknown', // Display name for clerk column

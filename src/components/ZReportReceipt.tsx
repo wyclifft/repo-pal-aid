@@ -41,10 +41,12 @@ export const ZReportReceipt = ({
   if (!data) return null;
 
   const formattedDate = new Date(data.date).toLocaleDateString('en-CA');
+  // Use 24-hour format for time (no AM/PM)
   const formattedTime = new Date().toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
     minute: '2-digit',
-    second: '2-digit'
+    second: '2-digit',
+    hour12: false
   });
 
   const handlePrint = async () => {

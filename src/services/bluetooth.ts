@@ -2005,10 +2005,12 @@ export const printReceipt = async (data: {
   
   const dateObj = data.collectionDate || new Date();
   const formattedDate = dateObj.toLocaleDateString('en-CA');
+  // Use 24-hour format for time (no AM/PM)
   const formattedTime = dateObj.toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
     minute: '2-digit',
-    second: '2-digit'
+    second: '2-digit',
+    hour12: false
   });
 
   // 58mm thermal paper = 32 characters per line
@@ -2107,10 +2109,12 @@ export const printStoreAIReceipt = async (data: {
   
   const dateObj = data.transactionDate || new Date();
   const formattedDate = dateObj.toLocaleDateString('en-CA');
+  // Use 24-hour format for time (no AM/PM)
   const formattedTime = dateObj.toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
     minute: '2-digit',
-    second: '2-digit'
+    second: '2-digit',
+    hour12: false
   });
 
   // 58mm thermal paper = 32 characters per line
@@ -2232,7 +2236,7 @@ export const printZReport = async (data: {
     year: 'numeric'
   });
   
-  // Format print time as DD/MM/YYYY - HH:MM AM/PM
+  // Format print time as DD/MM/YYYY - HH:MM (24-hour format, no AM/PM)
   const now = new Date();
   const printDate = now.toLocaleDateString('en-GB', {
     day: '2-digit',
@@ -2242,8 +2246,8 @@ export const printZReport = async (data: {
   const printTime = now.toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
     minute: '2-digit',
-    hour12: true
-  }).toUpperCase();
+    hour12: false
+  });
   
   const weightUnit = 'KGS';
   const routeLabel = data.routeLabel || (data.isCoffee ? 'CENTER' : 'ROUTE');
