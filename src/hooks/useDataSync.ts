@@ -60,6 +60,9 @@ export const useDataSync = () => {
     return () => window.removeEventListener('storage', checkSettings);
   }, []);
 
+  // Track in-flight syncs to prevent duplicate API calls for the same receipt
+  const inFlightSyncsRef = useRef<Set<string>>(new Set());
+
   // Sync offline receipts TO backend with deduplication
   // In offline-first mode (online=1), this is only triggered manually or on explicit sync
   // In background sync mode (online=0), this runs automatically
@@ -68,6 +71,13 @@ export const useDataSync = () => {
       console.log('[SYNC] Sync skipped: not ready or offline');
       return { synced: 0, failed: 0 };
     }
+
+    // Extra guard against concurrent sync operations
+    if (syncInProgressRef.current) {
+      console.log('[SYNC] Sync already in progress, skipping');
+      return { synced: 0, failed: 0 };
+    }
+    syncInProgressRef.current = true;
 
     let synced = 0;
     let failed = 0;
@@ -83,6 +93,11 @@ export const useDataSync = () => {
         if (r.type === 'sale') return false;
         // Must have required fields
         if (!r.reference_no || !r.farmer_id || !r.weight) return false;
+        // Skip receipts currently being synced
+        if (inFlightSyncsRef.current.has(r.reference_no)) {
+          console.log(`[SYNC] Skipping ${r.reference_no} - already in flight`);
+          return false;
+        }
         return true;
       });
       
@@ -94,6 +109,7 @@ export const useDataSync = () => {
           setPendingCount(0);
         }
         console.log('[SYNC] No pending receipts to sync');
+        syncInProgressRef.current = false;
         return { synced: 0, failed: 0 };
       }
 
@@ -103,6 +119,13 @@ export const useDataSync = () => {
       window.dispatchEvent(new CustomEvent('syncStart'));
       
       const deviceFingerprint = await generateDeviceFingerprint();
+      
+      // Mark all receipts as in-flight before processing
+      unsyncedReceipts.forEach(r => {
+        if (r.reference_no) {
+          inFlightSyncsRef.current.add(r.reference_no);
+        }
+      });
       
       // Process each receipt independently - continue even if one fails
       for (let i = 0; i < unsyncedReceipts.length; i++) {
@@ -242,6 +265,11 @@ export const useDataSync = () => {
           } else {
             failed++;
           }
+        } finally {
+          // Remove from in-flight tracking after processing (success or failure)
+          if (receipt.reference_no) {
+            inFlightSyncsRef.current.delete(receipt.reference_no);
+          }
         }
         
         // Small delay between requests to avoid overwhelming the server
@@ -263,6 +291,11 @@ export const useDataSync = () => {
       console.error('[SYNC] Fatal sync error:', err);
       window.dispatchEvent(new CustomEvent('syncComplete'));
       return { synced, failed };
+    } finally {
+      // Always clear the sync in progress flag
+      syncInProgressRef.current = false;
+      // Clear all in-flight tracking on completion
+      inFlightSyncsRef.current.clear();
     }
   }, [isReady, getUnsyncedReceipts, deleteReceipt]);
 
