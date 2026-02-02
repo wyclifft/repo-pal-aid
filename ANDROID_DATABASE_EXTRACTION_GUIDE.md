@@ -121,7 +121,9 @@ Once opened, you can:
 2. **Execute SQL:** Click "Execute SQL" to run custom queries
 3. **Export Data:** Right-click on a table → Export as CSV
 
-### Main Table: `sync_records`
+### Tables
+
+#### `sync_records` - Transaction Data
 
 | Column | Description |
 |--------|-------------|
@@ -133,6 +135,19 @@ Once opened, you can:
 | `is_synced` | Whether synced to server |
 | `sync_attempts` | Number of sync attempts |
 | `last_error` | Last sync error message |
+
+#### `app_logs` - Application Logs
+
+| Column | Description |
+|--------|-------------|
+| `id` | Auto-increment primary key |
+| `level` | Log level (DEBUG, INFO, WARN, ERROR) |
+| `tag` | Source tag/component |
+| `message` | Log message |
+| `stack_trace` | Error stack trace (if applicable) |
+| `created_at` | Timestamp when logged |
+| `device_info` | Device manufacturer, model, Android version |
+| `session_id` | Unique session identifier |
 
 ---
 

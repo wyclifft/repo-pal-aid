@@ -5,25 +5,28 @@ import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 import java.security.SecureRandom
 
 /**
- * Main Room database for the Delicoop app.
+ * Main Room database for the DeliCoop101 app.
  * Uses SQLCipher for encryption at rest.
  * 
  * Database name: delicoop101_database
  * This is the single source of truth for all app data.
  */
 @Database(
-    entities = [SyncRecord::class],
-    version = 1,
+    entities = [SyncRecord::class, LogRecord::class],
+    version = 2,
     exportSchema = true
 )
 abstract class DelicoopDatabase : RoomDatabase() {
     
     abstract fun syncRecordDao(): SyncRecordDao
+    abstract fun logRecordDao(): LogRecordDao
     
     companion object {
         private const val TAG = "DelicoopDatabase"
@@ -35,6 +38,34 @@ abstract class DelicoopDatabase : RoomDatabase() {
         private var INSTANCE: DelicoopDatabase? = null
         
         /**
+         * Migration from version 1 to 2: Add app_logs table
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                Log.d(TAG, "[DB] Running migration 1 -> 2: Adding app_logs table")
+                
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS app_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        level TEXT NOT NULL,
+                        tag TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        stack_trace TEXT,
+                        created_at INTEGER NOT NULL,
+                        device_info TEXT,
+                        session_id TEXT
+                    )
+                """)
+                
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_app_logs_level ON app_logs (level)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_app_logs_tag ON app_logs (tag)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_app_logs_created_at ON app_logs (created_at)")
+                
+                Log.d(TAG, "[DB] Migration 1 -> 2 completed")
+            }
+        }
+        
+        /**
          * Get the singleton database instance.
          * Creates the encrypted database on first access.
          */
@@ -42,6 +73,29 @@ abstract class DelicoopDatabase : RoomDatabase() {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context).also { INSTANCE = it }
             }
+        }
+        
+        /**
+         * Initialize the database immediately.
+         * Call this on app startup to ensure the database exists.
+         */
+        fun initializeAsync(context: Context, callback: ((Boolean) -> Unit)? = null) {
+            Thread {
+                try {
+                    Log.d(TAG, "[DB] Initializing database on startup...")
+                    val db = getInstance(context)
+                    
+                    // Force database creation by accessing a DAO
+                    db.syncRecordDao()
+                    db.logRecordDao()
+                    
+                    Log.d(TAG, "[DB] Database initialized successfully on startup")
+                    callback?.invoke(true)
+                } catch (e: Exception) {
+                    Log.e(TAG, "[DB] Failed to initialize database: ${e.message}")
+                    callback?.invoke(false)
+                }
+            }.start()
         }
         
         /**
@@ -60,10 +114,21 @@ abstract class DelicoopDatabase : RoomDatabase() {
                 DATABASE_NAME
             )
                 .openHelperFactory(factory)
-                .fallbackToDestructiveMigration()
+                .addMigrations(MIGRATION_1_2)
+                .addCallback(object : Callback() {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        super.onCreate(db)
+                        Log.d(TAG, "[DB] Database created for the first time")
+                    }
+                    
+                    override fun onOpen(db: SupportSQLiteDatabase) {
+                        super.onOpen(db)
+                        Log.d(TAG, "[DB] Database opened")
+                    }
+                })
                 .build()
                 .also {
-                    Log.d(TAG, "[DB] Database created successfully")
+                    Log.d(TAG, "[DB] Database built successfully")
                 }
         }
         
