@@ -1,4 +1,4 @@
-# Delicoop101 Database Extraction Guide
+# DeliCoop101 Database Extraction Guide
 
 This guide explains how to extract and view the encrypted SQLCipher database from a connected Android device using Android Studio on Windows.
 
@@ -35,7 +35,7 @@ This guide explains how to extract and view the encrypted SQLCipher database fro
 
 ## Step 3: Locate the Database Files
 
-The Delicoop101 database is located at:
+The DeliCoop101 database is located at:
 
 ```
 /data/data/app.delicoop101/databases/
