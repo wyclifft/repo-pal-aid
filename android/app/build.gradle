@@ -3,10 +3,10 @@ apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-kapt'
 
 android {
-    namespace "app.delicoop101"
+    namespace "app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "app.delicoop101"
+        applicationId "app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
