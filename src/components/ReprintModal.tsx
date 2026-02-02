@@ -202,14 +202,36 @@ export const ReprintModal = ({
 
   /**
    * Confirm a record exists on the backend by its EXACT reference number.
+   * IMPORTANT: treat as confirmed only if it matches expected date + farmer.
    */
-  const confirmExistsOnBackend = async (referenceNo: string): Promise<boolean> => {
+  const confirmExactOnBackend = async (
+    referenceNo: string,
+    expected: { dateISO: string; farmerId: string }
+  ): Promise<{ confirmed: boolean; mismatchReason?: 'not_found' | 'date_mismatch' | 'farmer_mismatch' }> => {
     try {
       const found = await mysqlApi.milkCollection.getByReference(referenceNo);
-      return !!found;
+      if (!found) return { confirmed: false, mismatchReason: 'not_found' };
+
+      const foundDateISO = found.collection_date
+        ? new Date(found.collection_date).toISOString().split('T')[0]
+        : null;
+      const foundFarmerId = (found.farmer_id || '').replace(/^#/, '').trim();
+      const expectedFarmerId = expected.farmerId.replace(/^#/, '').trim();
+
+      if (foundDateISO && foundDateISO !== expected.dateISO) {
+        console.warn(`[SYNC] Reference mismatch: ${referenceNo} found on DB date=${foundDateISO}, expected=${expected.dateISO}`);
+        return { confirmed: false, mismatchReason: 'date_mismatch' };
+      }
+
+      if (foundFarmerId && expectedFarmerId && foundFarmerId !== expectedFarmerId) {
+        console.warn(`[SYNC] Reference mismatch: ${referenceNo} found for DB farmer=${foundFarmerId}, expected=${expectedFarmerId}`);
+        return { confirmed: false, mismatchReason: 'farmer_mismatch' };
+      }
+
+      return { confirmed: true };
     } catch (err) {
       console.error(`[SYNC] Error checking backend for ${referenceNo}:`, err);
-      return false;
+      return { confirmed: false, mismatchReason: 'not_found' };
     }
   };
 
@@ -250,6 +272,10 @@ export const ReprintModal = ({
 
     try {
       const deviceFingerprint = await generateDeviceFingerprint();
+      const expected = {
+        dateISO: new Date(collection.collection_date).toISOString().split('T')[0],
+        farmerId: collection.farmer_id.replace(/^#/, '').trim(),
+      };
 
       // Normalize session to AM/PM
       let normalizedSession: 'AM' | 'PM' = 'AM';
@@ -258,44 +284,86 @@ export const ReprintModal = ({
         normalizedSession = 'PM';
       }
 
-      console.log(`[SYNC] Syncing with ACTUAL reference: ${refNo}`);
-      
-      const result = await mysqlApi.milkCollection.create({
-        reference_no: refNo,
-        uploadrefno: collection.uploadrefno || refNo,
-        farmer_id: collection.farmer_id.replace(/^#/, '').trim(),
-        farmer_name: collection.farmer_name.trim(),
-        route: (collection.route || '').trim(),
-        session: normalizedSession,
-        weight: collection.weight,
-        user_id: collection.user_id,
-        clerk_name: collection.clerk_name,
-        collection_date: new Date(collection.collection_date),
-        device_fingerprint: deviceFingerprint,
-        entry_type: (collection.entry_type as 'scale' | 'manual') || 'manual',
-        product_code: collection.product_code,
-        season_code: collection.season_code,
-        transtype: collection.transtype || 1,
-      });
+      const submitOnce = async (referenceNoToUse: string) => {
+        console.log(`[SYNC] Submitting: ref=${referenceNoToUse}`);
+        return mysqlApi.milkCollection.create({
+          reference_no: referenceNoToUse,
+          uploadrefno: collection.uploadrefno || referenceNoToUse,
+          farmer_id: expected.farmerId,
+          farmer_name: collection.farmer_name.trim(),
+          route: (collection.route || '').trim(),
+          session: normalizedSession,
+          weight: collection.weight,
+          user_id: collection.user_id,
+          clerk_name: collection.clerk_name,
+          collection_date: new Date(collection.collection_date),
+          device_fingerprint: deviceFingerprint,
+          entry_type: (collection.entry_type as 'scale' | 'manual') || 'manual',
+          product_code: collection.product_code,
+          season_code: collection.season_code,
+          transtype: collection.transtype || 1,
+        });
+      };
 
-      // Confirm the record actually exists on backend before showing success
-      const duplicateLike = isDuplicateLike(result.error || result.message);
-      const apiOk = result.success || duplicateLike;
-      const confirmed = apiOk ? await confirmExistsOnBackend(refNo) : false;
+      // Attempt #1 with captured reference
+      const result1 = await submitOnce(refNo);
+      const duplicateLike1 = isDuplicateLike(result1.error || result1.message);
+      const apiOk1 = result1.success || duplicateLike1;
+
+      const refCandidates1 = Array.from(
+        new Set(
+          [result1.reference_no, result1.existing_reference, refNo]
+            .map(v => (v || '').trim())
+            .filter(Boolean)
+        )
+      );
+
+      let confirmed = false;
+      let mismatch: 'not_found' | 'date_mismatch' | 'farmer_mismatch' | undefined;
+      if (apiOk1) {
+        for (const candidate of refCandidates1) {
+          const check = await confirmExactOnBackend(candidate, expected);
+          if (check.confirmed) {
+            confirmed = true;
+            break;
+          }
+          mismatch = check.mismatchReason;
+        }
+      }
+
+      // Reference collision -> retry once with a fresh backend reference
+      if (!confirmed && mismatch === 'date_mismatch') {
+        console.warn(`[SYNC] Reference collision detected for ${refNo}. Generating new reference and retrying once...`);
+        const nextRefResp = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
+        const newRef = (nextRefResp.data?.reference_no || '').trim();
+        if (newRef) {
+          const result2 = await submitOnce(newRef);
+          const duplicateLike2 = isDuplicateLike(result2.error || result2.message);
+          const apiOk2 = result2.success || duplicateLike2;
+          if (apiOk2) {
+            confirmed = (await confirmExactOnBackend(newRef, expected)).confirmed;
+            if (confirmed) {
+              toast.success(`Record synced (new ref ${newRef})`);
+            }
+          }
+        }
+      }
 
       if (confirmed) {
         setSyncedCollections(prev => new Set(prev).add(refNo));
         toast.success(`Record synced (${refNo})`);
-        console.log(`[SYNC] Confirmed on backend: ${refNo}`);
       } else {
         setFailedCollections(prev => new Set(prev).add(refNo));
-        toast.error(`Sync not confirmed on server`);
-        console.warn(`[SYNC] Not confirmed: ${refNo}`, { result });
+        toast.error('Sync not confirmed on server');
       }
     } catch (err: any) {
       const errorMsg = (err?.message || '').toLowerCase();
       const duplicateLike = errorMsg.includes('duplicate') || errorMsg.includes('already exists');
-      const confirmed = duplicateLike ? await confirmExistsOnBackend(refNo) : false;
+      const expected = {
+        dateISO: new Date(collection.collection_date).toISOString().split('T')[0],
+        farmerId: collection.farmer_id.replace(/^#/, '').trim(),
+      };
+      const confirmed = duplicateLike ? (await confirmExactOnBackend(refNo, expected)).confirmed : false;
       
       if (confirmed) {
         setSyncedCollections(prev => new Set(prev).add(refNo));
