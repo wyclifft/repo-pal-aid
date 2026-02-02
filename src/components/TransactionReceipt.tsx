@@ -154,28 +154,37 @@ export const TransactionReceipt = ({
 
   /**
    * Confirm a record exists on the backend by its EXACT reference number.
-   * Returns true only if we find the record AND it matches today's date (to avoid old record confusion).
+   * IMPORTANT: we only treat it as confirmed if it matches the expected transaction date AND farmer.
+   * This prevents the “reference mismatch” false-positive (where an older record is returned).
    */
-  const confirmExistsOnBackend = async (referenceNo: string): Promise<boolean> => {
+  const confirmExactOnBackend = async (
+    referenceNo: string,
+    expected: { dateISO: string; farmerId: string }
+  ): Promise<{ confirmed: boolean; mismatchReason?: 'not_found' | 'date_mismatch' | 'farmer_mismatch' }> => {
     try {
       const found = await mysqlApi.milkCollection.getByReference(referenceNo);
-      if (!found) return false;
-      
-      // Additional safeguard: verify the found record matches expected date
-      // This prevents false positives where an old record with same ref is found
-      const foundDate = found.collection_date ? new Date(found.collection_date).toISOString().split('T')[0] : null;
-      const expectedDate = transactionDate.toISOString().split('T')[0];
-      
-      if (foundDate && foundDate !== expectedDate) {
-        console.warn(`[SYNC] Reference ${referenceNo} found but date mismatch: DB=${foundDate}, expected=${expectedDate}`);
-        // Still return true as the reference exists - the date mismatch indicates a duplicate reference issue
-        // which should be investigated, but the record IS in the database
+      if (!found) return { confirmed: false, mismatchReason: 'not_found' };
+
+      const foundDateISO = found.collection_date
+        ? new Date(found.collection_date).toISOString().split('T')[0]
+        : null;
+      const foundFarmerId = (found.farmer_id || '').replace(/^#/, '').trim();
+      const expectedFarmerId = expected.farmerId.replace(/^#/, '').trim();
+
+      if (foundDateISO && foundDateISO !== expected.dateISO) {
+        console.warn(`[SYNC] Reference mismatch: ${referenceNo} found on DB date=${foundDateISO}, expected=${expected.dateISO}`);
+        return { confirmed: false, mismatchReason: 'date_mismatch' };
       }
-      
-      return true;
+
+      if (foundFarmerId && expectedFarmerId && foundFarmerId !== expectedFarmerId) {
+        console.warn(`[SYNC] Reference mismatch: ${referenceNo} found for DB farmer=${foundFarmerId}, expected=${expectedFarmerId}`);
+        return { confirmed: false, mismatchReason: 'farmer_mismatch' };
+      }
+
+      return { confirmed: true };
     } catch (err) {
       console.error(`[SYNC] Error checking backend for ${referenceNo}:`, err);
-      return false;
+      return { confirmed: false, mismatchReason: 'not_found' };
     }
   };
 
@@ -221,6 +230,10 @@ export const TransactionReceipt = ({
 
     try {
       const deviceFingerprint = await generateDeviceFingerprint();
+      const expected = {
+        dateISO: transactionDate.toISOString().split('T')[0],
+        farmerId: memberId.replace(/^#/, '').trim(),
+      };
 
       // Normalize session to AM/PM
       let normalizedSession: 'AM' | 'PM' = 'AM';
@@ -229,45 +242,88 @@ export const TransactionReceipt = ({
         normalizedSession = 'PM';
       }
 
-      console.log(`[SYNC] Syncing item with ACTUAL reference: ${refNo} (row=${syncKey})`);
-      
-      const result = await mysqlApi.milkCollection.create({
-        reference_no: refNo,
-        uploadrefno: uploadrefno || refNo,
-        farmer_id: memberId.replace(/^#/, '').trim(),
-        farmer_name: memberName.trim(),
-        route: (memberRoute || '').trim(),
-        session: normalizedSession,
-        weight: item.weight || 0,
-        user_id: userId,
-        clerk_name: clerkName,
-        collection_date: transactionDate,
-        device_fingerprint: deviceFingerprint,
-        entry_type: (entryType as 'scale' | 'manual') || 'manual',
-        product_code: productCode,
-        season_code: seasonCode,
-        transtype,
-      });
+      const submitOnce = async (referenceNoToUse: string) => {
+        console.log(`[SYNC] Submitting: ref=${referenceNoToUse} (row=${syncKey})`);
+        return mysqlApi.milkCollection.create({
+          reference_no: referenceNoToUse,
+          uploadrefno: uploadrefno || referenceNoToUse,
+          farmer_id: expected.farmerId,
+          farmer_name: memberName.trim(),
+          route: (memberRoute || '').trim(),
+          session: normalizedSession,
+          weight: item.weight || 0,
+          user_id: userId,
+          clerk_name: clerkName,
+          collection_date: transactionDate,
+          device_fingerprint: deviceFingerprint,
+          entry_type: (entryType as 'scale' | 'manual') || 'manual',
+          product_code: productCode,
+          season_code: seasonCode,
+          transtype,
+        });
+      };
 
-      // Only show green tick after we can confirm the record exists on backend.
-      // This prevents false positives where the API returns success but nothing is inserted.
-      const duplicateLike = isDuplicateLike(result.error || result.message);
-      const ok = result.success || duplicateLike;
-      const confirmed = ok ? await confirmExistsOnBackend(refNo) : false;
+      // Attempt #1 with the existing (captured) reference
+      const result1 = await submitOnce(refNo);
+      const duplicateLike1 = isDuplicateLike(result1.error || result1.message);
+      const apiOk1 = result1.success || duplicateLike1;
+
+      // Prefer confirming the final reference that backend returns (if any)
+      const refCandidates1 = Array.from(
+        new Set(
+          [result1.reference_no, result1.existing_reference, refNo]
+            .map(v => (v || '').trim())
+            .filter(Boolean)
+        )
+      );
+
+      let confirmed = false;
+      let mismatch: 'not_found' | 'date_mismatch' | 'farmer_mismatch' | undefined;
+      if (apiOk1) {
+        for (const candidate of refCandidates1) {
+          const check = await confirmExactOnBackend(candidate, expected);
+          if (check.confirmed) {
+            confirmed = true;
+            break;
+          }
+          mismatch = check.mismatchReason;
+        }
+      }
+
+      // If we found a reference collision (older record returned), auto-generate a fresh reference and retry once.
+      if (!confirmed && mismatch === 'date_mismatch') {
+        console.warn(`[SYNC] Reference collision detected for ${refNo}. Generating new reference and retrying once...`);
+        const nextRefResp = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
+        const newRef = (nextRefResp.data?.reference_no || '').trim();
+        if (newRef) {
+          const result2 = await submitOnce(newRef);
+          const duplicateLike2 = isDuplicateLike(result2.error || result2.message);
+          const apiOk2 = result2.success || duplicateLike2;
+          if (apiOk2) {
+            const check2 = await confirmExactOnBackend(newRef, expected);
+            confirmed = check2.confirmed;
+            if (confirmed) {
+              toast.success(`Record ${index + 1} synced (new ref ${newRef})`);
+            }
+          }
+        }
+      }
 
       if (confirmed) {
         setSyncedItems(prev => new Set(prev).add(syncKey));
         toast.success(`Record ${index + 1} synced (${refNo})`);
-        console.log(`[SYNC] Confirmed on backend: ${refNo}`);
       } else {
         setFailedItems(prev => new Set(prev).add(syncKey));
-        toast.error(`Record ${index + 1} not confirmed on server`);
-        console.warn(`[SYNC] Not confirmed: ${refNo}`, { result });
+        toast.error('Sync not confirmed on server');
       }
     } catch (err: any) {
       const errorMsg = (err?.message || '').toLowerCase();
       const ok = errorMsg.includes('duplicate') || errorMsg.includes('already exists');
-      const confirmed = ok ? await confirmExistsOnBackend(refNo) : false;
+      const expected = {
+        dateISO: transactionDate.toISOString().split('T')[0],
+        farmerId: memberId.replace(/^#/, '').trim(),
+      };
+      const confirmed = ok ? (await confirmExactOnBackend(refNo, expected)).confirmed : false;
       if (confirmed) {
         setSyncedItems(prev => new Set(prev).add(syncKey));
         toast.success(`Record ${index + 1} synced (${refNo})`);
