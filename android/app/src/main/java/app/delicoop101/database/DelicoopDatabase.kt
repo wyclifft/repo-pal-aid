@@ -1,4 +1,4 @@
-package app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e.database
+package app.delicoop101.database
 
 import android.content.Context
 import android.util.Log
