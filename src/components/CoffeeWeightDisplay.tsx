@@ -38,13 +38,17 @@ export const CoffeeWeightDisplay = ({
   sackTareWeight = 1, // Default 1 kg if not provided
   allowSackEdit = false, // Default: fixed, backend-controlled
 }: CoffeeWeightDisplayProps) => {
+  // For coffee, always default to 1 kg regardless of sackEdit permission
+  const effectiveTareWeight = sackTareWeight > 0 ? sackTareWeight : 1;
+  
   // Local tare weight state - starts from psettings value but can be edited if allowed
-  const [localTareWeight, setLocalTareWeight] = useState(sackTareWeight);
+  const [localTareWeight, setLocalTareWeight] = useState(effectiveTareWeight);
   const [isEditingTare, setIsEditingTare] = useState(false);
   
-  // Sync local tare weight when psettings changes
+  // Sync local tare weight when psettings changes (always default to 1 if not set)
   useEffect(() => {
-    setLocalTareWeight(sackTareWeight);
+    const tareValue = sackTareWeight > 0 ? sackTareWeight : 1;
+    setLocalTareWeight(tareValue);
   }, [sackTareWeight]);
 
   const {
