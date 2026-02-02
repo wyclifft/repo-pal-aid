@@ -200,10 +200,34 @@ export const ReprintModal = ({
     }
   };
 
+  /**
+   * Confirm a record exists on the backend by its EXACT reference number.
+   */
+  const confirmExistsOnBackend = async (referenceNo: string): Promise<boolean> => {
+    try {
+      const found = await mysqlApi.milkCollection.getByReference(referenceNo);
+      return !!found;
+    } catch (err) {
+      console.error(`[SYNC] Error checking backend for ${referenceNo}:`, err);
+      return false;
+    }
+  };
+
+  const isDuplicateLike = (msg?: string): boolean => {
+    const errorMsg = (msg || '').toLowerCase();
+    return errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique');
+  };
+
   // Manual sync handler for a SINGLE collection
   const handleSyncCollection = async (collection: MilkCollection) => {
     const refNo = collection.reference_no;
-    if (!refNo) return;
+    
+    // CRITICAL: Cannot sync without a reference number
+    if (!refNo) {
+      console.error('[SYNC ERROR] Collection is missing reference_no - cannot sync');
+      toast.error('Record has no reference number - cannot sync');
+      return;
+    }
 
     if (!navigator.onLine) {
       toast.error('You are offline. Please connect to sync.');
@@ -234,7 +258,7 @@ export const ReprintModal = ({
         normalizedSession = 'PM';
       }
 
-      console.log(`[SYNC] Syncing single collection: ${refNo}`);
+      console.log(`[SYNC] Syncing with ACTUAL reference: ${refNo}`);
       
       const result = await mysqlApi.milkCollection.create({
         reference_no: refNo,
@@ -254,28 +278,28 @@ export const ReprintModal = ({
         transtype: collection.transtype || 1,
       });
 
-      if (result.success) {
+      // Confirm the record actually exists on backend before showing success
+      const duplicateLike = isDuplicateLike(result.error || result.message);
+      const apiOk = result.success || duplicateLike;
+      const confirmed = apiOk ? await confirmExistsOnBackend(refNo) : false;
+
+      if (confirmed) {
         setSyncedCollections(prev => new Set(prev).add(refNo));
-        toast.success(`Record synced`);
-        console.log(`[SYNC] Success: ${refNo}`);
+        toast.success(`Record synced (${refNo})`);
+        console.log(`[SYNC] Confirmed on backend: ${refNo}`);
       } else {
-        // Check for duplicate - treat as success
-        const errorMsg = (result.error || result.message || '').toLowerCase();
-        if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
-          setSyncedCollections(prev => new Set(prev).add(refNo));
-          toast.success(`Record already in database`);
-          console.log(`[SYNC] Already synced: ${refNo}`);
-        } else {
-          setFailedCollections(prev => new Set(prev).add(refNo));
-          toast.error(`Sync failed: ${result.error || result.message}`);
-          console.warn(`[SYNC] Failed: ${refNo} - ${result.error || result.message}`);
-        }
+        setFailedCollections(prev => new Set(prev).add(refNo));
+        toast.error(`Sync not confirmed on server`);
+        console.warn(`[SYNC] Not confirmed: ${refNo}`, { result });
       }
     } catch (err: any) {
       const errorMsg = (err?.message || '').toLowerCase();
-      if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
+      const duplicateLike = errorMsg.includes('duplicate') || errorMsg.includes('already exists');
+      const confirmed = duplicateLike ? await confirmExistsOnBackend(refNo) : false;
+      
+      if (confirmed) {
         setSyncedCollections(prev => new Set(prev).add(refNo));
-        toast.success(`Record already in database`);
+        toast.success(`Record synced (${refNo})`);
       } else {
         setFailedCollections(prev => new Set(prev).add(refNo));
         toast.error(`Sync failed`);

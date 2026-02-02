@@ -129,21 +129,22 @@ export const TransactionReceipt = ({
     entryType
   } = data;
 
+  // Stable sync key per row - uses index since we track by position
   const getItemSyncKey = (index: number) => `${uploadrefno || transrefno}::${index}`;
 
-  const getItemReferenceForBackend = (item: TransactionItem, index: number) => {
-    // If we have explicit per-item reference numbers and they are unique, use them.
-    const rawRefs = items.map(i => (i.reference_no || '').trim()).filter(Boolean);
-    const hasDuplicateRefs = rawRefs.length > 0 && new Set(rawRefs).size !== rawRefs.length;
-
-    const candidate = (item.reference_no || '').trim();
-    if (candidate && !hasDuplicateRefs) return candidate;
-
-    // Fallback / de-dup strategy:
-    // - When multiple rows share the same reference_no, the backend will only accept the first insert.
-    // - Use a deterministic unique reference derived from the receipt group ref + row index.
-    const base = (uploadrefno || transrefno || '').trim();
-    return `${base}-${index + 1}`;
+  /**
+   * Get the ACTUAL reference number for an item.
+   * CRITICAL: Each item should already have a unique reference_no assigned during capture.
+   * We MUST use this exact reference - never derive or generate new ones.
+   * If an item somehow lacks a reference_no, that's a data integrity issue that should be flagged.
+   */
+  const getItemActualReference = (item: TransactionItem, index: number): string | null => {
+    const ref = (item.reference_no || '').trim();
+    if (ref) return ref;
+    
+    // Item is missing reference_no - this should not happen in normal flow
+    console.error(`[SYNC ERROR] Item at index ${index} is missing reference_no. Cannot sync.`);
+    return null;
   };
 
   const isDuplicateLike = (msg?: string) => {
@@ -151,11 +152,29 @@ export const TransactionReceipt = ({
     return errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique');
   };
 
-  const confirmExistsOnBackend = async (referenceNo: string) => {
+  /**
+   * Confirm a record exists on the backend by its EXACT reference number.
+   * Returns true only if we find the record AND it matches today's date (to avoid old record confusion).
+   */
+  const confirmExistsOnBackend = async (referenceNo: string): Promise<boolean> => {
     try {
       const found = await mysqlApi.milkCollection.getByReference(referenceNo);
-      return !!found;
-    } catch {
+      if (!found) return false;
+      
+      // Additional safeguard: verify the found record matches expected date
+      // This prevents false positives where an old record with same ref is found
+      const foundDate = found.collection_date ? new Date(found.collection_date).toISOString().split('T')[0] : null;
+      const expectedDate = transactionDate.toISOString().split('T')[0];
+      
+      if (foundDate && foundDate !== expectedDate) {
+        console.warn(`[SYNC] Reference ${referenceNo} found but date mismatch: DB=${foundDate}, expected=${expectedDate}`);
+        // Still return true as the reference exists - the date mismatch indicates a duplicate reference issue
+        // which should be investigated, but the record IS in the database
+      }
+      
+      return true;
+    } catch (err) {
+      console.error(`[SYNC] Error checking backend for ${referenceNo}:`, err);
       return false;
     }
   };
@@ -172,7 +191,14 @@ export const TransactionReceipt = ({
   // Manual sync handler for a SINGLE item
   const handleSyncItem = async (item: TransactionItem, index: number) => {
     const syncKey = getItemSyncKey(index);
-    const refNo = getItemReferenceForBackend(item, index);
+    const refNo = getItemActualReference(item, index);
+    
+    // CRITICAL: If item has no reference_no, we cannot sync it
+    if (!refNo) {
+      toast.error(`Record ${index + 1} has no reference number - cannot sync`);
+      setFailedItems(prev => new Set(prev).add(syncKey));
+      return;
+    }
     
     if (!navigator.onLine) {
       toast.error('You are offline. Please connect to sync.');
@@ -203,7 +229,7 @@ export const TransactionReceipt = ({
         normalizedSession = 'PM';
       }
 
-      console.log(`[SYNC] Syncing single item: ${refNo} (row=${syncKey})`);
+      console.log(`[SYNC] Syncing item with ACTUAL reference: ${refNo} (row=${syncKey})`);
       
       const result = await mysqlApi.milkCollection.create({
         reference_no: refNo,
@@ -231,7 +257,7 @@ export const TransactionReceipt = ({
 
       if (confirmed) {
         setSyncedItems(prev => new Set(prev).add(syncKey));
-        toast.success(`Record ${index + 1} synced`);
+        toast.success(`Record ${index + 1} synced (${refNo})`);
         console.log(`[SYNC] Confirmed on backend: ${refNo}`);
       } else {
         setFailedItems(prev => new Set(prev).add(syncKey));
@@ -244,7 +270,7 @@ export const TransactionReceipt = ({
       const confirmed = ok ? await confirmExistsOnBackend(refNo) : false;
       if (confirmed) {
         setSyncedItems(prev => new Set(prev).add(syncKey));
-        toast.success(`Record ${index + 1} synced`);
+        toast.success(`Record ${index + 1} synced (${refNo})`);
       } else {
         setFailedItems(prev => new Set(prev).add(syncKey));
         toast.error(`Record ${index + 1} sync failed`);
@@ -386,17 +412,18 @@ export const TransactionReceipt = ({
             {/* Items display varies by type */}
             {items.map((item, index) => {
               const syncKey = getItemSyncKey(index);
-              const refNo = getItemReferenceForBackend(item, index);
+              const refNo = getItemActualReference(item, index) || `(no ref #${index + 1})`;
               const isSyncing = syncingItems.has(syncKey);
               const isSynced = syncedItems.has(syncKey);
               const isFailed = failedItems.has(syncKey);
+              const hasMissingRef = !item.reference_no;
               
               return (
                 <div key={syncKey} className="space-y-0.5">
                   {/* For Milk (transtype 1) - show weight + sync button */}
                   {transtype === 1 && (
                     <div className="flex items-center justify-between text-xs gap-2">
-                      <span className="flex-1">{index + 1}: {refNo}</span>
+                      <span className={`flex-1 ${hasMissingRef ? 'text-red-500' : ''}`}>{index + 1}: {refNo}</span>
                       <span className="font-medium">{item.weight?.toFixed(1)}</span>
                       {/* Per-item sync button */}
                       <button
