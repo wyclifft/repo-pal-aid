@@ -92,7 +92,9 @@ export const TransactionReceipt = ({
   onClose, 
   onPrint 
 }: TransactionReceiptProps) => {
-  // Track sync state per item by reference number
+  // Track sync state per item by a stable per-row key (NOT reference_no)
+  // NOTE: Multiple rows can legitimately share the same reference_no in the UI data.
+  // Using a per-row key prevents one successful sync from disabling all rows.
   const [syncingItems, setSyncingItems] = useState<Set<string>>(new Set());
   const [syncedItems, setSyncedItems] = useState<Set<string>>(new Set());
   const [failedItems, setFailedItems] = useState<Set<string>>(new Set());
@@ -127,6 +129,37 @@ export const TransactionReceipt = ({
     entryType
   } = data;
 
+  const getItemSyncKey = (index: number) => `${uploadrefno || transrefno}::${index}`;
+
+  const getItemReferenceForBackend = (item: TransactionItem, index: number) => {
+    // If we have explicit per-item reference numbers and they are unique, use them.
+    const rawRefs = items.map(i => (i.reference_no || '').trim()).filter(Boolean);
+    const hasDuplicateRefs = rawRefs.length > 0 && new Set(rawRefs).size !== rawRefs.length;
+
+    const candidate = (item.reference_no || '').trim();
+    if (candidate && !hasDuplicateRefs) return candidate;
+
+    // Fallback / de-dup strategy:
+    // - When multiple rows share the same reference_no, the backend will only accept the first insert.
+    // - Use a deterministic unique reference derived from the receipt group ref + row index.
+    const base = (uploadrefno || transrefno || '').trim();
+    return `${base}-${index + 1}`;
+  };
+
+  const isDuplicateLike = (msg?: string) => {
+    const errorMsg = (msg || '').toLowerCase();
+    return errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique');
+  };
+
+  const confirmExistsOnBackend = async (referenceNo: string) => {
+    try {
+      const found = await mysqlApi.milkCollection.getByReference(referenceNo);
+      return !!found;
+    } catch {
+      return false;
+    }
+  };
+
   const formattedDate = transactionDate.toLocaleDateString('en-CA');
   // Use 24-hour format for time (no AM/PM)
   const formattedTime = transactionDate.toLocaleTimeString('en-GB', { 
@@ -138,7 +171,8 @@ export const TransactionReceipt = ({
 
   // Manual sync handler for a SINGLE item
   const handleSyncItem = async (item: TransactionItem, index: number) => {
-    const refNo = item.reference_no || `${transrefno}-${index}`;
+    const syncKey = getItemSyncKey(index);
+    const refNo = getItemReferenceForBackend(item, index);
     
     if (!navigator.onLine) {
       toast.error('You are offline. Please connect to sync.');
@@ -146,16 +180,16 @@ export const TransactionReceipt = ({
     }
 
     // Prevent duplicate sync attempts
-    if (syncingItems.has(refNo)) {
-      console.log(`[SYNC] Already syncing: ${refNo}`);
+    if (syncingItems.has(syncKey)) {
+      console.log(`[SYNC] Already syncing: ${syncKey}`);
       return;
     }
 
     // Mark as syncing
-    setSyncingItems(prev => new Set(prev).add(refNo));
+    setSyncingItems(prev => new Set(prev).add(syncKey));
     setFailedItems(prev => {
       const next = new Set(prev);
-      next.delete(refNo);
+      next.delete(syncKey);
       return next;
     });
 
@@ -169,7 +203,7 @@ export const TransactionReceipt = ({
         normalizedSession = 'PM';
       }
 
-      console.log(`[SYNC] Syncing single item: ${refNo}`);
+      console.log(`[SYNC] Syncing single item: ${refNo} (row=${syncKey})`);
       
       const result = await mysqlApi.milkCollection.create({
         reference_no: refNo,
@@ -189,37 +223,37 @@ export const TransactionReceipt = ({
         transtype,
       });
 
-      if (result.success) {
-        setSyncedItems(prev => new Set(prev).add(refNo));
+      // Only show green tick after we can confirm the record exists on backend.
+      // This prevents false positives where the API returns success but nothing is inserted.
+      const duplicateLike = isDuplicateLike(result.error || result.message);
+      const ok = result.success || duplicateLike;
+      const confirmed = ok ? await confirmExistsOnBackend(refNo) : false;
+
+      if (confirmed) {
+        setSyncedItems(prev => new Set(prev).add(syncKey));
         toast.success(`Record ${index + 1} synced`);
-        console.log(`[SYNC] Success: ${refNo}`);
+        console.log(`[SYNC] Confirmed on backend: ${refNo}`);
       } else {
-        // Check for duplicate - treat as success
-        const errorMsg = (result.error || result.message || '').toLowerCase();
-        if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
-          setSyncedItems(prev => new Set(prev).add(refNo));
-          toast.success(`Record ${index + 1} already in database`);
-          console.log(`[SYNC] Already synced: ${refNo}`);
-        } else {
-          setFailedItems(prev => new Set(prev).add(refNo));
-          toast.error(`Record ${index + 1} failed: ${result.error || result.message}`);
-          console.warn(`[SYNC] Failed: ${refNo} - ${result.error || result.message}`);
-        }
+        setFailedItems(prev => new Set(prev).add(syncKey));
+        toast.error(`Record ${index + 1} not confirmed on server`);
+        console.warn(`[SYNC] Not confirmed: ${refNo}`, { result });
       }
     } catch (err: any) {
       const errorMsg = (err?.message || '').toLowerCase();
-      if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
-        setSyncedItems(prev => new Set(prev).add(refNo));
-        toast.success(`Record ${index + 1} already in database`);
+      const ok = errorMsg.includes('duplicate') || errorMsg.includes('already exists');
+      const confirmed = ok ? await confirmExistsOnBackend(refNo) : false;
+      if (confirmed) {
+        setSyncedItems(prev => new Set(prev).add(syncKey));
+        toast.success(`Record ${index + 1} synced`);
       } else {
-        setFailedItems(prev => new Set(prev).add(refNo));
+        setFailedItems(prev => new Set(prev).add(syncKey));
         toast.error(`Record ${index + 1} sync failed`);
         console.error(`[SYNC] Error syncing ${refNo}:`, err);
       }
     } finally {
       setSyncingItems(prev => {
         const next = new Set(prev);
-        next.delete(refNo);
+        next.delete(syncKey);
         return next;
       });
     }
@@ -234,9 +268,9 @@ export const TransactionReceipt = ({
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      const refNo = item.reference_no || `${transrefno}-${i}`;
+      const syncKey = getItemSyncKey(i);
       // Skip already synced items
-      if (!syncedItems.has(refNo)) {
+      if (!syncedItems.has(syncKey)) {
         await handleSyncItem(item, i);
         // Small delay between syncs to avoid overwhelming the server
         if (i < items.length - 1) {
@@ -351,17 +385,18 @@ export const TransactionReceipt = ({
             
             {/* Items display varies by type */}
             {items.map((item, index) => {
-              const refNo = item.reference_no || `${transrefno}-${index}`;
-              const isSyncing = syncingItems.has(refNo);
-              const isSynced = syncedItems.has(refNo);
-              const isFailed = failedItems.has(refNo);
+              const syncKey = getItemSyncKey(index);
+              const refNo = getItemReferenceForBackend(item, index);
+              const isSyncing = syncingItems.has(syncKey);
+              const isSynced = syncedItems.has(syncKey);
+              const isFailed = failedItems.has(syncKey);
               
               return (
-                <div key={refNo} className="space-y-0.5">
+                <div key={syncKey} className="space-y-0.5">
                   {/* For Milk (transtype 1) - show weight + sync button */}
                   {transtype === 1 && (
                     <div className="flex items-center justify-between text-xs gap-2">
-                      <span className="flex-1">{index + 1}: {item.reference_no}</span>
+                      <span className="flex-1">{index + 1}: {refNo}</span>
                       <span className="font-medium">{item.weight?.toFixed(1)}</span>
                       {/* Per-item sync button */}
                       <button
