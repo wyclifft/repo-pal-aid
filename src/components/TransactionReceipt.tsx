@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Printer, X } from 'lucide-react';
+import { Printer, X, RefreshCw, Check, AlertTriangle } from 'lucide-react';
 import { printReceipt } from '@/services/bluetooth';
+import { mysqlApi } from '@/services/mysqlApi';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
 import type { CowDetails } from '@/components/CowDetailsModal';
 
@@ -49,6 +52,11 @@ export interface ReceiptData {
   routeLabel?: string;
   periodLabel?: string;
   printCopies?: number;
+  // Sync support - for re-syncing failed transactions
+  userId?: string;
+  productCode?: string;
+  seasonCode?: string;
+  entryType?: string;
 }
 
 interface TransactionReceiptProps {
@@ -84,6 +92,9 @@ export const TransactionReceipt = ({
   onClose, 
   onPrint 
 }: TransactionReceiptProps) => {
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
   if (!data) return null;
 
   const {
@@ -107,7 +118,11 @@ export const TransactionReceipt = ({
     locationName,
     routeLabel = 'Route',
     periodLabel = 'Session',
-    printCopies = 1
+    printCopies = 1,
+    userId,
+    productCode,
+    seasonCode,
+    entryType
   } = data;
 
   const formattedDate = transactionDate.toLocaleDateString('en-CA');
@@ -118,6 +133,97 @@ export const TransactionReceipt = ({
     second: '2-digit',
     hour12: false
   });
+
+  // Manual sync handler - re-syncs all items in the receipt
+  const handleManualSync = async () => {
+    if (!navigator.onLine) {
+      toast.error('You are offline. Please connect to sync.');
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncStatus('idle');
+
+    try {
+      const deviceFingerprint = await generateDeviceFingerprint();
+      let syncedCount = 0;
+      let failedCount = 0;
+
+      // Normalize session to AM/PM
+      let normalizedSession: 'AM' | 'PM' = 'AM';
+      const sessionVal = (session || '').trim().toUpperCase();
+      if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON') || sessionVal.includes('EV') || sessionVal.includes('AF')) {
+        normalizedSession = 'PM';
+      }
+
+      // For milk/coffee (transtype 1), sync each item
+      if (transtype === 1) {
+        for (const item of items) {
+          const refNo = item.reference_no || transrefno;
+          try {
+            console.log(`[SYNC] Re-syncing item: ${refNo}`);
+            
+            const result = await mysqlApi.milkCollection.create({
+              reference_no: refNo,
+              uploadrefno: uploadrefno || refNo,
+              farmer_id: memberId.replace(/^#/, '').trim(),
+              farmer_name: memberName.trim(),
+              route: (memberRoute || '').trim(),
+              session: normalizedSession,
+              weight: item.weight || 0,
+              user_id: userId,
+              clerk_name: clerkName,
+              collection_date: transactionDate,
+              device_fingerprint: deviceFingerprint,
+              entry_type: (entryType as 'scale' | 'manual') || 'manual',
+              product_code: productCode,
+              season_code: seasonCode,
+              transtype,
+            });
+
+            if (result.success) {
+              syncedCount++;
+              console.log(`[SYNC] Success: ${refNo}`);
+            } else {
+              // Check for duplicate - treat as success
+              const errorMsg = (result.error || result.message || '').toLowerCase();
+              if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+                syncedCount++;
+                console.log(`[SYNC] Already synced: ${refNo}`);
+              } else {
+                failedCount++;
+                console.warn(`[SYNC] Failed: ${refNo} - ${result.error || result.message}`);
+              }
+            }
+          } catch (err: any) {
+            const errorMsg = (err?.message || '').toLowerCase();
+            if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
+              syncedCount++;
+            } else {
+              failedCount++;
+              console.error(`[SYNC] Error syncing ${refNo}:`, err);
+            }
+          }
+        }
+      }
+
+      if (syncedCount > 0 && failedCount === 0) {
+        toast.success(`Synced ${syncedCount} record${syncedCount !== 1 ? 's' : ''} successfully`);
+        setSyncStatus('success');
+      } else if (failedCount > 0) {
+        toast.error(`Sync completed with ${failedCount} failure${failedCount !== 1 ? 's' : ''}`);
+        setSyncStatus('error');
+      } else {
+        toast.info('No records to sync');
+      }
+    } catch (err) {
+      console.error('[SYNC] Manual sync error:', err);
+      toast.error('Sync failed. Please try again.');
+      setSyncStatus('error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handlePrint = async () => {
     if (printCopies === 0) {
@@ -320,6 +426,48 @@ export const TransactionReceipt = ({
           </div>
         </div>
 
+        {/* Manual Sync Button - Temporary for debugging sync issues */}
+        {transtype === 1 && (
+          <div className="pt-2 border-t border-dashed">
+            <button
+              onClick={handleManualSync}
+              disabled={isSyncing}
+              className={`w-full py-2 rounded-md font-medium transition-colors flex items-center justify-center gap-2 ${
+                syncStatus === 'success' 
+                  ? 'bg-green-500 text-white' 
+                  : syncStatus === 'error'
+                  ? 'bg-red-500 text-white'
+                  : 'bg-amber-500 text-white hover:bg-amber-600'
+              } disabled:opacity-50`}
+            >
+              {isSyncing ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Syncing...
+                </>
+              ) : syncStatus === 'success' ? (
+                <>
+                  <Check className="h-4 w-4" />
+                  Synced
+                </>
+              ) : syncStatus === 'error' ? (
+                <>
+                  <AlertTriangle className="h-4 w-4" />
+                  Retry Sync
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4" />
+                  Sync to Database
+                </>
+              )}
+            </button>
+            <p className="text-xs text-center text-muted-foreground mt-1">
+              Use this if record didn't sync automatically
+            </p>
+          </div>
+        )}
+
         <div className="flex gap-2 pt-2">
           <button
             onClick={handlePrint}
@@ -354,6 +502,12 @@ export const createMilkReceiptData = (
     clerk_name: string;
     collection_date: Date;
     product_name?: string;
+    // Additional fields for sync support
+    user_id?: string;
+    product_code?: string;
+    season_code?: string;
+    entry_type?: string;
+    transtype?: number;
   }>,
   companyName: string,
   options?: {
@@ -372,7 +526,7 @@ export const createMilkReceiptData = (
   const totalWeight = receipts.reduce((sum, r) => sum + r.weight, 0);
   
   return {
-    transtype: 1,
+    transtype: (first.transtype as TransactionType) || 1,
     transrefno: first.reference_no || '',
     uploadrefno: first.uploadrefno,
     companyName,
@@ -389,6 +543,11 @@ export const createMilkReceiptData = (
       weight: r.weight
     })),
     totalWeight,
+    // Sync support fields
+    userId: first.user_id,
+    productCode: first.product_code,
+    seasonCode: first.season_code,
+    entryType: first.entry_type,
     ...options
   };
 };
