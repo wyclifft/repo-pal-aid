@@ -129,7 +129,7 @@ class BluetoothClassicPlugin : Plugin() {
      * Request Bluetooth permissions
      */
     @PluginMethod
-    fun requestPermissions(call: PluginCall) {
+    override fun requestPermissions(call: PluginCall) {
         Log.d(TAG, "[BT] Requesting Bluetooth permissions")
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -146,7 +146,7 @@ class BluetoothClassicPlugin : Plugin() {
         Log.d(TAG, "[BT] Permissions callback received")
         
         val result = JSObject()
-        val granted = hasRequiredPermissions()
+        val granted = hasBluetoothPermissions()
         result.put("granted", granted)
         
         if (granted) {
@@ -166,7 +166,7 @@ class BluetoothClassicPlugin : Plugin() {
     fun getPairedDevices(call: PluginCall) {
         Log.d(TAG, "[BT] Getting paired devices")
         
-        if (!hasRequiredPermissions()) {
+        if (!hasBluetoothPermissions()) {
             call.reject("Bluetooth permissions not granted")
             return
         }
@@ -222,7 +222,7 @@ class BluetoothClassicPlugin : Plugin() {
         
         Log.d(TAG, "[BT] Connecting to device: $deviceId")
         
-        if (!hasRequiredPermissions()) {
+        if (!hasBluetoothPermissions()) {
             call.reject("Bluetooth permissions not granted")
             return
         }
@@ -600,7 +600,7 @@ class BluetoothClassicPlugin : Plugin() {
     
     // Helper methods
     
-    private fun hasRequiredPermissions(): Boolean {
+    private fun hasBluetoothPermissions(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ActivityCompat.checkSelfPermission(
                 context,
