@@ -3,8 +3,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import type { MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
+import { mysqlApi } from '@/services/mysqlApi';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import type { CowDetails } from '@/components/CowDetailsModal';
@@ -63,6 +65,7 @@ export const ReprintModal = ({
 }: ReprintModalProps) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [isPrinting, setIsPrinting] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState<string | null>(null);
   const [isDeleteMode, setIsDeleteMode] = useState(false);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   const [activeTab, setActiveTab] = useState<'recent' | 'search'>('recent');
@@ -191,6 +194,102 @@ export const ReprintModal = ({
       toast.error('Failed to reprint receipt');
     } finally {
       setIsPrinting(null);
+    }
+  };
+
+  // Manual sync handler for milk receipts
+  const handleManualSync = async (receipt: PrintedReceipt) => {
+    if (!navigator.onLine) {
+      toast.error('You are offline. Please connect to sync.');
+      return;
+    }
+
+    // Only sync milk receipts (transtype 1)
+    if (receipt.type === 'store' || receipt.type === 'ai') {
+      toast.info('Store/AI receipts sync is handled separately');
+      return;
+    }
+
+    if (!receipt.collections || receipt.collections.length === 0) {
+      toast.error('No records to sync');
+      return;
+    }
+
+    setIsSyncing(receipt.farmerId);
+
+    try {
+      const deviceFingerprint = await generateDeviceFingerprint();
+      let syncedCount = 0;
+      let failedCount = 0;
+
+      for (const collection of receipt.collections) {
+        const refNo = collection.reference_no;
+        if (!refNo) continue;
+
+        // Normalize session to AM/PM
+        let normalizedSession: 'AM' | 'PM' = 'AM';
+        const sessionVal = (collection.session || '').trim().toUpperCase();
+        if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON') || sessionVal.includes('EV') || sessionVal.includes('AF')) {
+          normalizedSession = 'PM';
+        }
+
+        try {
+          console.log(`[SYNC] Re-syncing: ${refNo}`);
+          
+          const result = await mysqlApi.milkCollection.create({
+            reference_no: refNo,
+            uploadrefno: collection.uploadrefno || refNo,
+            farmer_id: collection.farmer_id.replace(/^#/, '').trim(),
+            farmer_name: collection.farmer_name.trim(),
+            route: (collection.route || '').trim(),
+            session: normalizedSession,
+            weight: collection.weight,
+            user_id: collection.user_id,
+            clerk_name: collection.clerk_name,
+            collection_date: new Date(collection.collection_date),
+            device_fingerprint: deviceFingerprint,
+            entry_type: (collection.entry_type as 'scale' | 'manual') || 'manual',
+            product_code: collection.product_code,
+            season_code: collection.season_code,
+            transtype: collection.transtype || 1,
+          });
+
+          if (result.success) {
+            syncedCount++;
+            console.log(`[SYNC] Success: ${refNo}`);
+          } else {
+            const errorMsg = (result.error || result.message || '').toLowerCase();
+            if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+              syncedCount++;
+              console.log(`[SYNC] Already synced: ${refNo}`);
+            } else {
+              failedCount++;
+              console.warn(`[SYNC] Failed: ${refNo} - ${result.error || result.message}`);
+            }
+          }
+        } catch (err: any) {
+          const errorMsg = (err?.message || '').toLowerCase();
+          if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
+            syncedCount++;
+          } else {
+            failedCount++;
+            console.error(`[SYNC] Error syncing ${refNo}:`, err);
+          }
+        }
+      }
+
+      if (syncedCount > 0 && failedCount === 0) {
+        toast.success(`Synced ${syncedCount} record${syncedCount !== 1 ? 's' : ''}`);
+      } else if (failedCount > 0) {
+        toast.error(`${failedCount} record${failedCount !== 1 ? 's' : ''} failed to sync`);
+      } else {
+        toast.info('No records needed syncing');
+      }
+    } catch (err) {
+      console.error('[SYNC] Manual sync error:', err);
+      toast.error('Sync failed. Please try again.');
+    } finally {
+      setIsSyncing(null);
     }
   };
 
@@ -432,19 +531,35 @@ export const ReprintModal = ({
                     )}
                   </div>
 
-                  {/* Reprint Button - Only show when not in delete mode */}
+                  {/* Action Buttons - Only show when not in delete mode */}
                   {!isDeleteMode && (
-                    <button
-                      onClick={() => handleReprint(receipt)}
-                      disabled={isPrinting !== null}
-                      className="w-full py-3 sm:py-2 bg-primary text-primary-foreground rounded-md font-medium 
-                               hover:bg-primary/90 active:bg-primary/80 transition-colors 
-                               flex items-center justify-center gap-2 min-h-[44px]
-                               disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Printer className="h-4 w-4" />
-                      {isPrinting === receipt.farmerId ? 'Printing...' : 'Reprint'}
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleReprint(receipt)}
+                        disabled={isPrinting !== null || isSyncing !== null}
+                        className="flex-1 py-3 sm:py-2 bg-primary text-primary-foreground rounded-md font-medium 
+                                 hover:bg-primary/90 active:bg-primary/80 transition-colors 
+                                 flex items-center justify-center gap-2 min-h-[44px]
+                                 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Printer className="h-4 w-4" />
+                        {isPrinting === receipt.farmerId ? 'Printing...' : 'Reprint'}
+                      </button>
+                      {/* Sync button - only for milk receipts */}
+                      {(!receipt.type || receipt.type === 'milk') && (
+                        <button
+                          onClick={() => handleManualSync(receipt)}
+                          disabled={isPrinting !== null || isSyncing !== null}
+                          className="py-3 sm:py-2 px-3 bg-amber-500 text-white rounded-md font-medium 
+                                   hover:bg-amber-600 active:bg-amber-700 transition-colors 
+                                   flex items-center justify-center gap-2 min-h-[44px]
+                                   disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Sync to database"
+                        >
+                          <RefreshCw className={`h-4 w-4 ${isSyncing === receipt.farmerId ? 'animate-spin' : ''}`} />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               );
