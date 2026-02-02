@@ -2310,17 +2310,17 @@ export const printZReport = async (data: {
     receipt += `== ${typeGroup.typeLabel} ==\n`;
     
     // Column headers: MNO|REF|QTY|TIME (compact with dotted separators)
-    receipt += 'MNO..:REF..:QTY.:TIME\n';
+    receipt += 'MNO......:REF..:QTY.:TIME\n';
     
     // Transaction rows - all on single line with dotted separators
     for (const tx of typeGroup.transactions) {
       const shortRef = (tx.refno || '').slice(-5);
-      const mno = tx.farmer_id.substring(0, 5).padEnd(5);
+      const mno = tx.farmer_id; // Show full MNO
       const ref = shortRef.padEnd(5);
       const qty = tx.weight.toFixed(1).padStart(4);
       const time = tx.time.substring(0, 5);
       
-      // Single row: MNO..:REF..:QTY.:TIME
+      // Single row: MNO:REF:QTY:TIME
       receipt += `${mno}:${ref}:${qty}:${time}\n`;
     }
     

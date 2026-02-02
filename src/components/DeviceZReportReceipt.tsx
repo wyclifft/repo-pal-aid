@@ -247,7 +247,7 @@ export const DeviceZReportReceipt = ({
       <div className="py-0.5">
         {group.transactions.map((tx, index) => (
           <div key={tx.transrefno || index} className="grid grid-cols-4 gap-0 text-center text-[10px] border-b border-dotted py-0.5">
-            <span className="truncate border-r border-dotted">{tx.farmer_id.substring(0, 5)}</span>
+            <span className="truncate border-r border-dotted">{tx.farmer_id}</span>
             <span className="truncate border-r border-dotted">{getShortRef(tx.refno)}</span>
             <span className="border-r border-dotted">{tx.weight.toFixed(1)}</span>
             <span>{tx.time.substring(0, 5)}</span>
