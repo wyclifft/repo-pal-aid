@@ -92,8 +92,10 @@ export const TransactionReceipt = ({
   onClose, 
   onPrint 
 }: TransactionReceiptProps) => {
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  // Track sync state per item by reference number
+  const [syncingItems, setSyncingItems] = useState<Set<string>>(new Set());
+  const [syncedItems, setSyncedItems] = useState<Set<string>>(new Set());
+  const [failedItems, setFailedItems] = useState<Set<string>>(new Set());
 
   if (!data) return null;
 
@@ -134,20 +136,31 @@ export const TransactionReceipt = ({
     hour12: false
   });
 
-  // Manual sync handler - re-syncs all items in the receipt
-  const handleManualSync = async () => {
+  // Manual sync handler for a SINGLE item
+  const handleSyncItem = async (item: TransactionItem, index: number) => {
+    const refNo = item.reference_no || `${transrefno}-${index}`;
+    
     if (!navigator.onLine) {
       toast.error('You are offline. Please connect to sync.');
       return;
     }
 
-    setIsSyncing(true);
-    setSyncStatus('idle');
+    // Prevent duplicate sync attempts
+    if (syncingItems.has(refNo)) {
+      console.log(`[SYNC] Already syncing: ${refNo}`);
+      return;
+    }
+
+    // Mark as syncing
+    setSyncingItems(prev => new Set(prev).add(refNo));
+    setFailedItems(prev => {
+      const next = new Set(prev);
+      next.delete(refNo);
+      return next;
+    });
 
     try {
       const deviceFingerprint = await generateDeviceFingerprint();
-      let syncedCount = 0;
-      let failedCount = 0;
 
       // Normalize session to AM/PM
       let normalizedSession: 'AM' | 'PM' = 'AM';
@@ -156,72 +169,80 @@ export const TransactionReceipt = ({
         normalizedSession = 'PM';
       }
 
-      // For milk/coffee (transtype 1), sync each item
-      if (transtype === 1) {
-        for (const item of items) {
-          const refNo = item.reference_no || transrefno;
-          try {
-            console.log(`[SYNC] Re-syncing item: ${refNo}`);
-            
-            const result = await mysqlApi.milkCollection.create({
-              reference_no: refNo,
-              uploadrefno: uploadrefno || refNo,
-              farmer_id: memberId.replace(/^#/, '').trim(),
-              farmer_name: memberName.trim(),
-              route: (memberRoute || '').trim(),
-              session: normalizedSession,
-              weight: item.weight || 0,
-              user_id: userId,
-              clerk_name: clerkName,
-              collection_date: transactionDate,
-              device_fingerprint: deviceFingerprint,
-              entry_type: (entryType as 'scale' | 'manual') || 'manual',
-              product_code: productCode,
-              season_code: seasonCode,
-              transtype,
-            });
+      console.log(`[SYNC] Syncing single item: ${refNo}`);
+      
+      const result = await mysqlApi.milkCollection.create({
+        reference_no: refNo,
+        uploadrefno: uploadrefno || refNo,
+        farmer_id: memberId.replace(/^#/, '').trim(),
+        farmer_name: memberName.trim(),
+        route: (memberRoute || '').trim(),
+        session: normalizedSession,
+        weight: item.weight || 0,
+        user_id: userId,
+        clerk_name: clerkName,
+        collection_date: transactionDate,
+        device_fingerprint: deviceFingerprint,
+        entry_type: (entryType as 'scale' | 'manual') || 'manual',
+        product_code: productCode,
+        season_code: seasonCode,
+        transtype,
+      });
 
-            if (result.success) {
-              syncedCount++;
-              console.log(`[SYNC] Success: ${refNo}`);
-            } else {
-              // Check for duplicate - treat as success
-              const errorMsg = (result.error || result.message || '').toLowerCase();
-              if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
-                syncedCount++;
-                console.log(`[SYNC] Already synced: ${refNo}`);
-              } else {
-                failedCount++;
-                console.warn(`[SYNC] Failed: ${refNo} - ${result.error || result.message}`);
-              }
-            }
-          } catch (err: any) {
-            const errorMsg = (err?.message || '').toLowerCase();
-            if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
-              syncedCount++;
-            } else {
-              failedCount++;
-              console.error(`[SYNC] Error syncing ${refNo}:`, err);
-            }
-          }
+      if (result.success) {
+        setSyncedItems(prev => new Set(prev).add(refNo));
+        toast.success(`Record ${index + 1} synced`);
+        console.log(`[SYNC] Success: ${refNo}`);
+      } else {
+        // Check for duplicate - treat as success
+        const errorMsg = (result.error || result.message || '').toLowerCase();
+        if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+          setSyncedItems(prev => new Set(prev).add(refNo));
+          toast.success(`Record ${index + 1} already in database`);
+          console.log(`[SYNC] Already synced: ${refNo}`);
+        } else {
+          setFailedItems(prev => new Set(prev).add(refNo));
+          toast.error(`Record ${index + 1} failed: ${result.error || result.message}`);
+          console.warn(`[SYNC] Failed: ${refNo} - ${result.error || result.message}`);
         }
       }
-
-      if (syncedCount > 0 && failedCount === 0) {
-        toast.success(`Synced ${syncedCount} record${syncedCount !== 1 ? 's' : ''} successfully`);
-        setSyncStatus('success');
-      } else if (failedCount > 0) {
-        toast.error(`Sync completed with ${failedCount} failure${failedCount !== 1 ? 's' : ''}`);
-        setSyncStatus('error');
+    } catch (err: any) {
+      const errorMsg = (err?.message || '').toLowerCase();
+      if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
+        setSyncedItems(prev => new Set(prev).add(refNo));
+        toast.success(`Record ${index + 1} already in database`);
       } else {
-        toast.info('No records to sync');
+        setFailedItems(prev => new Set(prev).add(refNo));
+        toast.error(`Record ${index + 1} sync failed`);
+        console.error(`[SYNC] Error syncing ${refNo}:`, err);
       }
-    } catch (err) {
-      console.error('[SYNC] Manual sync error:', err);
-      toast.error('Sync failed. Please try again.');
-      setSyncStatus('error');
     } finally {
-      setIsSyncing(false);
+      setSyncingItems(prev => {
+        const next = new Set(prev);
+        next.delete(refNo);
+        return next;
+      });
+    }
+  };
+
+  // Sync all items at once
+  const handleSyncAll = async () => {
+    if (!navigator.onLine) {
+      toast.error('You are offline. Please connect to sync.');
+      return;
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const refNo = item.reference_no || `${transrefno}-${i}`;
+      // Skip already synced items
+      if (!syncedItems.has(refNo)) {
+        await handleSyncItem(item, i);
+        // Small delay between syncs to avoid overwhelming the server
+        if (i < items.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
     }
   };
 
@@ -329,51 +350,81 @@ export const TransactionReceipt = ({
             )}
             
             {/* Items display varies by type */}
-            {items.map((item, index) => (
-              <div key={item.reference_no || index} className="space-y-0.5">
-                {/* For Milk (transtype 1) - show weight */}
-                {transtype === 1 && (
-                  <div className="flex justify-between text-xs">
-                    <span>{index + 1}: {item.reference_no}</span>
-                    <span className="font-medium">{item.weight?.toFixed(1)}</span>
-                  </div>
-                )}
-                
-                {/* For Store (transtype 2) - show item name, qty, amount */}
-                {transtype === 2 && (
-                  <div className="flex justify-between text-xs">
-                    <span>{item.item_name} x{item.quantity}</span>
-                    <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
-                  </div>
-                )}
-                
-                {/* For AI (transtype 3) - show item name, qty, amount + cow details */}
-                {transtype === 3 && (
-                  <>
+            {items.map((item, index) => {
+              const refNo = item.reference_no || `${transrefno}-${index}`;
+              const isSyncing = syncingItems.has(refNo);
+              const isSynced = syncedItems.has(refNo);
+              const isFailed = failedItems.has(refNo);
+              
+              return (
+                <div key={refNo} className="space-y-0.5">
+                  {/* For Milk (transtype 1) - show weight + sync button */}
+                  {transtype === 1 && (
+                    <div className="flex items-center justify-between text-xs gap-2">
+                      <span className="flex-1">{index + 1}: {item.reference_no}</span>
+                      <span className="font-medium">{item.weight?.toFixed(1)}</span>
+                      {/* Per-item sync button */}
+                      <button
+                        onClick={() => handleSyncItem(item, index)}
+                        disabled={isSyncing || isSynced}
+                        className={`p-1 rounded transition-colors ${
+                          isSynced 
+                            ? 'text-green-600 bg-green-50' 
+                            : isFailed
+                            ? 'text-red-600 bg-red-50 hover:bg-red-100'
+                            : 'text-amber-600 bg-amber-50 hover:bg-amber-100'
+                        } disabled:opacity-50`}
+                        title={isSynced ? 'Synced' : isFailed ? 'Retry sync' : 'Sync to database'}
+                      >
+                        {isSyncing ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : isSynced ? (
+                          <Check className="h-3 w-3" />
+                        ) : isFailed ? (
+                          <AlertTriangle className="h-3 w-3" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* For Store (transtype 2) - show item name, qty, amount */}
+                  {transtype === 2 && (
                     <div className="flex justify-between text-xs">
                       <span>{item.item_name} x{item.quantity}</span>
                       <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
                     </div>
-                    {item.cowDetails && (
-                      <div className="text-xs text-muted-foreground pl-2 border-l-2 border-dashed ml-1 space-y-0.5">
-                        {item.cowDetails.cowName && (
-                          <div>Cow: {item.cowDetails.cowName}</div>
-                        )}
-                        {item.cowDetails.cowBreed && (
-                          <div>Breed: {item.cowDetails.cowBreed}</div>
-                        )}
-                        {item.cowDetails.numberOfCalves && (
-                          <div>Calves: {item.cowDetails.numberOfCalves}</div>
-                        )}
-                        {item.cowDetails.otherDetails && (
-                          <div>Notes: {item.cowDetails.otherDetails}</div>
-                        )}
+                  )}
+                  
+                  {/* For AI (transtype 3) - show item name, qty, amount + cow details */}
+                  {transtype === 3 && (
+                    <>
+                      <div className="flex justify-between text-xs">
+                        <span>{item.item_name} x{item.quantity}</span>
+                        <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
                       </div>
-                    )}
-                  </>
-                )}
-              </div>
-            ))}
+                      {item.cowDetails && (
+                        <div className="text-xs text-muted-foreground pl-2 border-l-2 border-dashed ml-1 space-y-0.5">
+                          {item.cowDetails.cowName && (
+                            <div>Cow: {item.cowDetails.cowName}</div>
+                          )}
+                          {item.cowDetails.cowBreed && (
+                            <div>Breed: {item.cowDetails.cowBreed}</div>
+                          )}
+                          {item.cowDetails.numberOfCalves && (
+                            <div>Calves: {item.cowDetails.numberOfCalves}</div>
+                          )}
+                          {item.cowDetails.otherDetails && (
+                            <div>Notes: {item.cowDetails.otherDetails}</div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
           
           {/* Total - adapts based on transaction type */}
@@ -426,44 +477,58 @@ export const TransactionReceipt = ({
           </div>
         </div>
 
-        {/* Manual Sync Button - Temporary for debugging sync issues */}
+        {/* Manual Sync All Button - Temporary for debugging sync issues */}
         {transtype === 1 && (
           <div className="pt-2 border-t border-dashed">
-            <button
-              onClick={handleManualSync}
-              disabled={isSyncing}
-              className={`w-full py-2 rounded-md font-medium transition-colors flex items-center justify-center gap-2 ${
-                syncStatus === 'success' 
-                  ? 'bg-green-500 text-white' 
-                  : syncStatus === 'error'
-                  ? 'bg-red-500 text-white'
-                  : 'bg-amber-500 text-white hover:bg-amber-600'
-              } disabled:opacity-50`}
-            >
-              {isSyncing ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  Syncing...
-                </>
-              ) : syncStatus === 'success' ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  Synced
-                </>
-              ) : syncStatus === 'error' ? (
-                <>
-                  <AlertTriangle className="h-4 w-4" />
-                  Retry Sync
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-4 w-4" />
-                  Sync to Database
-                </>
-              )}
-            </button>
+            {/* Show sync status summary */}
+            <div className="flex items-center justify-between text-xs mb-2">
+              <span className="text-muted-foreground">Sync Status:</span>
+              <span className="font-medium">
+                {syncedItems.size}/{items.length} synced
+                {failedItems.size > 0 && <span className="text-red-500 ml-1">({failedItems.size} failed)</span>}
+              </span>
+            </div>
+            
+            {/* Sync All button - only show if not all synced */}
+            {syncedItems.size < items.length && (
+              <button
+                onClick={handleSyncAll}
+                disabled={syncingItems.size > 0}
+                className={`w-full py-2 rounded-md font-medium transition-colors flex items-center justify-center gap-2 ${
+                  failedItems.size > 0
+                    ? 'bg-red-500 text-white hover:bg-red-600'
+                    : 'bg-amber-500 text-white hover:bg-amber-600'
+                } disabled:opacity-50`}
+              >
+                {syncingItems.size > 0 ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Syncing ({syncingItems.size})...
+                  </>
+                ) : failedItems.size > 0 ? (
+                  <>
+                    <AlertTriangle className="h-4 w-4" />
+                    Retry All Failed
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4" />
+                    Sync All to Database
+                  </>
+                )}
+              </button>
+            )}
+            
+            {/* All synced message */}
+            {syncedItems.size === items.length && items.length > 0 && (
+              <div className="flex items-center justify-center gap-2 py-2 text-green-600 bg-green-50 rounded-md">
+                <Check className="h-4 w-4" />
+                <span className="font-medium">All records synced</span>
+              </div>
+            )}
+            
             <p className="text-xs text-center text-muted-foreground mt-1">
-              Use this if record didn't sync automatically
+              Click sync icon on each row or use button above
             </p>
           </div>
         )}

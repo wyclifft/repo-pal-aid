@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import type { MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -65,7 +65,10 @@ export const ReprintModal = ({
 }: ReprintModalProps) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [isPrinting, setIsPrinting] = useState<string | null>(null);
-  const [isSyncing, setIsSyncing] = useState<string | null>(null);
+  // Track sync state per collection by reference number
+  const [syncingCollections, setSyncingCollections] = useState<Set<string>>(new Set());
+  const [syncedCollections, setSyncedCollections] = useState<Set<string>>(new Set());
+  const [failedCollections, setFailedCollections] = useState<Set<string>>(new Set());
   const [isDeleteMode, setIsDeleteMode] = useState(false);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   const [activeTab, setActiveTab] = useState<'recent' | 'search'>('recent');
@@ -197,16 +200,100 @@ export const ReprintModal = ({
     }
   };
 
-  // Manual sync handler for milk receipts
-  const handleManualSync = async (receipt: PrintedReceipt) => {
+  // Manual sync handler for a SINGLE collection
+  const handleSyncCollection = async (collection: MilkCollection) => {
+    const refNo = collection.reference_no;
+    if (!refNo) return;
+
     if (!navigator.onLine) {
       toast.error('You are offline. Please connect to sync.');
       return;
     }
 
-    // Only sync milk receipts (transtype 1)
-    if (receipt.type === 'store' || receipt.type === 'ai') {
-      toast.info('Store/AI receipts sync is handled separately');
+    // Prevent duplicate sync attempts
+    if (syncingCollections.has(refNo)) {
+      console.log(`[SYNC] Already syncing: ${refNo}`);
+      return;
+    }
+
+    // Mark as syncing
+    setSyncingCollections(prev => new Set(prev).add(refNo));
+    setFailedCollections(prev => {
+      const next = new Set(prev);
+      next.delete(refNo);
+      return next;
+    });
+
+    try {
+      const deviceFingerprint = await generateDeviceFingerprint();
+
+      // Normalize session to AM/PM
+      let normalizedSession: 'AM' | 'PM' = 'AM';
+      const sessionVal = (collection.session || '').trim().toUpperCase();
+      if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON') || sessionVal.includes('EV') || sessionVal.includes('AF')) {
+        normalizedSession = 'PM';
+      }
+
+      console.log(`[SYNC] Syncing single collection: ${refNo}`);
+      
+      const result = await mysqlApi.milkCollection.create({
+        reference_no: refNo,
+        uploadrefno: collection.uploadrefno || refNo,
+        farmer_id: collection.farmer_id.replace(/^#/, '').trim(),
+        farmer_name: collection.farmer_name.trim(),
+        route: (collection.route || '').trim(),
+        session: normalizedSession,
+        weight: collection.weight,
+        user_id: collection.user_id,
+        clerk_name: collection.clerk_name,
+        collection_date: new Date(collection.collection_date),
+        device_fingerprint: deviceFingerprint,
+        entry_type: (collection.entry_type as 'scale' | 'manual') || 'manual',
+        product_code: collection.product_code,
+        season_code: collection.season_code,
+        transtype: collection.transtype || 1,
+      });
+
+      if (result.success) {
+        setSyncedCollections(prev => new Set(prev).add(refNo));
+        toast.success(`Record synced`);
+        console.log(`[SYNC] Success: ${refNo}`);
+      } else {
+        // Check for duplicate - treat as success
+        const errorMsg = (result.error || result.message || '').toLowerCase();
+        if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+          setSyncedCollections(prev => new Set(prev).add(refNo));
+          toast.success(`Record already in database`);
+          console.log(`[SYNC] Already synced: ${refNo}`);
+        } else {
+          setFailedCollections(prev => new Set(prev).add(refNo));
+          toast.error(`Sync failed: ${result.error || result.message}`);
+          console.warn(`[SYNC] Failed: ${refNo} - ${result.error || result.message}`);
+        }
+      }
+    } catch (err: any) {
+      const errorMsg = (err?.message || '').toLowerCase();
+      if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
+        setSyncedCollections(prev => new Set(prev).add(refNo));
+        toast.success(`Record already in database`);
+      } else {
+        setFailedCollections(prev => new Set(prev).add(refNo));
+        toast.error(`Sync failed`);
+        console.error(`[SYNC] Error syncing ${refNo}:`, err);
+      }
+    } finally {
+      setSyncingCollections(prev => {
+        const next = new Set(prev);
+        next.delete(refNo);
+        return next;
+      });
+    }
+  };
+
+  // Sync all collections for a receipt
+  const handleSyncAllCollections = async (receipt: PrintedReceipt) => {
+    if (!navigator.onLine) {
+      toast.error('You are offline. Please connect to sync.');
       return;
     }
 
@@ -215,81 +302,17 @@ export const ReprintModal = ({
       return;
     }
 
-    setIsSyncing(receipt.farmerId);
-
-    try {
-      const deviceFingerprint = await generateDeviceFingerprint();
-      let syncedCount = 0;
-      let failedCount = 0;
-
-      for (const collection of receipt.collections) {
-        const refNo = collection.reference_no;
-        if (!refNo) continue;
-
-        // Normalize session to AM/PM
-        let normalizedSession: 'AM' | 'PM' = 'AM';
-        const sessionVal = (collection.session || '').trim().toUpperCase();
-        if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON') || sessionVal.includes('EV') || sessionVal.includes('AF')) {
-          normalizedSession = 'PM';
-        }
-
-        try {
-          console.log(`[SYNC] Re-syncing: ${refNo}`);
-          
-          const result = await mysqlApi.milkCollection.create({
-            reference_no: refNo,
-            uploadrefno: collection.uploadrefno || refNo,
-            farmer_id: collection.farmer_id.replace(/^#/, '').trim(),
-            farmer_name: collection.farmer_name.trim(),
-            route: (collection.route || '').trim(),
-            session: normalizedSession,
-            weight: collection.weight,
-            user_id: collection.user_id,
-            clerk_name: collection.clerk_name,
-            collection_date: new Date(collection.collection_date),
-            device_fingerprint: deviceFingerprint,
-            entry_type: (collection.entry_type as 'scale' | 'manual') || 'manual',
-            product_code: collection.product_code,
-            season_code: collection.season_code,
-            transtype: collection.transtype || 1,
-          });
-
-          if (result.success) {
-            syncedCount++;
-            console.log(`[SYNC] Success: ${refNo}`);
-          } else {
-            const errorMsg = (result.error || result.message || '').toLowerCase();
-            if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
-              syncedCount++;
-              console.log(`[SYNC] Already synced: ${refNo}`);
-            } else {
-              failedCount++;
-              console.warn(`[SYNC] Failed: ${refNo} - ${result.error || result.message}`);
-            }
-          }
-        } catch (err: any) {
-          const errorMsg = (err?.message || '').toLowerCase();
-          if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
-            syncedCount++;
-          } else {
-            failedCount++;
-            console.error(`[SYNC] Error syncing ${refNo}:`, err);
-          }
+    for (let i = 0; i < receipt.collections.length; i++) {
+      const collection = receipt.collections[i];
+      const refNo = collection.reference_no;
+      // Skip already synced collections
+      if (refNo && !syncedCollections.has(refNo)) {
+        await handleSyncCollection(collection);
+        // Small delay between syncs
+        if (i < receipt.collections.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
-
-      if (syncedCount > 0 && failedCount === 0) {
-        toast.success(`Synced ${syncedCount} record${syncedCount !== 1 ? 's' : ''}`);
-      } else if (failedCount > 0) {
-        toast.error(`${failedCount} record${failedCount !== 1 ? 's' : ''} failed to sync`);
-      } else {
-        toast.info('No records needed syncing');
-      }
-    } catch (err) {
-      console.error('[SYNC] Manual sync error:', err);
-      toast.error('Sync failed. Please try again.');
-    } finally {
-      setIsSyncing(null);
     }
   };
 
@@ -536,7 +559,7 @@ export const ReprintModal = ({
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleReprint(receipt)}
-                        disabled={isPrinting !== null || isSyncing !== null}
+                        disabled={isPrinting !== null || syncingCollections.size > 0}
                         className="flex-1 py-3 sm:py-2 bg-primary text-primary-foreground rounded-md font-medium 
                                  hover:bg-primary/90 active:bg-primary/80 transition-colors 
                                  flex items-center justify-center gap-2 min-h-[44px]
@@ -545,18 +568,33 @@ export const ReprintModal = ({
                         <Printer className="h-4 w-4" />
                         {isPrinting === receipt.farmerId ? 'Printing...' : 'Reprint'}
                       </button>
-                      {/* Sync button - only for milk receipts */}
-                      {(!receipt.type || receipt.type === 'milk') && (
+                      {/* Sync All button - only for milk receipts */}
+                      {(!receipt.type || receipt.type === 'milk') && receipt.collections && (
                         <button
-                          onClick={() => handleManualSync(receipt)}
-                          disabled={isPrinting !== null || isSyncing !== null}
-                          className="py-3 sm:py-2 px-3 bg-amber-500 text-white rounded-md font-medium 
-                                   hover:bg-amber-600 active:bg-amber-700 transition-colors 
-                                   flex items-center justify-center gap-2 min-h-[44px]
-                                   disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="Sync to database"
+                          onClick={() => handleSyncAllCollections(receipt)}
+                          disabled={isPrinting !== null || syncingCollections.size > 0}
+                          className={`py-3 sm:py-2 px-3 rounded-md font-medium 
+                                   transition-colors flex items-center justify-center gap-2 min-h-[44px]
+                                   disabled:opacity-50 disabled:cursor-not-allowed ${
+                                     receipt.collections.every(c => syncedCollections.has(c.reference_no || ''))
+                                       ? 'bg-green-500 text-white'
+                                       : receipt.collections.some(c => failedCollections.has(c.reference_no || ''))
+                                       ? 'bg-red-500 text-white hover:bg-red-600'
+                                       : 'bg-amber-500 text-white hover:bg-amber-600'
+                                   }`}
+                          title={
+                            receipt.collections.every(c => syncedCollections.has(c.reference_no || ''))
+                              ? 'All synced'
+                              : 'Sync all to database'
+                          }
                         >
-                          <RefreshCw className={`h-4 w-4 ${isSyncing === receipt.farmerId ? 'animate-spin' : ''}`} />
+                          {receipt.collections.every(c => syncedCollections.has(c.reference_no || '')) ? (
+                            <Check className="h-4 w-4" />
+                          ) : syncingCollections.size > 0 && receipt.collections.some(c => syncingCollections.has(c.reference_no || '')) ? (
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" />
+                          )}
                         </button>
                       )}
                     </div>
