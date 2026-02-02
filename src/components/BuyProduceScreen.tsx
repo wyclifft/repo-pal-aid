@@ -87,8 +87,11 @@ export const BuyProduceScreen = ({
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers } = useIndexedDB();
   
+  // For coffee, always default to 1 kg regardless of allowSackEdit
+  const effectiveTareWeight = sackTareWeight > 0 ? sackTareWeight : 1;
+  
   // Track current effective tare weight (starts from psettings, can be edited by user)
-  const [currentTareWeight, setCurrentTareWeight] = useState(sackTareWeight);
+  const [currentTareWeight, setCurrentTareWeight] = useState(effectiveTareWeight);
   const { light: hapticLight, medium: hapticMedium, success: hapticSuccess } = useHaptics();
   
   // Get psettings for AutoW enforcement and produce labeling
@@ -110,9 +113,10 @@ export const BuyProduceScreen = ({
     console.log('📱 BuyProduceScreen - Supervisor mode:', { allowDigital, allowManual }, '| manualDisabled:', manualDisabled, 'digitalDisabled:', digitalDisabled, 'psettingsAutoWeightOnly:', psettingsAutoWeightOnly);
   }, [allowDigital, allowManual, manualDisabled, digitalDisabled, psettingsAutoWeightOnly]);
 
-  // Sync currentTareWeight when psettings value changes
+  // Sync currentTareWeight when psettings value changes (always default to 1 if not set)
   useEffect(() => {
-    setCurrentTareWeight(sackTareWeight);
+    const tareValue = sackTareWeight > 0 ? sackTareWeight : 1;
+    setCurrentTareWeight(tareValue);
   }, [sackTareWeight]);
 
   // Load cached farmers with chkroute logic

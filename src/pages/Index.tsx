@@ -114,9 +114,12 @@ const Index = () => {
   } = useAppSettings();
 
   // Sync tare weight from psettings when loaded
+  // For coffee (orgtype='C'), always default to 1 kg if not set
   useEffect(() => {
-    if (isCoffee && sackTareWeight > 0) {
-      setTareWeight(sackTareWeight);
+    if (isCoffee) {
+      // Use psettings value if valid, otherwise default to 1 kg
+      const tareValue = sackTareWeight > 0 ? sackTareWeight : 1;
+      setTareWeight(tareValue);
     }
   }, [isCoffee, sackTareWeight]);
 
