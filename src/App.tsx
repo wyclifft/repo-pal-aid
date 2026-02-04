@@ -8,7 +8,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ReprintProvider } from "@/contexts/ReprintContext";
 import { SplashScreen } from "@/components/SplashScreen";
 import { useDataSync } from "@/hooks/useDataSync";
-import { OfflineIndicator } from "@/components/OfflineIndicator";
+// OfflineIndicator is rendered inside Dashboard component for proper layout positioning
 import { BackendStatusBanner } from "@/components/BackendStatusBanner";
 import { ServiceWorkerUpdateBanner } from "@/components/ServiceWorkerUpdateBanner";
 import { preloadCriticalAssets } from "@/utils/precachePages";
@@ -153,7 +153,7 @@ const AppContent = () => {
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <ServiceWorkerUpdateBanner />
       <BackendStatusBanner />
-      <OfflineIndicator />
+      {/* OfflineIndicator now rendered inside Dashboard for proper layout positioning */}
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />

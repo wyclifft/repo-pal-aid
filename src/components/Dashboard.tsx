@@ -5,6 +5,7 @@ import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
 import { ProductSelector } from '@/components/ProductSelector';
 import { MemberSyncBanner } from '@/components/MemberSyncBanner';
+import { OfflineIndicator } from '@/components/OfflineIndicator';
 
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { useDataSync } from '@/hooks/useDataSync';
@@ -303,6 +304,9 @@ export const Dashboard = ({
             )}
           </div>
         </div>
+
+        {/* Offline/Pending Sync Banner - positioned BELOW header bar, inside teal section */}
+        <OfflineIndicator />
 
         {/* User Info & Session Status */}
         <div className="text-center px-3 pb-1">
