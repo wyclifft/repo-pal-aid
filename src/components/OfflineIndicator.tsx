@@ -71,21 +71,22 @@ export const OfflineIndicator = () => {
   // Show pending count badge if there are pending items (even when online)
   const showPendingBadge = pendingCount > 0 && isOnline && !visible;
 
+  // Move banner to top of screen instead of bottom to avoid blocking buttons
   if (showPendingBadge) {
     return (
       <div 
-        className="fixed bottom-0 left-0 right-0 z-[100] px-4 py-2 text-center text-sm font-medium bg-amber-500 text-amber-900 transition-all duration-300"
-        style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+        className="fixed top-0 left-0 right-0 z-[100] px-4 py-1.5 text-center text-xs font-medium bg-amber-500 text-amber-900 transition-all duration-300"
+        style={{ paddingTop: 'max(0.25rem, env(safe-area-inset-top))' }}
       >
         <div className="flex items-center justify-center gap-2">
           {isSyncing ? (
             <>
-              <RefreshCw className="h-4 w-4 animate-spin" />
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
               <span>Syncing {pendingCount} pending...</span>
             </>
           ) : (
             <>
-              <CloudOff className="h-4 w-4" />
+              <CloudOff className="h-3.5 w-3.5" />
               <span>{pendingCount} pending to sync</span>
             </>
           )}
@@ -96,24 +97,25 @@ export const OfflineIndicator = () => {
 
   if (!visible || dismissed || (isOnline && !isSlowConnection)) return null;
 
+  // Position at top instead of bottom to avoid blocking action buttons
   return (
     <div 
-      className={`fixed bottom-0 left-0 right-0 z-[100] px-4 py-2 text-center text-sm font-medium transition-all duration-300 ${
+      className={`fixed top-0 left-0 right-0 z-[100] px-4 py-1.5 text-center text-xs font-medium transition-all duration-300 ${
         !isOnline 
           ? 'bg-destructive text-destructive-foreground' 
           : 'bg-yellow-500 text-yellow-900'
       }`}
-      style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+      style={{ paddingTop: 'max(0.25rem, env(safe-area-inset-top))' }}
     >
       <div className="flex items-center justify-center gap-2">
         {!isOnline ? (
           <>
-            <WifiOff className="h-4 w-4" />
+            <WifiOff className="h-3.5 w-3.5" />
             <span>Offline{pendingCount > 0 ? ` - ${pendingCount} pending` : ' - Data saved locally'}</span>
           </>
         ) : (
           <>
-            <AlertTriangle className="h-4 w-4" />
+            <AlertTriangle className="h-3.5 w-3.5" />
             <span>Slow connection</span>
             <button 
               onClick={() => setDismissed(true)}

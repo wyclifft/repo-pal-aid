@@ -219,10 +219,25 @@ export const useDataSync = () => {
 
           // Check if sync was successful - API returns { success: true/false, reference_no: string }
           if (result.success) {
-            if (receipt.orderId && typeof receipt.orderId === 'number') {
+            // CRITICAL: Verify the record is actually in the database before deleting locally
+            // This prevents data loss if the API says success but record wasn't saved
+            let confirmed = false;
+            try {
+              const verifyResult = await mysqlApi.milkCollection.getByReference(receipt.reference_no);
+              confirmed = !!verifyResult;
+              if (!confirmed) {
+                console.warn(`[SYNC] API said success but record not found: ${receipt.reference_no}`);
+              }
+            } catch (verifyErr) {
+              console.warn(`[SYNC] Verification check failed for ${receipt.reference_no}:`, verifyErr);
+              // If verification fails, still trust the API success response
+              confirmed = true;
+            }
+
+            if (confirmed && receipt.orderId && typeof receipt.orderId === 'number') {
               try {
                 await deleteReceipt(receipt.orderId);
-                console.log(`[DB] Deleted local receipt: ${receipt.orderId}`);
+                console.log(`[DB] Deleted confirmed synced receipt: ${receipt.orderId}`);
               } catch (deleteErr) {
                 console.warn(`[WARN] Failed to delete synced receipt ${receipt.orderId}:`, deleteErr);
               }
