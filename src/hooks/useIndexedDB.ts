@@ -207,18 +207,53 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
-  const saveReceipt = useCallback((receipt: MilkCollection) => {
-    if (!db) return;
-    const tx = db.transaction('receipts', 'readwrite');
-    const store = tx.objectStore('receipts');
-    
-    // Ensure orderId exists for IndexedDB key
-    const receiptWithId = {
-      ...receipt,
-      orderId: receipt.orderId || Date.now(),
-    };
-    
-    store.put(receiptWithId);
+  const saveReceipt = useCallback((receipt: MilkCollection): Promise<{ success: boolean; orderId: number }> => {
+    return new Promise((resolve, reject) => {
+      if (!db) {
+        console.error('[DB] Cannot save receipt - DB not ready');
+        return reject(new Error('DB not ready'));
+      }
+      
+      // Ensure orderId exists for IndexedDB key
+      const orderId = receipt.orderId || Date.now();
+      const receiptWithId = {
+        ...receipt,
+        orderId,
+        // Add safeguard timestamp for data recovery
+        savedAt: new Date().toISOString(),
+        // Never mark as synced on initial save
+        synced: false,
+      };
+      
+      try {
+        const tx = db.transaction('receipts', 'readwrite');
+        const store = tx.objectStore('receipts');
+        const request = store.put(receiptWithId);
+        
+        request.onsuccess = () => {
+          console.log(`[DB] Receipt saved: ${receipt.reference_no} (orderId: ${orderId})`);
+          resolve({ success: true, orderId });
+        };
+        
+        request.onerror = () => {
+          console.error(`[DB] Failed to save receipt ${receipt.reference_no}:`, request.error);
+          reject(request.error);
+        };
+        
+        tx.onerror = () => {
+          console.error(`[DB] Transaction error saving receipt:`, tx.error);
+          reject(tx.error);
+        };
+        
+        tx.onabort = () => {
+          console.error(`[DB] Transaction aborted saving receipt`);
+          reject(new Error('Transaction aborted'));
+        };
+      } catch (error) {
+        console.error('[DB] Exception saving receipt:', error);
+        reject(error);
+      }
+    });
   }, [db]);
 
   const getUnsyncedReceipts = useCallback((): Promise<MilkCollection[]> => {

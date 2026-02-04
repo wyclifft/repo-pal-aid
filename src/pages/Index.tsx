@@ -659,16 +659,27 @@ const Index = () => {
               hardStopped = true;
               break;
             }
-            // API returned failure, save locally for retry
-            console.warn('⚠️ Submit returned failure, saving locally');
-            await saveReceipt({...capture, reference_no: referenceNo});
-            offlineCount++;
+            // API returned failure, save locally for retry with confirmation
+            console.warn('[SYNC] Submit returned failure, saving locally');
+            try {
+              const saveResult = await saveReceipt({...capture, reference_no: referenceNo});
+              if (saveResult?.success) {
+                console.log(`[DB] Confirmed save for retry: ${referenceNo}`);
+                offlineCount++;
+              } else {
+                console.error(`[ERROR] Failed to save for retry: ${referenceNo}`);
+                toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
+              }
+            } catch (saveErr) {
+              console.error(`[ERROR] Exception saving for retry: ${referenceNo}`, saveErr);
+              toast.error(`Critical: Failed to save ${capture.farmer_name}'s collection locally`);
+            }
           }
         } catch (err: unknown) {
           // Check if the error response contains duplicate session info
           const errorData = (err as { data?: { error?: string; message?: string; existing_reference?: string } })?.data;
           if (errorData?.error === 'DUPLICATE_SESSION_DELIVERY') {
-            console.warn(`⚠️ Member already delivered in ${capture.session} session`);
+            console.warn(`[SYNC] Member already delivered in ${capture.session} session`);
             toast.error(
               `${capture.farmer_name} has already delivered in the ${capture.session} session today.`,
               { duration: 6000 }
@@ -677,16 +688,37 @@ const Index = () => {
             hardStopped = true;
             break;
           }
-          console.error('❌ Submit error, saving locally:', err);
-          // Network error or other failure - save to IndexedDB for later sync
-          await saveReceipt(capture);
-          offlineCount++;
+          console.error('[ERROR] Submit exception, saving locally:', err);
+          // Network error or other failure - save to IndexedDB for later sync with confirmation
+          try {
+            const saveResult = await saveReceipt(capture);
+            if (saveResult?.success) {
+              console.log(`[DB] Confirmed offline save: ${capture.reference_no}`);
+              offlineCount++;
+            } else {
+              console.error(`[ERROR] Failed offline save: ${capture.reference_no}`);
+              toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
+            }
+          } catch (saveErr) {
+            console.error(`[ERROR] Exception in offline save: ${capture.reference_no}`, saveErr);
+            toast.error(`Critical: Failed to save ${capture.farmer_name}'s collection locally`);
+          }
         }
       } else {
-        // OFFLINE: Save to IndexedDB for later sync
-        await saveReceipt(capture);
-        offlineCount++;
-        console.log('📦 Saved offline for sync:', capture.reference_no);
+        // OFFLINE: Save to IndexedDB for later sync with confirmation
+        try {
+          const saveResult = await saveReceipt(capture);
+          if (saveResult?.success) {
+            console.log(`[DB] Confirmed offline save: ${capture.reference_no}`);
+            offlineCount++;
+          } else {
+            console.error(`[ERROR] Offline save failed: ${capture.reference_no}`);
+            toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
+          }
+        } catch (saveErr) {
+          console.error(`[ERROR] Exception in offline save: ${capture.reference_no}`, saveErr);
+          toast.error(`Critical: Failed to save ${capture.farmer_name}'s collection locally`);
+        }
       }
     }
 
