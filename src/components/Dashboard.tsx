@@ -6,10 +6,12 @@ import { SessionSelector } from '@/components/SessionSelector';
 import { ProductSelector } from '@/components/ProductSelector';
 import { MemberSyncBanner } from '@/components/MemberSyncBanner';
 import { OfflineIndicator } from '@/components/OfflineIndicator';
+import { SessionExpiredDialog } from '@/components/SessionExpiredDialog';
 
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionClose } from '@/hooks/useSessionClose';
+import { useSessionExpiration } from '@/hooks/useSessionExpiration';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { 
   quickReconnect, 
@@ -88,6 +90,17 @@ export const Dashboard = ({
   const [isReconnecting, setIsReconnecting] = useState(false);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
   const { sessionPrintOnly, periodLabel } = useAppSettings();
+  
+  // Session expiration monitoring - only active when session is started
+  const { 
+    isExpired: isSessionExpired, 
+    acknowledgeExpiration,
+    resetExpiration 
+  } = useSessionExpiration({
+    session: selectedSession,
+    enabled: sessionActive, // Only monitor when session is active
+    checkIntervalMs: 30000, // Check every 30 seconds for responsiveness
+  });
   
   // Listen for connection state changes from Settings or other components
   useEffect(() => {
@@ -178,6 +191,8 @@ export const Dashboard = ({
 
   const handleSessionChange = (session: Session | null) => {
     setSelectedSession(session);
+    // Reset expiration tracking when user selects a new session
+    resetExpiration();
   };
   
   const handleProductChange = (product: Item | null) => {
@@ -187,8 +202,19 @@ export const Dashboard = ({
   const handleNewSession = () => {
     if (selectedRoute && selectedSession) {
       setSessionActive(true);
+      // Reset expiration when starting a new session
+      resetExpiration();
     }
   };
+  
+  // Handle session expiration - return to session selection
+  const handleSessionExpiredSelect = useCallback(() => {
+    acknowledgeExpiration();
+    setSessionActive(false);
+    setSelectedSession(null);
+    // Don't clear route/product - just require new session selection
+    toast.info(`Please select an active ${periodLabel.toLowerCase()}`);
+  }, [acknowledgeExpiration, periodLabel]);
 
   // Legacy handler removed - now using useSessionClose hook
   const handleCloseSession = () => {
@@ -531,6 +557,15 @@ export const Dashboard = ({
           )}
         </div>
       </div>
+      
+      {/* Session Expired Dialog - blocks data entry but NOT syncing */}
+      <SessionExpiredDialog
+        open={isSessionExpired}
+        sessionName={selectedSession?.descript}
+        periodLabel={periodLabel}
+        pendingCount={pendingCount}
+        onSelectSession={handleSessionExpiredSelect}
+      />
     </div>
   );
 };
