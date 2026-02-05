@@ -4,6 +4,16 @@ import { useSyncManager, deduplicateReceipts } from '@/hooks/useSyncManager';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
+import { 
+  isNativeStorageAvailable, 
+  markNativeRecordSynced, 
+  markNativeRecordFailed 
+} from '@/services/offlineStorage';
+
+// Batch processing configuration to prevent overwhelming system during bulk sync
+const SYNC_BATCH_SIZE = 10; // Process 10 records at a time
+const SYNC_BATCH_DELAY_MS = 200; // Delay between batches
+const SYNC_RETRY_DELAY_MS = 1000; // Delay before retrying failed record
 
 // Get offlineFirstMode from localStorage (cached from useAppSettings)
 const getOfflineFirstMode = (): boolean => {
@@ -63,9 +73,10 @@ export const useDataSync = () => {
   // Track in-flight syncs to prevent duplicate API calls for the same receipt
   const inFlightSyncsRef = useRef<Set<string>>(new Set());
 
-  // Sync offline receipts TO backend with deduplication
+  // Sync offline receipts TO backend with deduplication and batch processing
   // In offline-first mode (online=1), this is only triggered manually or on explicit sync
   // In background sync mode (online=0), this runs automatically
+  // CRITICAL: Ensures NO DATA LOSS for OrgType C and D
   const syncOfflineReceipts = useCallback(async (): Promise<{ synced: number; failed: number }> => {
     if (!isReady || !navigator.onLine) {
       console.log('[SYNC] Sync skipped: not ready or offline');
@@ -81,6 +92,7 @@ export const useDataSync = () => {
 
     let synced = 0;
     let failed = 0;
+    const useNativeStorage = isNativeStorageAvailable();
 
     try {
       const rawReceipts = await getUnsyncedReceipts();
@@ -113,7 +125,7 @@ export const useDataSync = () => {
         return { synced: 0, failed: 0 };
       }
 
-      console.log(`[SYNC] Starting sync of ${unsyncedReceipts.length} offline receipts...`);
+      console.log(`[SYNC] Starting sync of ${unsyncedReceipts.length} offline receipts (batch size: ${SYNC_BATCH_SIZE})...`);
       
       // Dispatch sync start event
       window.dispatchEvent(new CustomEvent('syncStart'));
@@ -127,128 +139,168 @@ export const useDataSync = () => {
         }
       });
       
-      // Process each receipt independently - continue even if one fails
-      for (let i = 0; i < unsyncedReceipts.length; i++) {
-        const receipt = unsyncedReceipts[i];
+      // Process receipts in batches to prevent memory issues with large sync sets
+      const totalBatches = Math.ceil(unsyncedReceipts.length / SYNC_BATCH_SIZE);
+      console.log(`[SYNC] Processing ${unsyncedReceipts.length} receipts in ${totalBatches} batches...`);
+      
+      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+        const batchStart = batchIndex * SYNC_BATCH_SIZE;
+        const batchEnd = Math.min(batchStart + SYNC_BATCH_SIZE, unsyncedReceipts.length);
+        const batch = unsyncedReceipts.slice(batchStart, batchEnd);
         
-        // Check if component is still mounted
-        if (!mountedRef.current) {
-          console.warn(`[SYNC] Component unmounted at receipt ${i + 1}/${unsyncedReceipts.length}, stopping sync`);
-          break;
-        }
-
-        console.log(`[SYNC] Processing ${i + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
-
-        try {
-          // Normalize session to AM/PM - handle legacy data that might have description
-          let normalizedSession: 'AM' | 'PM' = 'AM';
-          const sessionVal = String(receipt.session || '').trim().toUpperCase();
-          if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
-            normalizedSession = 'PM';
+        console.log(`[SYNC] Batch ${batchIndex + 1}/${totalBatches}: processing ${batch.length} receipts`);
+        
+        // Process each receipt in the batch independently
+        for (let i = 0; i < batch.length; i++) {
+          const receipt = batch[i];
+          const globalIndex = batchStart + i;
+          
+          // Check if component is still mounted
+          if (!mountedRef.current) {
+            console.warn(`[SYNC] Component unmounted at receipt ${globalIndex + 1}/${unsyncedReceipts.length}, stopping sync`);
+            break;
           }
 
-          // Client-side FINAL GUARD for multOpt=0 during background sync
-          // IMPORTANT: multOpt=0 means only one *workflow* per session/day, but a workflow may include
-          // multiple rows (multiple buckets) that share the same uploadrefno.
-          // So: only skip if an existing server record is found AND it belongs to a DIFFERENT uploadrefno.
-          if (receipt.multOpt === 0) {
-            const receiptDate = new Date(receipt.collection_date).toISOString().split('T')[0];
-            try {
-              const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-                String(receipt.farmer_id || '').replace(/^#/, '').trim(),
-                normalizedSession,
-                receiptDate,
-                receiptDate,
-                deviceFingerprint
-              );
+          console.log(`[SYNC] Processing ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
 
-              if (existing) {
-                const existingUploadRef = (existing as any)?.uploadrefno;
-                const incomingUploadRef = (receipt as any)?.uploadrefno;
+          try {
+            // Normalize session to AM/PM - handle legacy data that might have description
+            let normalizedSession: 'AM' | 'PM' = 'AM';
+            const sessionVal = String(receipt.session || '').trim().toUpperCase();
+            if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
+              normalizedSession = 'PM';
+            }
 
-                // If uploadrefno matches, this is part of the same workflow; do NOT skip.
-                if (
-                  incomingUploadRef &&
-                  existingUploadRef &&
-                  String(incomingUploadRef) === String(existingUploadRef)
-                ) {
-                  console.log(
-                    `[SYNC] multOpt=0: existing workflow found and uploadrefno matches (${incomingUploadRef}); proceeding: ${receipt.reference_no}`
-                  );
-                } else {
-                  // Different (or unknown) workflow: treat as duplicate-session-delivery guard.
-                  // Attempting to sync will likely return a 409, but skipping here avoids extra calls.
-                  console.log(
-                    `[SKIP] multOpt=0 duplicate workflow detected (existingUploadRef=${existingUploadRef ?? 'unknown'}, incomingUploadRef=${incomingUploadRef ?? 'missing'}): ${receipt.reference_no}`
-                  );
-                  if (receipt.orderId && typeof receipt.orderId === 'number') {
-                    try {
-                      await deleteReceipt(receipt.orderId);
-                    } catch (deleteErr) {
-                      console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+            // Client-side FINAL GUARD for multOpt=0 during background sync
+            if (receipt.multOpt === 0) {
+              const receiptDate = new Date(receipt.collection_date).toISOString().split('T')[0];
+              try {
+                const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
+                  String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+                  normalizedSession,
+                  receiptDate,
+                  receiptDate,
+                  deviceFingerprint
+                );
+
+                if (existing) {
+                  const existingUploadRef = (existing as any)?.uploadrefno;
+                  const incomingUploadRef = (receipt as any)?.uploadrefno;
+
+                  if (
+                    incomingUploadRef &&
+                    existingUploadRef &&
+                    String(incomingUploadRef) === String(existingUploadRef)
+                  ) {
+                    console.log(`[SYNC] multOpt=0: uploadrefno matches (${incomingUploadRef}); proceeding: ${receipt.reference_no}`);
+                  } else {
+                    console.log(`[SKIP] multOpt=0 duplicate workflow detected: ${receipt.reference_no}`);
+                    // Mark as synced in native storage before deleting from IndexedDB
+                    if (useNativeStorage) {
+                      await markNativeRecordSynced(receipt.reference_no);
                     }
+                    if (receipt.orderId && typeof receipt.orderId === 'number') {
+                      try {
+                        await deleteReceipt(receipt.orderId);
+                      } catch (deleteErr) {
+                        console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+                      }
+                    }
+                    synced++;
+                    continue;
                   }
-                  synced++;
-                  continue; // Move to next receipt
+                }
+              } catch (checkErr) {
+                console.warn('[SYNC] Duplicate check failed, proceeding with sync:', checkErr);
+              }
+            }
+
+            const result = await mysqlApi.milkCollection.create({
+              reference_no: receipt.reference_no,
+              uploadrefno: receipt.uploadrefno,
+              farmer_id: String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+              farmer_name: String(receipt.farmer_name || '').trim(),
+              route: String(receipt.route || '').trim(),
+              session: normalizedSession,
+              weight: receipt.weight,
+              user_id: receipt.user_id,
+              clerk_name: receipt.clerk_name,
+              collection_date: receipt.collection_date,
+              device_fingerprint: deviceFingerprint,
+              entry_type: receipt.entry_type,
+              product_code: receipt.product_code,
+              season_code: receipt.season_code,
+              transtype: receipt.transtype,
+            });
+
+            console.log(`[API] Response for ${receipt.reference_no}:`, JSON.stringify(result));
+
+            if (result.success) {
+              // CRITICAL: Verify the record is actually in the database before deleting locally
+              let confirmed = false;
+              try {
+                const verifyResult = await mysqlApi.milkCollection.getByReference(receipt.reference_no);
+                confirmed = !!verifyResult;
+                if (!confirmed) {
+                  console.warn(`[SYNC] API said success but record not found: ${receipt.reference_no}`);
+                }
+              } catch (verifyErr) {
+                console.warn(`[SYNC] Verification check failed for ${receipt.reference_no}:`, verifyErr);
+                confirmed = true;
+              }
+
+              if (confirmed) {
+                // Mark as synced in native storage FIRST (encrypted backup)
+                if (useNativeStorage) {
+                  const backendId = (result as any).backend_id || (result as any).id;
+                  await markNativeRecordSynced(receipt.reference_no, backendId);
+                }
+                
+                // Then delete from IndexedDB
+                if (receipt.orderId && typeof receipt.orderId === 'number') {
+                  try {
+                    await deleteReceipt(receipt.orderId);
+                    console.log(`[DB] Deleted confirmed synced receipt: ${receipt.orderId}`);
+                  } catch (deleteErr) {
+                    console.warn(`[WARN] Failed to delete synced receipt ${receipt.orderId}:`, deleteErr);
+                  }
                 }
               }
-            } catch (checkErr) {
-              console.warn('[SYNC] Duplicate check failed, proceeding with sync:', checkErr);
-            }
-          }
-
-          const result = await mysqlApi.milkCollection.create({
-            reference_no: receipt.reference_no,
-            uploadrefno: receipt.uploadrefno, // Include milkId for approval workflow
-            farmer_id: String(receipt.farmer_id || '').replace(/^#/, '').trim(),
-            farmer_name: String(receipt.farmer_name || '').trim(),
-            route: String(receipt.route || '').trim(),
-            session: normalizedSession,
-            weight: receipt.weight,
-            user_id: receipt.user_id, // Login user_id for DB userId column
-            clerk_name: receipt.clerk_name, // Display name for clerk column
-            collection_date: receipt.collection_date,
-            device_fingerprint: deviceFingerprint,
-            entry_type: receipt.entry_type, // Pass entry_type to backend
-            product_code: receipt.product_code, // Pass selected product icode → DB: icode column
-            season_code: receipt.season_code, // Pass session SCODE → DB: CAN column
-            transtype: receipt.transtype, // Pass transtype: 1 = Buy, 2 = Sell
-          });
-
-          console.log(`[API] Response for ${receipt.reference_no}:`, JSON.stringify(result));
-
-          // Check if sync was successful - API returns { success: true/false, reference_no: string }
-          if (result.success) {
-            // CRITICAL: Verify the record is actually in the database before deleting locally
-            // This prevents data loss if the API says success but record wasn't saved
-            let confirmed = false;
-            try {
-              const verifyResult = await mysqlApi.milkCollection.getByReference(receipt.reference_no);
-              confirmed = !!verifyResult;
-              if (!confirmed) {
-                console.warn(`[SYNC] API said success but record not found: ${receipt.reference_no}`);
-              }
-            } catch (verifyErr) {
-              console.warn(`[SYNC] Verification check failed for ${receipt.reference_no}:`, verifyErr);
-              // If verification fails, still trust the API success response
-              confirmed = true;
-            }
-
-            if (confirmed && receipt.orderId && typeof receipt.orderId === 'number') {
-              try {
-                await deleteReceipt(receipt.orderId);
-                console.log(`[DB] Deleted confirmed synced receipt: ${receipt.orderId}`);
-              } catch (deleteErr) {
-                console.warn(`[WARN] Failed to delete synced receipt ${receipt.orderId}:`, deleteErr);
+              synced++;
+              console.log(`[SUCCESS] Synced ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
+            } else {
+              const errorMsg = (result.error || result.message || '').toLowerCase();
+              if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+                console.log(`[SKIP] Already synced (server duplicate): ${receipt.reference_no}`);
+                if (useNativeStorage) {
+                  await markNativeRecordSynced(receipt.reference_no);
+                }
+                if (receipt.orderId && typeof receipt.orderId === 'number') {
+                  try {
+                    await deleteReceipt(receipt.orderId);
+                  } catch (deleteErr) {
+                    console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+                  }
+                }
+                synced++;
+              } else {
+                failed++;
+                // Log failure in native storage for retry tracking
+                if (useNativeStorage) {
+                  await markNativeRecordFailed(receipt.reference_no, result.error || result.message || 'Unknown error');
+                }
+                console.warn(`[WARN] Sync failed for ${receipt.reference_no}: ${result.error || result.message || 'Unknown error'}`);
               }
             }
-            synced++;
-            console.log(`[SUCCESS] Synced ${i + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
-          } else {
-            // Check if it's a duplicate error - treat as success
-            const errorMsg = (result.error || result.message || '').toLowerCase();
+          } catch (err: any) {
+            console.error(`[ERROR] Exception syncing ${receipt.reference_no}:`, err);
+            
+            const errorMsg = (err?.message || '').toLowerCase();
             if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
-              console.log(`[SKIP] Already synced (server duplicate): ${receipt.reference_no}`);
+              console.log(`[SKIP] Already synced (exception duplicate): ${receipt.reference_no}`);
+              if (useNativeStorage) {
+                await markNativeRecordSynced(receipt.reference_no);
+              }
               if (receipt.orderId && typeof receipt.orderId === 'number') {
                 try {
                   await deleteReceipt(receipt.orderId);
@@ -259,37 +311,28 @@ export const useDataSync = () => {
               synced++;
             } else {
               failed++;
-              console.warn(`[WARN] Sync failed for ${receipt.reference_no}: ${result.error || result.message || 'Unknown error'}`);
-            }
-          }
-        } catch (err: any) {
-          console.error(`[ERROR] Exception syncing ${receipt.reference_no}:`, err);
-          
-          // Check if it's a duplicate error (already exists in DB)
-          const errorMsg = (err?.message || '').toLowerCase();
-          if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
-            console.log(`[SKIP] Already synced (exception duplicate): ${receipt.reference_no}`);
-            if (receipt.orderId && typeof receipt.orderId === 'number') {
-              try {
-                await deleteReceipt(receipt.orderId);
-              } catch (deleteErr) {
-                console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+              // Log failure in native storage for retry tracking
+              if (useNativeStorage) {
+                await markNativeRecordFailed(receipt.reference_no, err?.message || 'Exception during sync');
               }
             }
-            synced++;
-          } else {
-            failed++;
+          } finally {
+            // Remove from in-flight tracking after processing
+            if (receipt.reference_no) {
+              inFlightSyncsRef.current.delete(receipt.reference_no);
+            }
           }
-        } finally {
-          // Remove from in-flight tracking after processing (success or failure)
-          if (receipt.reference_no) {
-            inFlightSyncsRef.current.delete(receipt.reference_no);
+          
+          // Small delay between requests within batch
+          if (i < batch.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
           }
         }
         
-        // Small delay between requests to avoid overwhelming the server
-        if (i < unsyncedReceipts.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+        // Batch delay to prevent overwhelming system
+        if (batchIndex < totalBatches - 1) {
+          console.log(`[SYNC] Batch ${batchIndex + 1} complete. Waiting ${SYNC_BATCH_DELAY_MS}ms before next batch...`);
+          await new Promise(resolve => setTimeout(resolve, SYNC_BATCH_DELAY_MS));
         }
       }
       
