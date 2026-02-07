@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { mysqlApi, type Session, type SessionsResponse } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useOfflineStatus } from '@/hooks/useOfflineStatus';
 import { Clock, AlertCircle, CheckCircle, Calendar } from 'lucide-react';
 
 interface SessionSelectorProps {
@@ -26,6 +27,7 @@ export const SessionSelector = ({
   const [orgtype, setOrgtype] = useState<string>('D');
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const { saveSessions, getSessions, isReady } = useIndexedDB();
+  const { isOnline } = useOfflineStatus();
   
   // Track if we've already loaded data to prevent flickering
   const hasLoadedRef = useRef(false);
@@ -117,12 +119,18 @@ export const SessionSelector = ({
   }, [currentTime, isDateEnabled]);
 
   // Check if a session is SELECTABLE (can be chosen by user)
-  // Allows: current active sessions AND past seasons
-  // Disables: future seasons only
+  // When OFFLINE: allow selecting any non-future cached session (expired sessions remain selectable)
+  // When ONLINE: allows current active sessions AND past seasons, disables future seasons only
   const isSessionSelectable = useCallback((session: Session): boolean => {
-    // Future seasons are always disabled
+    // Future seasons are always disabled (online or offline)
     if (isFutureSeason(session)) {
       return false;
+    }
+    
+    // OFFLINE: allow selecting ANY non-future session from cache
+    // This prevents "No session available" when offline and all sessions are time-closed
+    if (!isOnline) {
+      return true;
     }
     
     // Past seasons are always selectable (for historical data entry)
@@ -132,7 +140,7 @@ export const SessionSelector = ({
     
     // For current/regular sessions, check if active (date + time)
     return isSessionActive(session);
-  }, [isFutureSeason, isPastSeason, isSessionActive]);
+  }, [isFutureSeason, isPastSeason, isSessionActive, isOnline]);
 
   // Find the currently active session from loaded sessions
   const findActiveSession = useCallback((sessionList: Session[]): Session | null => {
@@ -332,7 +340,8 @@ export const SessionSelector = ({
       return '- Date closed';
     }
     if (!timeOk) {
-      return '- Time closed';
+      // When offline, show "Expired" instead of "Time closed" for clarity
+      return !isOnline ? '○ Expired' : '- Time closed';
     }
     return '✓ Active';
   };

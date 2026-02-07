@@ -1,4 +1,4 @@
-import { AlertTriangle, Clock } from 'lucide-react';
+import { AlertTriangle, Clock, WifiOff } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -7,6 +7,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { useOfflineStatus } from '@/hooks/useOfflineStatus';
 
 interface SessionExpiredDialogProps {
   open: boolean;
@@ -20,6 +21,7 @@ interface SessionExpiredDialogProps {
  * Dialog shown when the user's selected session/season has expired.
  * Forces user to select an active session before continuing data entry.
  * Note: This does NOT block data syncing - only data ENTRY.
+ * When offline, cached sessions remain available for selection.
  */
 export const SessionExpiredDialog = ({
   open,
@@ -28,6 +30,8 @@ export const SessionExpiredDialog = ({
   pendingCount = 0,
   onSelectSession,
 }: SessionExpiredDialogProps) => {
+  const { isOnline } = useOfflineStatus();
+
   return (
     <Dialog open={open} onOpenChange={() => {/* Prevent closing by clicking outside */}}>
       <DialogContent 
@@ -73,6 +77,24 @@ export const SessionExpiredDialog = ({
             </div>
           </div>
 
+          {/* Offline notice */}
+          {!isOnline && (
+            <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+              <div className="flex items-start gap-3">
+                <WifiOff className="h-5 w-5 text-gray-400 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-medium text-gray-800 mb-1">
+                    You are offline
+                  </p>
+                  <p>
+                    Cached {periodLabel.toLowerCase()}s are available for selection.
+                    Your data is safe and will sync when connectivity is restored.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Pending sync note */}
           {pendingCount > 0 && (
             <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-700">
@@ -91,7 +113,7 @@ export const SessionExpiredDialog = ({
             onClick={onSelectSession}
             className="w-full py-6 text-lg font-semibold bg-[#26A69A] hover:bg-[#1E8E82]"
           >
-            Select Active {periodLabel}
+            Select {!isOnline ? 'Cached' : 'Active'} {periodLabel}
           </Button>
         </div>
       </DialogContent>
