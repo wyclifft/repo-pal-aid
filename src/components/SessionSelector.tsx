@@ -119,7 +119,7 @@ export const SessionSelector = ({
   }, [currentTime, isDateEnabled]);
 
   // Check if a session is SELECTABLE (can be chosen by user)
-  // When OFFLINE: allow selecting any non-future cached session (expired sessions remain selectable)
+  // When OFFLINE: ONLY the currently active session is selectable
   // When ONLINE: allows current active sessions AND past seasons, disables future seasons only
   const isSessionSelectable = useCallback((session: Session): boolean => {
     // Future seasons are always disabled (online or offline)
@@ -127,13 +127,12 @@ export const SessionSelector = ({
       return false;
     }
     
-    // OFFLINE: allow selecting ANY non-future session from cache
-    // This prevents "No session available" when offline and all sessions are time-closed
+    // OFFLINE: only allow selecting the currently active session
     if (!isOnline) {
-      return true;
+      return isSessionActive(session);
     }
     
-    // Past seasons are always selectable (for historical data entry)
+    // Past seasons are always selectable (for historical data entry) when online
     if (isPastSeason(session)) {
       return true;
     }
@@ -340,8 +339,8 @@ export const SessionSelector = ({
       return '- Date closed';
     }
     if (!timeOk) {
-      // When offline, show "Expired" instead of "Time closed" for clarity
-      return !isOnline ? '○ Expired' : '- Time closed';
+      // When offline, show "Expired" for clarity; sessions remain cached but not selectable
+      return !isOnline ? '✕ Expired' : '- Time closed';
     }
     return '✓ Active';
   };
