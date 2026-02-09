@@ -18,6 +18,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import kotlinx.coroutines.*
+import org.json.JSONArray
 import java.io.IOException
 import java.io.InputStream
 import java.util.UUID
@@ -95,16 +96,20 @@ class BluetoothClassicPlugin : Plugin() {
         }
 
         try {
-            val devices = bluetoothAdapter?.bondedDevices?.map { device ->
-                JSObject().apply {
-                    put("name", device.name ?: "Unknown")
-                    put("address", device.address)
-                    put("type", device.type)
-                }
-            } ?: emptyList()
+            val devicesArray = JSONArray()
+            bluetoothAdapter?.bondedDevices?.forEach { device ->
+                val obj = JSObject()
+                obj.put("name", device.name ?: "Unknown")
+                obj.put("address", device.address)
+                obj.put("type", device.type)
+                obj.put("bonded", true)
+                devicesArray.put(obj)
+            }
+
+            Log.d(TAG, "[BT] Found ${devicesArray.length()} paired devices")
 
             val result = JSObject()
-            result.put("devices", devices)
+            result.put("devices", devicesArray)
             call.resolve(result)
         } catch (e: SecurityException) {
             call.reject("Bluetooth permission denied", e)
