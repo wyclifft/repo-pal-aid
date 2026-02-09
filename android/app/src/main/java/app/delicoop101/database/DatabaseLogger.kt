@@ -3,16 +3,20 @@ package app.delicoop101.database
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.consumeEach
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Asynchronous, non-blocking database logger.
  * 
- * Uses Kotlin Channels to batch log entries for efficient database writes.
- * Logs are batched every 20 records OR every 5 seconds, whichever comes first.
- * This prevents UI performance degradation from frequent database operations.
+ * Uses a Mutex-protected list to batch log entries for efficient database writes.
+ * Logs are flushed every BATCH_SIZE records OR every FLUSH_INTERVAL, whichever comes first.
+ * 
+ * Thread-safety: All access to pendingLogs is guarded by a Mutex.
+ * Flush on destroy: flush() is a blocking call that ensures all pending logs
+ * are written before the process exits.
  * 
  * Automated maintenance:
  * - Retains only the last 7 days of logs
@@ -21,15 +25,17 @@ import java.util.concurrent.TimeUnit
 object DatabaseLogger {
     
     private const val TAG = "DatabaseLogger"
-    private const val BATCH_SIZE = 20
-    private const val FLUSH_INTERVAL_MS = 5000L
+    private const val BATCH_SIZE = 10
+    private const val FLUSH_INTERVAL_MS = 3000L
     private const val MAX_LOG_COUNT = 10000
     private const val MAX_LOG_AGE_DAYS = 7L
     
     private var database: DelicoopDatabase? = null
-    private val logChannel = Channel<AppLog>(Channel.UNLIMITED)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var isInitialized = false
+    private val initialized = AtomicBoolean(false)
+    
+    // Thread-safe pending log buffer
+    private val mutex = Mutex()
     private val pendingLogs = mutableListOf<AppLog>()
     
     /**
@@ -37,16 +43,15 @@ object DatabaseLogger {
      * Must be called after database is initialized.
      */
     fun initialize(context: Context) {
-        if (isInitialized) {
+        if (!initialized.compareAndSet(false, true)) {
             Log.d(TAG, "[LOGGER] Already initialized")
             return
         }
         
         database = DelicoopDatabase.getInstance(context)
-        isInitialized = true
         
-        // Start the batch processor
-        startBatchProcessor()
+        // Start the periodic flusher
+        startPeriodicFlush()
         
         // Schedule periodic maintenance
         scheduleMaintenance()
@@ -55,12 +60,11 @@ object DatabaseLogger {
     }
     
     /**
-     * Log a message asynchronously (non-blocking)
+     * Log a message asynchronously (non-blocking).
+     * If batch size is reached, triggers an immediate flush.
      */
     fun log(level: String, tag: String, message: String, extraData: String? = null) {
-        if (!isInitialized) {
-            // Queue log for later if not initialized yet
-            Log.w(TAG, "[LOGGER] Not initialized, logging to Android Log: $message")
+        if (!initialized.get()) {
             when (level) {
                 "ERROR" -> Log.e(tag, message)
                 "WARN" -> Log.w(tag, message)
@@ -77,15 +81,18 @@ object DatabaseLogger {
             extraData = extraData
         )
         
-        // Non-blocking send to channel
         scope.launch {
-            logChannel.send(logEntry)
+            var shouldFlush = false
+            mutex.withLock {
+                pendingLogs.add(logEntry)
+                shouldFlush = pendingLogs.size >= BATCH_SIZE
+            }
+            if (shouldFlush) {
+                writePendingLogs()
+            }
         }
     }
     
-    /**
-     * Convenience methods
-     */
     fun info(tag: String, message: String, extraData: String? = null) = 
         log("INFO", tag, message, extraData)
     
@@ -99,68 +106,59 @@ object DatabaseLogger {
         log("DEBUG", tag, message, extraData)
     
     /**
-     * Flush pending logs immediately (call before app termination)
+     * Flush pending logs SYNCHRONOUSLY.
+     * Call this from onDestroy to ensure all logs are written before process exit.
+     * Uses runBlocking so the calling thread waits until the write completes.
      */
     fun flush() {
-        if (!isInitialized) return
+        if (!initialized.get()) return
         
-        scope.launch {
-            try {
+        try {
+            // runBlocking ensures we don't return until logs are persisted
+            runBlocking(Dispatchers.IO) {
                 writePendingLogs()
-                Log.d(TAG, "[LOGGER] Flushed pending logs")
-            } catch (e: Exception) {
-                Log.e(TAG, "[LOGGER] Error flushing logs: ${e.message}")
             }
+            Log.d(TAG, "[LOGGER] Flushed pending logs synchronously")
+        } catch (e: Exception) {
+            Log.e(TAG, "[LOGGER] Error flushing logs: ${e.message}")
         }
     }
     
     /**
-     * Start the batch processor coroutine
+     * Periodically flush logs on a timer (in case batch size isn't reached).
      */
-    private fun startBatchProcessor() {
+    private fun startPeriodicFlush() {
         scope.launch {
-            var lastFlushTime = System.currentTimeMillis()
-            
             while (isActive) {
+                delay(FLUSH_INTERVAL_MS)
                 try {
-                    // Try to receive with timeout
-                    val log = withTimeoutOrNull(FLUSH_INTERVAL_MS) {
-                        logChannel.receive()
-                    }
-                    
-                    if (log != null) {
-                        pendingLogs.add(log)
-                    }
-                    
-                    val now = System.currentTimeMillis()
-                    val shouldFlush = pendingLogs.size >= BATCH_SIZE || 
-                                     (now - lastFlushTime >= FLUSH_INTERVAL_MS && pendingLogs.isNotEmpty())
-                    
-                    if (shouldFlush) {
-                        writePendingLogs()
-                        lastFlushTime = now
-                    }
+                    writePendingLogs()
                 } catch (e: Exception) {
-                    Log.e(TAG, "[LOGGER] Batch processor error: ${e.message}")
+                    Log.e(TAG, "[LOGGER] Periodic flush error: ${e.message}")
                 }
             }
         }
     }
     
     /**
-     * Write pending logs to database
+     * Write pending logs to database, thread-safely draining the buffer.
      */
     private suspend fun writePendingLogs() {
-        if (pendingLogs.isEmpty()) return
+        val logsToWrite: List<AppLog>
+        mutex.withLock {
+            if (pendingLogs.isEmpty()) return
+            logsToWrite = pendingLogs.toList()
+            pendingLogs.clear()
+        }
         
         try {
-            val logsToWrite = pendingLogs.toList()
-            pendingLogs.clear()
-            
             database?.appLogDao()?.insertAll(logsToWrite)
-            Log.d(TAG, "[LOGGER] Wrote ${logsToWrite.size} logs to database")
         } catch (e: Exception) {
-            Log.e(TAG, "[LOGGER] Failed to write logs: ${e.message}")
+            Log.e(TAG, "[LOGGER] Failed to write ${logsToWrite.size} logs: ${e.message}")
+            // Re-add failed logs back to the buffer so they aren't lost
+            mutex.withLock {
+                pendingLogs.addAll(0, logsToWrite)
+            }
         }
     }
     
@@ -170,8 +168,7 @@ object DatabaseLogger {
     private fun scheduleMaintenance() {
         scope.launch {
             while (isActive) {
-                delay(TimeUnit.HOURS.toMillis(1)) // Run maintenance hourly
-                
+                delay(TimeUnit.HOURS.toMillis(1))
                 try {
                     performMaintenance()
                 } catch (e: Exception) {
@@ -181,21 +178,15 @@ object DatabaseLogger {
         }
     }
     
-    /**
-     * Perform log maintenance - delete old logs, keep max count
-     */
     private suspend fun performMaintenance() {
         val dao = database?.appLogDao() ?: return
         
-        // Delete logs older than 7 days
         val cutoffTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(MAX_LOG_AGE_DAYS)
         val deletedByAge = dao.deleteOldLogs(cutoffTime)
-        
-        // Keep only the most recent 10,000 logs
         val deletedByCount = dao.keepRecentLogs(MAX_LOG_COUNT)
         
         if (deletedByAge > 0 || deletedByCount > 0) {
-            Log.d(TAG, "[LOGGER] Maintenance: deleted $deletedByAge old logs, $deletedByCount excess logs")
+            Log.d(TAG, "[LOGGER] Maintenance: deleted $deletedByAge old, $deletedByCount excess logs")
         }
     }
 }

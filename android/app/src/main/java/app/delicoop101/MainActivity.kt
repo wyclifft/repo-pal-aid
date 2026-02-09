@@ -33,21 +33,25 @@ class MainActivity : BridgeActivity() {
         
         super.onCreate(savedInstanceState)
         
-        // Initialize encrypted database immediately on a background thread
-        // This ensures the database is ready before any transaction occurs
+        // Initialize encrypted database on a background thread.
+        // getInstance() now forces the DB file open eagerly (not lazily),
+        // so the database is guaranteed ready before any DAO calls.
         appScope.launch(Dispatchers.IO) {
             try {
                 Log.d(TAG, "[INIT] Starting encrypted database initialization...")
                 
-                // Step 1: Initialize the encrypted Room database
+                // Step 1: Initialize + force-open the encrypted Room database
                 val db = DelicoopDatabase.getInstance(applicationContext)
-                Log.d(TAG, "[INIT] Encrypted database initialized successfully")
                 
-                // Step 2: Initialize the async DatabaseLogger
+                // Step 2: Verify the DB is truly open by running a quick read
+                val logCount = db.appLogDao().getLogCount()
+                Log.d(TAG, "[INIT] Database verified open. Existing logs: $logCount")
+                
+                // Step 3: Initialize the async DatabaseLogger
                 DatabaseLogger.initialize(applicationContext)
                 Log.d(TAG, "[INIT] DatabaseLogger initialized")
                 
-                // Step 3: Log app startup
+                // Step 4: Log app startup (this will be batched and persisted)
                 DatabaseLogger.log("INFO", TAG, "DeliCoop101 app started")
                 
                 Log.d(TAG, "[INIT] App initialization complete")
@@ -61,8 +65,9 @@ class MainActivity : BridgeActivity() {
     }
     
     override fun onDestroy() {
-        super.onDestroy()
-        // Flush any pending logs before app terminates
+        // Flush all pending logs SYNCHRONOUSLY before process exit
+        // This is now a blocking call that waits for writes to complete
         DatabaseLogger.flush()
+        super.onDestroy()
     }
 }

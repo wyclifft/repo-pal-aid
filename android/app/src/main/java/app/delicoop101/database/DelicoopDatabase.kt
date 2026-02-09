@@ -50,7 +50,6 @@ abstract class DelicoopDatabase : RoomDatabase() {
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 Log.d(TAG, "[DB] Running migration 1 -> 2")
-                // Create app_logs table if it doesn't exist
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS app_logs (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -70,11 +69,31 @@ abstract class DelicoopDatabase : RoomDatabase() {
         
         /**
          * Get the singleton database instance.
-         * Creates the encrypted database on first access.
+         * Creates and OPENS the encrypted database on first access.
          */
         fun getInstance(context: Context): DelicoopDatabase {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: buildDatabase(context).also { INSTANCE = it }
+                INSTANCE ?: buildDatabase(context).also { db ->
+                    INSTANCE = db
+                    // Force the database to actually open NOW (Room is lazy by default)
+                    // This ensures tables exist and the DB file is created immediately
+                    forceOpen(db)
+                }
+            }
+        }
+        
+        /**
+         * Force Room to open the database immediately.
+         * Without this, Room only opens on the first DAO query,
+         * which can cause data loss if the first write races with initialization.
+         */
+        private fun forceOpen(db: DelicoopDatabase) {
+            try {
+                // openHelper.writableDatabase forces Room to create/open the SQLite file
+                db.openHelper.writableDatabase
+                Log.d(TAG, "[DB] Database file opened and tables verified")
+            } catch (e: Exception) {
+                Log.e(TAG, "[DB] CRITICAL: Failed to force-open database: ${e.message}", e)
             }
         }
         
@@ -82,6 +101,7 @@ abstract class DelicoopDatabase : RoomDatabase() {
          * Build the encrypted Room database.
          * Uses SQLCipher for encryption at rest with a single consistent key.
          * Uses explicit migrations to NEVER destroy existing data.
+         * Enables WAL journal mode for faster writes and crash safety.
          */
         private fun buildDatabase(context: Context): DelicoopDatabase {
             val passphrase = getOrCreateDatabaseKey(context)
@@ -98,9 +118,11 @@ abstract class DelicoopDatabase : RoomDatabase() {
                 .addMigrations(MIGRATION_1_2)
                 // Only use destructive fallback as absolute last resort for unknown versions
                 .fallbackToDestructiveMigrationOnDowngrade()
+                // Enable WAL journal mode for better write performance and crash resilience
+                .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .build()
                 .also {
-                    Log.d(TAG, "[DB] Database created successfully")
+                    Log.d(TAG, "[DB] Database builder created successfully")
                 }
         }
         
@@ -119,14 +141,13 @@ abstract class DelicoopDatabase : RoomDatabase() {
             
             var key = prefs.getString(KEY_DB_KEY, null)
             if (key == null || key.length != 64) {
-                // Generate a new 32-byte random key (64 hex characters)
-                // This only happens on first install - key persists across app updates
                 val random = SecureRandom()
                 val bytes = ByteArray(32)
                 random.nextBytes(bytes)
                 key = bytes.joinToString("") { "%02x".format(it) }
                 
                 // Store the key with commit (synchronous) to ensure it's written
+                // BEFORE the database tries to use it
                 prefs.edit().putString(KEY_DB_KEY, key).commit()
                 Log.d(TAG, "[DB] Generated new encryption key (length=${key.length})")
             } else {
