@@ -312,8 +312,11 @@ export const connectClassicScale = async (
     }
 
     // Set up data listener - uses global broadcast as primary, callback as secondary
-    dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (data) => {
-      const weight = parseSerialWeightData(data.value);
+    dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (event: any) => {
+      // Native plugin sends { data: "..." }, handle both .data and .value for compatibility
+      const rawData = event.data ?? event.value ?? '';
+      console.log(`📡 Classic BT dataReceived event keys: ${Object.keys(event).join(', ')}, raw: "${rawData}"`);
+      const weight = parseSerialWeightData(rawData);
       if (weight !== null) {
         // Always broadcast globally - this is the app-level persistent mechanism
         broadcastScaleWeightUpdate(weight, 'Classic-SPP');
