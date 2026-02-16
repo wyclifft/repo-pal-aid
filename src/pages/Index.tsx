@@ -87,7 +87,8 @@ const Index = () => {
     clearUnsyncedReceipts, 
     isReady,
     updateFarmerCumulative,
-    getFarmerTotalCumulative
+    getFarmerTotalCumulative,
+    getUnsyncedWeightForFarmer
   } = useIndexedDB();
   
   // Data sync hook for background syncing
@@ -185,6 +186,33 @@ const Index = () => {
     }
   }, [activeSession?.descript, clearBlacklist]);
 
+  // Refresh cumulative cache after sync completes (records uploaded → cloud total changed)
+  useEffect(() => {
+    const handleSyncComplete = async () => {
+      if (!selectedFarmer || !deviceFingerprint || !showCumulative) return;
+      if (!navigator.onLine) return;
+      const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
+      if (Number(selectedFarmer.currqty) !== 1) return;
+      try {
+        const freqResult = await Promise.race([
+          mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint),
+          new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
+        ]);
+        if (freqResult.success && freqResult.data) {
+          const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+          await updateFarmerCumulative(cleanId, cloudCumulative, true);
+          const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanId);
+          setCumulativeFrequency(cloudCumulative + unsyncedWeight);
+          console.log(`🔄 Post-sync cumulative refresh for ${cleanId}: cloud=${cloudCumulative}, unsynced=${unsyncedWeight}`);
+        }
+      } catch (err) {
+        console.warn('Failed to refresh cumulative after sync:', err);
+      }
+    };
+    window.addEventListener('syncComplete', handleSyncComplete);
+    return () => window.removeEventListener('syncComplete', handleSyncComplete);
+  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer]);
+
   // NOTE: Printed receipts are now loaded from ReprintContext, no need to load here
   // The ReprintProvider handles loading from IndexedDB
 
@@ -227,6 +255,39 @@ const Index = () => {
     if (lastCapturedFarmerId !== cleanFarmerId) {
       setCaptureLocked(false);
       console.log('🔄 zeroOpt: New member selected, captureLocked=false');
+    }
+
+    // Pre-fetch cumulative for this farmer (online: seed cache, offline: use local data)
+    if (showCumulative && Number(farmer.currqty) === 1 && deviceFingerprint) {
+      (async () => {
+        try {
+          if (navigator.onLine) {
+            const freqResult = await Promise.race([
+              mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint),
+              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
+            ]);
+            if (freqResult.success && freqResult.data) {
+              const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
+              // Add unsynced local weight on top of cloud value
+              const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanFarmerId);
+              setCumulativeFrequency(cloudCumulative + unsyncedWeight);
+              console.log(`📊 Pre-fetched cumulative for ${cleanFarmerId}: cloud=${cloudCumulative}, unsynced=${unsyncedWeight}`);
+              return;
+            }
+          }
+          // Offline or fetch failed: use local cache + unsynced receipts
+          const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
+          const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanFarmerId);
+          // Avoid double-counting: cachedTotal includes localCount which may overlap with unsynced
+          // Use the larger of the two to be safe, or just use unsynced if no cache
+          const total = cachedTotal > 0 ? cachedTotal : unsyncedWeight;
+          setCumulativeFrequency(total > 0 ? total : undefined);
+          console.log(`📊 Offline cumulative for ${cleanFarmerId}: cached=${cachedTotal}, unsynced=${unsyncedWeight}, total=${total}`);
+        } catch (err) {
+          console.warn('Failed to pre-fetch cumulative:', err);
+        }
+      })();
     }
   };
 
@@ -810,29 +871,41 @@ const Index = () => {
           const wasSubmittedOnline = successCount > 0;
 
           try {
-            // Very short timeout - prioritize fast printing over accurate cumulative
-            const freqResult = await Promise.race([
-              mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint),
-              new Promise<{ success: false }>((resolve) => 
-                setTimeout(() => resolve({ success: false }), 1500) // 1.5s timeout
-              )
-            ]);
+            if (navigator.onLine) {
+              // Very short timeout - prioritize fast printing over accurate cumulative
+              const freqResult = await Promise.race([
+                mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint),
+                new Promise<{ success: false }>((resolve) => 
+                  setTimeout(() => resolve({ success: false }), 1500) // 1.5s timeout
+                )
+              ]);
 
-            if (freqResult.success && freqResult.data) {
-              const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-              cumulativeForPrint = wasSubmittedOnline ? cloudCumulative : cloudCumulative + currentCollectionWeight;
-              // Update cache in background
-              updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true).catch(() => {});
-            } else {
-              // Use local cache as fallback
+              if (freqResult.success && freqResult.data) {
+                const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+                // If submitted online, cloud already includes this weight; otherwise add it
+                const unsyncedWeight = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative);
+                cumulativeForPrint = wasSubmittedOnline 
+                  ? cloudCumulative + unsyncedWeight 
+                  : cloudCumulative + unsyncedWeight + currentCollectionWeight;
+                // Update cache in background
+                updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true).catch(() => {});
+              }
+            }
+            
+            // Offline or cloud fetch failed: use local cache + unsynced receipts
+            if (cumulativeForPrint === undefined) {
               const cachedTotal = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
-              cumulativeForPrint = cachedTotal + currentCollectionWeight;
+              const unsyncedWeight = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative);
+              // Use the larger source to avoid double-counting, then add current weight
+              const baseTotal = Math.max(cachedTotal, unsyncedWeight);
+              cumulativeForPrint = baseTotal + currentCollectionWeight;
               updateFarmerCumulative(printData.farmerIdForCumulative, currentCollectionWeight, false).catch(() => {});
             }
           } catch {
-            // Fallback to local cache on any error
+            // Fallback: unsynced receipts + current weight
+            const unsyncedWeight = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative);
             const cachedTotal = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
-            cumulativeForPrint = cachedTotal + currentCollectionWeight;
+            cumulativeForPrint = Math.max(cachedTotal, unsyncedWeight) + currentCollectionWeight;
           }
         }
         
