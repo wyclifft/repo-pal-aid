@@ -789,6 +789,38 @@ export const useIndexedDB = () => {
     return 0;
   }, [getFarmerCumulative]);
 
+  /**
+   * Calculate cumulative weight from unsynced receipts in IndexedDB for a farmer in the current month.
+   * This ensures offline cumulative is accurate even if the farmer_cumulative cache was never seeded.
+   */
+  const getUnsyncedWeightForFarmer = useCallback(async (farmerId: string): Promise<number> => {
+    if (!db) return 0;
+    try {
+      const unsynced = await getUnsyncedReceipts();
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+      const cleanFarmerId = farmerId.replace(/^#/, '').trim().toUpperCase();
+
+      let totalWeight = 0;
+      for (const r of unsynced) {
+        // Only count Buy (transtype=1) receipts
+        if (r.transtype === 2) continue;
+        const rFarmerId = (r.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
+        if (rFarmerId !== cleanFarmerId) continue;
+        // Check same month
+        const rDate = new Date(r.collection_date);
+        if (rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear) {
+          totalWeight += r.weight || 0;
+        }
+      }
+      return totalWeight;
+    } catch (err) {
+      console.warn('Failed to get unsynced weight for farmer:', err);
+      return 0;
+    }
+  }, [db, getUnsyncedReceipts]);
+
   return {
     db,
     isReady,
@@ -820,5 +852,6 @@ export const useIndexedDB = () => {
     getFarmerCumulative,
     updateFarmerCumulative,
     getFarmerTotalCumulative,
+    getUnsyncedWeightForFarmer,
   };
 };
