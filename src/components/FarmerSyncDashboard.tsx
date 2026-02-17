@@ -24,10 +24,13 @@ export const FarmerSyncDashboard = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [unsyncedCount, setUnsyncedCount] = useState(0);
+  const [progressInfo, setProgressInfo] = useState({ current: 0, total: 0, status: '' });
 
   const loadData = useCallback(async () => {
     if (!isReady) return;
     setIsLoading(true);
+    setProgressInfo({ current: 0, total: 0, status: 'Fetching farmers list...' });
+
     try {
       const [farmers, unsyncedReceipts] = await Promise.all([
         getFarmers(),
@@ -36,8 +39,18 @@ export const FarmerSyncDashboard = () => {
 
       setUnsyncedCount(unsyncedReceipts.filter((r: any) => r.orderId !== 'PRINTED_RECEIPTS').length);
 
+      // Filter farmers by the device's assigned ccode
+      const deviceCcode = localStorage.getItem('device_ccode') || '';
+      const filteredFarmers = deviceCcode
+        ? farmers.filter((f: Farmer) => f.ccode === deviceCcode)
+        : farmers;
+
+      const total = filteredFarmers.length;
+      setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} farmers...` });
+
       const results: FarmerSyncEntry[] = [];
-      for (const farmer of farmers) {
+      for (let i = 0; i < filteredFarmers.length; i++) {
+        const farmer = filteredFarmers[i];
         const cumData = await getFarmerCumulative(farmer.farmer_id);
         results.push({
           farmer_id: farmer.farmer_id,
@@ -48,6 +61,15 @@ export const FarmerSyncDashboard = () => {
           localCount: cumData?.localCount || 0,
           isCached: !!cumData,
         });
+
+        // Update progress every 5 farmers or on last one
+        if ((i + 1) % 5 === 0 || i === filteredFarmers.length - 1) {
+          setProgressInfo({
+            current: i + 1,
+            total,
+            status: `Processing ${i + 1} of ${total} farmers...`,
+          });
+        }
       }
 
       // Sort: cached first, then by name
@@ -57,8 +79,10 @@ export const FarmerSyncDashboard = () => {
       });
 
       setEntries(results);
+      setProgressInfo({ current: total, total, status: 'Complete' });
     } catch (err) {
       console.error('Failed to load farmer sync data:', err);
+      setProgressInfo(prev => ({ ...prev, status: 'Error loading data' }));
     } finally {
       setIsLoading(false);
     }
@@ -71,6 +95,11 @@ export const FarmerSyncDashboard = () => {
   const cachedCount = entries.filter(e => e.isCached).length;
   const totalCount = entries.length;
   const syncPercentage = totalCount > 0 ? Math.round((cachedCount / totalCount) * 100) : 0;
+  const loadProgress = progressInfo.total > 0
+    ? Math.round((progressInfo.current / progressInfo.total) * 100)
+    : 0;
+
+  const deviceCcode = localStorage.getItem('device_ccode') || '';
 
   const filtered = searchQuery
     ? entries.filter(e =>
@@ -87,7 +116,9 @@ export const FarmerSyncDashboard = () => {
             <Database className="h-5 w-5 text-primary" />
             <div>
               <CardTitle>Farmer Sync Status</CardTitle>
-              <CardDescription>Cumulative data cached for offline use</CardDescription>
+              <CardDescription>
+                Cumulative data for <span className="font-medium">{deviceCcode || 'all'}</span> cached offline
+              </CardDescription>
             </div>
           </div>
           <Button
@@ -103,6 +134,18 @@ export const FarmerSyncDashboard = () => {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Loading progress */}
+        {isLoading && (
+          <div className="space-y-2 p-3 rounded-lg bg-muted/50 border">
+            <div className="flex items-center gap-2 text-sm">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              <span className="text-muted-foreground">{progressInfo.status}</span>
+            </div>
+            <Progress value={loadProgress} className="h-2" />
+            <p className="text-xs text-muted-foreground text-right">{loadProgress}%</p>
+          </div>
+        )}
+
         {/* Summary stats */}
         <div className="grid grid-cols-3 gap-3">
           <div className="text-center p-3 rounded-lg bg-primary/10">
@@ -148,16 +191,11 @@ export const FarmerSyncDashboard = () => {
         )}
 
         {/* Farmer list */}
-        {isLoading ? (
-          <div className="flex items-center justify-center py-6 gap-2 text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm">Loading farmer data...</span>
-          </div>
-        ) : filtered.length === 0 ? (
+        {!isLoading && filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-4">
-            {totalCount === 0 ? 'No farmers cached locally yet. Go to the collection screen to sync.' : 'No matching farmers found.'}
+            {totalCount === 0 ? 'No farmers cached locally for this device\'s company code.' : 'No matching farmers found.'}
           </p>
-        ) : (
+        ) : !isLoading ? (
           <div className="max-h-64 overflow-y-auto space-y-1">
             {filtered.map((entry) => (
               <div
@@ -192,10 +230,10 @@ export const FarmerSyncDashboard = () => {
               </div>
             ))}
           </div>
-        )}
+        ) : null}
 
         <p className="text-xs text-muted-foreground text-center">
-          Cached farmers have their monthly cumulative totals stored locally for accurate offline receipts.
+          Showing farmers for company code: <span className="font-medium">{deviceCcode || 'all'}</span>
         </p>
       </CardContent>
     </Card>
