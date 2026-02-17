@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +18,9 @@ interface FarmerSyncEntry {
   isCached: boolean;
 }
 
+const BATCH_SIZE = 20; // Process farmers in batches of 20
+const PAGE_SIZE = 50; // Show 50 farmers at a time in the list
+
 export const FarmerSyncDashboard = () => {
   const { getFarmers, getFarmerCumulative, getUnsyncedReceipts, isReady } = useIndexedDB();
   const [entries, setEntries] = useState<FarmerSyncEntry[]>([]);
@@ -25,10 +28,14 @@ export const FarmerSyncDashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [progressInfo, setProgressInfo] = useState({ current: 0, total: 0, status: '' });
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const cancelledRef = useRef(false);
 
   const loadData = useCallback(async () => {
     if (!isReady) return;
+    cancelledRef.current = false;
     setIsLoading(true);
+    setVisibleCount(PAGE_SIZE);
     setProgressInfo({ current: 0, total: 0, status: 'Fetching farmers list...' });
 
     try {
@@ -39,7 +46,6 @@ export const FarmerSyncDashboard = () => {
 
       setUnsyncedCount(unsyncedReceipts.filter((r: any) => r.orderId !== 'PRINTED_RECEIPTS').length);
 
-      // Filter farmers by the device's assigned ccode
       const deviceCcode = localStorage.getItem('device_ccode') || '';
       const filteredFarmers = deviceCcode
         ? farmers.filter((f: Farmer) => f.ccode === deviceCcode)
@@ -49,26 +55,42 @@ export const FarmerSyncDashboard = () => {
       setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} farmers...` });
 
       const results: FarmerSyncEntry[] = [];
-      for (let i = 0; i < filteredFarmers.length; i++) {
-        const farmer = filteredFarmers[i];
-        const cumData = await getFarmerCumulative(farmer.farmer_id);
-        results.push({
-          farmer_id: farmer.farmer_id,
-          name: farmer.name || '',
-          route: farmer.route || 'N/A',
-          cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : 0,
-          baseCount: cumData?.baseCount || 0,
-          localCount: cumData?.localCount || 0,
-          isCached: !!cumData,
+
+      // Process in batches to avoid blocking the main thread
+      for (let i = 0; i < filteredFarmers.length; i += BATCH_SIZE) {
+        if (cancelledRef.current) break;
+        
+        const batch = filteredFarmers.slice(i, i + BATCH_SIZE);
+        
+        // Process batch concurrently
+        const batchResults = await Promise.all(
+          batch.map(async (farmer) => {
+            const cumData = await getFarmerCumulative(farmer.farmer_id);
+            return {
+              farmer_id: farmer.farmer_id,
+              name: farmer.name || '',
+              route: farmer.route || 'N/A',
+              cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : 0,
+              baseCount: cumData?.baseCount || 0,
+              localCount: cumData?.localCount || 0,
+              isCached: !!cumData,
+            };
+          })
+        );
+        
+        results.push(...batchResults);
+
+        // Update progress once per batch (not per farmer)
+        const processed = Math.min(i + BATCH_SIZE, filteredFarmers.length);
+        setProgressInfo({
+          current: processed,
+          total,
+          status: `Processing ${processed} of ${total} farmers...`,
         });
 
-        // Update progress every 5 farmers or on last one
-        if ((i + 1) % 5 === 0 || i === filteredFarmers.length - 1) {
-          setProgressInfo({
-            current: i + 1,
-            total,
-            status: `Processing ${i + 1} of ${total} farmers...`,
-          });
+        // Yield to main thread between batches
+        if (i + BATCH_SIZE < filteredFarmers.length) {
+          await new Promise(r => setTimeout(r, 0));
         }
       }
 
@@ -78,6 +100,7 @@ export const FarmerSyncDashboard = () => {
         return a.name.localeCompare(b.name);
       });
 
+      // Single state update with final results
       setEntries(results);
       setProgressInfo({ current: total, total, status: 'Complete' });
     } catch (err) {
@@ -90,6 +113,7 @@ export const FarmerSyncDashboard = () => {
 
   useEffect(() => {
     loadData();
+    return () => { cancelledRef.current = true; };
   }, [loadData]);
 
   const cachedCount = entries.filter(e => e.isCached).length;
@@ -101,12 +125,22 @@ export const FarmerSyncDashboard = () => {
 
   const deviceCcode = localStorage.getItem('device_ccode') || '';
 
-  const filtered = searchQuery
-    ? entries.filter(e =>
-        e.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        e.farmer_id.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : entries;
+  const filtered = useMemo(() => {
+    const base = searchQuery
+      ? entries.filter(e =>
+          e.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          e.farmer_id.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+      : entries;
+    return base;
+  }, [entries, searchQuery]);
+
+  // Only render visible portion
+  const visibleEntries = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
+
+  const handleShowMore = useCallback(() => {
+    setVisibleCount(prev => prev + PAGE_SIZE);
+  }, []);
 
   return (
     <Card>
@@ -197,7 +231,7 @@ export const FarmerSyncDashboard = () => {
           </p>
         ) : !isLoading ? (
           <div className="max-h-64 overflow-y-auto space-y-1">
-            {filtered.map((entry) => (
+            {visibleEntries.map((entry) => (
               <div
                 key={entry.farmer_id}
                 className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-muted/50 text-sm"
@@ -229,6 +263,16 @@ export const FarmerSyncDashboard = () => {
                 </div>
               </div>
             ))}
+            {visibleCount < filtered.length && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleShowMore}
+                className="w-full text-xs text-muted-foreground"
+              >
+                Show more ({filtered.length - visibleCount} remaining)
+              </Button>
+            )}
           </div>
         ) : null}
 
