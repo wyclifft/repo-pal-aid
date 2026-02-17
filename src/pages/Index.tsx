@@ -954,9 +954,6 @@ const Index = () => {
         
         // Calculate cumulative in background with very short timeout
         if (printData.shouldShowCumulativeForFarmer && deviceFingerprint) {
-          const currentCollectionWeight = printData.collections.reduce((sum, c) => sum + c.weight, 0);
-          const wasSubmittedOnline = successCount > 0;
-
           try {
             if (navigator.onLine) {
               // Very short timeout - prioritize fast printing over accurate cumulative
@@ -969,11 +966,10 @@ const Index = () => {
 
               if (freqResult.success && freqResult.data) {
                 const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-                // If submitted online, cloud already includes this weight; otherwise add it
+                // cloudCumulative covers online-submitted weights; unsyncedWeight covers offline-saved receipts
+                // Together they cover everything — no need to add currentCollectionWeight
                 const unsyncedWeight = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative);
-                cumulativeForPrint = wasSubmittedOnline 
-                  ? cloudCumulative + unsyncedWeight 
-                  : cloudCumulative + unsyncedWeight + currentCollectionWeight;
+                cumulativeForPrint = cloudCumulative + unsyncedWeight;
                 // Update cache in background
                 updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true).catch(() => {});
               }
@@ -981,17 +977,14 @@ const Index = () => {
             
             // Offline or cloud fetch failed: use baseCount + fresh unsynced receipts
             if (cumulativeForPrint === undefined) {
-              const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
-              // total already includes baseCount + unsynced receipts weight
-              // Add current collection weight since it's not yet saved to IndexedDB at print time
-              cumulativeForPrint = total + currentCollectionWeight;
-              // Update baseCount cache only, don't increment localCount (receipts are the source of truth)
-              updateFarmerCumulative(printData.farmerIdForCumulative, 0, false).catch(() => {});
+              // getFarmerTotalCumulative = baseCount + unsyncedWeight from IndexedDB
+              // Offline-saved receipts are already in IndexedDB, so unsyncedWeight includes them
+              // Do NOT add currentCollectionWeight — that would double-count
+              cumulativeForPrint = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
             }
           } catch {
-            // Fallback: fresh calculation from baseCount + unsynced receipts + current weight
-            const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
-            cumulativeForPrint = total + currentCollectionWeight;
+            // Fallback: baseCount + unsynced receipts (already includes just-saved offline receipts)
+            cumulativeForPrint = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
           }
         }
         
