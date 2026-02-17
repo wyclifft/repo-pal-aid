@@ -87,6 +87,7 @@ const Index = () => {
     clearUnsyncedReceipts, 
     isReady,
     getFarmers,
+    saveFarmers,
     updateFarmerCumulative,
     getFarmerTotalCumulative,
     getUnsyncedWeightForFarmer
@@ -213,12 +214,23 @@ const Index = () => {
         }
       }
       
-      // Background: refresh cumulatives for ALL farmers under device ccode with currqty=1
-      // Uses getFarmers() (full IndexedDB set) instead of loadedFarmers (route-filtered)
-      const allFarmers = await getFarmers();
-      const deviceCcode = localStorage.getItem('device_ccode') || '';
-      const ccodeFarmers = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
-      const farmersToRefresh = ccodeFarmers;
+      // Background: refresh cumulatives for ALL farmers under device ccode
+      // Fetch directly from API to avoid stale/incomplete IndexedDB data
+      let farmersToRefresh: any[] = [];
+      try {
+        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+        if (response.success && response.data) {
+          const deviceCcode = localStorage.getItem('device_ccode') || '';
+          farmersToRefresh = deviceCcode ? response.data.filter(f => f.ccode === deviceCcode) : response.data;
+          // Also update IndexedDB with the full farmer list
+          saveFarmers(response.data);
+        }
+      } catch {
+        // Fallback to IndexedDB if API fails
+        const allFarmers = await getFarmers();
+        const deviceCcode = localStorage.getItem('device_ccode') || '';
+        farmersToRefresh = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
+      }
       if (farmersToRefresh.length > 0) {
         console.log(`🔄 Background cumulative refresh for ${farmersToRefresh.length} farmers (batched)...`);
         const BATCH_SIZE = 5;
@@ -251,10 +263,11 @@ const Index = () => {
     };
     window.addEventListener('syncComplete', handleSyncComplete);
     return () => window.removeEventListener('syncComplete', handleSyncComplete);
-  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers]);
+  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers]);
 
   // Pre-fetch cumulative weights for ALL farmers under device ccode when online
-  // Uses getFarmers() from IndexedDB (full ccode set) — NOT route-filtered loadedFarmers
+  // Fetches the FULL farmer list directly from the API to avoid race conditions
+  // with route-filtered IndexedDB data from FarmerSearch
   useEffect(() => {
     if (!showCumulative || !deviceFingerprint || !navigator.onLine || !isReady) return;
     
@@ -262,14 +275,25 @@ const Index = () => {
     
     const prefetchCumulatives = async () => {
       try {
-        const allFarmers = await getFarmers();
+        // Fetch ALL farmers directly from the API (no route/mprefix filter)
+        // This ensures we get the complete set regardless of IndexedDB state
+        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+        if (!response.success || !response.data) {
+          console.warn('📦 Pre-fetch: failed to fetch farmers from API');
+          return;
+        }
+        
+        const allFarmers = response.data;
         const deviceCcode = localStorage.getItem('device_ccode') || '';
         const ccodeFarmers = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
         const farmersToCache = ccodeFarmers;
         
+        // Also save ALL farmers to IndexedDB so FarmerSyncDashboard sees them
+        saveFarmers(allFarmers);
+        
         if (farmersToCache.length === 0 || cancelled) return;
         
-        console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers (all ccode=${deviceCcode})...`);
+        console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers (all ccode=${deviceCcode}, from API)...`);
         let cached = 0;
         const BATCH_SIZE = 5;
         
@@ -313,7 +337,7 @@ const Index = () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [isReady, showCumulative, deviceFingerprint, updateFarmerCumulative, getFarmers]);
+  }, [isReady, showCumulative, deviceFingerprint, updateFarmerCumulative, saveFarmers]);
 
   // NOTE: Printed receipts are now loaded from ReprintContext, no need to load here
   // The ReprintProvider handles loading from IndexedDB
