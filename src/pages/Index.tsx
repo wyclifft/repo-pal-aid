@@ -194,7 +194,7 @@ const Index = () => {
       if (!navigator.onLine) return;
       
       // Refresh the currently selected farmer immediately
-      if (selectedFarmer && Number(selectedFarmer.currqty) === 1) {
+      if (selectedFarmer) {
         const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
         try {
           const freqResult = await Promise.race([
@@ -218,7 +218,7 @@ const Index = () => {
       const allFarmers = await getFarmers();
       const deviceCcode = localStorage.getItem('device_ccode') || '';
       const ccodeFarmers = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
-      const farmersToRefresh = ccodeFarmers.filter(f => Number(f.currqty) === 1);
+      const farmersToRefresh = ccodeFarmers;
       if (farmersToRefresh.length > 0) {
         console.log(`🔄 Background cumulative refresh for ${farmersToRefresh.length} farmers (batched)...`);
         const BATCH_SIZE = 5;
@@ -265,7 +265,7 @@ const Index = () => {
         const allFarmers = await getFarmers();
         const deviceCcode = localStorage.getItem('device_ccode') || '';
         const ccodeFarmers = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
-        const farmersToCache = ccodeFarmers.filter(f => Number(f.currqty) === 1);
+        const farmersToCache = ccodeFarmers;
         
         if (farmersToCache.length === 0 || cancelled) return;
         
@@ -360,7 +360,7 @@ const Index = () => {
     }
 
     // Pre-fetch cumulative for this farmer (online: seed cache, offline: use local data)
-    if (showCumulative && Number(farmer.currqty) === 1 && deviceFingerprint) {
+    if (showCumulative && deviceFingerprint) {
       (async () => {
         try {
           if (navigator.onLine) {
@@ -752,7 +752,7 @@ const Index = () => {
       locationName: routeName,
       clerkName: currentUser?.username || '',
       productName: selectedProduct?.descript,
-      shouldShowCumulativeForFarmer: showCumulative && Number(selectedFarmer?.currqty) === 1,
+      shouldShowCumulativeForFarmer: showCumulative,
       farmerIdForCumulative: selectedFarmer?.farmer_id?.replace(/^#/, '').trim() || '',
     };
 
@@ -1369,7 +1369,7 @@ const Index = () => {
           window.dispatchEvent(new CustomEvent('receiptModalClosed'));
         }}
         cumulativeFrequency={cumulativeFrequency}
-        showCumulativeFrequency={showCumulative && Number(selectedFarmer?.currqty) === 1}
+        showCumulativeFrequency={showCumulative}
         printCopies={printCopies}
         routeLabel={routeLabel}
         periodLabel={periodLabel}
