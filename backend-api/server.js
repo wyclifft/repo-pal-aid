@@ -2602,6 +2602,68 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // ==================== BATCH CUMULATIVE ENDPOINT ====================
+    // Returns cumulative weights for ALL farmers under a device's ccode in ONE query
+    if (path === '/api/farmer-monthly-frequency-batch' && method === 'GET') {
+      const { uniquedevcode } = parsedUrl.query;
+      
+      if (!uniquedevcode) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'uniquedevcode is required' 
+        }, 400);
+      }
+      
+      // Get device's ccode
+      const [deviceRows] = await pool.query(
+        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        [uniquedevcode]
+      );
+      
+      if (deviceRows.length === 0) {
+        return sendJSON(res, { 
+          success: false, 
+          error: 'Device not authorized' 
+        }, 401);
+      }
+      
+      const ccode = deviceRows[0].ccode;
+      
+      const toYmdLocal = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+
+      const now = new Date();
+      const monthStart = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+      const monthEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+      
+      // Single query: get cumulative weights for ALL farmers at once
+      const [rows] = await pool.query(
+        `SELECT memberno as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
+         FROM transactions 
+         WHERE ccode = ? AND Transtype = 1
+         AND transdate >= ? AND transdate <= ?
+         GROUP BY memberno`,
+        [ccode, monthStart, monthEnd]
+      );
+      
+      return sendJSON(res, { 
+        success: true, 
+        data: {
+          farmers: rows.map(r => ({
+            farmer_id: r.farmer_id,
+            cumulative_weight: parseFloat(r.cumulative_weight) || 0
+          })),
+          month_start: monthStart,
+          month_end: monthEnd,
+          total_farmers: rows.length
+        }
+      });
+    }
+
     // Farmer monthly cumulative frequency endpoint
     // Returns the count of collections for a farmer in the current month
     if (path === '/api/farmer-monthly-frequency' && method === 'GET') {

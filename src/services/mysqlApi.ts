@@ -937,6 +937,13 @@ export interface FarmerMonthlyFrequency {
   month_end: string;
 }
 
+export interface FarmerMonthlyFrequencyBatch {
+  farmers: Array<{ farmer_id: string; cumulative_weight: number }>;
+  month_start: string;
+  month_end: string;
+  total_farmers: number;
+}
+
 export const farmerFrequencyApi = {
   /**
    * Get farmer's monthly cumulative frequency (collection count for current month)
@@ -944,6 +951,18 @@ export const farmerFrequencyApi = {
   getMonthlyFrequency: async (farmerId: string, uniquedevcode: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
     return apiRequest<FarmerMonthlyFrequency>(
       `/farmer-monthly-frequency?farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`
+    );
+  },
+
+  /**
+   * Get ALL farmers' monthly cumulative weights in a single batch request
+   * Returns cumulative weights for every farmer under the device's ccode
+   */
+  getMonthlyFrequencyBatch: async (uniquedevcode: string): Promise<ApiResponse<FarmerMonthlyFrequencyBatch>> => {
+    return apiRequest<FarmerMonthlyFrequencyBatch>(
+      `/farmer-monthly-frequency-batch?uniquedevcode=${encodeURIComponent(uniquedevcode)}`,
+      {},
+      30000 // 30s timeout for batch
     );
   },
 };

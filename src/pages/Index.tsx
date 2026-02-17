@@ -270,11 +270,9 @@ const Index = () => {
     return () => window.removeEventListener('syncComplete', handleSyncComplete);
   }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers]);
 
-  // ========== RESILIENT CUMULATIVE PRE-FETCH ==========
-  // Fixes for 30% coverage issue:
-  //  1. Module-level guard prevents re-render from restarting/cancelling sync
-  //  2. Skips already-cached farmers (resumes from where it left off)
-  //  3. Multi-pass retry loop (up to 5 passes) with increasing timeouts
+  // ========== FAST CUMULATIVE PRE-FETCH (BATCH API) ==========
+  // Uses single batch endpoint instead of 3558 individual API calls
+  // Falls back to individual calls only if batch endpoint is unavailable
   useEffect(() => {
     if (!showCumulative || !deviceFingerprint || !navigator.onLine || !isReady) return;
     
@@ -288,6 +286,7 @@ const Index = () => {
     
     const prefetchCumulatives = async () => {
       try {
+        // Step 1: Fetch farmer list from API
         const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
         if (!response.success || !response.data) {
           console.warn('📦 Pre-fetch: failed to fetch farmers from API');
@@ -309,101 +308,136 @@ const Index = () => {
           return;
         }
         
-        // === Check which farmers are ALREADY cached this month — skip them ===
-        const now = new Date();
-        const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        const uncachedFarmers: typeof farmersToCache = [];
+        console.log(`📦 Pre-fetch: ${farmersToCache.length} qualifying farmers. Trying batch API...`);
         
-        for (const farmer of farmersToCache) {
-          const fId = farmer.farmer_id.replace(/^#/, '').trim();
-          const cached = await getFarmerCumulative(fId);
-          if (cached && cached.month === month) continue; // Already cached this month
-          uncachedFarmers.push(farmer);
+        // Dispatch initial progress
+        window.dispatchEvent(new CustomEvent('cumulative-sync-progress', {
+          detail: { current: 0, total: farmersToCache.length, pass: 1 }
+        }));
+        
+        // Step 2: Try batch endpoint first (1 request instead of 3558)
+        let batchSuccess = false;
+        try {
+          const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint);
+          if (batchResult.success && batchResult.data && batchResult.data.farmers) {
+            const batchMap = new Map<string, number>();
+            for (const f of batchResult.data.farmers) {
+              batchMap.set(f.farmer_id.trim(), f.cumulative_weight);
+            }
+            
+            console.log(`📦 Batch API returned ${batchMap.size} farmer cumulative records`);
+            
+            // Write all cumulative data to IndexedDB in batches
+            const WRITE_BATCH = 50;
+            let written = 0;
+            for (let i = 0; i < farmersToCache.length; i += WRITE_BATCH) {
+              const batch = farmersToCache.slice(i, i + WRITE_BATCH);
+              await Promise.all(batch.map(async (farmer) => {
+                const fId = farmer.farmer_id.replace(/^#/, '').trim();
+                const weight = batchMap.get(fId) ?? 0;
+                await updateFarmerCumulative(fId, weight, true);
+              }));
+              written += batch.length;
+              
+              // Dispatch progress
+              window.dispatchEvent(new CustomEvent('cumulative-sync-progress', {
+                detail: { current: written, total: farmersToCache.length, pass: 1 }
+              }));
+              
+              // Yield to main thread
+              if (i + WRITE_BATCH < farmersToCache.length) {
+                await new Promise(r => setTimeout(r, 0));
+              }
+            }
+            
+            console.log(`✅ Batch pre-fetch complete: ${written}/${farmersToCache.length} farmers cached (100% coverage)`);
+            batchSuccess = true;
+          }
+        } catch (batchErr) {
+          console.warn('📦 Batch endpoint unavailable, falling back to individual calls:', batchErr);
         }
         
-        const alreadyCached = farmersToCache.length - uncachedFarmers.length;
-        console.log(`📦 Pre-fetch: ${farmersToCache.length} total, ${alreadyCached} already cached, ${uncachedFarmers.length} to fetch`);
-        
-        if (uncachedFarmers.length === 0) {
-          console.log('✅ All farmers already cached — 100% coverage');
-          (window as any).__cumulativeSyncRunning = false;
-          return;
-        }
-        
-        // === Multi-pass retry loop ===
-        const MAX_PASSES = 5;
-        let totalCached = alreadyCached;
-        let remaining = uncachedFarmers;
-        
-        for (let pass = 1; pass <= MAX_PASSES && remaining.length > 0; pass++) {
-          if (!navigator.onLine) {
-            console.warn(`📦 Pass ${pass}: offline — stopping`);
-            break;
+        // Step 3: Fallback — individual calls with multi-pass retry (only if batch failed)
+        if (!batchSuccess) {
+          const now = new Date();
+          const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          const uncachedFarmers: typeof farmersToCache = [];
+          
+          for (const farmer of farmersToCache) {
+            const fId = farmer.farmer_id.replace(/^#/, '').trim();
+            const cached = await getFarmerCumulative(fId);
+            if (cached && cached.month === month) continue;
+            uncachedFarmers.push(farmer);
           }
           
-          const BATCH_SIZE = pass === 1 ? 25 : 10;
-          const TIMEOUT = pass === 1 ? 5000 : pass <= 3 ? 8000 : 12000;
-          const failed: typeof remaining = [];
-          let passSuccess = 0;
+          const alreadyCached = farmersToCache.length - uncachedFarmers.length;
+          console.log(`📦 Fallback: ${alreadyCached} already cached, ${uncachedFarmers.length} to fetch individually`);
           
-          console.log(`📦 Pass ${pass}/${MAX_PASSES}: fetching ${remaining.length} farmers (batch=${BATCH_SIZE}, timeout=${TIMEOUT}ms)...`);
-          
-          for (let i = 0; i < remaining.length; i += BATCH_SIZE) {
-            if (!navigator.onLine) break;
-            const batch = remaining.slice(i, i + BATCH_SIZE);
+          if (uncachedFarmers.length > 0) {
+            const MAX_PASSES = 5;
+            let totalCached = alreadyCached;
+            let remaining = uncachedFarmers;
             
-            const results = await Promise.allSettled(batch.map(async (farmer) => {
-              const fId = farmer.farmer_id.replace(/^#/, '').trim();
-              const res = await Promise.race([
-                mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
-                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), TIMEOUT))
-              ]);
-              if (res.success && res.data) {
-                await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
-                return true;
-              }
-              return false;
-            }));
-            
-            results.forEach((r, idx) => {
-              if (r.status === 'rejected' || (r.status === 'fulfilled' && !r.value)) {
-                failed.push(batch[idx]);
-              } else {
-                passSuccess++;
-              }
-            });
+            for (let pass = 1; pass <= MAX_PASSES && remaining.length > 0; pass++) {
+              if (!navigator.onLine) break;
+              
+              const BATCH_SIZE = pass === 1 ? 25 : 10;
+              const TIMEOUT = pass === 1 ? 5000 : pass <= 3 ? 8000 : 12000;
+              const failed: typeof remaining = [];
+              let passSuccess = 0;
+              
+              for (let i = 0; i < remaining.length; i += BATCH_SIZE) {
+                if (!navigator.onLine) break;
+                const batch = remaining.slice(i, i + BATCH_SIZE);
+                
+                const results = await Promise.allSettled(batch.map(async (farmer) => {
+                  const fId = farmer.farmer_id.replace(/^#/, '').trim();
+                  const res = await Promise.race([
+                    mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
+                    new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), TIMEOUT))
+                  ]);
+                  if (res.success && res.data) {
+                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
+                    return true;
+                  }
+                  return false;
+                }));
+                
+                results.forEach((r, idx) => {
+                  if (r.status === 'rejected' || (r.status === 'fulfilled' && !r.value)) {
+                    failed.push(batch[idx]);
+                  } else {
+                    passSuccess++;
+                  }
+                });
 
-            // Dispatch progress event for Settings UI
-            const currentTotalCached = totalCached + passSuccess;
-            window.dispatchEvent(new CustomEvent('cumulative-sync-progress', {
-              detail: {
-                current: currentTotalCached,
-                total: farmersToCache.length,
-                pass: pass
+                const currentTotalCached = totalCached + passSuccess;
+                window.dispatchEvent(new CustomEvent('cumulative-sync-progress', {
+                  detail: { current: currentTotalCached, total: farmersToCache.length, pass }
+                }));
+                
+                if (i + BATCH_SIZE < remaining.length) {
+                  await new Promise(r => setTimeout(r, pass === 1 ? 20 : 100));
+                }
               }
-            }));
-            
-            if (i + BATCH_SIZE < remaining.length) {
-              await new Promise(r => setTimeout(r, pass === 1 ? 20 : 100));
+              
+              totalCached += passSuccess;
+              remaining = failed;
+              
+              const coverage = Math.round((totalCached / farmersToCache.length) * 100);
+              console.log(`📦 Pass ${pass} done: +${passSuccess}, ${remaining.length} failed, ${coverage}% coverage`);
+              
+              if (remaining.length > 0 && pass < MAX_PASSES) {
+                await new Promise(r => setTimeout(r, pass * 3000));
+              }
             }
           }
-          
-          totalCached += passSuccess;
-          remaining = failed;
-          
-          const coverage = Math.round((totalCached / farmersToCache.length) * 100);
-          console.log(`📦 Pass ${pass} done: +${passSuccess} cached, ${remaining.length} still failed, total ${totalCached}/${farmersToCache.length} (${coverage}%)`);
-          
-          // Wait before next retry pass (increasing backoff)
-          if (remaining.length > 0 && pass < MAX_PASSES) {
-            const delay = pass * 3000;
-            console.log(`⏳ Waiting ${delay / 1000}s before pass ${pass + 1}...`);
-            await new Promise(r => setTimeout(r, delay));
-          }
         }
         
-        const coverage = Math.round((totalCached / farmersToCache.length) * 100);
-        console.log(`✅ Pre-fetch complete: ${totalCached}/${farmersToCache.length} farmers cached (${coverage}% coverage)${remaining.length > 0 ? ` — ${remaining.length} still failed` : ''}`);
+        // Signal completion
+        window.dispatchEvent(new CustomEvent('cumulative-sync-progress', {
+          detail: { current: farmersToCache.length, total: farmersToCache.length, pass: 0 }
+        }));
         
       } catch (err) {
         console.warn('Pre-fetch cumulative failed:', err);
