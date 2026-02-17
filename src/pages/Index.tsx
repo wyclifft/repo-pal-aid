@@ -304,8 +304,10 @@ const Index = () => {
         
         console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers (all ccode=${deviceCcode}, currqty=1, from API)...`);
         let cached = 0;
-        const BATCH_SIZE = 25; // Increased batch size for faster pre-fetch
+        const failedFarmers: typeof farmersToCache = [];
+        const BATCH_SIZE = 25;
         
+        // === Pass 1: Initial fetch ===
         for (let i = 0; i < farmersToCache.length; i += BATCH_SIZE) {
           if (cancelled || !navigator.onLine) break;
           const batch = farmersToCache.slice(i, i + BATCH_SIZE);
@@ -314,7 +316,7 @@ const Index = () => {
             const fId = farmer.farmer_id.replace(/^#/, '').trim();
             const res = await Promise.race([
               mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
-              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
+              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 5000))
             ]);
             if (res.success && res.data) {
               await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
@@ -323,16 +325,54 @@ const Index = () => {
             return false;
           }));
           
-          cached += results.filter(r => r.status === 'fulfilled' && r.value).length;
+          // Track failures for retry
+          results.forEach((r, idx) => {
+            if (r.status === 'rejected' || (r.status === 'fulfilled' && !r.value)) {
+              failedFarmers.push(batch[idx]);
+            } else {
+              cached++;
+            }
+          });
           
-          // Yield to main thread between batches
           if (i + BATCH_SIZE < farmersToCache.length) {
             await new Promise(r => setTimeout(r, 20));
           }
         }
         
+        // === Pass 2: Retry failed farmers with longer timeout ===
+        if (failedFarmers.length > 0 && !cancelled && navigator.onLine) {
+          console.log(`🔄 Retrying ${failedFarmers.length} failed farmers...`);
+          await new Promise(r => setTimeout(r, 2000)); // Wait before retry
+          
+          const RETRY_BATCH = 10; // Smaller batches for retries
+          for (let i = 0; i < failedFarmers.length; i += RETRY_BATCH) {
+            if (cancelled || !navigator.onLine) break;
+            const batch = failedFarmers.slice(i, i + RETRY_BATCH);
+            
+            const retryResults = await Promise.allSettled(batch.map(async (farmer) => {
+              const fId = farmer.farmer_id.replace(/^#/, '').trim();
+              const res = await Promise.race([
+                mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
+                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 8000))
+              ]);
+              if (res.success && res.data) {
+                await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
+                return true;
+              }
+              return false;
+            }));
+            
+            cached += retryResults.filter(r => r.status === 'fulfilled' && r.value).length;
+            
+            if (i + RETRY_BATCH < failedFarmers.length) {
+              await new Promise(r => setTimeout(r, 100));
+            }
+          }
+        }
+        
         if (!cancelled) {
-          console.log(`✅ Pre-fetched cumulative for ${cached}/${farmersToCache.length} farmers`);
+          const stillFailed = farmersToCache.length - cached;
+          console.log(`✅ Pre-fetched cumulative for ${cached}/${farmersToCache.length} farmers${stillFailed > 0 ? ` (${stillFailed} still failed)` : ''}`);
         }
       } catch (err) {
         console.warn('Pre-fetch cumulative failed:', err);
