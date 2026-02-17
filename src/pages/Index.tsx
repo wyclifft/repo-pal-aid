@@ -360,23 +360,17 @@ const Index = () => {
             if (freqResult.success && freqResult.data) {
               const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
               await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
-              // Add unsynced local weight on top of cloud value
+              // Fresh unsynced weight from actual IndexedDB receipts (no cached localCount)
               const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanFarmerId);
               setCumulativeFrequency(cloudCumulative + unsyncedWeight);
               console.log(`📊 Pre-fetched cumulative for ${cleanFarmerId}: cloud=${cloudCumulative}, unsynced=${unsyncedWeight}`);
               return;
             }
           }
-          // Offline or fetch failed: use local cache + unsynced receipts
-          const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
-          const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanFarmerId);
-          // cachedTotal = baseCount (from last online fetch) + localCount (incremented after offline submissions)
-          // unsyncedWeight = sum of weights from unsynced IndexedDB receipts (overlaps with localCount)
-          // Use the larger of cachedTotal vs unsyncedWeight to avoid double-counting
-          // If cachedTotal has a seeded baseCount, it's the most accurate source
-          const total = Math.max(cachedTotal, unsyncedWeight);
+          // Offline or fetch failed: baseCount + fresh unsynced receipts (no double-counting)
+          const total = await getFarmerTotalCumulative(cleanFarmerId);
           setCumulativeFrequency(total > 0 ? total : undefined);
-          console.log(`📊 Offline cumulative for ${cleanFarmerId}: cached=${cachedTotal}, unsynced=${unsyncedWeight}, total=${total}`);
+          console.log(`📊 Offline cumulative for ${cleanFarmerId}: total=${total}`);
         } catch (err) {
           console.warn('Failed to pre-fetch cumulative:', err);
         }
@@ -985,20 +979,19 @@ const Index = () => {
               }
             }
             
-            // Offline or cloud fetch failed: use local cache + unsynced receipts
+            // Offline or cloud fetch failed: use baseCount + fresh unsynced receipts
             if (cumulativeForPrint === undefined) {
-              const cachedTotal = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
-              const unsyncedWeight = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative);
-              // Use the larger source to avoid double-counting, then add current weight
-              const baseTotal = Math.max(cachedTotal, unsyncedWeight);
-              cumulativeForPrint = baseTotal + currentCollectionWeight;
-              updateFarmerCumulative(printData.farmerIdForCumulative, currentCollectionWeight, false).catch(() => {});
+              const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+              // total already includes baseCount + unsynced receipts weight
+              // Add current collection weight since it's not yet saved to IndexedDB at print time
+              cumulativeForPrint = total + currentCollectionWeight;
+              // Update baseCount cache only, don't increment localCount (receipts are the source of truth)
+              updateFarmerCumulative(printData.farmerIdForCumulative, 0, false).catch(() => {});
             }
           } catch {
-            // Fallback: unsynced receipts + current weight
-            const unsyncedWeight = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative);
-            const cachedTotal = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
-            cumulativeForPrint = Math.max(cachedTotal, unsyncedWeight) + currentCollectionWeight;
+            // Fallback: fresh calculation from baseCount + unsynced receipts + current weight
+            const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+            cumulativeForPrint = total + currentCollectionWeight;
           }
         }
         

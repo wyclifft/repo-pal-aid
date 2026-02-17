@@ -779,17 +779,6 @@ export const useIndexedDB = () => {
   }, [db]);
 
   /**
-   * Get total cumulative for farmer (baseCount + localCount)
-   */
-  const getFarmerTotalCumulative = useCallback(async (farmerId: string): Promise<number> => {
-    const cached = await getFarmerCumulative(farmerId);
-    if (cached) {
-      return cached.baseCount + cached.localCount;
-    }
-    return 0;
-  }, [getFarmerCumulative]);
-
-  /**
    * Calculate cumulative weight from unsynced receipts in IndexedDB for a farmer in the current month.
    * This ensures offline cumulative is accurate even if the farmer_cumulative cache was never seeded.
    */
@@ -820,6 +809,18 @@ export const useIndexedDB = () => {
       return 0;
     }
   }, [db, getUnsyncedReceipts]);
+
+  /**
+   * Get total cumulative for farmer: baseCount (last backend total) + fresh unsynced weight from receipts.
+   * This avoids double-counting by NOT using localCount (which duplicates unsynced receipt data).
+   */
+  const getFarmerTotalCumulative = useCallback(async (farmerId: string): Promise<number> => {
+    const cached = await getFarmerCumulative(farmerId);
+    const baseCount = cached?.baseCount || 0;
+    // Always recalculate from actual unsynced receipts instead of using cached localCount
+    const unsyncedWeight = await getUnsyncedWeightForFarmer(farmerId);
+    return baseCount + unsyncedWeight;
+  }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
 
   return {
     db,
