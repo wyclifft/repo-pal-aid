@@ -86,6 +86,7 @@ const Index = () => {
     getUnsyncedReceipts, 
     clearUnsyncedReceipts, 
     isReady,
+    getFarmers,
     updateFarmerCumulative,
     getFarmerTotalCumulative,
     getUnsyncedWeightForFarmer
@@ -212,9 +213,12 @@ const Index = () => {
         }
       }
       
-      // Background: refresh cumulatives for ALL loaded farmers with currqty=1
-      // Batched to prevent blocking - process 5 at a time with yielding
-      const farmersToRefresh = loadedFarmers.filter(f => Number(f.currqty) === 1);
+      // Background: refresh cumulatives for ALL farmers under device ccode with currqty=1
+      // Uses getFarmers() (full IndexedDB set) instead of loadedFarmers (route-filtered)
+      const allFarmers = await getFarmers();
+      const deviceCcode = localStorage.getItem('device_ccode') || '';
+      const ccodeFarmers = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
+      const farmersToRefresh = ccodeFarmers.filter(f => Number(f.currqty) === 1);
       if (farmersToRefresh.length > 0) {
         console.log(`🔄 Background cumulative refresh for ${farmersToRefresh.length} farmers (batched)...`);
         const BATCH_SIZE = 5;
@@ -247,51 +251,58 @@ const Index = () => {
     };
     window.addEventListener('syncComplete', handleSyncComplete);
     return () => window.removeEventListener('syncComplete', handleSyncComplete);
-  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, loadedFarmers]);
+  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers]);
 
-  // Pre-fetch cumulative weights for all farmers when online and farmers are loaded
-  // This ensures offline cumulative calculations use the full updated dataset
+  // Pre-fetch cumulative weights for ALL farmers under device ccode when online
+  // Uses getFarmers() from IndexedDB (full ccode set) — NOT route-filtered loadedFarmers
   useEffect(() => {
-    if (!showCumulative || !deviceFingerprint || !navigator.onLine) return;
-    if (loadedFarmers.length === 0) return;
-    
-    const farmersToCache = loadedFarmers.filter(f => Number(f.currqty) === 1);
-    if (farmersToCache.length === 0) return;
+    if (!showCumulative || !deviceFingerprint || !navigator.onLine || !isReady) return;
     
     let cancelled = false;
     
     const prefetchCumulatives = async () => {
-      console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers (batched)...`);
-      let cached = 0;
-      const BATCH_SIZE = 5;
-      
-      for (let i = 0; i < farmersToCache.length; i += BATCH_SIZE) {
-        if (cancelled || !navigator.onLine) break;
-        const batch = farmersToCache.slice(i, i + BATCH_SIZE);
+      try {
+        const allFarmers = await getFarmers();
+        const deviceCcode = localStorage.getItem('device_ccode') || '';
+        const ccodeFarmers = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
+        const farmersToCache = ccodeFarmers.filter(f => Number(f.currqty) === 1);
         
-        const results = await Promise.allSettled(batch.map(async (farmer) => {
-          const fId = farmer.farmer_id.replace(/^#/, '').trim();
-          const res = await Promise.race([
-            mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
-            new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
-          ]);
-          if (res.success && res.data) {
-            await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
-            return true;
+        if (farmersToCache.length === 0 || cancelled) return;
+        
+        console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers (all ccode=${deviceCcode})...`);
+        let cached = 0;
+        const BATCH_SIZE = 5;
+        
+        for (let i = 0; i < farmersToCache.length; i += BATCH_SIZE) {
+          if (cancelled || !navigator.onLine) break;
+          const batch = farmersToCache.slice(i, i + BATCH_SIZE);
+          
+          const results = await Promise.allSettled(batch.map(async (farmer) => {
+            const fId = farmer.farmer_id.replace(/^#/, '').trim();
+            const res = await Promise.race([
+              mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
+              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
+            ]);
+            if (res.success && res.data) {
+              await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
+              return true;
+            }
+            return false;
+          }));
+          
+          cached += results.filter(r => r.status === 'fulfilled' && r.value).length;
+          
+          // Yield to main thread between batches
+          if (i + BATCH_SIZE < farmersToCache.length) {
+            await new Promise(r => setTimeout(r, 50));
           }
-          return false;
-        }));
-        
-        cached += results.filter(r => r.status === 'fulfilled' && r.value).length;
-        
-        // Yield to main thread between batches
-        if (i + BATCH_SIZE < farmersToCache.length) {
-          await new Promise(r => setTimeout(r, 50));
         }
-      }
-      
-      if (!cancelled) {
-        console.log(`✅ Pre-fetched cumulative for ${cached}/${farmersToCache.length} farmers`);
+        
+        if (!cancelled) {
+          console.log(`✅ Pre-fetched cumulative for ${cached}/${farmersToCache.length} farmers`);
+        }
+      } catch (err) {
+        console.warn('Pre-fetch cumulative failed:', err);
       }
     };
     
@@ -302,7 +313,7 @@ const Index = () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [loadedFarmers, showCumulative, deviceFingerprint, updateFarmerCumulative]);
+  }, [isReady, showCumulative, deviceFingerprint, updateFarmerCumulative, getFarmers]);
 
   // NOTE: Printed receipts are now loaded from ReprintContext, no need to load here
   // The ReprintProvider handles loading from IndexedDB
