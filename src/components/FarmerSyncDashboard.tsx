@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { mysqlApi } from '@/services/mysqlApi';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,8 +19,8 @@ interface FarmerSyncEntry {
   isCached: boolean;
 }
 
-const BATCH_SIZE = 20; // Process farmers in batches of 20
-const PAGE_SIZE = 50; // Show 50 farmers at a time in the list
+const BATCH_SIZE = 20;
+const PAGE_SIZE = 50;
 
 export const FarmerSyncDashboard = () => {
   const { getFarmers, getFarmerCumulative, getUnsyncedReceipts, isReady } = useIndexedDB();
@@ -31,6 +32,32 @@ export const FarmerSyncDashboard = () => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const cancelledRef = useRef(false);
 
+  /**
+   * Fetch the authoritative farmer list.
+   * Priority: API (complete, unfiltered) → IndexedDB fallback (offline).
+   */
+  const fetchFarmerList = useCallback(async (): Promise<Farmer[]> => {
+    const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
+    
+    // Try API first — this returns ALL farmers, no route filter
+    if (navigator.onLine && deviceFingerprint) {
+      try {
+        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+        if (response.success && response.data && response.data.length > 0) {
+          console.log(`[SyncDash] Fetched ${response.data.length} farmers from API`);
+          return response.data as Farmer[];
+        }
+      } catch (err) {
+        console.warn('[SyncDash] API fetch failed, falling back to IndexedDB:', err);
+      }
+    }
+    
+    // Fallback: IndexedDB
+    const farmers = await getFarmers();
+    console.log(`[SyncDash] Fetched ${farmers.length} farmers from IndexedDB`);
+    return farmers;
+  }, [getFarmers]);
+
   const loadData = useCallback(async () => {
     if (!isReady) return;
     cancelledRef.current = false;
@@ -40,14 +67,14 @@ export const FarmerSyncDashboard = () => {
 
     try {
       const [farmers, unsyncedReceipts] = await Promise.all([
-        getFarmers(),
+        fetchFarmerList(),
         getUnsyncedReceipts(),
       ]);
 
       setUnsyncedCount(unsyncedReceipts.filter((r: any) => r.orderId !== 'PRINTED_RECEIPTS').length);
 
       const deviceCcode = localStorage.getItem('device_ccode') || '';
-      // Only include farmers qualifying for cumulative sync (currqty=1)
+      // Only include farmers qualifying for cumulative sync (ccode match + currqty=1)
       const filteredFarmers = deviceCcode
         ? farmers.filter((f: Farmer) => f.ccode === deviceCcode && Number(f.currqty) === 1)
         : farmers.filter((f: Farmer) => Number(f.currqty) === 1);
@@ -57,13 +84,11 @@ export const FarmerSyncDashboard = () => {
 
       const results: FarmerSyncEntry[] = [];
 
-      // Process in batches to avoid blocking the main thread
       for (let i = 0; i < filteredFarmers.length; i += BATCH_SIZE) {
         if (cancelledRef.current) break;
         
         const batch = filteredFarmers.slice(i, i + BATCH_SIZE);
         
-        // Process batch concurrently
         const batchResults = await Promise.all(
           batch.map(async (farmer) => {
             const cumData = await getFarmerCumulative(farmer.farmer_id);
@@ -81,7 +106,6 @@ export const FarmerSyncDashboard = () => {
         
         results.push(...batchResults);
 
-        // Update progress once per batch (not per farmer)
         const processed = Math.min(i + BATCH_SIZE, filteredFarmers.length);
         setProgressInfo({
           current: processed,
@@ -89,7 +113,6 @@ export const FarmerSyncDashboard = () => {
           status: `Processing ${processed} of ${total} farmers...`,
         });
 
-        // Yield to main thread between batches
         if (i + BATCH_SIZE < filteredFarmers.length) {
           await new Promise(r => setTimeout(r, 0));
         }
@@ -101,7 +124,6 @@ export const FarmerSyncDashboard = () => {
         return a.name.localeCompare(b.name);
       });
 
-      // Single state update with final results
       setEntries(results);
       setProgressInfo({ current: total, total, status: 'Complete' });
     } catch (err) {
@@ -110,7 +132,7 @@ export const FarmerSyncDashboard = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [isReady, getFarmers, getFarmerCumulative, getUnsyncedReceipts]);
+  }, [isReady, fetchFarmerList, getFarmerCumulative, getUnsyncedReceipts]);
 
   useEffect(() => {
     loadData();
@@ -127,16 +149,14 @@ export const FarmerSyncDashboard = () => {
   const deviceCcode = localStorage.getItem('device_ccode') || '';
 
   const filtered = useMemo(() => {
-    const base = searchQuery
+    return searchQuery
       ? entries.filter(e =>
           e.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           e.farmer_id.toLowerCase().includes(searchQuery.toLowerCase())
         )
       : entries;
-    return base;
   }, [entries, searchQuery]);
 
-  // Only render visible portion
   const visibleEntries = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
   const handleShowMore = useCallback(() => {
