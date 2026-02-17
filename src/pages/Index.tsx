@@ -232,10 +232,14 @@ const Index = () => {
         farmersToRefresh = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
       }
       if (farmersToRefresh.length > 0) {
-        console.log(`🔄 Background cumulative refresh for ${farmersToRefresh.length} farmers (batched)...`);
-        const BATCH_SIZE = 5;
+        // Only refresh those qualifying for cumulative tracking (currqty=1)
+        const qualifyingToRefresh = farmersToRefresh.filter(f => Number(f.currqty) === 1);
+        if (qualifyingToRefresh.length === 0) return;
+
+        console.log(`🔄 Background cumulative refresh for ${qualifyingToRefresh.length} qualifying farmers (batched)...`);
+        const BATCH_SIZE = 20; // Increased batch size for faster refresh
         const selectedId = selectedFarmer?.farmer_id.replace(/^#/, '').trim();
-        const toRefresh = farmersToRefresh.filter(f => f.farmer_id.replace(/^#/, '').trim() !== selectedId);
+        const toRefresh = qualifyingToRefresh.filter(f => f.farmer_id.replace(/^#/, '').trim() !== selectedId);
         
         for (let i = 0; i < toRefresh.length; i += BATCH_SIZE) {
           const batch = toRefresh.slice(i, i + BATCH_SIZE);
@@ -244,7 +248,7 @@ const Index = () => {
             try {
               const res = await Promise.race([
                 mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
-                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
+                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
               ]);
               if (res.success && res.data) {
                 await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
@@ -255,7 +259,7 @@ const Index = () => {
           }));
           // Yield to main thread between batches
           if (i + BATCH_SIZE < toRefresh.length) {
-            await new Promise(r => setTimeout(r, 50));
+            await new Promise(r => setTimeout(r, 20));
           }
         }
         console.log(`✅ Background cumulative refresh complete`);
@@ -286,16 +290,21 @@ const Index = () => {
         const allFarmers = response.data;
         const deviceCcode = localStorage.getItem('device_ccode') || '';
         const ccodeFarmers = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
-        const farmersToCache = ccodeFarmers;
+        
+        // Filter: ONLY cache farmers with currqty=1 (user instruction)
+        const farmersToCache = ccodeFarmers.filter(f => Number(f.currqty) === 1);
         
         // Also save ALL farmers to IndexedDB so FarmerSyncDashboard sees them
         saveFarmers(allFarmers);
         
-        if (farmersToCache.length === 0 || cancelled) return;
+        if (farmersToCache.length === 0 || cancelled) {
+          console.log('📦 Pre-fetch: No qualifying farmers (currqty=1) to cache');
+          return;
+        }
         
-        console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers (all ccode=${deviceCcode}, from API)...`);
+        console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers (all ccode=${deviceCcode}, currqty=1, from API)...`);
         let cached = 0;
-        const BATCH_SIZE = 5;
+        const BATCH_SIZE = 25; // Increased batch size for faster pre-fetch
         
         for (let i = 0; i < farmersToCache.length; i += BATCH_SIZE) {
           if (cancelled || !navigator.onLine) break;
@@ -305,7 +314,7 @@ const Index = () => {
             const fId = farmer.farmer_id.replace(/^#/, '').trim();
             const res = await Promise.race([
               mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
-              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
+              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
             ]);
             if (res.success && res.data) {
               await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
@@ -318,7 +327,7 @@ const Index = () => {
           
           // Yield to main thread between batches
           if (i + BATCH_SIZE < farmersToCache.length) {
-            await new Promise(r => setTimeout(r, 50));
+            await new Promise(r => setTimeout(r, 20));
           }
         }
         
