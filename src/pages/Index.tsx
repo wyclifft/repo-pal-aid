@@ -372,6 +372,16 @@ const Index = () => {
                 passSuccess++;
               }
             });
+
+            // Dispatch progress event for Settings UI
+            const currentTotalCached = totalCached + passSuccess;
+            window.dispatchEvent(new CustomEvent('cumulative-sync-progress', {
+              detail: {
+                current: currentTotalCached,
+                total: farmersToCache.length,
+                pass: pass
+              }
+            }));
             
             if (i + BATCH_SIZE < remaining.length) {
               await new Promise(r => setTimeout(r, pass === 1 ? 20 : 100));
