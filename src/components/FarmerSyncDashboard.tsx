@@ -47,12 +47,13 @@ export const FarmerSyncDashboard = () => {
       setUnsyncedCount(unsyncedReceipts.filter((r: any) => r.orderId !== 'PRINTED_RECEIPTS').length);
 
       const deviceCcode = localStorage.getItem('device_ccode') || '';
+      // Only include farmers qualifying for cumulative sync (currqty=1)
       const filteredFarmers = deviceCcode
-        ? farmers.filter((f: Farmer) => f.ccode === deviceCcode)
-        : farmers;
+        ? farmers.filter((f: Farmer) => f.ccode === deviceCcode && Number(f.currqty) === 1)
+        : farmers.filter((f: Farmer) => Number(f.currqty) === 1);
 
       const total = filteredFarmers.length;
-      setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} farmers...` });
+      setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} qualifying farmers...` });
 
       const results: FarmerSyncEntry[] = [];
 
@@ -187,13 +188,13 @@ export const FarmerSyncDashboard = () => {
             <p className="text-lg font-bold">{totalCount}</p>
             <p className="text-xs text-muted-foreground">Total Farmers</p>
           </div>
-          <div className="text-center p-3 rounded-lg bg-green-500/10">
-            <CheckCircle2 className="h-4 w-4 mx-auto mb-1 text-green-600" />
+          <div className="text-center p-3 rounded-lg bg-primary/10">
+            <CheckCircle2 className="h-4 w-4 mx-auto mb-1 text-primary" />
             <p className="text-lg font-bold">{cachedCount}</p>
             <p className="text-xs text-muted-foreground">Cached</p>
           </div>
-          <div className="text-center p-3 rounded-lg bg-orange-500/10">
-            <AlertCircle className="h-4 w-4 mx-auto mb-1 text-orange-600" />
+          <div className="text-center p-3 rounded-lg bg-secondary/20">
+            <AlertCircle className="h-4 w-4 mx-auto mb-1 text-muted-foreground" />
             <p className="text-lg font-bold">{unsyncedCount}</p>
             <p className="text-xs text-muted-foreground">Unsynced Receipts</p>
           </div>
@@ -238,7 +239,7 @@ export const FarmerSyncDashboard = () => {
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   {entry.isCached ? (
-                    <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                    <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
                   ) : (
                     <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0" />
                   )}
@@ -254,7 +255,7 @@ export const FarmerSyncDashboard = () => {
                     <div>
                       <p className="font-semibold">{entry.cumulativeTotal.toFixed(1)} kg</p>
                       {entry.localCount > 0 && (
-                        <p className="text-xs text-orange-600">+{entry.localCount.toFixed(1)} local</p>
+                        <p className="text-xs text-primary">+{entry.localCount.toFixed(1)} local</p>
                       )}
                     </div>
                   ) : (
