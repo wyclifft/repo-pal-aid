@@ -28,6 +28,7 @@ import {
 
 import { runBluetoothDiagnostics, logConnectionTips } from "@/utils/bluetoothDiagnostics";
 import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
+import { FarmerSyncDashboard } from "@/components/FarmerSyncDashboard";
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -675,6 +676,9 @@ Date: ${new Date().toLocaleString()}
             </p>
           </CardContent>
         </Card>
+
+        {/* Farmer Sync Status Dashboard */}
+        <FarmerSyncDashboard />
 
         {/* Bluetooth Debug Panel */}
         <BluetoothDebugPanel />
