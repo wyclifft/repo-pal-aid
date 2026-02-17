@@ -29,6 +29,7 @@ export const FarmerSyncDashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [progressInfo, setProgressInfo] = useState({ current: 0, total: 0, status: '' });
+  const [bgProgress, setBgProgress] = useState<{ current: number; total: number; pass: number } | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const cancelledRef = useRef(false);
 
@@ -136,7 +137,18 @@ export const FarmerSyncDashboard = () => {
 
   useEffect(() => {
     loadData();
-    return () => { cancelledRef.current = true; };
+
+    // Listen for background sync progress events
+    const handleProgress = (e: any) => {
+      setBgProgress(e.detail);
+    };
+
+    window.addEventListener('cumulative-sync-progress', handleProgress);
+    
+    return () => { 
+      cancelledRef.current = true; 
+      window.removeEventListener('cumulative-sync-progress', handleProgress);
+    };
   }, [loadData]);
 
   const cachedCount = entries.filter(e => e.isCached).length;
@@ -198,6 +210,24 @@ export const FarmerSyncDashboard = () => {
             </div>
             <Progress value={loadProgress} className="h-2" />
             <p className="text-xs text-muted-foreground text-right">{loadProgress}%</p>
+          </div>
+        )}
+
+        {/* Background Sync Progress */}
+        {bgProgress && bgProgress.current < bgProgress.total && (
+          <div className="space-y-2 p-3 rounded-lg bg-primary/5 border border-primary/20 animate-pulse">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="h-3 w-3 animate-spin text-primary" />
+                <span className="font-medium text-primary">Background Cache Sync</span>
+              </div>
+              <Badge variant="outline" className="text-[10px] font-normal py-0">Pass {bgProgress.pass}/5</Badge>
+            </div>
+            <Progress value={(bgProgress.current / bgProgress.total) * 100} className="h-1.5 bg-primary/10" />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>{bgProgress.current} / {bgProgress.total} records</span>
+              <span>{Math.round((bgProgress.current / bgProgress.total) * 100)}%</span>
+            </div>
           </div>
         )}
 
