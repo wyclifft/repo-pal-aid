@@ -213,24 +213,33 @@ const Index = () => {
       }
       
       // Background: refresh cumulatives for ALL loaded farmers with currqty=1
-      // This seeds the cache so offline cumulative works for any farmer
+      // Batched to prevent blocking - process 5 at a time with yielding
       const farmersToRefresh = loadedFarmers.filter(f => Number(f.currqty) === 1);
       if (farmersToRefresh.length > 0) {
-        console.log(`🔄 Background cumulative refresh for ${farmersToRefresh.length} farmers...`);
-        for (const farmer of farmersToRefresh) {
-          const fId = farmer.farmer_id.replace(/^#/, '').trim();
-          // Skip the already-refreshed selected farmer
-          if (selectedFarmer && fId === selectedFarmer.farmer_id.replace(/^#/, '').trim()) continue;
-          try {
-            const res = await Promise.race([
-              mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
-              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
-            ]);
-            if (res.success && res.data) {
-              await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
+        console.log(`🔄 Background cumulative refresh for ${farmersToRefresh.length} farmers (batched)...`);
+        const BATCH_SIZE = 5;
+        const selectedId = selectedFarmer?.farmer_id.replace(/^#/, '').trim();
+        const toRefresh = farmersToRefresh.filter(f => f.farmer_id.replace(/^#/, '').trim() !== selectedId);
+        
+        for (let i = 0; i < toRefresh.length; i += BATCH_SIZE) {
+          const batch = toRefresh.slice(i, i + BATCH_SIZE);
+          await Promise.allSettled(batch.map(async (farmer) => {
+            const fId = farmer.farmer_id.replace(/^#/, '').trim();
+            try {
+              const res = await Promise.race([
+                mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
+                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
+              ]);
+              if (res.success && res.data) {
+                await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
+              }
+            } catch {
+              // Silent fail for background refresh
             }
-          } catch {
-            // Silent fail for background refresh
+          }));
+          // Yield to main thread between batches
+          if (i + BATCH_SIZE < toRefresh.length) {
+            await new Promise(r => setTimeout(r, 50));
           }
         }
         console.log(`✅ Background cumulative refresh complete`);
@@ -252,23 +261,32 @@ const Index = () => {
     let cancelled = false;
     
     const prefetchCumulatives = async () => {
-      console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers...`);
+      console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers (batched)...`);
       let cached = 0;
+      const BATCH_SIZE = 5;
       
-      for (const farmer of farmersToCache) {
+      for (let i = 0; i < farmersToCache.length; i += BATCH_SIZE) {
         if (cancelled || !navigator.onLine) break;
-        const fId = farmer.farmer_id.replace(/^#/, '').trim();
-        try {
+        const batch = farmersToCache.slice(i, i + BATCH_SIZE);
+        
+        const results = await Promise.allSettled(batch.map(async (farmer) => {
+          const fId = farmer.farmer_id.replace(/^#/, '').trim();
           const res = await Promise.race([
             mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
             new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
           ]);
           if (res.success && res.data) {
             await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
-            cached++;
+            return true;
           }
-        } catch {
-          // Silent fail - best effort caching
+          return false;
+        }));
+        
+        cached += results.filter(r => r.status === 'fulfilled' && r.value).length;
+        
+        // Yield to main thread between batches
+        if (i + BATCH_SIZE < farmersToCache.length) {
+          await new Promise(r => setTimeout(r, 50));
         }
       }
       
@@ -278,7 +296,7 @@ const Index = () => {
     };
     
     // Delay to avoid blocking initial render
-    const timer = setTimeout(prefetchCumulatives, 3000);
+    const timer = setTimeout(prefetchCumulatives, 5000);
     
     return () => {
       cancelled = true;
