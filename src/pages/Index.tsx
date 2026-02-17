@@ -189,29 +189,102 @@ const Index = () => {
   // Refresh cumulative cache after sync completes (records uploaded → cloud total changed)
   useEffect(() => {
     const handleSyncComplete = async () => {
-      if (!selectedFarmer || !deviceFingerprint || !showCumulative) return;
+      if (!deviceFingerprint || !showCumulative) return;
       if (!navigator.onLine) return;
-      const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
-      if (Number(selectedFarmer.currqty) !== 1) return;
-      try {
-        const freqResult = await Promise.race([
-          mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint),
-          new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
-        ]);
-        if (freqResult.success && freqResult.data) {
-          const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-          await updateFarmerCumulative(cleanId, cloudCumulative, true);
-          const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanId);
-          setCumulativeFrequency(cloudCumulative + unsyncedWeight);
-          console.log(`🔄 Post-sync cumulative refresh for ${cleanId}: cloud=${cloudCumulative}, unsynced=${unsyncedWeight}`);
+      
+      // Refresh the currently selected farmer immediately
+      if (selectedFarmer && Number(selectedFarmer.currqty) === 1) {
+        const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
+        try {
+          const freqResult = await Promise.race([
+            mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint),
+            new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
+          ]);
+          if (freqResult.success && freqResult.data) {
+            const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+            await updateFarmerCumulative(cleanId, cloudCumulative, true);
+            const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanId);
+            setCumulativeFrequency(cloudCumulative + unsyncedWeight);
+            console.log(`🔄 Post-sync cumulative refresh for ${cleanId}: cloud=${cloudCumulative}, unsynced=${unsyncedWeight}`);
+          }
+        } catch (err) {
+          console.warn('Failed to refresh cumulative after sync:', err);
         }
-      } catch (err) {
-        console.warn('Failed to refresh cumulative after sync:', err);
+      }
+      
+      // Background: refresh cumulatives for ALL loaded farmers with currqty=1
+      // This seeds the cache so offline cumulative works for any farmer
+      const farmersToRefresh = loadedFarmers.filter(f => Number(f.currqty) === 1);
+      if (farmersToRefresh.length > 0) {
+        console.log(`🔄 Background cumulative refresh for ${farmersToRefresh.length} farmers...`);
+        for (const farmer of farmersToRefresh) {
+          const fId = farmer.farmer_id.replace(/^#/, '').trim();
+          // Skip the already-refreshed selected farmer
+          if (selectedFarmer && fId === selectedFarmer.farmer_id.replace(/^#/, '').trim()) continue;
+          try {
+            const res = await Promise.race([
+              mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
+              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
+            ]);
+            if (res.success && res.data) {
+              await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
+            }
+          } catch {
+            // Silent fail for background refresh
+          }
+        }
+        console.log(`✅ Background cumulative refresh complete`);
       }
     };
     window.addEventListener('syncComplete', handleSyncComplete);
     return () => window.removeEventListener('syncComplete', handleSyncComplete);
-  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer]);
+  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, loadedFarmers]);
+
+  // Pre-fetch cumulative weights for all farmers when online and farmers are loaded
+  // This ensures offline cumulative calculations use the full updated dataset
+  useEffect(() => {
+    if (!showCumulative || !deviceFingerprint || !navigator.onLine) return;
+    if (loadedFarmers.length === 0) return;
+    
+    const farmersToCache = loadedFarmers.filter(f => Number(f.currqty) === 1);
+    if (farmersToCache.length === 0) return;
+    
+    let cancelled = false;
+    
+    const prefetchCumulatives = async () => {
+      console.log(`📦 Pre-fetching cumulative for ${farmersToCache.length} farmers...`);
+      let cached = 0;
+      
+      for (const farmer of farmersToCache) {
+        if (cancelled || !navigator.onLine) break;
+        const fId = farmer.farmer_id.replace(/^#/, '').trim();
+        try {
+          const res = await Promise.race([
+            mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
+            new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
+          ]);
+          if (res.success && res.data) {
+            await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
+            cached++;
+          }
+        } catch {
+          // Silent fail - best effort caching
+        }
+      }
+      
+      if (!cancelled) {
+        console.log(`✅ Pre-fetched cumulative for ${cached}/${farmersToCache.length} farmers`);
+      }
+    };
+    
+    // Delay to avoid blocking initial render
+    const timer = setTimeout(prefetchCumulatives, 3000);
+    
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [loadedFarmers, showCumulative, deviceFingerprint, updateFarmerCumulative]);
 
   // NOTE: Printed receipts are now loaded from ReprintContext, no need to load here
   // The ReprintProvider handles loading from IndexedDB
@@ -279,9 +352,11 @@ const Index = () => {
           // Offline or fetch failed: use local cache + unsynced receipts
           const cachedTotal = await getFarmerTotalCumulative(cleanFarmerId);
           const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanFarmerId);
-          // Avoid double-counting: cachedTotal includes localCount which may overlap with unsynced
-          // Use the larger of the two to be safe, or just use unsynced if no cache
-          const total = cachedTotal > 0 ? cachedTotal : unsyncedWeight;
+          // cachedTotal = baseCount (from last online fetch) + localCount (incremented after offline submissions)
+          // unsyncedWeight = sum of weights from unsynced IndexedDB receipts (overlaps with localCount)
+          // Use the larger of cachedTotal vs unsyncedWeight to avoid double-counting
+          // If cachedTotal has a seeded baseCount, it's the most accurate source
+          const total = Math.max(cachedTotal, unsyncedWeight);
           setCumulativeFrequency(total > 0 ? total : undefined);
           console.log(`📊 Offline cumulative for ${cleanFarmerId}: cached=${cachedTotal}, unsynced=${unsyncedWeight}, total=${total}`);
         } catch (err) {
