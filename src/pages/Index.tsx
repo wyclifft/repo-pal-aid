@@ -189,86 +189,75 @@ const Index = () => {
     }
   }, [activeSession?.descript, clearBlacklist]);
 
-  // Refresh cumulative cache after sync completes (records uploaded → cloud total changed)
+  // Refresh cumulative cache after sync completes OR periodically to detect external DB changes
   useEffect(() => {
-    const handleSyncComplete = async () => {
-      if (!deviceFingerprint || !showCumulative) return;
-      if (!navigator.onLine) return;
-      
-      // Refresh the currently selected farmer immediately
-      if (selectedFarmer) {
-        const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
-        try {
-          const freqResult = await Promise.race([
-            mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint),
-            new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
-          ]);
-          if (freqResult.success && freqResult.data) {
-            const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-            await updateFarmerCumulative(cleanId, cloudCumulative, true);
-            const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanId);
-            setCumulativeFrequency(cloudCumulative + unsyncedWeight);
-            console.log(`🔄 Post-sync cumulative refresh for ${cleanId}: cloud=${cloudCumulative}, unsynced=${unsyncedWeight}`);
-          }
-        } catch (err) {
-          console.warn('Failed to refresh cumulative after sync:', err);
-        }
-      }
-      
-      // Background: refresh cumulatives for ALL farmers under device ccode
-      // Fetch directly from API to avoid stale/incomplete IndexedDB data
-      let farmersToRefresh: any[] = [];
-      try {
-        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
-        if (response.success && response.data) {
-          const deviceCcode = localStorage.getItem('device_ccode') || '';
-          farmersToRefresh = deviceCcode ? response.data.filter(f => f.ccode === deviceCcode) : response.data;
-          // Also update IndexedDB with the full farmer list
-          saveFarmers(response.data);
-        }
-      } catch {
-        // Fallback to IndexedDB if API fails
-        const allFarmers = await getFarmers();
-        const deviceCcode = localStorage.getItem('device_ccode') || '';
-        farmersToRefresh = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
-      }
-      if (farmersToRefresh.length > 0) {
-        // Only refresh those qualifying for cumulative tracking (currqty=1)
-        const qualifyingToRefresh = farmersToRefresh.filter(f => Number(f.currqty) === 1);
-        if (qualifyingToRefresh.length === 0) return;
+    if (!deviceFingerprint || !showCumulative) return;
 
-        console.log(`🔄 Background cumulative refresh for ${qualifyingToRefresh.length} qualifying farmers (batched)...`);
-        const BATCH_SIZE = 20; // Increased batch size for faster refresh
-        const selectedId = selectedFarmer?.farmer_id.replace(/^#/, '').trim();
-        const toRefresh = qualifyingToRefresh.filter(f => f.farmer_id.replace(/^#/, '').trim() !== selectedId);
-        
-        for (let i = 0; i < toRefresh.length; i += BATCH_SIZE) {
-          const batch = toRefresh.slice(i, i + BATCH_SIZE);
-          await Promise.allSettled(batch.map(async (farmer) => {
-            const fId = farmer.farmer_id.replace(/^#/, '').trim();
-            try {
-              const res = await Promise.race([
-                mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
-                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
-              ]);
-              if (res.success && res.data) {
-                await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
+    const refreshCumulativesBatch = async (reason: string) => {
+      if (!navigator.onLine) return;
+      try {
+        console.log(`🔄 Cumulative refresh (${reason}): using batch API...`);
+        const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint);
+        if (batchResult.success && batchResult.data && batchResult.data.farmers) {
+          const batchMap = new Map<string, number>();
+          for (const f of batchResult.data.farmers) {
+            batchMap.set(f.farmer_id.trim(), f.cumulative_weight);
+          }
+
+          // Fetch qualifying farmers
+          const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+          if (response.success && response.data) {
+            saveFarmers(response.data);
+            const deviceCcode = localStorage.getItem('device_ccode') || '';
+            const qualifying = (deviceCcode ? response.data.filter(f => f.ccode === deviceCcode) : response.data)
+              .filter(f => Number(f.currqty) === 1);
+
+            // Write updated cumulatives in batches
+            const WRITE_BATCH = 50;
+            for (let i = 0; i < qualifying.length; i += WRITE_BATCH) {
+              const batch = qualifying.slice(i, i + WRITE_BATCH);
+              await Promise.all(batch.map(async (farmer) => {
+                const fId = farmer.farmer_id.replace(/^#/, '').trim();
+                const weight = batchMap.get(fId) ?? 0;
+                await updateFarmerCumulative(fId, weight, true);
+              }));
+              if (i + WRITE_BATCH < qualifying.length) {
+                await new Promise(r => setTimeout(r, 0));
               }
-            } catch {
-              // Silent fail for background refresh
             }
-          }));
-          // Yield to main thread between batches
-          if (i + BATCH_SIZE < toRefresh.length) {
-            await new Promise(r => setTimeout(r, 20));
+            console.log(`✅ Cumulative refresh (${reason}): ${qualifying.length} farmers updated`);
           }
         }
-        console.log(`✅ Background cumulative refresh complete`);
+
+        // Update currently selected farmer's display immediately
+        if (selectedFarmer) {
+          const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
+          const cached = await getFarmerCumulative(cleanId);
+          const baseCount = cached?.baseCount || 0;
+          const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanId);
+          setCumulativeFrequency(baseCount + unsyncedWeight);
+        }
+      } catch (err) {
+        console.warn(`Cumulative refresh (${reason}) failed:`, err);
       }
     };
+
+    // On syncComplete: refresh to pick up newly synced records
+    const handleSyncComplete = () => refreshCumulativesBatch('post-sync');
     window.addEventListener('syncComplete', handleSyncComplete);
-    return () => window.removeEventListener('syncComplete', handleSyncComplete);
-  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers]);
+
+    // Periodic refresh every 10 minutes to detect external DB changes
+    const intervalId = setInterval(() => {
+      if (navigator.onLine && !(window as any).__cumulativeSyncRunning) {
+        refreshCumulativesBatch('periodic');
+      }
+    }, 10 * 60 * 1000);
+
+    return () => {
+      window.removeEventListener('syncComplete', handleSyncComplete);
+      clearInterval(intervalId);
+    };
+  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers, getFarmerCumulative]);
 
   // ========== FAST CUMULATIVE PRE-FETCH (BATCH API) ==========
   // Uses single batch endpoint instead of 3558 individual API calls
