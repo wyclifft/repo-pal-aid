@@ -29,26 +29,31 @@ const STORE_NAME = 'device_config';
 const LOCALSTORAGE_KEY = 'device_config_backup';
 
 /**
- * MUTEX LOCK for reference generation
- * Prevents race conditions when multiple references are generated simultaneously
+ * MUTEX LOCK for reference generation (queue-based)
+ * Prevents race conditions when multiple references are generated simultaneously.
+ * 
+ * IMPORTANT: The previous implementation had a race condition where two concurrent
+ * acquireLock() calls could both resolve the same promise before either set the new one,
+ * causing duplicate counter values and thus duplicate uploadrefno across different farmers.
+ * 
+ * This queue-based approach chains each lock acquisition as a .then() on the previous,
+ * ensuring strict serialization regardless of timing.
  */
-let referenceGenerationLock: Promise<void> = Promise.resolve();
-let lockResolver: (() => void) | null = null;
+let lockChain: Promise<void> = Promise.resolve();
 
-const acquireLock = async (): Promise<void> => {
-  // Wait for any existing lock to be released
-  await referenceGenerationLock;
+const withLock = async <T>(fn: () => Promise<T>): Promise<T> => {
+  let resolve!: () => void;
+  const nextLock = new Promise<void>((r) => { resolve = r; });
   
-  // Create a new lock
-  referenceGenerationLock = new Promise((resolve) => {
-    lockResolver = resolve;
-  });
-};
-
-const releaseLock = (): void => {
-  if (lockResolver) {
-    lockResolver();
-    lockResolver = null;
+  // Chain: wait for all previous locks to finish, then run fn
+  const waitForPrevious = lockChain;
+  lockChain = nextLock;
+  
+  await waitForPrevious;
+  try {
+    return await fn();
+  } finally {
+    resolve();
   }
 };
 
@@ -300,20 +305,12 @@ const updateConfig = async (updates: Partial<DeviceConfig>): Promise<void> => {
  * Get next transaction ID atomically with mutex lock
  */
 const getNextTrnId = async (): Promise<number> => {
-  // ACQUIRE LOCK - prevents race conditions
-  await acquireLock();
-  
-  try {
+  return withLock(async () => {
     const config = await getDeviceConfig();
     const nextId = (config?.lastTrnId || 0) + 1;
-    
     await updateConfig({ lastTrnId: nextId });
-    
     return nextId;
-  } finally {
-    // ALWAYS release lock
-    releaseLock();
-  }
+  });
 };
 
 /**
@@ -327,37 +324,23 @@ const getNextTrnId = async (): Promise<number> => {
  * references are generated simultaneously (e.g., rapid button taps)
  */
 export const generateOfflineReference = async (): Promise<string | null> => {
-  // ACQUIRE LOCK - prevents race conditions
-  await acquireLock();
-  
-  try {
-    // Get devcode from localStorage (set during device authorization)
+  return withLock(async () => {
     const devcode = localStorage.getItem('devcode');
     
     if (devcode) {
-      // Get the last used trnId and increment
       const config = await getDeviceConfig();
       const lastUsed = config?.lastTrnId || 0;
-      
-      // Generate next sequential number
       const nextTrnId = lastUsed + 1;
-      
-      // Update for next call - MUST complete before releasing lock
       await updateConfig({ lastTrnId: nextTrnId });
-      
-      // Generate reference: devcode + 8-digit trnid padded
       const reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
-      
       console.log(`⚡ Reference: ${reference} (devcode: ${devcode}, trnid: ${nextTrnId})`);
       return reference;
     }
     
-    // Fallback: try to get devcode from config
     const config = await getDeviceConfig();
     if (config?.devcode) {
       const nextTrnId = (config.lastTrnId || 0) + 1;
       await updateConfig({ lastTrnId: nextTrnId });
-      
       const reference = `${config.devcode}${String(nextTrnId).padStart(8, '0')}`;
       console.log(`⚡ Reference (from config): ${reference}`);
       return reference;
@@ -365,10 +348,7 @@ export const generateOfflineReference = async (): Promise<string | null> => {
     
     console.warn('⚠️ devcode not available - cannot generate reference');
     return null;
-  } finally {
-    // ALWAYS release lock, even if an error occurred
-    releaseLock();
-  }
+  });
 };
 
 /**
@@ -457,10 +437,7 @@ export const syncOfflineCounter = async (
  * CRITICAL: Uses mutex lock to prevent race conditions
  */
 export const getNextTypeId = async (transactionType: TransactionType): Promise<number> => {
-  // ACQUIRE LOCK - prevents race conditions
-  await acquireLock();
-  
-  try {
+  return withLock(async () => {
     const config = await getDeviceConfig();
     
     let currentId = 0;
@@ -486,10 +463,7 @@ export const getNextTypeId = async (transactionType: TransactionType): Promise<n
     
     console.log(`⚡ Next ${transactionType}Id: ${nextId}`);
     return nextId;
-  } finally {
-    // ALWAYS release lock
-    releaseLock();
-  }
+  });
 };
 
 /**
@@ -565,15 +539,10 @@ export const generateTransRefOnly = async (): Promise<string | null> => {
  * CRITICAL: Uses mutex lock to prevent race conditions
  */
 export const resetOfflineCounter = async (): Promise<void> => {
-  // ACQUIRE LOCK - prevents race conditions
-  await acquireLock();
-  
-  try {
+  return withLock(async () => {
     await updateConfig({ lastTrnId: 0, milkId: 0, storeId: 0, aiId: 0 });
     console.log('🔄 Reset all offline counters to 0');
-  } finally {
-    releaseLock();
-  }
+  });
 };
 
 /**
