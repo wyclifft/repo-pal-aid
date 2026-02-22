@@ -1069,6 +1069,14 @@ const Index = () => {
 
     // OPTIMIZED: Reset UI IMMEDIATELY for fast response - don't wait for print/cumulative
     if (showCollection) {
+      // When printCopies === 0, show receipt modal on screen without printing
+      if (printCopies === 0) {
+        setIsSubmitting(false);
+        setReceiptModalOpen(true);
+        window.dispatchEvent(new CustomEvent('syncComplete'));
+        return;
+      }
+
       // Clear state immediately - user can start next transaction right away
       setCapturedCollections([]);
       setCumulativeFrequency(undefined);
