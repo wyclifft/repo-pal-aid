@@ -476,34 +476,11 @@ export const TransactionReceipt = ({
               
               return (
                 <div key={syncKey} className="space-y-0.5">
-                  {/* For Milk (transtype 1) - show weight + sync button */}
+                  {/* For Milk (transtype 1) - show weight */}
                   {transtype === 1 && (
                     <div className="flex items-center justify-between text-xs gap-2">
-                      <span className={`flex-1 ${hasMissingRef ? 'text-red-500' : ''}`}>{index + 1}: {refNo}</span>
+                      <span className={`flex-1 ${hasMissingRef ? 'text-destructive' : ''}`}>{index + 1}: {refNo}</span>
                       <span className="font-medium">{item.weight?.toFixed(1)}</span>
-                      {/* Per-item sync button */}
-                      <button
-                        onClick={() => handleSyncItem(item, index)}
-                        disabled={isSyncing || isSynced}
-                        className={`p-1 rounded transition-colors ${
-                          isSynced 
-                            ? 'text-green-600 bg-green-50' 
-                            : isFailed
-                            ? 'text-red-600 bg-red-50 hover:bg-red-100'
-                            : 'text-amber-600 bg-amber-50 hover:bg-amber-100'
-                        } disabled:opacity-50`}
-                        title={isSynced ? 'Synced' : isFailed ? 'Retry sync' : 'Sync to database'}
-                      >
-                        {isSyncing ? (
-                          <RefreshCw className="h-3 w-3 animate-spin" />
-                        ) : isSynced ? (
-                          <Check className="h-3 w-3" />
-                        ) : isFailed ? (
-                          <AlertTriangle className="h-3 w-3" />
-                        ) : (
-                          <RefreshCw className="h-3 w-3" />
-                        )}
-                      </button>
                     </div>
                   )}
                   
@@ -595,59 +572,13 @@ export const TransactionReceipt = ({
           </div>
         </div>
 
-        {/* Manual Sync All Button - Temporary for debugging sync issues */}
-        {transtype === 1 && (
+        {/* Sync status - auto-sync runs in background */}
+        {transtype === 1 && syncedItems.size > 0 && syncedItems.size === items.length && (
           <div className="pt-2 border-t border-dashed">
-            {/* Show sync status summary */}
-            <div className="flex items-center justify-between text-xs mb-2">
-              <span className="text-muted-foreground">Sync Status:</span>
-              <span className="font-medium">
-                {syncedItems.size}/{items.length} synced
-                {failedItems.size > 0 && <span className="text-red-500 ml-1">({failedItems.size} failed)</span>}
-              </span>
+            <div className="flex items-center justify-center gap-2 py-2 text-primary bg-primary/10 rounded-md">
+              <Check className="h-4 w-4" />
+              <span className="font-medium text-xs">All records synced</span>
             </div>
-            
-            {/* Sync All button - only show if not all synced */}
-            {syncedItems.size < items.length && (
-              <button
-                onClick={handleSyncAll}
-                disabled={syncingItems.size > 0}
-                className={`w-full py-2 rounded-md font-medium transition-colors flex items-center justify-center gap-2 ${
-                  failedItems.size > 0
-                    ? 'bg-red-500 text-white hover:bg-red-600'
-                    : 'bg-amber-500 text-white hover:bg-amber-600'
-                } disabled:opacity-50`}
-              >
-                {syncingItems.size > 0 ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    Syncing ({syncingItems.size})...
-                  </>
-                ) : failedItems.size > 0 ? (
-                  <>
-                    <AlertTriangle className="h-4 w-4" />
-                    Retry All Failed
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-4 w-4" />
-                    Sync All to Database
-                  </>
-                )}
-              </button>
-            )}
-            
-            {/* All synced message */}
-            {syncedItems.size === items.length && items.length > 0 && (
-              <div className="flex items-center justify-center gap-2 py-2 text-green-600 bg-green-50 rounded-md">
-                <Check className="h-4 w-4" />
-                <span className="font-medium">All records synced</span>
-              </div>
-            )}
-            
-            <p className="text-xs text-center text-muted-foreground mt-1">
-              Click sync icon on each row or use button above
-            </p>
           </div>
         )}
 

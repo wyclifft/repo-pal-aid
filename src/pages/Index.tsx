@@ -1070,7 +1070,36 @@ const Index = () => {
     // OPTIMIZED: Reset UI IMMEDIATELY for fast response - don't wait for print/cumulative
     if (showCollection) {
       // When printCopies === 0, show receipt modal on screen without printing
+      // Calculate cumulative BEFORE showing modal so it displays correctly
       if (printCopies === 0) {
+        if (showCumulative && deviceFingerprint && capturedCollections.length > 0) {
+          const firstCapture = capturedCollections[0];
+          const cleanId = firstCapture.farmer_id.replace(/^#/, '').trim();
+          try {
+            if (navigator.onLine) {
+              const freqResult = await Promise.race([
+                mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint),
+                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
+              ]);
+              if (freqResult.success && freqResult.data) {
+                const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+                await updateFarmerCumulative(cleanId, cloudCumulative, true);
+                const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanId);
+                setCumulativeFrequency(cloudCumulative + unsyncedWeight);
+              } else {
+                const total = await getFarmerTotalCumulative(cleanId);
+                setCumulativeFrequency(total > 0 ? total : undefined);
+              }
+            } else {
+              // Offline: use cached baseCount + unsynced receipts
+              const total = await getFarmerTotalCumulative(cleanId);
+              setCumulativeFrequency(total > 0 ? total : undefined);
+            }
+          } catch {
+            const total = await getFarmerTotalCumulative(cleanId);
+            setCumulativeFrequency(total > 0 ? total : undefined);
+          }
+        }
         setIsSubmitting(false);
         setReceiptModalOpen(true);
         window.dispatchEvent(new CustomEvent('syncComplete'));
