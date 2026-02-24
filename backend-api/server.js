@@ -2637,8 +2637,32 @@ const server = http.createServer(async (req, res) => {
       };
 
       const now = new Date();
-      const monthStart = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
-      const monthEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+      let periodStart = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+      let periodEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+      
+      // For coffee orgs (orgtype=C), use the active session/season date range
+      // instead of calendar month, so transactions from the entire season are included
+      try {
+        const [orgRows] = await pool.query(
+          `SELECT orgtype FROM fm_company WHERE ccode = ? LIMIT 1`, [ccode]
+        );
+        if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
+          const today = toYmdLocal(now);
+          const [seasonRows] = await pool.query(
+            `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
+             FROM sessions WHERE ccode = ? AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
+             ORDER BY datefrom DESC LIMIT 1`,
+            [ccode, today, today]
+          );
+          if (seasonRows.length > 0) {
+            periodStart = seasonRows[0].datefrom;
+            periodEnd = seasonRows[0].dateto;
+            console.log(`📊 Batch cumulative using season range: ${periodStart} to ${periodEnd}`);
+          }
+        }
+      } catch (e) {
+        console.log('⚠️ Could not detect orgtype for cumulative, using monthly range:', e.message);
+      }
       
       // Single query: get cumulative weights for ALL farmers at once
       // Uses TRIM() and CAST() to handle transactions posted by external sources
@@ -2649,7 +2673,7 @@ const server = http.createServer(async (req, res) => {
          WHERE TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
          AND CAST(transdate AS DATE) >= ? AND CAST(transdate AS DATE) <= ?
          GROUP BY TRIM(memberno)`,
-        [ccode, monthStart, monthEnd]
+        [ccode, periodStart, periodEnd]
       );
       
       return sendJSON(res, { 
@@ -2659,8 +2683,8 @@ const server = http.createServer(async (req, res) => {
             farmer_id: r.farmer_id,
             cumulative_weight: parseFloat(r.cumulative_weight) || 0
           })),
-          month_start: monthStart,
-          month_end: monthEnd,
+          month_start: periodStart,
+          month_end: periodEnd,
           total_farmers: rows.length
         }
       });
@@ -2693,8 +2717,7 @@ const server = http.createServer(async (req, res) => {
       
       const ccode = deviceRows[0].ccode;
       
-      // Get current month's start and end dates (LOCAL date, not UTC)
-      // NOTE: Using toISOString() can shift dates due to timezone, causing off-by-one errors.
+      // Get period start and end dates (LOCAL date, not UTC)
       const toYmdLocal = (d) => {
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -2703,17 +2726,40 @@ const server = http.createServer(async (req, res) => {
       };
 
       const now = new Date();
-      const monthStart = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
-      const monthEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+      let periodStart = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+      let periodEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
       
-      // Sum total weight for this farmer in the current month
+      // For coffee orgs, use active season date range instead of calendar month
+      try {
+        const [orgRows] = await pool.query(
+          `SELECT orgtype FROM fm_company WHERE ccode = ? LIMIT 1`, [ccode]
+        );
+        if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
+          const today = toYmdLocal(now);
+          const [seasonRows] = await pool.query(
+            `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
+             FROM sessions WHERE ccode = ? AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
+             ORDER BY datefrom DESC LIMIT 1`,
+            [ccode, today, today]
+          );
+          if (seasonRows.length > 0) {
+            periodStart = seasonRows[0].datefrom;
+            periodEnd = seasonRows[0].dateto;
+            console.log(`📊 Individual cumulative for ${farmer_id} using season range: ${periodStart} to ${periodEnd}`);
+          }
+        }
+      } catch (e) {
+        console.log('⚠️ Could not detect orgtype for individual cumulative, using monthly range:', e.message);
+      }
+      
+      // Sum total weight for this farmer in the period
       // Uses TRIM() and CAST() to handle transactions posted by external sources
       const [sumRows] = await pool.query(
         `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
          WHERE TRIM(memberno) = TRIM(?) AND TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
          AND CAST(transdate AS DATE) >= ? AND CAST(transdate AS DATE) <= ?`,
-        [farmer_id, ccode, monthStart, monthEnd]
+        [farmer_id, ccode, periodStart, periodEnd]
       );
       
       const cumulativeWeight = sumRows.length > 0 ? parseFloat(sumRows[0].cumulative_weight) || 0 : 0;
@@ -2723,8 +2769,8 @@ const server = http.createServer(async (req, res) => {
         data: {
           farmer_id,
           cumulative_weight: cumulativeWeight,
-          month_start: monthStart,
-          month_end: monthEnd
+          month_start: periodStart,
+          month_end: periodEnd
         }
       });
     }
