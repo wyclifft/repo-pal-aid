@@ -2641,12 +2641,14 @@ const server = http.createServer(async (req, res) => {
       const monthEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
       
       // Single query: get cumulative weights for ALL farmers at once
+      // Uses TRIM() and CAST() to handle transactions posted by external sources
+      // that may have whitespace or different type formatting
       const [rows] = await pool.query(
-        `SELECT memberno as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
+        `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
-         WHERE ccode = ? AND Transtype = 1
-         AND transdate >= ? AND transdate <= ?
-         GROUP BY memberno`,
+         WHERE TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
+         AND CAST(transdate AS DATE) >= ? AND CAST(transdate AS DATE) <= ?
+         GROUP BY TRIM(memberno)`,
         [ccode, monthStart, monthEnd]
       );
       
@@ -2705,11 +2707,12 @@ const server = http.createServer(async (req, res) => {
       const monthEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
       
       // Sum total weight for this farmer in the current month
+      // Uses TRIM() and CAST() to handle transactions posted by external sources
       const [sumRows] = await pool.query(
         `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
-         WHERE memberno = ? AND ccode = ? AND Transtype = 1
-         AND transdate >= ? AND transdate <= ?`,
+         WHERE TRIM(memberno) = TRIM(?) AND TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
+         AND CAST(transdate AS DATE) >= ? AND CAST(transdate AS DATE) <= ?`,
         [farmer_id, ccode, monthStart, monthEnd]
       );
       
