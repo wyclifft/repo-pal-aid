@@ -2644,13 +2644,13 @@ const server = http.createServer(async (req, res) => {
       // instead of calendar month, so transactions from the entire season are included
       try {
         const [orgRows] = await pool.query(
-          `SELECT orgtype FROM fm_company WHERE ccode = ? LIMIT 1`, [ccode]
+          `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(ccode) = TRIM(?) LIMIT 1`, [ccode]
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
           const [seasonRows] = await pool.query(
             `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
-             FROM sessions WHERE ccode = ? AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
+             FROM sessions WHERE TRIM(ccode) = TRIM(?) AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
              ORDER BY datefrom DESC LIMIT 1`,
             [ccode, today, today]
           );
@@ -2658,6 +2658,8 @@ const server = http.createServer(async (req, res) => {
             periodStart = seasonRows[0].datefrom;
             periodEnd = seasonRows[0].dateto;
             console.log(`📊 Batch cumulative using season range: ${periodStart} to ${periodEnd}`);
+          } else {
+            console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);
           }
         }
       } catch (e) {
@@ -2732,13 +2734,13 @@ const server = http.createServer(async (req, res) => {
       // For coffee orgs, use active season date range instead of calendar month
       try {
         const [orgRows] = await pool.query(
-          `SELECT orgtype FROM fm_company WHERE ccode = ? LIMIT 1`, [ccode]
+          `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(ccode) = TRIM(?) LIMIT 1`, [ccode]
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
           const [seasonRows] = await pool.query(
             `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
-             FROM sessions WHERE ccode = ? AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
+             FROM sessions WHERE TRIM(ccode) = TRIM(?) AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
              ORDER BY datefrom DESC LIMIT 1`,
             [ccode, today, today]
           );
@@ -2746,6 +2748,8 @@ const server = http.createServer(async (req, res) => {
             periodStart = seasonRows[0].datefrom;
             periodEnd = seasonRows[0].dateto;
             console.log(`📊 Individual cumulative for ${farmer_id} using season range: ${periodStart} to ${periodEnd}`);
+          } else {
+            console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);
           }
         }
       } catch (e) {
