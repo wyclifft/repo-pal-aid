@@ -2673,7 +2673,7 @@ const server = http.createServer(async (req, res) => {
         `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
          WHERE TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) >= ? AND CAST(transdate AS DATE) <= ?
+         AND CAST(transdate AS DATE) BETWEEN ? AND ?
          GROUP BY TRIM(memberno)`,
         [ccode, periodStart, periodEnd]
       );
@@ -2762,7 +2762,7 @@ const server = http.createServer(async (req, res) => {
         `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
          WHERE TRIM(memberno) = TRIM(?) AND TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) >= ? AND CAST(transdate AS DATE) <= ?`,
+         AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
         [farmer_id, ccode, periodStart, periodEnd]
       );
       
