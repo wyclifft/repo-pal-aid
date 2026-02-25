@@ -59,14 +59,23 @@ export const FarmerSyncDashboard = () => {
     return farmers;
   }, [getFarmers]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (triggerSync = false) => {
     if (!isReady) return;
     cancelledRef.current = false;
     setIsLoading(true);
     setVisibleCount(PAGE_SIZE);
-    setProgressInfo({ current: 0, total: 0, status: 'Fetching farmers list...' });
+    setProgressInfo({ current: 0, total: 0, status: triggerSync ? 'Syncing offline receipts...' : 'Fetching farmers list...' });
 
     try {
+      // If triggerSync requested, dispatch syncStart to trigger background sync first
+      if (triggerSync && navigator.onLine) {
+        setProgressInfo({ current: 0, total: 0, status: 'Syncing offline receipts to server...' });
+        window.dispatchEvent(new CustomEvent('syncStart'));
+        // Wait briefly for sync to begin processing
+        await new Promise(r => setTimeout(r, 2000));
+        setProgressInfo({ current: 0, total: 0, status: 'Refreshing cumulative data from server...' });
+      }
+
       const [farmers, unsyncedReceipts] = await Promise.all([
         fetchFarmerList(),
         getUnsyncedReceipts(),
@@ -136,7 +145,7 @@ export const FarmerSyncDashboard = () => {
   }, [isReady, fetchFarmerList, getFarmerCumulative, getUnsyncedReceipts]);
 
   useEffect(() => {
-    loadData();
+    loadData(false);
 
     // Listen for background sync progress events
     const handleProgress = (e: any) => {
@@ -191,7 +200,7 @@ export const FarmerSyncDashboard = () => {
           <Button
             variant="outline"
             size="sm"
-            onClick={loadData}
+            onClick={() => loadData(true)}
             disabled={isLoading}
             className="gap-1"
           >
