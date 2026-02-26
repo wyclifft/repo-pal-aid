@@ -190,11 +190,26 @@ const Index = () => {
   }, [activeSession?.descript, clearBlacklist]);
 
   // Refresh cumulative cache after sync completes OR periodically to detect external DB changes
+  // Uses a concurrency guard to prevent overlapping refreshes that cause partial updates
   useEffect(() => {
     if (!deviceFingerprint || !showCumulative) return;
 
+    let refreshInProgress = false;
+    let pendingRefresh: string | null = null;
+
     const refreshCumulativesBatch = async (reason: string) => {
       if (!navigator.onLine) return;
+
+      // If a refresh is already running, queue this one (only keep latest)
+      if (refreshInProgress) {
+        console.log(`🔄 Cumulative refresh (${reason}): queued (another refresh in progress)`);
+        pendingRefresh = reason;
+        return;
+      }
+
+      refreshInProgress = true;
+      pendingRefresh = null;
+
       try {
         console.log(`🔄 Cumulative refresh (${reason}): using batch API...`);
         const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint);
@@ -212,8 +227,9 @@ const Index = () => {
             const qualifying = (deviceCcode ? response.data.filter(f => f.ccode === deviceCcode) : response.data)
               .filter(f => Number(f.currqty) === 1);
 
-            // Write updated cumulatives in batches
+            // Write ALL updated cumulatives atomically in batches — do not abort early
             const WRITE_BATCH = 50;
+            let written = 0;
             for (let i = 0; i < qualifying.length; i += WRITE_BATCH) {
               const batch = qualifying.slice(i, i + WRITE_BATCH);
               await Promise.all(batch.map(async (farmer) => {
@@ -221,11 +237,12 @@ const Index = () => {
                 const weight = batchMap.get(fId) ?? 0;
                 await updateFarmerCumulative(fId, weight, true);
               }));
+              written += batch.length;
               if (i + WRITE_BATCH < qualifying.length) {
                 await new Promise(r => setTimeout(r, 0));
               }
             }
-            console.log(`✅ Cumulative refresh (${reason}): ${qualifying.length} farmers updated`);
+            console.log(`✅ Cumulative refresh (${reason}): ${written}/${qualifying.length} farmers updated completely`);
           }
         }
 
@@ -239,16 +256,25 @@ const Index = () => {
         }
       } catch (err) {
         console.warn(`Cumulative refresh (${reason}) failed:`, err);
+      } finally {
+        refreshInProgress = false;
+        // If another refresh was queued while we were running, execute it now
+        if (pendingRefresh) {
+          const nextReason = pendingRefresh;
+          pendingRefresh = null;
+          // Small delay to avoid rapid-fire API calls
+          setTimeout(() => refreshCumulativesBatch(nextReason), 500);
+        }
       }
     };
 
-    // On syncComplete: refresh to pick up newly synced records
-    const handleSyncComplete = () => refreshCumulativesBatch('post-sync');
+    // On syncComplete: refresh with a delay to let server commit all records
+    const handleSyncComplete = () => {
+      setTimeout(() => refreshCumulativesBatch('post-sync'), 3000);
+    };
     window.addEventListener('syncComplete', handleSyncComplete);
 
-    // On syncStart: refresh pre-sync state too
-    const handleSyncStart = () => refreshCumulativesBatch('pre-sync');
-    window.addEventListener('syncStart', handleSyncStart);
+    // On syncStart: no longer refresh pre-sync (wasteful + can conflict with post-sync)
 
     // Refresh when app returns to foreground (catches external transactions)
     const handleVisibility = () => {
@@ -267,7 +293,6 @@ const Index = () => {
 
     return () => {
       window.removeEventListener('syncComplete', handleSyncComplete);
-      window.removeEventListener('syncStart', handleSyncStart);
       document.removeEventListener('visibilitychange', handleVisibility);
       clearInterval(intervalId);
     };
