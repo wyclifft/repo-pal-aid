@@ -23,7 +23,7 @@ const BATCH_SIZE = 20;
 const PAGE_SIZE = 50;
 
 export const FarmerSyncDashboard = () => {
-  const { getFarmers, getFarmerCumulative, getUnsyncedReceipts, isReady } = useIndexedDB();
+  const { getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
   const [entries, setEntries] = useState<FarmerSyncEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -67,13 +67,38 @@ export const FarmerSyncDashboard = () => {
     setProgressInfo({ current: 0, total: 0, status: triggerSync ? 'Syncing offline receipts...' : 'Fetching farmers list...' });
 
     try {
-      // If triggerSync requested, dispatch syncStart to trigger background sync first
+      // If triggerSync requested, dispatch syncStart to trigger background sync first,
+      // then re-fetch cumulative totals from the server batch API
       if (triggerSync && navigator.onLine) {
         setProgressInfo({ current: 0, total: 0, status: 'Syncing offline receipts to server...' });
         window.dispatchEvent(new CustomEvent('syncStart'));
         // Wait briefly for sync to begin processing
         await new Promise(r => setTimeout(r, 2000));
-        setProgressInfo({ current: 0, total: 0, status: 'Refreshing cumulative data from server...' });
+
+        // Fetch fresh cumulative totals from server batch API and update IndexedDB
+        setProgressInfo({ current: 0, total: 0, status: 'Fetching cumulative totals from server...' });
+        const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
+        if (deviceFingerprint) {
+          try {
+            const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint);
+            if (batchResult.success && batchResult.data && batchResult.data.farmers) {
+              const batchFarmers = batchResult.data.farmers;
+              console.log(`[SyncDash] Batch API returned ${batchFarmers.length} cumulative records`);
+              // Write updated cumulatives to IndexedDB
+              const WRITE_BATCH = 50;
+              for (let i = 0; i < batchFarmers.length; i += WRITE_BATCH) {
+                const batch = batchFarmers.slice(i, i + WRITE_BATCH);
+                await Promise.all(batch.map(async (f) => {
+                  const fId = f.farmer_id.trim();
+                  await updateFarmerCumulative(fId, f.cumulative_weight, true);
+                }));
+              }
+            }
+          } catch (err) {
+            console.warn('[SyncDash] Batch cumulative refresh failed:', err);
+          }
+        }
+        setProgressInfo({ current: 0, total: 0, status: 'Refreshing cumulative data...' });
       }
 
       const [farmers, unsyncedReceipts] = await Promise.all([
