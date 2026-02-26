@@ -530,12 +530,6 @@ export const useDataSync = () => {
         }
       }
       
-      // After successful sync, trigger cumulative refresh once
-      if (syncedCount > 0 && navigator.onLine) {
-        console.log('[SYNC] Dispatching cumulativeRefreshNeeded after successful sync');
-        window.dispatchEvent(new CustomEvent('cumulativeRefreshNeeded'));
-      }
-
       return syncedCount > 0 || !hasAuthError;
     } catch (err) {
       console.error('Sync error:', err);
