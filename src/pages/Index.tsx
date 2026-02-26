@@ -246,15 +246,29 @@ const Index = () => {
     const handleSyncComplete = () => refreshCumulativesBatch('post-sync');
     window.addEventListener('syncComplete', handleSyncComplete);
 
-    // Periodic refresh every 10 minutes to detect external DB changes
+    // On syncStart: refresh pre-sync state too
+    const handleSyncStart = () => refreshCumulativesBatch('pre-sync');
+    window.addEventListener('syncStart', handleSyncStart);
+
+    // Refresh when app returns to foreground (catches external transactions)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine && !(window as any).__cumulativeSyncRunning) {
+        refreshCumulativesBatch('visibility');
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    // Periodic refresh every 3 minutes to detect external DB changes
     const intervalId = setInterval(() => {
       if (navigator.onLine && !(window as any).__cumulativeSyncRunning) {
         refreshCumulativesBatch('periodic');
       }
-    }, 10 * 60 * 1000);
+    }, 3 * 60 * 1000);
 
     return () => {
       window.removeEventListener('syncComplete', handleSyncComplete);
+      window.removeEventListener('syncStart', handleSyncStart);
+      document.removeEventListener('visibilitychange', handleVisibility);
       clearInterval(intervalId);
     };
   }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers, getFarmerCumulative]);
