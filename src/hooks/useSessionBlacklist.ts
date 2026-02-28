@@ -79,24 +79,19 @@ export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
         try {
           const deviceFingerprint = await generateDeviceFingerprint();
           
-          // Check each multOpt=0 farmer for existing deliveries
-          for (const farmerId of farmersWithMultOptZero) {
-            if (blacklist.has(farmerId)) continue; // Already blacklisted
-            
-            try {
-              const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-                farmerId,
-                sessionType,
-                today,
-                today,
-                deviceFingerprint
-              );
-              if (existing) {
-                blacklist.add(farmerId);
-              }
-            } catch (e) {
-              // Individual check failed, skip
-            }
+          // Batch check multOpt=0 farmers with concurrency limit
+          const unchecked = Array.from(farmersWithMultOptZero).filter(id => !blacklist.has(id));
+          const CONCURRENCY = 5;
+          for (let i = 0; i < unchecked.length; i += CONCURRENCY) {
+            const batch = unchecked.slice(i, i + CONCURRENCY);
+            const results = await Promise.allSettled(
+              batch.map(async (fId) => {
+                const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
+                  fId, sessionType, today, today, deviceFingerprint
+                );
+                if (existing) blacklist.add(fId);
+              })
+            );
           }
         } catch (e) {
           console.warn('Online blacklist check failed:', e);

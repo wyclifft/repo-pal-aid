@@ -9,6 +9,7 @@ import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { SessionExpiredDialog } from '@/components/SessionExpiredDialog';
 
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
+import { APP_VERSION } from '@/constants/appVersion';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionClose } from '@/hooks/useSessionClose';
 import { useSessionExpiration } from '@/hooks/useSessionExpiration';
@@ -406,7 +407,7 @@ export const Dashboard = ({
             <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>AI</span>
           </button>
 
-          <button onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.5')} className="flex flex-col items-center active:scale-95 transition-transform">
+          <button onClick={() => toast.info(`MADDA SYSTEMS LTD - Milk Collection App v${APP_VERSION}`)} className="flex flex-col items-center active:scale-95 transition-transform">
             <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
               <BarChart3 className="h-6 w-6 sm:h-7 sm:w-7 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>

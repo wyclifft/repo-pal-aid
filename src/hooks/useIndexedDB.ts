@@ -155,12 +155,8 @@ export const useIndexedDB = () => {
       console.warn('[DB] IndexedDB upgrade blocked - close other tabs');
     };
 
-    return () => {
-      if (dbInstance && db) {
-        dbInstance.close();
-        dbInstance = null;
-      }
-    };
+    // NOTE: No cleanup — dbInstance is a singleton shared across all components.
+    // Closing it here would break other components using useIndexedDB().
   };
   
   openDatabase();
@@ -375,27 +371,36 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
-  const saveSale = useCallback(async (sale: any) => {
-    if (!db) return;
+  const saveSale = useCallback((sale: any): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject(new Error('DB not ready'));
 
-    try {
-      const tx = db.transaction('receipts', 'readwrite');
-      const store = tx.objectStore('receipts');
-      
-      // Use receipts store for sales with a unique ID
-      const saleRecord = {
-        ...sale,
-        orderId: Date.now(),
-        type: 'sale',
-        synced: false,
-      };
-      
-      await store.put(saleRecord);
-      console.log('Sale saved to IndexedDB');
-    } catch (error) {
-      console.error('Failed to save sale to IndexedDB:', error);
-      throw error;
-    }
+      try {
+        const tx = db.transaction('receipts', 'readwrite');
+        const store = tx.objectStore('receipts');
+        
+        const saleRecord = {
+          ...sale,
+          orderId: Date.now(),
+          type: 'sale',
+          synced: false,
+        };
+        
+        const request = store.put(saleRecord);
+        request.onsuccess = () => {
+          console.log('Sale saved to IndexedDB');
+          resolve();
+        };
+        request.onerror = () => {
+          console.error('Failed to save sale to IndexedDB:', request.error);
+          reject(request.error);
+        };
+        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        console.error('Failed to save sale to IndexedDB:', error);
+        reject(error);
+      }
+    });
   }, [db]);
 
   const getUnsyncedSales = useCallback(async (): Promise<any[]> => {
@@ -468,16 +473,27 @@ export const useIndexedDB = () => {
   /**
    * Save Z Report data to IndexedDB
    */
-  const saveZReport = useCallback(async (date: string, data: any) => {
-    if (!db) return;
-    try {
-      const tx = db.transaction('z_reports', 'readwrite');
-      const store = tx.objectStore('z_reports');
-      await store.put({ date, data, timestamp: Date.now() });
-      console.log('Z Report cached successfully');
-    } catch (error) {
-      console.error('Failed to cache Z Report:', error);
-    }
+  const saveZReport = useCallback((date: string, data: any): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject(new Error('DB not ready'));
+      try {
+        const tx = db.transaction('z_reports', 'readwrite');
+        const store = tx.objectStore('z_reports');
+        const request = store.put({ date, data, timestamp: Date.now() });
+        request.onsuccess = () => {
+          console.log('Z Report cached successfully');
+          resolve();
+        };
+        request.onerror = () => {
+          console.error('Failed to cache Z Report:', request.error);
+          reject(request.error);
+        };
+        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        console.error('Failed to cache Z Report:', error);
+        reject(error);
+      }
+    });
   }, [db]);
 
   /**
@@ -502,16 +518,27 @@ export const useIndexedDB = () => {
   /**
    * Save Periodic Report data to IndexedDB
    */
-  const savePeriodicReport = useCallback(async (cacheKey: string, data: any) => {
-    if (!db) return;
-    try {
-      const tx = db.transaction('periodic_reports', 'readwrite');
-      const store = tx.objectStore('periodic_reports');
-      await store.put({ cacheKey, data, timestamp: Date.now() });
-      console.log('Periodic Report cached successfully');
-    } catch (error) {
-      console.error('Failed to cache Periodic Report:', error);
-    }
+  const savePeriodicReport = useCallback((cacheKey: string, data: any): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject(new Error('DB not ready'));
+      try {
+        const tx = db.transaction('periodic_reports', 'readwrite');
+        const store = tx.objectStore('periodic_reports');
+        const request = store.put({ cacheKey, data, timestamp: Date.now() });
+        request.onsuccess = () => {
+          console.log('Periodic Report cached successfully');
+          resolve();
+        };
+        request.onerror = () => {
+          console.error('Failed to cache Periodic Report:', request.error);
+          reject(request.error);
+        };
+        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        console.error('Failed to cache Periodic Report:', error);
+        reject(error);
+      }
+    });
   }, [db]);
 
   /**
