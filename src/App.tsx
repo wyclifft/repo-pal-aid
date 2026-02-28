@@ -260,9 +260,24 @@ const App = () => {
       // Don't set hasError for minor errors that won't crash the app
       if (event.error?.message?.includes('ChunkLoadError') || 
           event.error?.message?.includes('Loading chunk')) {
-        // Try to recover from chunk load errors by reloading
-        console.log('Chunk load error detected, will reload...');
-        setTimeout(() => window.location.reload(), 1000);
+        // Retry with a counter to prevent infinite reload loops
+        const CHUNK_RELOAD_KEY = 'chunk_reload_count';
+        const MAX_RETRIES = 3;
+        try {
+          const count = parseInt(sessionStorage.getItem(CHUNK_RELOAD_KEY) || '0', 10);
+          if (count < MAX_RETRIES) {
+            sessionStorage.setItem(CHUNK_RELOAD_KEY, String(count + 1));
+            console.log(`Chunk load error detected, reload attempt ${count + 1}/${MAX_RETRIES}...`);
+            setTimeout(() => window.location.reload(), 1000);
+          } else {
+            console.error('Chunk load error: max retries exceeded');
+            sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+            setHasError(true);
+          }
+        } catch (e) {
+          // sessionStorage unavailable, just reload once
+          setTimeout(() => window.location.reload(), 1000);
+        }
       }
     };
     

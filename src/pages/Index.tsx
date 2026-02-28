@@ -1412,11 +1412,7 @@ const Index = () => {
 
   // Show Dashboard first
   if (!showCollection) {
-  // Get capture mode from user's supervisor setting
   const captureMode = getCaptureMode(currentUser?.supervisor);
-  
-  // Debug logging for supervisor mode
-  console.log('📋 Dashboard - User supervisor value:', currentUser?.supervisor, '| Capture mode:', captureMode);
   
   return (
     <>
@@ -1454,9 +1450,6 @@ const Index = () => {
   // Get capture mode from supervisor setting
   const captureMode = getCaptureMode(currentUser?.supervisor);
   
-  // Debug logging for supervisor mode in collection view
-  console.log('📋 Collection View - User supervisor value:', currentUser?.supervisor, '| Capture mode:', captureMode);
-  
   // For multOpt=0: Allow unlimited weight captures, only disable Submit after first successful submission
   const cleanFarmerIdForCheck = farmerId?.replace(/^#/, '').trim() || '';
   
@@ -1478,10 +1471,10 @@ const Index = () => {
 
   return (
     <>
-      {collectionMode === 'buy' ? (
+      {!activeSession ? null : collectionMode === 'buy' ? (
         <BuyProduceScreen
           route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
-          session={activeSession!}
+          session={activeSession}
           userName={currentUser?.username || currentUser?.user_id || 'User'}
           weight={weight}
           capturedCollections={capturedCollections}
@@ -1518,7 +1511,7 @@ const Index = () => {
       ) : (
         <SellProduceScreen
           route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
-          session={activeSession!}
+          session={activeSession}
           userName={currentUser?.username || currentUser?.user_id || 'User'}
           weight={weight}
           capturedCollections={capturedCollections}
