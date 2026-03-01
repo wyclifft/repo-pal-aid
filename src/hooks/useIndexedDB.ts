@@ -716,9 +716,11 @@ export const useIndexedDB = () => {
   const getFarmerCumulative = useCallback(async (farmerId: string): Promise<{ baseCount: number; localCount: number; month: string } | null> => {
     if (!db) return null;
     try {
+      // Normalize farmerId to prevent cache key mismatches across callers
+      const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const cacheKey = `${farmerId}_${month}`;
+      const cacheKey = `${cleanId}_${month}`;
       
       return new Promise((resolve, reject) => {
         const tx = db.transaction('farmer_cumulative', 'readonly');
@@ -755,9 +757,11 @@ export const useIndexedDB = () => {
   ): Promise<void> => {
     if (!db) return;
     try {
+      // Normalize farmerId to prevent cache key mismatches across callers
+      const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const cacheKey = `${farmerId}_${month}`;
+      const cacheKey = `${cleanId}_${month}`;
       
       return new Promise((resolve, reject) => {
         const tx = db.transaction('farmer_cumulative', 'readwrite');
@@ -773,7 +777,7 @@ export const useIndexedDB = () => {
             // Backend sync: update baseCount, reset localCount
             newRecord = {
               cacheKey,
-              farmer_id: farmerId,
+              farmer_id: cleanId,
               month,
               baseCount: count,
               localCount: 0,
@@ -783,7 +787,7 @@ export const useIndexedDB = () => {
             // Local collection: increment localCount
             newRecord = {
               cacheKey,
-              farmer_id: farmerId,
+              farmer_id: cleanId,
               month,
               baseCount: existing?.baseCount || 0,
               localCount: (existing?.localCount || 0) + count,
@@ -793,7 +797,7 @@ export const useIndexedDB = () => {
           
           const putRequest = store.put(newRecord);
           putRequest.onsuccess = () => {
-            console.log(`✅ Updated farmer cumulative: ${farmerId}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
+            console.log(`✅ Updated farmer cumulative: ${cleanId}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
             resolve();
           };
           putRequest.onerror = () => reject(putRequest.error);
@@ -816,6 +820,7 @@ export const useIndexedDB = () => {
       const now = new Date();
       const currentMonth = now.getMonth();
       const currentYear = now.getFullYear();
+      // Normalize farmerId consistently
       const cleanFarmerId = farmerId.replace(/^#/, '').trim().toUpperCase();
 
       let totalWeight = 0;

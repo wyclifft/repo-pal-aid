@@ -89,6 +89,7 @@ export const Dashboard = ({
   const [scaleConnected, setScaleConnected] = useState(() => isScaleConnected());
   const [printerConnected, setPrinterConnected] = useState(() => isPrinterConnected());
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [availableProductCount, setAvailableProductCount] = useState(0);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
   const { sessionPrintOnly, periodLabel } = useAppSettings();
   
@@ -188,6 +189,7 @@ export const Dashboard = ({
     setSelectedRoute(route);
     // Clear product when route changes (will auto-select if only one)
     setSelectedProduct(null);
+    setAvailableProductCount(0); // Reset until ProductSelector reloads
   };
 
   const handleSessionChange = (session: Session | null) => {
@@ -199,6 +201,10 @@ export const Dashboard = ({
   const handleProductChange = (product: Item | null) => {
     setSelectedProduct(product);
   };
+
+  const handleProductsLoaded = useCallback((count: number) => {
+    setAvailableProductCount(count);
+  }, []);
 
   const handleNewSession = () => {
     if (selectedRoute && selectedSession) {
@@ -539,6 +545,7 @@ export const Dashboard = ({
                     onProductChange={handleProductChange}
                     routeCode={selectedRoute.tcode}
                     disabled={false}
+                    onProductsLoaded={handleProductsLoaded}
                   />
                 </div>
               )}
@@ -547,7 +554,7 @@ export const Dashboard = ({
               <div className="flex justify-center pt-1">
                 <button
                   onClick={handleNewSession}
-                  disabled={!selectedRoute || !selectedSession}
+                  disabled={!selectedRoute || !selectedSession || (availableProductCount > 1 && !selectedProduct)}
                   className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md min-h-[2.75rem]"
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
