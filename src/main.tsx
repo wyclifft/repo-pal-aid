@@ -38,7 +38,11 @@ createRoot(document.getElementById("root")!).render(
 // Use multiple checks for reliable Capacitor detection (bridge may not be ready immediately)
 const isCapacitorApp = (): boolean => {
   try {
-    // Check for Capacitor global object
+    // Reliable native detection even before Capacitor bridge is fully ready
+    if (window.location.hostname === 'app' || window.location.protocol === 'capacitor:') {
+      return true;
+    }
+
     const capGlobal = (window as any).Capacitor;
     if (!capGlobal) return false;
     
@@ -150,6 +154,26 @@ if ('serviceWorker' in navigator && !isCapacitor) {
   });
 } else if (isCapacitor) {
   console.log('📱 Capacitor native app - skipping Service Worker registration');
+
+  // Safety: remove any previously registered web service workers on native startup
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.getRegistrations()
+        .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+        .then(() => console.log('🧹 Cleared legacy Service Workers on native app startup'))
+        .catch(() => {});
+    });
+  }
+
+  // Safety: clear browser caches that may trap old offline responses
+  if ('caches' in window) {
+    window.addEventListener('load', () => {
+      caches.keys()
+        .then((cacheNames) => Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName))))
+        .then(() => console.log('🧹 Cleared legacy web caches on native app startup'))
+        .catch(() => {});
+    });
+  }
 }
 
 // Handle online/offline status

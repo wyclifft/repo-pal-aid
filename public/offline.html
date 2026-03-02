@@ -28,9 +28,69 @@
     <h1>You're Offline</h1>
     <p>Your data is safely stored. Connect to sync your latest collections.</p>
     <div class="status"><span class="status-dot"></span><span>Waiting for connection...</span></div>
-    <button class="btn" onclick="location.reload()">Try Again</button>
+    <button class="btn">Try Again</button>
     <p class="info">Data will automatically sync when you're back online.</p>
   </div>
-  <script>window.addEventListener('online',()=>location.reload());setInterval(()=>{if(navigator.onLine)location.reload()},5000)</script>
+  <script>
+    (function () {
+      var isCapacitorHost = location.hostname === 'app' || location.protocol === 'capacitor:';
+
+      function openApp() {
+        location.replace('/index.html');
+      }
+
+      function cleanupServiceWorkers() {
+        if (!('serviceWorker' in navigator)) return Promise.resolve();
+        return navigator.serviceWorker.getRegistrations()
+          .then(function (registrations) {
+            return Promise.all(registrations.map(function (registration) {
+              return registration.unregister();
+            }));
+          })
+          .catch(function () {
+            return Promise.resolve();
+          });
+      }
+
+      function cleanupCaches() {
+        if (!('caches' in window)) return Promise.resolve();
+        return caches.keys()
+          .then(function (cacheNames) {
+            return Promise.all(cacheNames.map(function (cacheName) {
+              return caches.delete(cacheName);
+            }));
+          })
+          .catch(function () {
+            return Promise.resolve();
+          });
+      }
+
+      function tryRecover() {
+        if (isCapacitorHost) {
+          cleanupServiceWorkers()
+            .then(function () { return cleanupCaches(); })
+            .then(openApp)
+            .catch(openApp);
+          return;
+        }
+
+        if (navigator.onLine) {
+          location.reload();
+        }
+      }
+
+      var button = document.querySelector('.btn');
+      if (button) {
+        button.addEventListener('click', function (event) {
+          event.preventDefault();
+          tryRecover();
+        });
+      }
+
+      window.addEventListener('online', tryRecover);
+      setTimeout(tryRecover, 1200);
+      setInterval(tryRecover, 5000);
+    })();
+  </script>
 </body>
 </html>

@@ -9,7 +9,7 @@ const config: CapacitorConfig = {
   
   // Android configuration
   android: {
-    minWebViewVersion: 55,
+    minWebViewVersion: 51, // Android 7 POS compatibility (Chrome/WebView 51)
     allowMixedContent: false, // Disabled for production security
     captureInput: true,
     backgroundColor: '#1a1a2e',
