@@ -125,11 +125,19 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     
-    <!-- Register SW early for faster caching -->
+    <!-- Register SW early for faster caching (web only) -->
     <script>
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        window.addEventListener('load', function () {
+          var cap = window.Capacitor;
+          var isNativeApp =
+            window.location.hostname === 'app' ||
+            window.location.protocol === 'capacitor:' ||
+            !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
+
+          if (!isNativeApp) {
+            navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+          }
         });
       }
     </script>
