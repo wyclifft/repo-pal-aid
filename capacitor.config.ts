@@ -39,7 +39,7 @@ const config: CapacitorConfig = {
     iosScheme: 'capacitor',
     hostname: 'app',
     // Error handling
-    errorPath: '/offline.html',
+    errorPath: 'offline.html',
   },
   
   // Plugin configurations
