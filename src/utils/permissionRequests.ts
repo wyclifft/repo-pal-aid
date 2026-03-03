@@ -5,7 +5,17 @@
 
 import { Capacitor } from '@capacitor/core';
 import { toast } from 'sonner';
-import { requestClassicBluetoothPermissions } from '@/services/bluetoothClassic';
+
+// Lazy-load bluetoothClassic to prevent registerPlugin crash on Android 7 WebView
+const loadBluetoothClassic = async () => {
+  try {
+    const module = await import('@/services/bluetoothClassic');
+    return module;
+  } catch (error) {
+    console.warn('⚠️ Failed to load bluetoothClassic module:', error);
+    return null;
+  }
+};
 
 // Lazy load Capacitor Camera to avoid issues on web
 const loadCapacitorCamera = async () => {
@@ -32,7 +42,8 @@ export const requestAllPermissions = async (): Promise<{
   // Request Bluetooth permissions (native only)
   if (Capacitor.isNativePlatform()) {
     try {
-      results.bluetooth = await requestClassicBluetoothPermissions();
+      const btModule = await loadBluetoothClassic();
+      results.bluetooth = btModule ? await btModule.requestClassicBluetoothPermissions() : false;
       if (!results.bluetooth) {
         console.log('ℹ️ Bluetooth permissions not granted - scale features may be limited');
       }
@@ -91,7 +102,8 @@ export const requestBluetoothPermission = async (): Promise<boolean> => {
   }
 
   try {
-    const granted = await requestClassicBluetoothPermissions();
+    const btModule = await loadBluetoothClassic();
+    const granted = btModule ? await btModule.requestClassicBluetoothPermissions() : false;
     if (!granted) {
       toast.error('Bluetooth permission required to connect to scale');
       return false;
