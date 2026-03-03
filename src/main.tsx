@@ -7,7 +7,12 @@ import "./index.css";
 import "./utils/errorHandler";
 
 // Initialize native platform features FIRST (critical for device registration)
-initializeNativePlatform().catch(console.error);
+// Wrapped in try-catch to prevent module-level crashes (e.g. triggerEvent on Android 7)
+try {
+  initializeNativePlatform().catch((err) => console.warn('Native init failed:', err));
+} catch (err) {
+  console.warn('Native init module error:', err);
+}
 
 // Prevent zoom on double tap for native feel
 document.addEventListener('touchstart', (e) => {
