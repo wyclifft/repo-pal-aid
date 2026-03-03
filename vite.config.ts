@@ -12,14 +12,14 @@ export default defineConfig(({ mode }) => ({
     port: 8080,
   },
   plugins: [
-    legacy({
-      targets: ["chrome >= 51", "android >= 7"],
-      modernPolyfills: true,
-      renderLegacyChunks: true,
-    }),
-    react(),
-    mode === "development" && componentTagger(),
-  ].filter(Boolean),
+  react(),
+  legacy({
+    targets: ["chrome >= 51", "android >= 7"],
+    modernPolyfills: true,
+    renderLegacyChunks: true,
+  }),
+  mode === "development" && componentTagger(),
+].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
