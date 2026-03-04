@@ -909,7 +909,7 @@ export interface AuthUser {
   email?: string;
   ccode?: string;
   admin?: boolean;
-  supervisor?: boolean;
+  supervisor?: number;
   dcode?: string;
   groupid?: string;
   depart?: string;
