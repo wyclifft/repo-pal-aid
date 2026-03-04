@@ -71,14 +71,24 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           return;
         }
 
-        const userData = authResponse.data;
-        let needsRegistration = false;
+        const rawUserData = authResponse.data as Partial<AppUser> & Record<string, any>;
+        const normalizedUserId = String(rawUserData.user_id ?? rawUserData.userid ?? userId).trim();
+
+        if (!normalizedUserId) {
+          throw new Error('Authentication succeeded but user ID is missing in response');
+        }
+
+        const userData: AppUser = {
+          ...rawUserData,
+          user_id: normalizedUserId,
+        };
+
         let resolvedDeviceData = deviceData;
 
         // Process device data (already fetched in parallel)
         if (resolvedDeviceData && resolvedDeviceData.id) {
           // Device is registered - cache approval asynchronously (fire and forget)
-          saveDeviceApproval(deviceFingerprint, resolvedDeviceData.id, userId, resolvedDeviceData.approved).catch(() => {});
+          saveDeviceApproval(deviceFingerprint, resolvedDeviceData.id, normalizedUserId, resolvedDeviceData.approved).catch(() => {});
           
           if (!resolvedDeviceData.approved) {
             setDeviceStatus('pending');
@@ -92,10 +102,15 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           
           // Store device config asynchronously (fire and forget - don't block login)
           if (resolvedDeviceData.company_name && resolvedDeviceData.devcode) {
-            storeDeviceConfig(resolvedDeviceData.company_name, resolvedDeviceData.devcode);
+            storeDeviceConfig(resolvedDeviceData.company_name, resolvedDeviceData.devcode).catch(() => {});
           }
           if (resolvedDeviceData.devcode) {
-            localStorage.setItem('devcode', resolvedDeviceData.devcode);
+            try {
+              localStorage.setItem('devcode', resolvedDeviceData.devcode);
+            } catch (storageError) {
+              console.warn('[AUTH] Failed to cache devcode locally:', storageError);
+            }
+
             // Sync counters in background (fire and forget)
             const lastTrnId = resolvedDeviceData.trnid ? parseInt(String(resolvedDeviceData.trnid), 10) : undefined;
             const lastMilkId = resolvedDeviceData.milkid ? parseInt(String(resolvedDeviceData.milkid), 10) : undefined;
@@ -105,10 +120,9 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           }
           
           // Update last sync timestamp (fire and forget)
-          mysqlApi.devices.update(resolvedDeviceData.id, { user_id: userId }).catch(() => {});
+          mysqlApi.devices.update(resolvedDeviceData.id, { user_id: normalizedUserId }).catch(() => {});
         } else if (resolvedDeviceData && !resolvedDeviceData.id) {
           console.log('Device in devsettings but not approved_devices - needs registration');
-          needsRegistration = true;
           resolvedDeviceData = null;
         }
         
@@ -137,7 +151,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
               const registerResult = await Promise.race([
                 mysqlApi.devices.register({
                   device_fingerprint: deviceFingerprint,
-                  user_id: userId,
+                  user_id: normalizedUserId,
                   approved: false,
                   device_info: deviceName,
                 }),
@@ -147,7 +161,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
               if (registerResult && registerResult.id) {
                 console.log('Device registered with ID:', registerResult.id);
                 // Save approval in background
-                saveDeviceApproval(deviceFingerprint, registerResult.id, userId, false).catch(() => {});
+                saveDeviceApproval(deviceFingerprint, registerResult.id, normalizedUserId, false).catch(() => {});
                 setDeviceStatus('pending');
                 setCurrentDeviceId(deviceFingerprint);
                 toast.error('New device detected. Awaiting admin approval.');
@@ -170,25 +184,34 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         
         console.log('👤 Role assignment - admin:', userData.admin, 'isAdmin:', isAdmin, 'supervisor mode:', supervisorMode);
         
-        const userWithPassword: AppUser = { 
-          ...userData, 
+        const userWithPassword: AppUser = {
+          ...userData,
+          user_id: normalizedUserId,
+          username: userData.username || normalizedUserId,
           supervisor: supervisorMode,
           password,
           role: isAdmin ? 'admin' : 'user'
         };
         
         console.log('👤 Login successful - User data:', {
-          user_id: userData.user_id,
-          admin: userData.admin,
+          user_id: userWithPassword.user_id,
+          admin: userWithPassword.admin,
           supervisor: supervisorMode,
           role: userWithPassword.role
         });
-        
-        saveUser(userWithPassword);
+
+        // Do not block successful auth when local IndexedDB cache write fails
+        try {
+          saveUser(userWithPassword);
+        } catch (cacheError) {
+          console.warn('[AUTH] Failed to cache user in IndexedDB, continuing login:', cacheError);
+        }
+
         onLogin(userWithPassword, false, password); // Pass password to cache credentials
         toast.success('Login successful');
       } catch (err) {
-        console.error('Login error', err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error('Login error:', errorMessage, err);
         toast.error('Login failed. Check credentials.');
       }
     } else {
