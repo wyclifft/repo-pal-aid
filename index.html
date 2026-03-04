@@ -123,6 +123,25 @@
 
   <body>
     <div id="root"></div>
+    
+    <!-- Capacitor bridge shim: patch missing methods on Android 7 (Chrome 51) -->
+    <script>
+      (function() {
+        var c = window.Capacitor;
+        if (c) {
+          if (typeof c.triggerEvent !== 'function') {
+            c.triggerEvent = function() {};
+          }
+          if (typeof c.handleError !== 'function') {
+            c.handleError = function(e) { console.warn('Capacitor error:', e); };
+          }
+          if (typeof c.handleWindowError !== 'function') {
+            c.handleWindowError = function() { return false; };
+          }
+        }
+      })();
+    </script>
+    
     <script type="module" src="/src/main.tsx"></script>
     
     <!-- Register SW early for faster caching (web only) -->
