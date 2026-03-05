@@ -127,17 +127,53 @@
     <!-- Capacitor bridge shim: patch missing methods on Android 7 (Chrome 51) -->
     <script>
       (function() {
-        var c = window.Capacitor;
-        if (c) {
-          if (typeof c.triggerEvent !== 'function') {
-            c.triggerEvent = function() {};
+        function patchCapacitorBridge(cap) {
+          if (!cap) return false;
+
+          if (typeof cap.triggerEvent !== 'function') {
+            cap.triggerEvent = function() {};
           }
-          if (typeof c.handleError !== 'function') {
-            c.handleError = function(e) { console.warn('Capacitor error:', e); };
+          if (typeof cap.handleError !== 'function') {
+            cap.handleError = function(e) { console.warn('Capacitor error:', e); };
           }
-          if (typeof c.handleWindowError !== 'function') {
-            c.handleWindowError = function() { return false; };
+          if (typeof cap.handleWindowError !== 'function') {
+            cap.handleWindowError = function() { return false; };
           }
+
+          return true;
+        }
+
+        var currentCapacitor = window.Capacitor;
+
+        try {
+          Object.defineProperty(window, 'Capacitor', {
+            configurable: true,
+            enumerable: true,
+            get: function() {
+              return currentCapacitor;
+            },
+            set: function(value) {
+              currentCapacitor = value;
+              patchCapacitorBridge(currentCapacitor);
+            }
+          });
+
+          if (currentCapacitor) {
+            window.Capacitor = currentCapacitor;
+          }
+        } catch (e) {
+          // Fallback for environments where defineProperty is restricted
+          patchCapacitorBridge(currentCapacitor);
+        }
+
+        if (!patchCapacitorBridge(window.Capacitor)) {
+          var retries = 0;
+          var interval = setInterval(function() {
+            retries += 1;
+            if (patchCapacitorBridge(window.Capacitor) || retries > 80) {
+              clearInterval(interval);
+            }
+          }, 50);
         }
       })();
     </script>

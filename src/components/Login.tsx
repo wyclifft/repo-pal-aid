@@ -1,4 +1,4 @@
-import { useState, memo } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { Mail, Eye, EyeOff } from 'lucide-react';
 import { type AppUser } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
@@ -20,6 +20,48 @@ export const Login = memo(({ onLogin }: LoginProps) => {
   const [deviceStatus, setDeviceStatus] = useState<'pending' | 'approved' | null>(null);
   const [currentDeviceId, setCurrentDeviceId] = useState<string>('');
   const { isReady, saveUser, getUser, saveDeviceApproval, getDeviceApproval } = useIndexedDB();
+  const [deviceFingerprintPreview, setDeviceFingerprintPreview] = useState<string>('');
+
+  useEffect(() => {
+    let mounted = true;
+
+    const initializeFingerprint = async () => {
+      try {
+        const existing = getStoredDeviceId();
+        if (existing && mounted) {
+          setDeviceFingerprintPreview(existing);
+          return;
+        }
+
+        const fingerprint = await generateDeviceFingerprint();
+        if (!mounted) return;
+
+        setStoredDeviceId(fingerprint);
+        setDeviceFingerprintPreview(fingerprint);
+      } catch (error) {
+        console.error('Fingerprint initialization failed:', error);
+        if (mounted) {
+          setDeviceFingerprintPreview('Unavailable');
+        }
+      }
+    };
+
+    const onFingerprintReady = (event: Event) => {
+      const custom = event as CustomEvent<{ fingerprint?: string }>;
+      const fp = custom?.detail?.fingerprint;
+      if (fp && mounted) {
+        setDeviceFingerprintPreview(fp);
+      }
+    };
+
+    window.addEventListener('deviceFingerprintReady', onFingerprintReady as EventListener);
+    initializeFingerprint();
+
+    return () => {
+      mounted = false;
+      window.removeEventListener('deviceFingerprintReady', onFingerprintReady as EventListener);
+    };
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,10 +81,18 @@ export const Login = memo(({ onLogin }: LoginProps) => {
     setLoading(true);
 
     // Get or generate device fingerprint
-    let deviceFingerprint = getStoredDeviceId();
-    if (!deviceFingerprint) {
-      deviceFingerprint = await generateDeviceFingerprint();
-      setStoredDeviceId(deviceFingerprint);
+    let deviceFingerprint = getStoredDeviceId() || deviceFingerprintPreview;
+    if (!deviceFingerprint || deviceFingerprint === 'Unavailable') {
+      try {
+        deviceFingerprint = await generateDeviceFingerprint();
+        setStoredDeviceId(deviceFingerprint);
+        setDeviceFingerprintPreview(deviceFingerprint);
+      } catch (fingerprintError) {
+        console.error('Fingerprint generation error:', fingerprintError);
+        toast.error('Device fingerprint failed. Please restart the app and try again.');
+        setLoading(false);
+        return;
+      }
     }
     
     console.log('Device fingerprint:', deviceFingerprint);
@@ -53,7 +103,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
     if (navigator.onLine) {
       try {
         // OPTIMIZED: Run auth and device check in PARALLEL with short timeout
-        const authPromise = mysqlApi.auth.login(userId, password);
+        const authPromise = mysqlApi.auth.login(userId, password, deviceFingerprint);
         const deviceCheckPromise = Promise.race([
           mysqlApi.devices.getByFingerprint(deviceFingerprint),
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)) // 2s timeout for device
@@ -372,6 +422,13 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           </div>
         )}
         
+        <div className="mb-2 p-2 bg-white/80 border border-gray-300 rounded text-xs text-gray-700 break-all">
+          <strong>Device Fingerprint:</strong>{' '}
+          {deviceFingerprintPreview && deviceFingerprintPreview !== 'Unavailable'
+            ? `${deviceFingerprintPreview.substring(0, 20)}...`
+            : deviceFingerprintPreview || 'Generating...'}
+        </div>
+
         <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
           {/* User ID Field */}
           <div className="relative">
