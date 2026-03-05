@@ -9,8 +9,16 @@ import "./utils/errorHandler";
 // Dynamic import to prevent module-level crashes from @capacitor/core on Android 7 WebView
 (async () => {
   try {
-    const { initializeNativePlatform } = await import("./utils/nativeInit");
+    const [{ initializeNativePlatform }, { generateDeviceFingerprint }] = await Promise.all([
+      import("./utils/nativeInit"),
+      import("./utils/deviceFingerprint"),
+    ]);
+
     await initializeNativePlatform();
+
+    // Ensure fingerprint exists immediately on startup (used by login/device auth)
+    const fingerprint = await generateDeviceFingerprint();
+    window.dispatchEvent(new CustomEvent('deviceFingerprintReady', { detail: { fingerprint } }));
   } catch (err) {
     console.warn('Native init failed:', err);
   }

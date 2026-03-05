@@ -3,9 +3,36 @@
  * Generate unique device fingerprints and parse device information
  */
 
-import { Capacitor } from '@capacitor/core';
-
 const DEVICE_ID_KEY = 'device_id';
+
+const getCapacitorContext = () => {
+  try {
+    const cap = (window as any)?.Capacitor;
+    const platform = cap?.getPlatform?.() || cap?.platform || 'web';
+    const isNative = typeof cap?.isNativePlatform === 'function'
+      ? cap.isNativePlatform()
+      : platform === 'android' || platform === 'ios';
+
+    return { isNative, platform };
+  } catch {
+    return { isNative: false, platform: 'web' };
+  }
+};
+
+const getNativeDeviceIdentifier = async (): Promise<string | null> => {
+  const { isNative } = getCapacitorContext();
+  if (!isNative) return null;
+
+  try {
+    const { Device } = await import('@capacitor/device');
+    const info = await Device.getId();
+    const identifier = typeof info?.identifier === 'string' ? info.identifier.trim() : '';
+    return identifier || null;
+  } catch (error) {
+    console.warn('Native device identifier unavailable, using fallback fingerprinting:', error);
+    return null;
+  }
+};
 
 /**
  * Simple hash function fallback for environments without crypto.subtle
@@ -33,65 +60,65 @@ const simpleHash = (str: string): string => {
 
 /**
  * Generate a unique device fingerprint
- * Uses SHA-256 when available, falls back to simple hash for Capacitor/WebView
+ * Uses native Device.getId() on Capacitor first, then SHA-256/browser fallback
  * IMPORTANT: Always returns the same fingerprint for a device by using localStorage
  */
 export const generateDeviceFingerprint = async (): Promise<string> => {
-  const isNative = Capacitor.isNativePlatform();
-  const platform = Capacitor.getPlatform();
-  
+  const { isNative, platform } = getCapacitorContext();
+
   // ALWAYS check stored ID first for consistency
   try {
     const storedId = localStorage.getItem(DEVICE_ID_KEY);
-    if (storedId && storedId.length >= 32) {
+    if (storedId && storedId.trim().length >= 16) {
       console.log('📱 Using stored device fingerprint:', storedId.substring(0, 16) + '...');
       return storedId;
     }
   } catch (e) {
     console.warn('📱 localStorage read failed:', e);
   }
-  
+
   console.log('📱 Generating NEW device fingerprint - platform:', platform, 'isNative:', isNative);
-  
-  // Generate new fingerprint only if no stored ID exists
+
+  // Native-first identifier for Capacitor Android/iOS
+  const nativeIdentifier = await getNativeDeviceIdentifier();
+
   let canvasData = '';
   try {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    
+
     if (ctx) {
       ctx.textBaseline = 'top';
       ctx.font = '14px Arial';
       ctx.fillText('Device fingerprint', 2, 2);
     }
-    
+
     canvasData = canvas.toDataURL();
   } catch (e) {
     console.warn('Canvas fingerprint failed:', e);
     canvasData = 'canvas-not-available';
   }
-  
-  // For native apps, include more device-specific info
+
   const fingerprint = {
+    nativeIdentifier,
     userAgent: navigator.userAgent,
     language: navigator.language,
     platform: navigator.platform || platform,
+    nativePlatform: platform,
+    isNative,
     screenResolution: `${screen.width}x${screen.height}`,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     canvasFingerprint: canvasData,
-    isNative: isNative,
-    nativePlatform: platform,
-    // Add random component for truly unique ID
-    randomSeed: Math.random().toString(36).substring(2, 15) + Date.now().toString(36),
-    // Native-specific: add extra entropy
-    timestamp: Date.now(),
     colorDepth: screen.colorDepth,
     pixelRatio: window.devicePixelRatio || 1,
+    // Add randomness ONLY when native identifier is unavailable
+    randomSeed: nativeIdentifier ? undefined : Math.random().toString(36).substring(2, 15),
+    createdAt: nativeIdentifier ? undefined : Date.now(),
   };
-  
+
   const fingerprintString = JSON.stringify(fingerprint);
-  let hashHex: string;
-  
+  let hashHex = '';
+
   // Try to use crypto.subtle, fall back to simple hash
   try {
     if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function') {
@@ -109,25 +136,20 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
     hashHex = simpleHash(fingerprintString);
     console.log('🔐 Used fallback hash for fingerprint');
   }
-  
-  // Store immediately for consistency - with retry for native platforms
+
+  // Safety fallback: guarantee a non-empty fingerprint
+  if (!hashHex || hashHex.length < 16) {
+    hashHex = simpleHash(`${nativeIdentifier || 'fallback'}|${navigator.userAgent}|${Date.now()}`);
+  }
+
+  // Store immediately for consistency
   try {
     localStorage.setItem(DEVICE_ID_KEY, hashHex);
     console.log('🔑 Generated and stored new device fingerprint:', hashHex.substring(0, 16) + '...');
-    
-    // Verify storage on native platforms
-    if (isNative) {
-      const verified = localStorage.getItem(DEVICE_ID_KEY);
-      if (verified !== hashHex) {
-        console.warn('⚠️ localStorage verification failed - fingerprint may not persist');
-      } else {
-        console.log('✅ [Native] Fingerprint storage verified');
-      }
-    }
   } catch (e) {
     console.error('❌ Failed to store fingerprint:', e);
   }
-  
+
   return hashHex;
 };
 
@@ -249,9 +271,26 @@ export const getDeviceInfo = () => {
 };
 
 export const getStoredDeviceId = (): string | null => {
-  return localStorage.getItem('device_id');
+  try {
+    const value = localStorage.getItem(DEVICE_ID_KEY);
+    if (!value) return null;
+
+    const normalized = value.trim();
+    if (!normalized || normalized === 'undefined' || normalized === 'null' || normalized.length < 16) {
+      return null;
+    }
+
+    return normalized;
+  } catch {
+    return null;
+  }
 };
 
 export const setStoredDeviceId = (deviceId: string): void => {
-  localStorage.setItem('device_id', deviceId);
+  if (!deviceId || !deviceId.trim()) return;
+  try {
+    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+  } catch (error) {
+    console.warn('Failed to persist device fingerprint:', error);
+  }
 };
