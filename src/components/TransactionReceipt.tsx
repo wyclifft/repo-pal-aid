@@ -35,6 +35,8 @@ export interface ReceiptData {
   memberRoute?: string;
   // Clerk/Collector info
   clerkName: string;
+  // Delivery tracking
+  deliveredBy?: string;
   // Date/Time
   transactionDate: Date;
   // Items/Collections
@@ -110,6 +112,7 @@ export const TransactionReceipt = ({
     memberName,
     memberRoute,
     clerkName,
+    deliveredBy,
     transactionDate,
     items,
     totalWeight,
@@ -560,6 +563,12 @@ export const TransactionReceipt = ({
               <span className="text-muted-foreground">Clerk Name</span>
               <span className="font-medium">{clerkName}</span>
             </div>
+            {deliveredBy && (transtype === 2 || transtype === 3) && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Delivered By</span>
+                <span className="font-medium">{deliveredBy}</span>
+              </div>
+            )}
             {session && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{periodLabel}</span>
@@ -674,7 +683,7 @@ export const createStoreReceiptData = (
     lineTotal: number;
   }>,
   memberInfo: { id: string; name: string; route?: string },
-  transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string },
+  transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string; deliveredBy?: string },
   companyName: string
 ): ReceiptData => {
   return {
@@ -686,6 +695,7 @@ export const createStoreReceiptData = (
     memberName: memberInfo.name,
     memberRoute: memberInfo.route,
     clerkName: transactionInfo.clerkName,
+    deliveredBy: transactionInfo.deliveredBy || 'owner',
     transactionDate: new Date(),
     items: cartItems.map(c => ({
       item_code: c.item.icode,
@@ -707,7 +717,7 @@ export const createAIReceiptData = (
     cowDetails?: CowDetails;
   }>,
   memberInfo: { id: string; name: string; route?: string },
-  transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string },
+  transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string; deliveredBy?: string },
   companyName: string
 ): ReceiptData => {
   return {
@@ -719,6 +729,7 @@ export const createAIReceiptData = (
     memberName: memberInfo.name,
     memberRoute: memberInfo.route,
     clerkName: transactionInfo.clerkName,
+    deliveredBy: transactionInfo.deliveredBy || 'owner',
     transactionDate: new Date(),
     items: cartItems.map(c => ({
       item_code: c.item.icode,
