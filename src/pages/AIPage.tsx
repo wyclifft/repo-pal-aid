@@ -666,6 +666,18 @@ const AIPage = () => {
           )}
         </div>
 
+        {/* Delivered By Input */}
+        <div className="bg-white rounded-lg p-4 shadow">
+          <label className="text-sm font-medium text-muted-foreground mb-1 block">Delivered By</label>
+          <input
+            type="text"
+            placeholder="Enter name (default: owner)"
+            value={deliveredBy}
+            onChange={(e) => setDeliveredBy(e.target.value)}
+            className="w-full px-3 py-2 border border-input rounded-md text-sm"
+          />
+        </div>
+
         {/* Total */}
         <div className="bg-white rounded-lg p-4 shadow">
           <div className="flex justify-between items-center">
