@@ -1,4 +1,4 @@
-import { useEffect, useState, memo } from 'react';
+import { useState, memo } from 'react';
 import { Mail, Eye, EyeOff } from 'lucide-react';
 import { type AppUser } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
@@ -20,48 +20,6 @@ export const Login = memo(({ onLogin }: LoginProps) => {
   const [deviceStatus, setDeviceStatus] = useState<'pending' | 'approved' | null>(null);
   const [currentDeviceId, setCurrentDeviceId] = useState<string>('');
   const { isReady, saveUser, getUser, saveDeviceApproval, getDeviceApproval } = useIndexedDB();
-  const [deviceFingerprintPreview, setDeviceFingerprintPreview] = useState<string>('');
-
-  useEffect(() => {
-    let mounted = true;
-
-    const initializeFingerprint = async () => {
-      try {
-        const existing = getStoredDeviceId();
-        if (existing && mounted) {
-          setDeviceFingerprintPreview(existing);
-          return;
-        }
-
-        const fingerprint = await generateDeviceFingerprint();
-        if (!mounted) return;
-
-        setStoredDeviceId(fingerprint);
-        setDeviceFingerprintPreview(fingerprint);
-      } catch (error) {
-        console.error('Fingerprint initialization failed:', error);
-        if (mounted) {
-          setDeviceFingerprintPreview('Unavailable');
-        }
-      }
-    };
-
-    const onFingerprintReady = (event: Event) => {
-      const custom = event as CustomEvent<{ fingerprint?: string }>;
-      const fp = custom?.detail?.fingerprint;
-      if (fp && mounted) {
-        setDeviceFingerprintPreview(fp);
-      }
-    };
-
-    window.addEventListener('deviceFingerprintReady', onFingerprintReady as EventListener);
-    initializeFingerprint();
-
-    return () => {
-      mounted = false;
-      window.removeEventListener('deviceFingerprintReady', onFingerprintReady as EventListener);
-    };
-  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,18 +39,10 @@ export const Login = memo(({ onLogin }: LoginProps) => {
     setLoading(true);
 
     // Get or generate device fingerprint
-    let deviceFingerprint = getStoredDeviceId() || deviceFingerprintPreview;
-    if (!deviceFingerprint || deviceFingerprint === 'Unavailable') {
-      try {
-        deviceFingerprint = await generateDeviceFingerprint();
-        setStoredDeviceId(deviceFingerprint);
-        setDeviceFingerprintPreview(deviceFingerprint);
-      } catch (fingerprintError) {
-        console.error('Fingerprint generation error:', fingerprintError);
-        toast.error('Device fingerprint failed. Please restart the app and try again.');
-        setLoading(false);
-        return;
-      }
+    let deviceFingerprint = getStoredDeviceId();
+    if (!deviceFingerprint) {
+      deviceFingerprint = await generateDeviceFingerprint();
+      setStoredDeviceId(deviceFingerprint);
     }
     
     console.log('Device fingerprint:', deviceFingerprint);
@@ -103,7 +53,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
     if (navigator.onLine) {
       try {
         // OPTIMIZED: Run auth and device check in PARALLEL with short timeout
-        const authPromise = mysqlApi.auth.login(userId, password, deviceFingerprint);
+        const authPromise = mysqlApi.auth.login(userId, password);
         const deviceCheckPromise = Promise.race([
           mysqlApi.devices.getByFingerprint(deviceFingerprint),
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)) // 2s timeout for device
@@ -121,24 +71,14 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           return;
         }
 
-        const rawUserData = authResponse.data as Partial<AppUser> & Record<string, any>;
-        const normalizedUserId = String(rawUserData.user_id ?? rawUserData.userid ?? userId).trim();
-
-        if (!normalizedUserId) {
-          throw new Error('Authentication succeeded but user ID is missing in response');
-        }
-
-        const userData: AppUser = {
-          ...rawUserData,
-          user_id: normalizedUserId,
-        };
-
+        const userData = authResponse.data;
+        let needsRegistration = false;
         let resolvedDeviceData = deviceData;
 
         // Process device data (already fetched in parallel)
         if (resolvedDeviceData && resolvedDeviceData.id) {
           // Device is registered - cache approval asynchronously (fire and forget)
-          saveDeviceApproval(deviceFingerprint, resolvedDeviceData.id, normalizedUserId, resolvedDeviceData.approved).catch(() => {});
+          saveDeviceApproval(deviceFingerprint, resolvedDeviceData.id, userId, resolvedDeviceData.approved).catch(() => {});
           
           if (!resolvedDeviceData.approved) {
             setDeviceStatus('pending');
@@ -152,15 +92,10 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           
           // Store device config asynchronously (fire and forget - don't block login)
           if (resolvedDeviceData.company_name && resolvedDeviceData.devcode) {
-            storeDeviceConfig(resolvedDeviceData.company_name, resolvedDeviceData.devcode).catch(() => {});
+            storeDeviceConfig(resolvedDeviceData.company_name, resolvedDeviceData.devcode);
           }
           if (resolvedDeviceData.devcode) {
-            try {
-              localStorage.setItem('devcode', resolvedDeviceData.devcode);
-            } catch (storageError) {
-              console.warn('[AUTH] Failed to cache devcode locally:', storageError);
-            }
-
+            localStorage.setItem('devcode', resolvedDeviceData.devcode);
             // Sync counters in background (fire and forget)
             const lastTrnId = resolvedDeviceData.trnid ? parseInt(String(resolvedDeviceData.trnid), 10) : undefined;
             const lastMilkId = resolvedDeviceData.milkid ? parseInt(String(resolvedDeviceData.milkid), 10) : undefined;
@@ -170,9 +105,10 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           }
           
           // Update last sync timestamp (fire and forget)
-          mysqlApi.devices.update(resolvedDeviceData.id, { user_id: normalizedUserId }).catch(() => {});
+          mysqlApi.devices.update(resolvedDeviceData.id, { user_id: userId }).catch(() => {});
         } else if (resolvedDeviceData && !resolvedDeviceData.id) {
           console.log('Device in devsettings but not approved_devices - needs registration');
+          needsRegistration = true;
           resolvedDeviceData = null;
         }
         
@@ -201,7 +137,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
               const registerResult = await Promise.race([
                 mysqlApi.devices.register({
                   device_fingerprint: deviceFingerprint,
-                  user_id: normalizedUserId,
+                  user_id: userId,
                   approved: false,
                   device_info: deviceName,
                 }),
@@ -211,7 +147,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
               if (registerResult && registerResult.id) {
                 console.log('Device registered with ID:', registerResult.id);
                 // Save approval in background
-                saveDeviceApproval(deviceFingerprint, registerResult.id, normalizedUserId, false).catch(() => {});
+                saveDeviceApproval(deviceFingerprint, registerResult.id, userId, false).catch(() => {});
                 setDeviceStatus('pending');
                 setCurrentDeviceId(deviceFingerprint);
                 toast.error('New device detected. Awaiting admin approval.');
@@ -234,34 +170,25 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         
         console.log('👤 Role assignment - admin:', userData.admin, 'isAdmin:', isAdmin, 'supervisor mode:', supervisorMode);
         
-        const userWithPassword: AppUser = {
-          ...userData,
-          user_id: normalizedUserId,
-          username: userData.username || normalizedUserId,
+        const userWithPassword: AppUser = { 
+          ...userData, 
           supervisor: supervisorMode,
           password,
           role: isAdmin ? 'admin' : 'user'
         };
         
         console.log('👤 Login successful - User data:', {
-          user_id: userWithPassword.user_id,
-          admin: userWithPassword.admin,
+          user_id: userData.user_id,
+          admin: userData.admin,
           supervisor: supervisorMode,
           role: userWithPassword.role
         });
-
-        // Do not block successful auth when local IndexedDB cache write fails
-        try {
-          saveUser(userWithPassword);
-        } catch (cacheError) {
-          console.warn('[AUTH] Failed to cache user in IndexedDB, continuing login:', cacheError);
-        }
-
+        
+        saveUser(userWithPassword);
         onLogin(userWithPassword, false, password); // Pass password to cache credentials
         toast.success('Login successful');
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        console.error('Login error:', errorMessage, err);
+        console.error('Login error', err);
         toast.error('Login failed. Check credentials.');
       }
     } else {
@@ -422,13 +349,6 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           </div>
         )}
         
-        <div className="mb-2 p-2 bg-white/80 border border-gray-300 rounded text-xs text-gray-700 break-all">
-          <strong>Device Fingerprint:</strong>{' '}
-          {deviceFingerprintPreview && deviceFingerprintPreview !== 'Unavailable'
-            ? `${deviceFingerprintPreview.substring(0, 20)}...`
-            : deviceFingerprintPreview || 'Generating...'}
-        </div>
-
         <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
           {/* User ID Field */}
           <div className="relative">

@@ -9,7 +9,7 @@ const config: CapacitorConfig = {
   
   // Android configuration
   android: {
-    minWebViewVersion: 51, // Android 7 POS compatibility (Chrome/WebView 51)
+    minWebViewVersion: 55,
     allowMixedContent: false, // Disabled for production security
     captureInput: true,
     backgroundColor: '#1a1a2e',
@@ -39,7 +39,7 @@ const config: CapacitorConfig = {
     iosScheme: 'capacitor',
     hostname: 'app',
     // Error handling
-    errorPath: 'offline.html',
+    errorPath: '/offline.html',
   },
   
   // Plugin configurations

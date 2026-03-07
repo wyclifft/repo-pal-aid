@@ -49,16 +49,11 @@ async function apiRequest<T>(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
-      mode: 'cors',
-      cache: 'no-store',
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        'X-App-Origin': appOrigin,
         ...options.headers,
       },
     });
@@ -914,7 +909,7 @@ export interface AuthUser {
   email?: string;
   ccode?: string;
   admin?: boolean;
-  supervisor?: number;
+  supervisor?: boolean;
   dcode?: string;
   groupid?: string;
   depart?: string;
@@ -924,15 +919,10 @@ export const authApi = {
   /**
    * Login with userid and password
    */
-  login: async (userid: string, password: string, deviceFingerprint?: string): Promise<ApiResponse<AuthUser>> => {
+  login: async (userid: string, password: string): Promise<ApiResponse<AuthUser>> => {
     return apiRequest<AuthUser>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({
-        userid,
-        password,
-        device_fingerprint: deviceFingerprint,
-        deviceFingerprint,
-      }),
+      body: JSON.stringify({ userid, password }),
     });
   },
 };

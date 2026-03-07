@@ -30,26 +30,15 @@ const parseBody = (req) => new Promise((resolve) => {
 
 // CORS
 // NOTE: Some Apache/Passenger setups strip or override wildcard CORS, so we
-// echo back the request Origin when present and explicitly allow Capacitor origins.
-const ALLOWED_CAPACITOR_ORIGINS = new Set([
-  'https://app',
-  'capacitor://localhost',
-  'http://localhost',
-  'http://localhost:8080',
-]);
-
+// echo back the request Origin when present.
 const getCorsHeaders = (origin) => {
-  const normalizedOrigin = typeof origin === 'string' ? origin.toLowerCase() : '';
-  const isHttpOrigin = normalizedOrigin.startsWith('http://') || normalizedOrigin.startsWith('https://');
-  const allowOrigin = origin && (ALLOWED_CAPACITOR_ORIGINS.has(normalizedOrigin) || isHttpOrigin)
-    ? origin
-    : '*';
+  const allowOrigin = origin || '*';
 
   return {
     'Access-Control-Allow-Origin': allowOrigin,
     'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-    'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, Origin, X-App-Origin, X-Device-Fingerprint',
+    'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, Origin',
     'Access-Control-Max-Age': '86400'
   };
 };
@@ -2793,15 +2782,9 @@ const server = http.createServer(async (req, res) => {
     // Authentication endpoints
     if (path === '/api/auth/login' && method === 'POST') {
       const body = await parseBody(req);
-      const { userid, password, device_fingerprint, deviceFingerprint } = body;
-      const loginFingerprint = (device_fingerprint || deviceFingerprint || '').toString().trim();
+      const { userid, password } = body;
       
-      console.log('🔐 Login attempt:', {
-        userid,
-        passwordLength: password?.length,
-        hasFingerprint: !!loginFingerprint,
-        fingerprintPreview: loginFingerprint ? `${loginFingerprint.slice(0, 12)}...` : null,
-      });
+      console.log('🔐 Login attempt:', { userid, passwordLength: password?.length });
       
       if (!userid || !password) {
         return sendJSON(res, { 

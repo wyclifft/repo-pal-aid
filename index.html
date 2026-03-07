@@ -36,8 +36,7 @@
     
     <!-- Preload critical fonts -->
     <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" as="style" />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'" />
-    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" /></noscript>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
     
     <!-- Critical CSS for instant paint -->
     <style>
@@ -46,9 +45,7 @@
         margin: 0;
         padding: 0;
         height: 100%;
-        height: 100vh;
         height: 100dvh;
-        max-height: 100vh;
         max-height: 100dvh;
         background: #f9fafb;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -123,76 +120,13 @@
 
   <body>
     <div id="root"></div>
-    
-    <!-- Capacitor bridge shim: patch missing methods on Android 7 (Chrome 51) -->
-    <script>
-      (function() {
-        function patchCapacitorBridge(cap) {
-          if (!cap) return false;
-
-          if (typeof cap.triggerEvent !== 'function') {
-            cap.triggerEvent = function() {};
-          }
-          if (typeof cap.handleError !== 'function') {
-            cap.handleError = function(e) { console.warn('Capacitor error:', e); };
-          }
-          if (typeof cap.handleWindowError !== 'function') {
-            cap.handleWindowError = function() { return false; };
-          }
-
-          return true;
-        }
-
-        var currentCapacitor = window.Capacitor;
-
-        try {
-          Object.defineProperty(window, 'Capacitor', {
-            configurable: true,
-            enumerable: true,
-            get: function() {
-              return currentCapacitor;
-            },
-            set: function(value) {
-              currentCapacitor = value;
-              patchCapacitorBridge(currentCapacitor);
-            }
-          });
-
-          if (currentCapacitor) {
-            window.Capacitor = currentCapacitor;
-          }
-        } catch (e) {
-          // Fallback for environments where defineProperty is restricted
-          patchCapacitorBridge(currentCapacitor);
-        }
-
-        if (!patchCapacitorBridge(window.Capacitor)) {
-          var retries = 0;
-          var interval = setInterval(function() {
-            retries += 1;
-            if (patchCapacitorBridge(window.Capacitor) || retries > 80) {
-              clearInterval(interval);
-            }
-          }, 50);
-        }
-      })();
-    </script>
-    
     <script type="module" src="/src/main.tsx"></script>
     
-    <!-- Register SW early for faster caching (web only) -->
+    <!-- Register SW early for faster caching -->
     <script>
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function () {
-          var cap = window.Capacitor;
-          var isNativeApp =
-            window.location.hostname === 'app' ||
-            window.location.protocol === 'capacitor:' ||
-            !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
-
-          if (!isNativeApp) {
-            navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
-          }
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' });
         });
       }
     </script>

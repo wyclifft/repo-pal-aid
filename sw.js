@@ -178,14 +178,6 @@ self.addEventListener('fetch', (event) => {
       return;
     }
 
-    // CRITICAL: On Capacitor (hostname 'app'), let the WebView serve local files directly
-    // Do NOT intercept navigation or local asset requests - they are served from the APK
-    if (url.hostname === 'app' || url.hostname === 'localhost') {
-      if (!url.hostname.includes('supabase.co') && !url.hostname.includes('2backend.maddasystems.co.ke')) {
-        return;
-      }
-    }
-
     // Network-first for Supabase API calls
     if (url.hostname.includes('supabase.co')) {
       event.respondWith(
