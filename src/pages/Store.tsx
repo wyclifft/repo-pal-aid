@@ -71,8 +71,14 @@ const Store = () => {
   // Photo audit viewer state
   const [showPhotoAudit, setShowPhotoAudit] = useState(false);
 
-  // Active session state for CAN column
+   // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
+
+  // Delivered by state
+  const [deliveredBy, setDeliveredBy] = useState('owner');
+
+  // clientFetch from route data (2=Store, 3=AI)
+  const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
 
   // Scale weight state
   const [weight, setWeight] = useState(0);
@@ -216,6 +222,13 @@ const Store = () => {
             
             const hasStoreEnabled = routes.some((route: { allowStore?: boolean }) => route.allowStore === true);
             setStoreEnabled(hasStoreEnabled);
+            
+            // Extract clientFetch from the first store-enabled route
+            const storeRoute = routes.find((route: { allowStore?: boolean; clientFetch?: number }) => route.allowStore === true);
+            if (storeRoute?.clientFetch) {
+              setClientFetch(storeRoute.clientFetch);
+              console.log('[Store] clientFetch from route:', storeRoute.clientFetch);
+            }
             
             if (!hasStoreEnabled) {
               setItems([]);
@@ -525,7 +538,7 @@ const Store = () => {
 
     try {
       // Generate ONE uploadrefno for the entire batch (like Buy milk)
-      const refs = await generateReferenceWithUploadRef('store');
+      const refs = await generateReferenceWithUploadRef('store', clientFetch);
       if (!refs) {
         toast.error('Failed to generate reference number');
         setSubmitting(false);
@@ -581,6 +594,7 @@ const Store = () => {
         device_fingerprint: deviceFingerprint,
         items: batchItems,
         season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
+        delivered_by: deliveredBy || 'owner',
         // Photo excluded - will upload in background after transaction
       };
 
@@ -617,6 +631,7 @@ const Store = () => {
             device_fingerprint: deviceFingerprint,
             photo: photoBase64, // Include photo for offline sync
             season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
+            delivered_by: deliveredBy || 'owner',
           };
           await saveSale(sale);
         }
