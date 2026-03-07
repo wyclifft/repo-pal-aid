@@ -72,6 +72,12 @@ const AIPage = () => {
   // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
 
+  // Delivered by state
+  const [deliveredBy, setDeliveredBy] = useState('owner');
+
+  // clientFetch from route data (3=AI)
+  const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
+
   const { getFarmers, getItems, isReady } = useIndexedDB();
   const { saveOfflineSale, syncPendingSales } = useSalesSync();
   const { addAIReceipt } = useReprint();
@@ -201,6 +207,13 @@ const AIPage = () => {
             const routes = data.data || [];
             const routesExist = data.success && routes.length > 0;
             setHasRoutes(routesExist);
+            
+            // Extract clientFetch from the first AI-enabled route
+            const aiRoute = routes.find((route: { allowAI?: boolean; clientFetch?: number }) => route.allowAI === true);
+            if (aiRoute?.clientFetch) {
+              setClientFetch(aiRoute.clientFetch);
+              console.log('[AI] clientFetch from route:', aiRoute.clientFetch);
+            }
             
             if (!routesExist) {
               setItems([]);
@@ -381,7 +394,7 @@ const AIPage = () => {
 
     try {
       // Generate AI transaction reference (transtype = 3 for AI)
-      const refs = await generateReferenceWithUploadRef('ai');
+      const refs = await generateReferenceWithUploadRef('ai', clientFetch);
       if (!refs) {
         toast.error('Failed to generate reference number');
         setSubmitting(false);
@@ -405,6 +418,7 @@ const AIPage = () => {
           sold_by: clerkName, // Display name for DB clerk column
           device_fingerprint: deviceFingerprint,
           season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
+          delivered_by: deliveredBy || 'owner',
           // Cow details for AI
           cow_name: cartItem.cowDetails?.cowName || '',
           cow_breed: cartItem.cowDetails?.cowBreed || '',
@@ -427,7 +441,7 @@ const AIPage = () => {
       const receipt = createAIReceiptData(
         cart,
         { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
-        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName: clerkName },
+        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName, deliveredBy: deliveredBy || 'owner' },
         companyName
       );
       setReceiptData(receipt);
