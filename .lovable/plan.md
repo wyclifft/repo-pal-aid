@@ -1,121 +1,76 @@
-# App Bug Audit and Improvement Plan
 
-## Critical Bugs Found
 
-### 1. Hardcoded stale version in Dashboard "About" button
+# Transaction Reference, Delivery Tracking, and Z-Report Improvements
 
-**File:** `src/components/Dashboard.tsx` (line 409)
-The About button shows `"Milk Collection App v1.5"` -- this is hardcoded and out of date (actual version is 2.5). Should read the version dynamically from `build.gradle` or a shared constant.
+## 1. Uploadrefno Prefix Change for Store/AI
 
-**Fix:** Create a shared `APP_VERSION` constant and use it in both Dashboard and `build.gradle`.
+**Current**: `generateFormattedUploadRef('store')` produces `BA0100000002` (devcode + padded storeId).
 
-### 2. Memory leak: IndexedDB cleanup closes shared singleton
+**Requested**: Insert `clientFetch` digit into the prefix:
+- Store (clientFetch=2): `BA0120000002` — devcode + "2" + padded storeId
+- AI (clientFetch=3): `BA0130000002` — devcode + "3" + padded aiId
 
-**File:** `src/hooks/useIndexedDB.ts` (lines 158-163)
-The `useEffect` cleanup calls `dbInstance.close()` and nullifies the singleton. Since multiple components use `useIndexedDB()`, unmounting one component closes the DB for ALL other components, causing "InvalidStateError: database connection is closing" crashes.
+**Note**: Transtype=1 (milk/buy) remains unchanged.
 
-**Fix:** Remove the cleanup function entirely -- the `dbInstance` singleton should live for the app lifetime. Only close on full app teardown.
+### Files to modify:
+- **`src/utils/referenceGenerator.ts`** — Update `generateFormattedUploadRef` to accept an optional `clientFetch` parameter. When `transactionType` is `'store'` or `'ai'`, insert the clientFetch digit after devcode in the uploadrefno format. Transrefno generation stays the same.
+- **`src/pages/Store.tsx`** — Pass `clientFetch` (from route or stored setting) when calling `generateReferenceWithUploadRef('store', clientFetch)`.
+- **`src/pages/AIPage.tsx`** — Pass `clientFetch` when calling `generateReferenceWithUploadRef('ai', clientFetch)`.
+- **`src/hooks/useSalesSync.ts`** — Offline sync already uses stored `uploadrefno`, no changes needed there.
 
-### 3. `saveSale` uses `await store.put()` incorrectly
-
-**File:** `src/hooks/useIndexedDB.ts` (line 393)
-`store.put()` returns an `IDBRequest`, not a `Promise`. Using `await` on it won't actually wait for the operation to complete. The sale may silently fail without error handling.
-
-**Fix:** Wrap in a proper Promise like `saveReceipt` does.
-
-### 4. `useEffect` dependency array issue in `useAppSettings`
-
-**File:** `src/hooks/useAppSettings.ts` (line ~237)  
-The splash timeout `useEffect` in `App.tsx` (line 237) references `showSplash` in the callback but not in the dependency array, causing the timeout to potentially fire with a stale `showSplash` value.
-
-### 5. Excessive debug logging in production
-
-**File:** `src/pages/Index.tsx` (lines 1419, 1458)
-`console.log('📋 Dashboard - User supervisor value:...')` runs on EVERY render of the Index component (it's outside `useEffect`). Since `getCaptureMode` is called in the render body, this logs on every single re-render, flooding the console and slowing down the app.
-
-**Fix:** Move inside `useMemo` or remove.
-
-### 6. `useSessionBlacklist` makes N sequential API calls
-
-**File:** `src/hooks/useSessionBlacklist.ts` (lines 83-99)
-For each `multOpt=0` farmer, the code makes a sequential API call (`for...of` loop with `await`). With many farmers, this blocks the UI thread for seconds.
-
-**Fix:** Batch the API calls using `Promise.all` with a concurrency limit, or use a single batch endpoint.
+### How clientFetch reaches Store/AI pages:
+The Store and AI pages already load routes via `checkRoutesAndLoadItems()`. We'll extract `clientFetch` from the loaded route data and store it in component state for use during reference generation.
 
 ---
 
-## Potential Crash Causes
+## 2. DeliveredBy Field
 
-### 7. Non-null assertion on `activeSession` when rendering collection screens
+Add a "Delivered By" input field to Store and AI transaction screens.
 
-**File:** `src/pages/Index.tsx` (lines 1484, 1521)
-`session={activeSession!}` uses non-null assertion. If `activeSession` is null (e.g., session expires between render cycles), this passes `null` to child components that don't guard against it, potentially causing crashes.
-
-**Fix:** Add a null guard: return to dashboard if `activeSession` is null.
-
-### 8. `saveZReport` and `savePeriodicReport` use `await store.put()` incorrectly
-
-**File:** `src/hooks/useIndexedDB.ts` (lines 476, 510)
-Same issue as `saveSale` -- `store.put()` returns `IDBRequest`, not a Promise.
-
-### 9. No error boundary around lazy-loaded pages
-
-**File:** `src/App.tsx` (lines 157-167)
-If a lazy-loaded page fails to load (chunk error), the `Suspense` fallback shows but no recovery mechanism exists beyond the global `ErrorBoundary`. The chunk error handler in line 261 tries to reload, but this creates an infinite reload loop if the chunk is persistently unavailable (e.g., new deployment with cache mismatch).
-
-**Fix:** Add retry logic with a max-attempt counter stored in `sessionStorage`.
+### Files to modify:
+- **`src/services/mysqlApi.ts`** — Add `delivered_by?: string` to `Sale` and `BatchSaleRequest` interfaces.
+- **`src/pages/Store.tsx`** — Add `deliveredBy` state, input field in UI, default to `"owner"`, include in batch request and offline save.
+- **`src/pages/AIPage.tsx`** — Same: add state, input field, default to `"owner"`, include in transaction data.
+- **`src/components/TransactionReceipt.tsx`** — Add `deliveredBy?: string` to `ReceiptData`, display "Delivered By: \<name\>" on receipt.
 
 ---
 
-## Improvements Needed
+## 3. Store Photo: Require Only 1 Image
 
-### 10. `useDataSync` `syncAllData` dependency array is incomplete
-
-**File:** `src/hooks/useDataSync.ts` (line 542)
-`syncAllData` depends on `syncOfflineReceipts` but the memo doesn't list it, which could lead to stale closures.
-
-### 11. `currentUser` accessed without null check in capture
-
-**File:** `src/pages/Index.tsx` (line 698)
-`getCaptureMode(currentUser?.supervisor)` is safe, but `currentUser?.user_id || 'unknown'` at line 793 could mean receipts get saved with `user_id: 'unknown'`, which would be hard to trace in the database.
-
-### 12. Dashboard renders inside conditional without early return
-
-**File:** `src/pages/Index.tsx` (lines 1414-1451)
-The `if (!showCollection)` block doesn't use `return` consistently -- the `return` is inside a block that's easy to accidentally break with future edits. The pattern `if (!showCollection) { ... return (...); }` is fragile.
+The current Store flow already captures exactly 1 photo (single `PhotoCapture` dialog). The flow is: tap SUBMIT → photo dialog opens → capture 1 photo → auto-submits. This is already correct — **no change needed** unless the user is seeing a different behavior. I'll verify the `PhotoCapture` component doesn't prompt twice.
 
 ---
 
-## Implementation Plan
+## 4. Z-Report: Separate Totals by Type and Individual Transactions
 
-### Phase 1: Critical Bug Fixes
+**Current behavior**: `DeviceZReportReceipt` groups by transtype (Buy/Sell/AI) and shows individual transaction rows with MNO, weight, time. Each transaction row is already separate.
 
-1. **Fix IndexedDB singleton cleanup** -- remove the `useEffect` cleanup that closes the shared `dbInstance` in `useIndexedDB.ts`
-2. **Fix `saveSale`/`saveZReport`/`savePeriodicReport**` -- wrap `store.put()` in proper Promises
-3. **Add null guard for `activeSession**` -- check before rendering collection screens in `Index.tsx`
-4. **Remove render-time console.log calls** -- move debug logging out of the render path in `Index.tsx`
+**Requested**: Ensure that if a farmer has multiple deliveries (e.g., 10kg coffee S0001 and 12kg coffee S0002), both appear as separate rows — not accumulated.
 
-### Phase 2: Stability Improvements
+The current Z-report already shows individual transactions. The backend query returns per-row data. I'll verify and ensure:
+- Each uploadrefno group shows separately (not merged by farmer)
+- Type subtotals are clearly labeled
 
-5. **Fix stale version string** -- create `APP_VERSION` constant, use in Dashboard About button
-6. **Add chunk load retry counter** -- prevent infinite reload loops in `App.tsx`
-7. **Batch blacklist API calls** -- use `Promise.all` with concurrency limit in `useSessionBlacklist.ts`
-8. `If no coffee/milk type is selected and there is one to be selected disable new session/season button`
-
-### Phase 3: Version Bump
-
-8. **Update version** to 2.6 (versionCode 17) in `android/app/build.gradle`
+### Files to verify/modify:
+- **`src/components/DeviceZReportReceipt.tsx`** — Already groups by transtype. Confirm individual rows are shown, not merged by farmer.
+- **`src/components/ZReportReceipt.tsx`** — The legacy Z-report may aggregate by farmer. Will check if it needs item-level breakdown.
 
 ---
 
-## Files to Modify
+## 5. Version Bump
 
+- **`android/app/build.gradle`** — Increment versionCode to 18, versionName to "2.7"
+- **`src/constants/appVersion.ts`** — Update to "2.7"
 
-| File                               | Changes                                                                                 |
-| ---------------------------------- | --------------------------------------------------------------------------------------- |
-| `src/hooks/useIndexedDB.ts`        | Remove singleton cleanup, fix `saveSale`/`saveZReport`/`savePeriodicReport`             |
-| `src/pages/Index.tsx`              | Add `activeSession` null guard, remove render-time logging, add shared version constant |
-| `src/components/Dashboard.tsx`     | Use dynamic version string                                                              |
-| `src/App.tsx`                      | Add chunk reload retry counter                                                          |
-| `src/hooks/useSessionBlacklist.ts` | Batch API calls                                                                         |
-| `android/app/build.gradle`         | Version bump to 2.6                                                                     |
+---
+
+## Implementation Order
+
+1. Update `referenceGenerator.ts` to support clientFetch-prefixed uploadrefno
+2. Add `deliveredBy` field to API interfaces
+3. Update Store.tsx (clientFetch prefix + deliveredBy UI + reference changes)
+4. Update AIPage.tsx (clientFetch prefix + deliveredBy UI + reference changes)
+5. Update TransactionReceipt to display "Delivered By"
+6. Verify Z-report shows separate transaction rows (no farmer merging)
+7. Version bump
+
