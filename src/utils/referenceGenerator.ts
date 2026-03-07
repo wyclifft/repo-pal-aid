@@ -470,7 +470,7 @@ export const getNextTypeId = async (transactionType: TransactionType): Promise<n
  * Generate formatted uploadrefno string (devcode + 8-digit padded ID)
  * Example: BA0500000031 for device BA05 with milkId 31
  */
-export const generateFormattedUploadRef = async (transactionType: TransactionType): Promise<string | null> => {
+export const generateFormattedUploadRef = async (transactionType: TransactionType, clientFetch?: number): Promise<string | null> => {
   const devcode = localStorage.getItem('devcode');
   if (!devcode) {
     const config = await getDeviceConfig();
@@ -482,9 +482,17 @@ export const generateFormattedUploadRef = async (transactionType: TransactionTyp
   
   const nextId = await getNextTypeId(transactionType);
   const code = devcode || (await getDeviceConfig())?.devcode || '';
-  const formatted = `${code}${String(nextId).padStart(8, '0')}`;
   
-  console.log(`⚡ Formatted uploadrefno: ${formatted} (${transactionType}Id: ${nextId})`);
+  // For store/ai transactions, insert clientFetch digit after devcode
+  // e.g. BA05 + clientFetch=2 + padded id → BA0120000002
+  let formatted: string;
+  if ((transactionType === 'store' || transactionType === 'ai') && clientFetch) {
+    formatted = `${code}${clientFetch}${String(nextId).padStart(7, '0')}`;
+  } else {
+    formatted = `${code}${String(nextId).padStart(8, '0')}`;
+  }
+  
+  console.log(`⚡ Formatted uploadrefno: ${formatted} (${transactionType}Id: ${nextId}, clientFetch: ${clientFetch || 'none'})`);
   return formatted;
 };
 
@@ -511,14 +519,14 @@ export const getCurrentTypeId = async (transactionType: TransactionType): Promis
  * Generate transaction reference with type-specific uploadrefno
  * Returns both transrefno (devcode + trnid) and uploadrefno (formatted string: devcode + typeId)
  */
-export const generateReferenceWithUploadRef = async (transactionType: TransactionType): Promise<{
+export const generateReferenceWithUploadRef = async (transactionType: TransactionType, clientFetch?: number): Promise<{
   transrefno: string;
   uploadrefno: string;
 } | null> => {
   const transrefno = await generateOfflineReference();
   if (!transrefno) return null;
   
-  const uploadrefno = await generateFormattedUploadRef(transactionType);
+  const uploadrefno = await generateFormattedUploadRef(transactionType, clientFetch);
   if (!uploadrefno) return null;
   
   console.log(`⚡ Generated: transrefno=${transrefno}, uploadrefno=${uploadrefno} (type=${transactionType})`);
