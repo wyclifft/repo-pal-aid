@@ -713,7 +713,7 @@ export const useIndexedDB = () => {
    * - baseCount: last known count from backend
    * - localCount: collections added locally since last sync
    */
-  const getFarmerCumulative = useCallback(async (farmerId: string): Promise<{ baseCount: number; localCount: number; month: string } | null> => {
+  const getFarmerCumulative = useCallback(async (farmerId: string): Promise<{ baseCount: number; localCount: number; month: string; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | null> => {
     if (!db) return null;
     try {
       // Normalize farmerId to prevent cache key mismatches across callers
@@ -816,8 +816,8 @@ export const useIndexedDB = () => {
    * Calculate cumulative weight from unsynced receipts in IndexedDB for a farmer in the current month.
    * This ensures offline cumulative is accurate even if the farmer_cumulative cache was never seeded.
    */
-  const getUnsyncedWeightForFarmer = useCallback(async (farmerId: string): Promise<number> => {
-    if (!db) return 0;
+  const getUnsyncedWeightForFarmer = useCallback(async (farmerId: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
+    if (!db) return { total: 0, byProduct: [] };
     try {
       const unsynced = await getUnsyncedReceipts();
       const now = new Date();
@@ -838,7 +838,7 @@ export const useIndexedDB = () => {
         if (rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear) {
           totalWeight += r.weight || 0;
           // Track per-product weights
-          const icode = (r.product_code || r.icode || '').trim();
+          const icode = (r.product_code || '').trim();
           if (icode) {
             if (!productWeights[icode]) {
               productWeights[icode] = { icode, product_name: r.product_name || icode, weight: 0 };
@@ -850,7 +850,7 @@ export const useIndexedDB = () => {
       return { total: totalWeight, byProduct: Object.values(productWeights) };
     } catch (err) {
       console.warn('Failed to get unsynced weight for farmer:', err);
-      return 0;
+      return { total: 0, byProduct: [] };
     }
   }, [db, getUnsyncedReceipts]);
 
