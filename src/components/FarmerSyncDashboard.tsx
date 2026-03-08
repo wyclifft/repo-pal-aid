@@ -109,25 +109,10 @@ export const FarmerSyncDashboard = () => {
       setUnsyncedCount(unsyncedReceipts.filter((r: any) => r.orderId !== 'PRINTED_RECEIPTS').length);
 
       const deviceCcode = localStorage.getItem('device_ccode') || '';
-      // Read selected route from active session data
-      let selectedRouteTcode = '';
-      try {
-        const sessionData = localStorage.getItem('active_session_data');
-        if (sessionData) {
-          const parsed = JSON.parse(sessionData);
-          selectedRouteTcode = parsed?.route?.tcode || '';
-        }
-      } catch {}
-      
       // Only include farmers qualifying for cumulative sync (ccode match + currqty=1)
-      let filteredFarmers = deviceCcode
+      const filteredFarmers = deviceCcode
         ? farmers.filter((f: Farmer) => f.ccode === deviceCcode && Number(f.currqty) === 1)
         : farmers.filter((f: Farmer) => Number(f.currqty) === 1);
-      
-      // Filter by selected route if one is active
-      if (selectedRouteTcode) {
-        filteredFarmers = filteredFarmers.filter((f: Farmer) => f.route === selectedRouteTcode);
-      }
 
       const total = filteredFarmers.length;
       setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} qualifying farmers...` });
@@ -208,11 +193,6 @@ export const FarmerSyncDashboard = () => {
     : 0;
 
   const deviceCcode = localStorage.getItem('device_ccode') || '';
-  let activeRouteTcode = '';
-  try {
-    const sd = localStorage.getItem('active_session_data');
-    if (sd) activeRouteTcode = JSON.parse(sd)?.route?.tcode || '';
-  } catch {}
 
   const filtered = useMemo(() => {
     return searchQuery
