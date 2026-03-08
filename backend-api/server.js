@@ -2680,13 +2680,14 @@ const server = http.createServer(async (req, res) => {
       );
       
       const [productRows] = await pool.query(
-        `SELECT TRIM(memberno) as farmer_id, TRIM(icode) as icode, 
-                IFNULL(MAX(descript), TRIM(icode)) as product_name,
-                IFNULL(SUM(weight), 0) as weight 
-         FROM transactions 
-         WHERE TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?
-         GROUP BY TRIM(memberno), TRIM(icode)`,
+        `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
+                IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
+                IFNULL(SUM(t.weight), 0) as weight 
+         FROM transactions t
+         LEFT JOIN fm_items fi ON TRIM(fi.icode) = TRIM(t.icode) AND TRIM(fi.ccode) = TRIM(t.ccode)
+         WHERE TRIM(t.ccode) = TRIM(?) AND CAST(t.Transtype AS UNSIGNED) = 1
+         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+         GROUP BY TRIM(t.memberno), TRIM(t.icode)`,
         [ccode, periodStart, periodEnd]
       );
       
@@ -2791,13 +2792,14 @@ const server = http.createServer(async (req, res) => {
       
       // Per-product breakdown for this farmer
       const [productRows] = await pool.query(
-        `SELECT TRIM(icode) as icode, 
-                IFNULL(MAX(descript), TRIM(icode)) as product_name,
-                IFNULL(SUM(weight), 0) as weight 
-         FROM transactions 
-         WHERE TRIM(memberno) = TRIM(?) AND TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?
-         GROUP BY TRIM(icode)`,
+        `SELECT TRIM(t.icode) as icode, 
+                IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
+                IFNULL(SUM(t.weight), 0) as weight 
+         FROM transactions t
+         LEFT JOIN fm_items fi ON TRIM(fi.icode) = TRIM(t.icode) AND TRIM(fi.ccode) = TRIM(t.ccode)
+         WHERE TRIM(t.memberno) = TRIM(?) AND TRIM(t.ccode) = TRIM(?) AND CAST(t.Transtype AS UNSIGNED) = 1
+         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+         GROUP BY TRIM(t.icode)`,
         [farmer_id, ccode, periodStart, periodEnd]
       );
       
