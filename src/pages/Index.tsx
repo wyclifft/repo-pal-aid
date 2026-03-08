@@ -1223,6 +1223,9 @@ const Index = () => {
           clerkName: printData.clerkName,
           productName: printData.productName
         }).catch(err => console.warn('Background print failed:', err));
+        
+        // Save receipt for reprinting WITH the correct cumulative value
+        addMilkReceipt(printData.collections, cumulativeForPrint).catch(() => {});
       })();
     } else {
       // If not in collection view (shouldn't happen), fall back to modal
