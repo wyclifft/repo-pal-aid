@@ -1131,7 +1131,7 @@ const Index = () => {
       // When printCopies === 0, show receipt modal on screen without printing
       // Calculate cumulative BEFORE showing modal so it displays correctly
       if (printCopies === 0) {
-        let computedCumulative: number | undefined = cumulativeFrequency;
+        let computedCumulative: { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined = cumulativeFrequency;
         if (showCumulative && deviceFingerprint && capturedCollections.length > 0) {
           const firstCapture = capturedCollections[0];
           const cleanId = firstCapture.farmer_id.replace(/^#/, '').trim();
@@ -1143,28 +1143,34 @@ const Index = () => {
               ]);
               if (freqResult.success && freqResult.data) {
                 const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-                await updateFarmerCumulative(cleanId, cloudCumulative, true);
-                const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanId);
-                computedCumulative = cloudCumulative + unsyncedWeight;
+                const cloudByProduct = freqResult.data.by_product || [];
+                await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct);
+                const unsynced = await getUnsyncedWeightForFarmer(cleanId);
+                const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
+                for (const p of cloudByProduct) merged[p.icode] = { ...p };
+                for (const p of unsynced.byProduct) {
+                  if (merged[p.icode]) merged[p.icode].weight += p.weight;
+                  else merged[p.icode] = { ...p };
+                }
+                computedCumulative = { total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) };
               } else {
                 const total = await getFarmerTotalCumulative(cleanId);
-                computedCumulative = total > 0 ? total : undefined;
+                computedCumulative = total.total > 0 ? total : undefined;
               }
             } else {
-              // Offline: use cached baseCount + unsynced receipts
               const total = await getFarmerTotalCumulative(cleanId);
-              computedCumulative = total > 0 ? total : undefined;
+              computedCumulative = total.total > 0 ? total : undefined;
             }
           } catch {
             const total = await getFarmerTotalCumulative(cleanId);
-            computedCumulative = total > 0 ? total : undefined;
+            computedCumulative = total.total > 0 ? total : undefined;
           }
           setCumulativeFrequency(computedCumulative);
         }
         setIsSubmitting(false);
         setReceiptModalOpen(true);
         // Save receipt for reprinting with the COMPUTED cumulative value
-        addMilkReceipt(printData.collections, computedCumulative).catch(() => {});
+        addMilkReceipt(printData.collections, computedCumulative?.total).catch(() => {});
         window.dispatchEvent(new CustomEvent('syncComplete'));
         return;
       }
@@ -1191,7 +1197,7 @@ const Index = () => {
       // OPTIMIZED: Run printing and cumulative fetch AFTER UI is reset (non-blocking)
       // This allows user to immediately start next transaction while printing happens in background
       (async () => {
-        let cumulativeForPrint: number | undefined = undefined;
+        let cumulativeForPrint: { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined = undefined;
         
         // Calculate cumulative in background with very short timeout
         if (printData.shouldShowCumulativeForFarmer && deviceFingerprint) {
@@ -1201,26 +1207,28 @@ const Index = () => {
               const freqResult = await Promise.race([
                 mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint),
                 new Promise<{ success: false }>((resolve) => 
-                  setTimeout(() => resolve({ success: false }), 1500) // 1.5s timeout
+                  setTimeout(() => resolve({ success: false }), 1500)
                 )
               ]);
 
               if (freqResult.success && freqResult.data) {
                 const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-                // cloudCumulative covers online-submitted weights; unsyncedWeight covers offline-saved receipts
-                // Together they cover everything — no need to add currentCollectionWeight
-                const unsyncedWeight = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative);
-                cumulativeForPrint = cloudCumulative + unsyncedWeight;
+                const cloudByProduct = freqResult.data.by_product || [];
+                const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative);
+                const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
+                for (const p of cloudByProduct) merged[p.icode] = { ...p };
+                for (const p of unsynced.byProduct) {
+                  if (merged[p.icode]) merged[p.icode].weight += p.weight;
+                  else merged[p.icode] = { ...p };
+                }
+                cumulativeForPrint = { total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) };
                 // Update cache in background
-                updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true).catch(() => {});
+                updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct).catch(() => {});
               }
             }
             
             // Offline or cloud fetch failed: use baseCount + fresh unsynced receipts
             if (cumulativeForPrint === undefined) {
-              // getFarmerTotalCumulative = baseCount + unsyncedWeight from IndexedDB
-              // Offline-saved receipts are already in IndexedDB, so unsyncedWeight includes them
-              // Do NOT add currentCollectionWeight — that would double-count
               cumulativeForPrint = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
             }
           } catch {
@@ -1237,14 +1245,15 @@ const Index = () => {
           periodLabel: printData.periodLabel,
           locationCode: printData.locationCode,
           locationName: printData.locationName,
-          cumulativeFrequency: cumulativeForPrint,
+          cumulativeFrequency: cumulativeForPrint?.total,
+          cumulativeByProduct: cumulativeForPrint?.byProduct,
           showCumulativeFrequency: printData.shouldShowCumulativeForFarmer,
           clerkName: printData.clerkName,
           productName: printData.productName
         }).catch(err => console.warn('Background print failed:', err));
         
         // Save receipt for reprinting WITH the correct cumulative value
-        addMilkReceipt(printData.collections, cumulativeForPrint).catch(() => {});
+        addMilkReceipt(printData.collections, cumulativeForPrint?.total, cumulativeForPrint?.byProduct).catch(() => {});
       })();
     } else {
       // If not in collection view (shouldn't happen), fall back to modal
