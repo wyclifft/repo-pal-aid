@@ -2608,7 +2608,7 @@ const server = http.createServer(async (req, res) => {
     // ==================== BATCH CUMULATIVE ENDPOINT ====================
     // Returns cumulative weights for ALL farmers under a device's ccode in ONE query
     if (path === '/api/farmer-monthly-frequency-batch' && method === 'GET') {
-      const { uniquedevcode } = parsedUrl.query;
+      const { uniquedevcode, route } = parsedUrl.query;
       
       if (!uniquedevcode) {
         return sendJSON(res, { 
@@ -2670,14 +2670,20 @@ const server = http.createServer(async (req, res) => {
       }
       
       // Two queries: 1) per-farmer totals, 2) per-farmer per-product breakdown
+      const routeFilter = route ? ' AND TRIM(route) = TRIM(?)' : '';
+      const baseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
+      
       const [totalRows] = await pool.query(
         `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
          WHERE TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?
+         AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}
          GROUP BY TRIM(memberno)`,
-        [ccode, periodStart, periodEnd]
+        baseParams
       );
+      
+      const tRouteFilter = route ? ' AND TRIM(t.route) = TRIM(?)' : '';
+      const tBaseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
       
       const [productRows] = await pool.query(
         `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
@@ -2686,9 +2692,9 @@ const server = http.createServer(async (req, res) => {
          FROM transactions t
          LEFT JOIN fm_items fi ON TRIM(fi.icode) = TRIM(t.icode) AND TRIM(fi.ccode) = TRIM(t.ccode)
          WHERE TRIM(t.ccode) = TRIM(?) AND CAST(t.Transtype AS UNSIGNED) = 1
-         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${tRouteFilter}
          GROUP BY TRIM(t.memberno), TRIM(t.icode)`,
-        [ccode, periodStart, periodEnd]
+        tBaseParams
       );
       
       // Build per-farmer product map
@@ -2720,7 +2726,7 @@ const server = http.createServer(async (req, res) => {
     // Farmer monthly cumulative frequency endpoint
     // Returns the count of collections for a farmer in the current month
     if (path === '/api/farmer-monthly-frequency' && method === 'GET') {
-      const { farmer_id, uniquedevcode } = parsedUrl.query;
+      const { farmer_id, uniquedevcode, route } = parsedUrl.query;
       
       if (!farmer_id || !uniquedevcode) {
         return sendJSON(res, { 
@@ -2782,15 +2788,21 @@ const server = http.createServer(async (req, res) => {
       }
       
       // Total weight for this farmer
+      const indRouteFilter = route ? ' AND TRIM(route) = TRIM(?)' : '';
+      const indParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
+      
       const [sumRows] = await pool.query(
         `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
          WHERE TRIM(memberno) = TRIM(?) AND TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
-        [farmer_id, ccode, periodStart, periodEnd]
+         AND CAST(transdate AS DATE) BETWEEN ? AND ?${indRouteFilter}`,
+        indParams
       );
       
       // Per-product breakdown for this farmer
+      const indTRouteFilter = route ? ' AND TRIM(t.route) = TRIM(?)' : '';
+      const indTParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
+      
       const [productRows] = await pool.query(
         `SELECT TRIM(t.icode) as icode, 
                 IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
@@ -2798,9 +2810,9 @@ const server = http.createServer(async (req, res) => {
          FROM transactions t
          LEFT JOIN fm_items fi ON TRIM(fi.icode) = TRIM(t.icode) AND TRIM(fi.ccode) = TRIM(t.ccode)
          WHERE TRIM(t.memberno) = TRIM(?) AND TRIM(t.ccode) = TRIM(?) AND CAST(t.Transtype AS UNSIGNED) = 1
-         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${indTRouteFilter}
          GROUP BY TRIM(t.icode)`,
-        [farmer_id, ccode, periodStart, periodEnd]
+        indTParams
       );
       
       const cumulativeWeight = sumRows.length > 0 ? parseFloat(sumRows[0].cumulative_weight) || 0 : 0;
