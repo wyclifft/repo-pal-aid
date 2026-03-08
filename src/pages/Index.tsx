@@ -1147,6 +1147,8 @@ const Index = () => {
         }
         setIsSubmitting(false);
         setReceiptModalOpen(true);
+        // Save receipt for reprinting (printCopies=0 path)
+        addMilkReceipt(printData.collections, cumulativeFrequency).catch(() => {});
         window.dispatchEvent(new CustomEvent('syncComplete'));
         return;
       }
