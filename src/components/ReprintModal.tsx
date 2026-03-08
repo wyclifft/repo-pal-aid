@@ -36,6 +36,8 @@ export interface PrintedReceipt {
   clerkName?: string;
   memberRoute?: string;
   transactionDate?: Date;
+  // Cumulative weight for milk/coffee receipts
+  cumulativeWeight?: number;
 }
 
 interface ReprintModalProps {
