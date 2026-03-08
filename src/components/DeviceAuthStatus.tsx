@@ -155,8 +155,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
               await syncOfflineCounter(data.data.devcode, lastTrnId, lastMilkId, lastStoreId, lastAiId);
               console.log('📦 Synced devcode:', data.data.devcode, 'counters: trnid=', lastTrnId, 'milkid=', lastMilkId, 'storeid=', lastStoreId, 'aiid=', lastAiId);
             }
-            const deviceCode = String(data.data.devcode || data.data.uniquedevcode || '00000').slice(-5);
-            await initializeDeviceConfig(fetchedCompanyName, data.data.devcode || deviceCode);
+            // Note: initializeDeviceConfig removed here — syncOfflineCounter above already persists devcode and counters
           }
         }
       }

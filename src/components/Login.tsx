@@ -90,9 +90,9 @@ export const Login = memo(({ onLogin }: LoginProps) => {
 
           setDeviceStatus('approved');
           
-          // Store device config asynchronously (fire and forget - don't block login)
+          // Store device config before syncing counters to avoid race condition
           if (resolvedDeviceData.company_name && resolvedDeviceData.devcode) {
-            storeDeviceConfig(resolvedDeviceData.company_name, resolvedDeviceData.devcode);
+            await storeDeviceConfig(resolvedDeviceData.company_name, resolvedDeviceData.devcode);
           }
           if (resolvedDeviceData.devcode) {
             localStorage.setItem('devcode', resolvedDeviceData.devcode);
