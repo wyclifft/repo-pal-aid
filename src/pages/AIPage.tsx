@@ -12,7 +12,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { API_CONFIG } from '@/config/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CowDetailsModal, type CowDetails } from '@/components/CowDetailsModal';
-import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
+import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createAIReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useReprint } from '@/contexts/ReprintContext';
@@ -400,10 +400,21 @@ const AIPage = () => {
         return;
       }
 
-      // Build AI transaction data
-      for (const cartItem of cart) {
+      // Build AI transaction data — each cart item needs a unique transrefno
+      let currentTransRefNo = refs.transrefno;
+      for (let i = 0; i < cart.length; i++) {
+        const cartItem = cart[i];
+        // First item uses the original transrefno; subsequent items get a new one
+        if (i > 0) {
+          const newRef = await generateTransRefOnly(clientFetch);
+          if (!newRef) {
+            toast.error('Failed to generate reference for item');
+            continue;
+          }
+          currentTransRefNo = newRef;
+        }
         const aiTransaction = {
-          transrefno: refs.transrefno,
+          transrefno: currentTransRefNo,
           uploadrefno: refs.uploadrefno,
           transtype: 3, // AI transaction type
           farmer_id: selectedFarmer.farmer_id,
