@@ -74,9 +74,6 @@ const Store = () => {
    // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
 
-  // Delivered by state
-  const [deliveredBy, setDeliveredBy] = useState('owner');
-
   // clientFetch from route data (2=Store, 3=AI)
   const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
 
@@ -868,18 +865,6 @@ const Store = () => {
               ))}
             </div>
           )}
-        </div>
-
-        {/* Delivered By Input */}
-        <div className="bg-white rounded-lg px-4 py-3">
-          <label className="text-sm font-medium text-muted-foreground mb-1 block">Delivered By</label>
-          <input
-            type="text"
-            placeholder="Enter name (default: owner)"
-            value={deliveredBy}
-            onChange={(e) => setDeliveredBy(e.target.value)}
-            className="w-full px-3 py-2 border border-input rounded-md text-sm"
-          />
         </div>
 
         {/* Total */}

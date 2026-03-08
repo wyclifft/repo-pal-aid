@@ -631,6 +631,7 @@ export const createMilkReceiptData = (
     season_code?: string;
     entry_type?: string;
     transtype?: number;
+    delivered_by?: string;
   }>,
   companyName: string,
   options?: {
