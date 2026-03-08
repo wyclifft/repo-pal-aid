@@ -574,25 +574,27 @@ export const resetOfflineCounter = async (): Promise<void> => {
  * Reset device configuration (for testing or when changing device)
  */
 export const resetDeviceConfig = async (): Promise<void> => {
-  // Clear localStorage
-  try {
-    localStorage.removeItem(LOCALSTORAGE_KEY);
-    localStorage.removeItem('devcode');
-    console.log('🗑️ Cleared localStorage config');
-  } catch (error) {
-    console.error('Failed to clear localStorage:', error);
-  }
-  
-  // Clear IndexedDB
-  try {
-    const db = await getDB();
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    await store.delete('config');
-    console.log('🗑️ Device config reset in IndexedDB');
-  } catch (error) {
-    console.error('Failed to reset IndexedDB config:', error);
-  }
+  return withLock(async () => {
+    // Clear localStorage
+    try {
+      localStorage.removeItem(LOCALSTORAGE_KEY);
+      localStorage.removeItem('devcode');
+      console.log('🗑️ Cleared localStorage config');
+    } catch (error) {
+      console.error('Failed to clear localStorage:', error);
+    }
+    
+    // Clear IndexedDB
+    try {
+      const db = await getDB();
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      await store.delete('config');
+      console.log('🗑️ Device config reset in IndexedDB');
+    } catch (error) {
+      console.error('Failed to reset IndexedDB config:', error);
+    }
+  });
 };
 
 /**
