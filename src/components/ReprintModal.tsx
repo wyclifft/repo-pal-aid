@@ -177,6 +177,8 @@ export const ReprintModal = ({
             uploadRefNo: receipt.uploadrefno || firstReceipt.uploadrefno || firstReceipt.reference_no,
             collectorName: firstReceipt.clerk_name,
             collections,
+            cumulativeFrequency: receipt.cumulativeWeight,
+            cumulativeByProduct: receipt.cumulativeByProduct,
             locationName: locationName || firstReceipt.route,
             collectionDate: collectionDateTime
           });

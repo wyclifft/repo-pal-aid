@@ -1170,7 +1170,7 @@ const Index = () => {
         setIsSubmitting(false);
         setReceiptModalOpen(true);
         // Save receipt for reprinting with the COMPUTED cumulative value
-        addMilkReceipt(printData.collections, computedCumulative?.total).catch(() => {});
+        addMilkReceipt(printData.collections, computedCumulative?.total, computedCumulative?.byProduct).catch(() => {});
         window.dispatchEvent(new CustomEvent('syncComplete'));
         return;
       }
