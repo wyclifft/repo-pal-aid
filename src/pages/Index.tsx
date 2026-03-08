@@ -1608,7 +1608,8 @@ const Index = () => {
           // Dispatch event to notify child components to focus input
           window.dispatchEvent(new CustomEvent('receiptModalClosed'));
         }}
-        cumulativeFrequency={cumulativeFrequency}
+        cumulativeFrequency={cumulativeFrequency?.total}
+        cumulativeByProduct={cumulativeFrequency?.byProduct}
         showCumulativeFrequency={showCumulative}
         printCopies={printCopies}
         routeLabel={routeLabel}
