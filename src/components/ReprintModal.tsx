@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import type { MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check, Coffee } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -36,6 +36,8 @@ export interface PrintedReceipt {
   clerkName?: string;
   memberRoute?: string;
   transactionDate?: Date;
+  // Cumulative weight for milk/coffee receipts
+  cumulativeWeight?: number;
 }
 
 interface ReprintModalProps {
@@ -466,19 +468,23 @@ export const ReprintModal = ({
     }
   };
 
-  const getReceiptTypeIcon = (type?: string) => {
+  const isCoffeeReceipt = (receipt: PrintedReceipt) => {
+    return receipt.collections?.some(c => c.gross_weight !== undefined && c.gross_weight !== null);
+  };
+
+  const getReceiptTypeIcon = (type?: string, receipt?: PrintedReceipt) => {
     switch (type) {
       case 'store': return <ShoppingCart className="h-3 w-3" />;
       case 'ai': return <Bot className="h-3 w-3" />;
-      default: return <Milk className="h-3 w-3" />;
+      default: return receipt && isCoffeeReceipt(receipt) ? <Coffee className="h-3 w-3" /> : <Milk className="h-3 w-3" />;
     }
   };
 
-  const getReceiptTypeLabel = (type?: string) => {
+  const getReceiptTypeLabel = (type?: string, receipt?: PrintedReceipt) => {
     switch (type) {
       case 'store': return 'Store';
       case 'ai': return 'AI';
-      default: return 'Milk';
+      default: return receipt && isCoffeeReceipt(receipt) ? 'Coffee' : 'Milk';
     }
   };
 
@@ -609,8 +615,8 @@ export const ReprintModal = ({
                       <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-2">
                         <span>{receipt.farmerId}</span>
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted flex items-center gap-1">
-                          {getReceiptTypeIcon(receipt.type)}
-                          {getReceiptTypeLabel(receipt.type)}
+                          {getReceiptTypeIcon(receipt.type, receipt)}
+                          {getReceiptTypeLabel(receipt.type, receipt)}
                         </span>
                       </div>
                     </div>
@@ -645,6 +651,18 @@ export const ReprintModal = ({
                       </span>
                     )}
                   </div>
+
+                  {/* Cumulative + Delivered By - only for milk/coffee receipts */}
+                  {(!receipt.type || receipt.type === 'milk') && receipt.collections?.length > 0 && (
+                    <div className="flex items-center justify-between text-[10px] sm:text-xs text-muted-foreground">
+                      {receipt.collections[0]?.delivered_by && (
+                        <span>Delivered By: <span className="font-medium text-foreground">{receipt.collections[0].delivered_by}</span></span>
+                      )}
+                      {receipt.cumulativeWeight !== undefined && receipt.cumulativeWeight !== null && receipt.cumulativeWeight > 0 && (
+                        <span>Cumulative: <span className="font-medium text-foreground">{receipt.cumulativeWeight} Kg</span></span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Action Buttons - Only show when not in delete mode */}
                   {!isDeleteMode && (

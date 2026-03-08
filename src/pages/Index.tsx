@@ -1107,7 +1107,7 @@ const Index = () => {
     }
 
     // OPTIMIZED: Save receipt for reprinting in background (don't block UI)
-    addMilkReceipt(printData.collections).catch(() => {});
+    addMilkReceipt(printData.collections, cumulativeFrequency).catch(() => {});
     
     // Trigger refresh
     setRefreshTrigger(prev => prev + 1);
@@ -1147,6 +1147,8 @@ const Index = () => {
         }
         setIsSubmitting(false);
         setReceiptModalOpen(true);
+        // Save receipt for reprinting (printCopies=0 path)
+        addMilkReceipt(printData.collections, cumulativeFrequency).catch(() => {});
         window.dispatchEvent(new CustomEvent('syncComplete'));
         return;
       }
