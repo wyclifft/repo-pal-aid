@@ -48,6 +48,7 @@ export interface ReceiptData {
   session?: string;
   productName?: string;
   cumulativeFrequency?: number;
+  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
   showCumulativeFrequency?: boolean;
   locationCode?: string;
   locationName?: string;
@@ -636,6 +637,7 @@ export const createMilkReceiptData = (
   companyName: string,
   options?: {
     cumulativeFrequency?: number;
+    cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
     showCumulativeFrequency?: boolean;
     printCopies?: number;
     routeLabel?: string;
