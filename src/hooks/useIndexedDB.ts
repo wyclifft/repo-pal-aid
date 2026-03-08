@@ -857,13 +857,29 @@ export const useIndexedDB = () => {
   /**
    * Get total cumulative for farmer: baseCount (last backend total) + fresh unsynced weight from receipts.
    * This avoids double-counting by NOT using localCount (which duplicates unsynced receipt data).
+   * Returns { total, byProduct } with merged per-product breakdown.
    */
-  const getFarmerTotalCumulative = useCallback(async (farmerId: string): Promise<number> => {
+  const getFarmerTotalCumulative = useCallback(async (farmerId: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
     const cached = await getFarmerCumulative(farmerId);
     const baseCount = cached?.baseCount || 0;
+    const baseProd = cached?.byProduct || [];
     // Always recalculate from actual unsynced receipts instead of using cached localCount
-    const unsyncedWeight = await getUnsyncedWeightForFarmer(farmerId);
-    return baseCount + unsyncedWeight;
+    const unsynced = await getUnsyncedWeightForFarmer(farmerId);
+    const total = baseCount + unsynced.total;
+    
+    // Merge by-product: base + unsynced
+    const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
+    for (const p of baseProd) {
+      merged[p.icode] = { ...p };
+    }
+    for (const p of unsynced.byProduct) {
+      if (merged[p.icode]) {
+        merged[p.icode].weight += p.weight;
+      } else {
+        merged[p.icode] = { ...p };
+      }
+    }
+    return { total, byProduct: Object.values(merged) };
   }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
 
   return {
