@@ -1120,7 +1120,7 @@ const server = http.createServer(async (req, res) => {
         FROM transactions t
         LEFT JOIN cm_members cm ON t.memberno = cm.mcode AND t.ccode = cm.ccode
         WHERE t.Transtype = 1 
-          AND t.transdate BETWEEN ? AND ?
+          AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
           AND t.ccode = ?
           AND t.deviceserial = ?
       `;
@@ -1191,7 +1191,7 @@ const server = http.createServer(async (req, res) => {
          FROM transactions t
          LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
          WHERE t.memberno = ? 
-           AND t.transdate BETWEEN ? AND ? 
+           AND CAST(t.transdate AS DATE) BETWEEN ? AND ? 
            AND t.Transtype = 1 
            AND t.ccode = ?
            AND t.deviceserial = ?
@@ -1212,7 +1212,7 @@ const server = http.createServer(async (req, res) => {
         FROM transactions t
         WHERE t.memberno = ? 
           AND t.Transtype = 1 
-          AND t.transdate BETWEEN ? AND ?
+          AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
           AND t.ccode = ?
           AND t.deviceserial = ?
         ORDER BY t.transdate ASC, t.transtime ASC`,
