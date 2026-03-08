@@ -95,6 +95,7 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
       type: 'milk',
       uploadrefno: collections[0].uploadrefno || collections[0].reference_no,
       cumulativeWeight,
+      cumulativeByProduct,
     };
 
     const updatedReceipts = [newReceipt, ...printedReceipts];

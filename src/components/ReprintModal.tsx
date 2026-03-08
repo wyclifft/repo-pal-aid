@@ -39,6 +39,7 @@ export interface PrintedReceipt {
   transactionDate?: Date;
   // Cumulative weight for milk/coffee receipts
   cumulativeWeight?: number;
+  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
 }
 
 interface ReprintModalProps {
