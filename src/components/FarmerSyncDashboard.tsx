@@ -90,7 +90,7 @@ export const FarmerSyncDashboard = () => {
                 const batch = batchFarmers.slice(i, i + WRITE_BATCH);
                 await Promise.all(batch.map(async (f) => {
                   const fId = f.farmer_id.trim();
-                  await updateFarmerCumulative(fId, f.cumulative_weight, true);
+                  await updateFarmerCumulative(fId, f.cumulative_weight, true, f.by_product || []);
                 }));
               }
             }

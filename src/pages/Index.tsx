@@ -361,8 +361,11 @@ const Index = () => {
           const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint);
           if (batchResult.success && batchResult.data && batchResult.data.farmers) {
             const batchMap = new Map<string, number>();
+            const batchByProductMap = new Map<string, Array<{ icode: string; product_name: string; weight: number }>>();
             for (const f of batchResult.data.farmers) {
-              batchMap.set(f.farmer_id.trim(), f.cumulative_weight);
+              const key = f.farmer_id.trim();
+              batchMap.set(key, f.cumulative_weight);
+              batchByProductMap.set(key, f.by_product || []);
             }
             
             console.log(`📦 Batch API returned ${batchMap.size} farmer cumulative records`);
@@ -375,7 +378,7 @@ const Index = () => {
               await Promise.all(batch.map(async (farmer) => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
-                await updateFarmerCumulative(fId, weight, true);
+                await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || []);
               }));
               written += batch.length;
               
@@ -437,7 +440,7 @@ const Index = () => {
                     new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), TIMEOUT))
                   ]);
                   if (res.success && res.data) {
-                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true);
+                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true, res.data.by_product || []);
                     return true;
                   }
                   return false;
