@@ -563,7 +563,7 @@ export const TransactionReceipt = ({
               <span className="text-muted-foreground">Clerk Name</span>
               <span className="font-medium">{clerkName}</span>
             </div>
-            {deliveredBy && (transtype === 2 || transtype === 3) && (
+            {deliveredBy && (transtype === 1 || transtype === 2) && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Delivered By</span>
                 <span className="font-medium">{deliveredBy}</span>
