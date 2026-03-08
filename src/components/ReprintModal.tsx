@@ -658,8 +658,8 @@ export const ReprintModal = ({
                       {receipt.collections[0]?.delivered_by && (
                         <span>Delivered By: <span className="font-medium text-foreground">{receipt.collections[0].delivered_by}</span></span>
                       )}
-                      {receipt.collections[0]?.cumulative_weight !== undefined && receipt.collections[0]?.cumulative_weight !== null && (
-                        <span>Cumulative: <span className="font-medium text-foreground">{receipt.collections[0].cumulative_weight} Kg</span></span>
+                      {receipt.cumulativeWeight !== undefined && receipt.cumulativeWeight !== null && receipt.cumulativeWeight > 0 && (
+                        <span>Cumulative: <span className="font-medium text-foreground">{receipt.cumulativeWeight} Kg</span></span>
                       )}
                     </div>
                   )}
