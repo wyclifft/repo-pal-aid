@@ -184,10 +184,9 @@ export const storeDeviceConfig = async (companyName: string, devcode: string): P
     });
   } catch (error) {
     console.error('Failed to open IndexedDB:', error);
-  }
-  }); // end withLock
     // Config is still saved in localStorage, so don't throw
   }
+  }); // end withLock
 };
 
 /**
