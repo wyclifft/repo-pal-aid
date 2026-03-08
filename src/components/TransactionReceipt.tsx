@@ -631,6 +631,7 @@ export const createMilkReceiptData = (
     season_code?: string;
     entry_type?: string;
     transtype?: number;
+    delivered_by?: string;
   }>,
   companyName: string,
   options?: {
@@ -657,6 +658,7 @@ export const createMilkReceiptData = (
     memberName: first.farmer_name,
     memberRoute: first.route,
     clerkName: first.clerk_name,
+    deliveredBy: first.delivered_by || undefined,
     transactionDate: new Date(first.collection_date),
     // Use session_descript for display if available, otherwise fall back to session code
     session: first.session_descript || first.session,

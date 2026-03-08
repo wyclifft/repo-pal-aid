@@ -74,9 +74,6 @@ const Store = () => {
    // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
 
-  // Delivered by state
-  const [deliveredBy, setDeliveredBy] = useState('owner');
-
   // clientFetch from route data (2=Store, 3=AI)
   const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
 
@@ -594,7 +591,7 @@ const Store = () => {
         device_fingerprint: deviceFingerprint,
         items: batchItems,
         season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
-        delivered_by: deliveredBy || 'owner',
+        // delivered_by not used in Store transactions
         // Photo excluded - will upload in background after transaction
       };
 
@@ -631,7 +628,7 @@ const Store = () => {
             device_fingerprint: deviceFingerprint,
             photo: photoBase64, // Include photo for offline sync
             season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
-            delivered_by: deliveredBy || 'owner',
+            // delivered_by not used in Store transactions
           };
           await saveSale(sale);
         }
@@ -643,7 +640,7 @@ const Store = () => {
       const receipt = createStoreReceiptData(
         cart,
         { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
-        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName, deliveredBy: deliveredBy || 'owner' },
+        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
         companyName
       );
       setReceiptData(receipt);
@@ -868,18 +865,6 @@ const Store = () => {
               ))}
             </div>
           )}
-        </div>
-
-        {/* Delivered By Input */}
-        <div className="bg-white rounded-lg px-4 py-3">
-          <label className="text-sm font-medium text-muted-foreground mb-1 block">Delivered By</label>
-          <input
-            type="text"
-            placeholder="Enter name (default: owner)"
-            value={deliveredBy}
-            onChange={(e) => setDeliveredBy(e.target.value)}
-            className="w-full px-3 py-2 border border-input rounded-md text-sm"
-          />
         </div>
 
         {/* Total */}

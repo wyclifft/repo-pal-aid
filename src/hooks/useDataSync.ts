@@ -231,6 +231,7 @@ export const useDataSync = () => {
               product_code: receipt.product_code,
               season_code: receipt.season_code,
               transtype: receipt.transtype,
+              delivered_by: receipt.delivered_by,
             });
 
             console.log(`[API] Response for ${receipt.reference_no}:`, JSON.stringify(result));
