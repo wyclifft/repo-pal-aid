@@ -501,6 +501,7 @@ export const ReprintModal = ({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="w-[95vw] max-w-md mx-auto p-4 sm:p-6 max-h-[90vh] flex flex-col" hideCloseButton>
         <DialogHeader className="pb-2 flex-shrink-0">
