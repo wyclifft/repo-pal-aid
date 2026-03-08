@@ -10,6 +10,7 @@ interface DirectPrintOptions {
   locationCode?: string;
   locationName?: string;
   cumulativeFrequency?: number;
+  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
   showCumulativeFrequency?: boolean;
   clerkName: string;
   productName?: string;
@@ -65,6 +66,7 @@ export const printMilkReceiptDirect = async (
         collectorName: options.clerkName,
         collections,
         cumulativeFrequency: options.showCumulativeFrequency ? options.cumulativeFrequency : undefined,
+        cumulativeByProduct: options.showCumulativeFrequency ? options.cumulativeByProduct : undefined,
         locationCode: options.locationCode,
         locationName: options.locationName,
         collectionDate: new Date(first.collection_date)

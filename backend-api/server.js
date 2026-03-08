@@ -2669,10 +2669,8 @@ const server = http.createServer(async (req, res) => {
         console.log('⚠️ Could not detect orgtype for cumulative, using monthly range:', e.message);
       }
       
-      // Single query: get cumulative weights for ALL farmers at once
-      // Uses TRIM() and CAST() to handle transactions posted by external sources
-      // that may have whitespace or different type formatting
-      const [rows] = await pool.query(
+      // Two queries: 1) per-farmer totals, 2) per-farmer per-product breakdown
+      const [totalRows] = await pool.query(
         `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
          WHERE TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
@@ -2681,16 +2679,39 @@ const server = http.createServer(async (req, res) => {
         [ccode, periodStart, periodEnd]
       );
       
+      const [productRows] = await pool.query(
+        `SELECT TRIM(memberno) as farmer_id, TRIM(icode) as icode, 
+                IFNULL(MAX(descript), TRIM(icode)) as product_name,
+                IFNULL(SUM(weight), 0) as weight 
+         FROM transactions 
+         WHERE TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
+         AND CAST(transdate AS DATE) BETWEEN ? AND ?
+         GROUP BY TRIM(memberno), TRIM(icode)`,
+        [ccode, periodStart, periodEnd]
+      );
+      
+      // Build per-farmer product map
+      const productMap = {};
+      for (const r of productRows) {
+        if (!productMap[r.farmer_id]) productMap[r.farmer_id] = [];
+        productMap[r.farmer_id].push({
+          icode: r.icode || '',
+          product_name: r.product_name || r.icode || '',
+          weight: parseFloat(r.weight) || 0
+        });
+      }
+      
       return sendJSON(res, { 
         success: true, 
         data: {
-          farmers: rows.map(r => ({
+          farmers: totalRows.map(r => ({
             farmer_id: r.farmer_id,
-            cumulative_weight: parseFloat(r.cumulative_weight) || 0
+            cumulative_weight: parseFloat(r.cumulative_weight) || 0,
+            by_product: productMap[r.farmer_id] || []
           })),
           month_start: periodStart,
           month_end: periodEnd,
-          total_farmers: rows.length
+          total_farmers: totalRows.length
         }
       });
     }
@@ -2759,8 +2780,7 @@ const server = http.createServer(async (req, res) => {
         console.log('⚠️ Could not detect orgtype for individual cumulative, using monthly range:', e.message);
       }
       
-      // Sum total weight for this farmer in the period
-      // Uses TRIM() and CAST() to handle transactions posted by external sources
+      // Total weight for this farmer
       const [sumRows] = await pool.query(
         `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
@@ -2769,13 +2789,31 @@ const server = http.createServer(async (req, res) => {
         [farmer_id, ccode, periodStart, periodEnd]
       );
       
+      // Per-product breakdown for this farmer
+      const [productRows] = await pool.query(
+        `SELECT TRIM(icode) as icode, 
+                IFNULL(MAX(descript), TRIM(icode)) as product_name,
+                IFNULL(SUM(weight), 0) as weight 
+         FROM transactions 
+         WHERE TRIM(memberno) = TRIM(?) AND TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
+         AND CAST(transdate AS DATE) BETWEEN ? AND ?
+         GROUP BY TRIM(icode)`,
+        [farmer_id, ccode, periodStart, periodEnd]
+      );
+      
       const cumulativeWeight = sumRows.length > 0 ? parseFloat(sumRows[0].cumulative_weight) || 0 : 0;
+      const byProduct = productRows.map(r => ({
+        icode: r.icode || '',
+        product_name: r.product_name || r.icode || '',
+        weight: parseFloat(r.weight) || 0
+      }));
       
       return sendJSON(res, { 
         success: true, 
         data: {
           farmer_id,
           cumulative_weight: cumulativeWeight,
+          by_product: byProduct,
           month_start: periodStart,
           month_end: periodEnd
         }

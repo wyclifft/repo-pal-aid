@@ -48,6 +48,7 @@ export interface ReceiptData {
   session?: string;
   productName?: string;
   cumulativeFrequency?: number;
+  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
   showCumulativeFrequency?: boolean;
   locationCode?: string;
   locationName?: string;
@@ -120,6 +121,7 @@ export const TransactionReceipt = ({
     session,
     productName,
     cumulativeFrequency,
+    cumulativeByProduct,
     showCumulativeFrequency = false,
     locationCode,
     locationName,
@@ -393,6 +395,7 @@ export const TransactionReceipt = ({
         collectorName: clerkName,
         collections,
         cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined,
+        cumulativeByProduct: showCumulativeFrequency ? cumulativeByProduct : undefined,
         locationCode,
         locationName,
         collectionDate: transactionDate
@@ -541,6 +544,16 @@ export const TransactionReceipt = ({
                 <span className="font-medium">{cumulativeFrequency.toFixed(1)}</span>
               </div>
             )}
+            {showCumulativeFrequency && cumulativeByProduct && cumulativeByProduct.length > 1 && (
+              <div className="space-y-0.5 pl-2">
+                {cumulativeByProduct.map((prod) => (
+                  <div key={prod.icode} className="flex justify-between text-[10px]">
+                    <span className="text-muted-foreground">{prod.product_name || prod.icode}</span>
+                    <span>{prod.weight.toFixed(1)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             {locationCode && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Location</span>
@@ -636,6 +649,7 @@ export const createMilkReceiptData = (
   companyName: string,
   options?: {
     cumulativeFrequency?: number;
+    cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
     showCumulativeFrequency?: boolean;
     printCopies?: number;
     routeLabel?: string;

@@ -39,6 +39,7 @@ export interface PrintedReceipt {
   transactionDate?: Date;
   // Cumulative weight for milk/coffee receipts
   cumulativeWeight?: number;
+  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
 }
 
 interface ReprintModalProps {
@@ -176,6 +177,8 @@ export const ReprintModal = ({
             uploadRefNo: receipt.uploadrefno || firstReceipt.uploadrefno || firstReceipt.reference_no,
             collectorName: firstReceipt.clerk_name,
             collections,
+            cumulativeFrequency: receipt.cumulativeWeight,
+            cumulativeByProduct: receipt.cumulativeByProduct,
             locationName: locationName || firstReceipt.route,
             collectionDate: collectionDateTime
           });
@@ -797,6 +800,7 @@ export const ReprintModal = ({
         // Milk/Coffee receipt
         const receiptData = createMilkReceiptData(viewingReceipt.collections, companyName, {
           cumulativeFrequency: viewingReceipt.cumulativeWeight,
+          cumulativeByProduct: viewingReceipt.cumulativeByProduct,
           showCumulativeFrequency: viewingReceipt.cumulativeWeight !== undefined && viewingReceipt.cumulativeWeight > 0,
           routeLabel,
           locationName,
