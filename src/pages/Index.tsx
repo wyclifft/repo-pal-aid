@@ -74,7 +74,7 @@ const Index = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Cumulative frequency for current farmer (monthly collection count)
-  const [cumulativeFrequency, setCumulativeFrequency] = useState<number | undefined>(undefined);
+  const [cumulativeFrequency, setCumulativeFrequency] = useState<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined>(undefined);
   
   // Captured collections for batch printing
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
@@ -238,7 +238,8 @@ const Index = () => {
               await Promise.all(batch.map(async (farmer) => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
-                await updateFarmerCumulative(fId, weight, true);
+                const byProd = batchResult.data.farmers.find(f => f.farmer_id.trim() === fId)?.by_product || [];
+                await updateFarmerCumulative(fId, weight, true, byProd);
               }));
               written += batch.length;
               if (i + WRITE_BATCH < qualifying.length) {
@@ -254,8 +255,16 @@ const Index = () => {
           const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
           const cached = await getFarmerCumulative(cleanId);
           const baseCount = cached?.baseCount || 0;
-          const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanId);
-          setCumulativeFrequency(baseCount + unsyncedWeight);
+          const baseProd = cached?.byProduct || [];
+          const unsynced = await getUnsyncedWeightForFarmer(cleanId);
+          // Merge by-product
+          const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
+          for (const p of baseProd) merged[p.icode] = { ...p };
+          for (const p of unsynced.byProduct) {
+            if (merged[p.icode]) merged[p.icode].weight += p.weight;
+            else merged[p.icode] = { ...p };
+          }
+          setCumulativeFrequency({ total: baseCount + unsynced.total, byProduct: Object.values(merged) });
         }
       } catch (err) {
         console.warn(`Cumulative refresh (${reason}) failed:`, err);
@@ -541,18 +550,26 @@ const Index = () => {
             ]);
             if (freqResult.success && freqResult.data) {
               const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true);
+              const cloudByProduct = freqResult.data.by_product || [];
+              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct);
               // Fresh unsynced weight from actual IndexedDB receipts (no cached localCount)
-              const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanFarmerId);
-              setCumulativeFrequency(cloudCumulative + unsyncedWeight);
-              console.log(`📊 Pre-fetched cumulative for ${cleanFarmerId}: cloud=${cloudCumulative}, unsynced=${unsyncedWeight}`);
+              const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId);
+              // Merge by-product
+              const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
+              for (const p of cloudByProduct) merged[p.icode] = { ...p };
+              for (const p of unsynced.byProduct) {
+                if (merged[p.icode]) merged[p.icode].weight += p.weight;
+                else merged[p.icode] = { ...p };
+              }
+              setCumulativeFrequency({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) });
+              console.log(`📊 Pre-fetched cumulative for ${cleanFarmerId}: cloud=${cloudCumulative}, unsynced=${unsynced.total}`);
               return;
             }
           }
           // Offline or fetch failed: baseCount + fresh unsynced receipts (no double-counting)
           const total = await getFarmerTotalCumulative(cleanFarmerId);
-          setCumulativeFrequency(total > 0 ? total : undefined);
-          console.log(`📊 Offline cumulative for ${cleanFarmerId}: total=${total}`);
+          setCumulativeFrequency(total.total > 0 ? total : undefined);
+          console.log(`📊 Offline cumulative for ${cleanFarmerId}: total=${total.total}`);
         } catch (err) {
           console.warn('Failed to pre-fetch cumulative:', err);
         }
