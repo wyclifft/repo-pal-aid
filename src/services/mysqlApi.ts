@@ -959,22 +959,20 @@ export const farmerFrequencyApi = {
   /**
    * Get farmer's monthly cumulative frequency (collection count for current month)
    */
-  getMonthlyFrequency: async (farmerId: string, uniquedevcode: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
-    return apiRequest<FarmerMonthlyFrequency>(
-      `/farmer-monthly-frequency?farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`
-    );
+  getMonthlyFrequency: async (farmerId: string, uniquedevcode: string, route?: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
+    let url = `/farmer-monthly-frequency?farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+    if (route) url += `&route=${encodeURIComponent(route)}`;
+    return apiRequest<FarmerMonthlyFrequency>(url);
   },
 
   /**
    * Get ALL farmers' monthly cumulative weights in a single batch request
    * Returns cumulative weights for every farmer under the device's ccode
    */
-  getMonthlyFrequencyBatch: async (uniquedevcode: string): Promise<ApiResponse<FarmerMonthlyFrequencyBatch>> => {
-    return apiRequest<FarmerMonthlyFrequencyBatch>(
-      `/farmer-monthly-frequency-batch?uniquedevcode=${encodeURIComponent(uniquedevcode)}`,
-      {},
-      30000 // 30s timeout for batch
-    );
+  getMonthlyFrequencyBatch: async (uniquedevcode: string, route?: string): Promise<ApiResponse<FarmerMonthlyFrequencyBatch>> => {
+    let url = `/farmer-monthly-frequency-batch?uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+    if (route) url += `&route=${encodeURIComponent(route)}`;
+    return apiRequest<FarmerMonthlyFrequencyBatch>(url, {}, 30000);
   },
 };
 

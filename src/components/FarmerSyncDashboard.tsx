@@ -22,6 +22,17 @@ interface FarmerSyncEntry {
 const BATCH_SIZE = 20;
 const PAGE_SIZE = 50;
 
+const getActiveRoute = (): string => {
+  try {
+    const data = localStorage.getItem('active_session_data');
+    if (data) {
+      const parsed = JSON.parse(data);
+      return parsed?.route?.tcode || '';
+    }
+  } catch {}
+  return '';
+};
+
 export const FarmerSyncDashboard = () => {
   const { getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
   const [entries, setEntries] = useState<FarmerSyncEntry[]>([]);
@@ -32,6 +43,7 @@ export const FarmerSyncDashboard = () => {
   const [bgProgress, setBgProgress] = useState<{ current: number; total: number; pass: number } | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const cancelledRef = useRef(false);
+  const activeRoute = getActiveRoute();
 
   /**
    * Fetch the authoritative farmer list.
@@ -80,7 +92,7 @@ export const FarmerSyncDashboard = () => {
         const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
         if (deviceFingerprint) {
           try {
-            const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint);
+            const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, activeRoute || undefined);
             if (batchResult.success && batchResult.data && batchResult.data.farmers) {
               const batchFarmers = batchResult.data.farmers;
               console.log(`[SyncDash] Batch API returned ${batchFarmers.length} cumulative records`);
@@ -109,10 +121,15 @@ export const FarmerSyncDashboard = () => {
       setUnsyncedCount(unsyncedReceipts.filter((r: any) => r.orderId !== 'PRINTED_RECEIPTS').length);
 
       const deviceCcode = localStorage.getItem('device_ccode') || '';
-      // Only include farmers qualifying for cumulative sync (ccode match + currqty=1)
-      const filteredFarmers = deviceCcode
+      // Only include farmers qualifying for cumulative sync (ccode match + currqty=1 + route match)
+      let filteredFarmers = deviceCcode
         ? farmers.filter((f: Farmer) => f.ccode === deviceCcode && Number(f.currqty) === 1)
         : farmers.filter((f: Farmer) => Number(f.currqty) === 1);
+      
+      // Filter by active route if one is selected
+      if (activeRoute) {
+        filteredFarmers = filteredFarmers.filter((f: Farmer) => f.route === activeRoute);
+      }
 
       const total = filteredFarmers.length;
       setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} qualifying farmers...` });
@@ -218,7 +235,7 @@ export const FarmerSyncDashboard = () => {
             <div>
               <CardTitle>Farmer Sync Status</CardTitle>
               <CardDescription>
-                Cumulative data for <span className="font-medium">{deviceCcode || 'all'}</span> cached offline
+                Cumulative data for <span className="font-medium">{deviceCcode || 'all'}</span>{activeRoute ? ` · Route: ${activeRoute}` : ''} cached offline
               </CardDescription>
             </div>
           </div>
@@ -362,7 +379,7 @@ export const FarmerSyncDashboard = () => {
         ) : null}
 
         <p className="text-xs text-muted-foreground text-center">
-          Showing farmers for company code: <span className="font-medium">{deviceCcode || 'all'}</span>
+          Showing farmers for company code: <span className="font-medium">{deviceCcode || 'all'}</span>{activeRoute ? ` · Route: ${activeRoute}` : ''}
         </p>
       </CardContent>
     </Card>
