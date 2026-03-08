@@ -349,6 +349,8 @@ export interface MilkCollection {
   gross_weight?: number;      // Gross weight from scale (before sack deduction)
   tare_weight?: number;       // Fixed sack weight (1 kg per sack)
   net_weight?: number;        // Calculated: gross_weight - tare_weight
+  // Delivery tracking: who delivered the goods (default: "owner")
+  delivered_by?: string;      // → DB: deliveredby
 }
 
 export const milkCollectionApi = {

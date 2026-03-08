@@ -323,7 +323,7 @@ const getNextTrnId = async (): Promise<number> => {
  * CRITICAL: Uses mutex lock to prevent race conditions when multiple
  * references are generated simultaneously (e.g., rapid button taps)
  */
-export const generateOfflineReference = async (): Promise<string | null> => {
+export const generateOfflineReference = async (clientFetch?: number): Promise<string | null> => {
   return withLock(async () => {
     const devcode = localStorage.getItem('devcode');
     
@@ -332,8 +332,14 @@ export const generateOfflineReference = async (): Promise<string | null> => {
       const lastUsed = config?.lastTrnId || 0;
       const nextTrnId = lastUsed + 1;
       await updateConfig({ lastTrnId: nextTrnId });
-      const reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
-      console.log(`⚡ Reference: ${reference} (devcode: ${devcode}, trnid: ${nextTrnId})`);
+      // For store/AI transactions, insert clientFetch digit after devcode
+      let reference: string;
+      if (clientFetch) {
+        reference = `${devcode}${clientFetch}${String(nextTrnId).padStart(7, '0')}`;
+      } else {
+        reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
+      }
+      console.log(`⚡ Reference: ${reference} (devcode: ${devcode}, trnid: ${nextTrnId}, clientFetch: ${clientFetch || 'none'})`);
       return reference;
     }
     
@@ -341,7 +347,12 @@ export const generateOfflineReference = async (): Promise<string | null> => {
     if (config?.devcode) {
       const nextTrnId = (config.lastTrnId || 0) + 1;
       await updateConfig({ lastTrnId: nextTrnId });
-      const reference = `${config.devcode}${String(nextTrnId).padStart(8, '0')}`;
+      let reference: string;
+      if (clientFetch) {
+        reference = `${config.devcode}${clientFetch}${String(nextTrnId).padStart(7, '0')}`;
+      } else {
+        reference = `${config.devcode}${String(nextTrnId).padStart(8, '0')}`;
+      }
       console.log(`⚡ Reference (from config): ${reference}`);
       return reference;
     }
@@ -523,13 +534,15 @@ export const generateReferenceWithUploadRef = async (transactionType: Transactio
   transrefno: string;
   uploadrefno: string;
 } | null> => {
-  const transrefno = await generateOfflineReference();
+  // For store/AI transactions, pass clientFetch to embed prefix in transrefno too
+  const cfForTransref = (transactionType === 'store' || transactionType === 'ai') ? clientFetch : undefined;
+  const transrefno = await generateOfflineReference(cfForTransref);
   if (!transrefno) return null;
   
   const uploadrefno = await generateFormattedUploadRef(transactionType, clientFetch);
   if (!uploadrefno) return null;
   
-  console.log(`⚡ Generated: transrefno=${transrefno}, uploadrefno=${uploadrefno} (type=${transactionType})`);
+  console.log(`⚡ Generated: transrefno=${transrefno}, uploadrefno=${uploadrefno} (type=${transactionType}, clientFetch=${clientFetch || 'none'})`);
   
   return { transrefno, uploadrefno };
 };

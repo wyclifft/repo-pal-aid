@@ -72,8 +72,7 @@ const AIPage = () => {
   // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
 
-  // Delivered by state
-  const [deliveredBy, setDeliveredBy] = useState('owner');
+
 
   // clientFetch from route data (3=AI)
   const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
@@ -418,7 +417,6 @@ const AIPage = () => {
           sold_by: clerkName, // Display name for DB clerk column
           device_fingerprint: deviceFingerprint,
           season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
-          delivered_by: deliveredBy || 'owner',
           // Cow details for AI
           cow_name: cartItem.cowDetails?.cowName || '',
           cow_breed: cartItem.cowDetails?.cowBreed || '',
@@ -441,7 +439,7 @@ const AIPage = () => {
       const receipt = createAIReceiptData(
         cart,
         { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
-        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName, deliveredBy: deliveredBy || 'owner' },
+        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
         companyName
       );
       setReceiptData(receipt);
@@ -666,17 +664,6 @@ const AIPage = () => {
           )}
         </div>
 
-        {/* Delivered By Input */}
-        <div className="bg-white rounded-lg p-4 shadow">
-          <label className="text-sm font-medium text-muted-foreground mb-1 block">Delivered By</label>
-          <input
-            type="text"
-            placeholder="Enter name (default: owner)"
-            value={deliveredBy}
-            onChange={(e) => setDeliveredBy(e.target.value)}
-            className="w-full px-3 py-2 border border-input rounded-md text-sm"
-          />
-        </div>
 
         {/* Total */}
         <div className="bg-white rounded-lg p-4 shadow">
