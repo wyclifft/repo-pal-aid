@@ -697,7 +697,7 @@ export const createStoreReceiptData = (
     memberName: memberInfo.name,
     memberRoute: memberInfo.route,
     clerkName: transactionInfo.clerkName,
-    deliveredBy: transactionInfo.deliveredBy || 'owner',
+    // Store transactions do NOT have deliveredBy - only Buy/Sell portals do
     transactionDate: new Date(),
     items: cartItems.map(c => ({
       item_code: c.item.icode,
@@ -731,7 +731,7 @@ export const createAIReceiptData = (
     memberName: memberInfo.name,
     memberRoute: memberInfo.route,
     clerkName: transactionInfo.clerkName,
-    deliveredBy: transactionInfo.deliveredBy || 'owner',
+    // AI transactions do NOT have deliveredBy - only Buy/Sell portals do
     transactionDate: new Date(),
     items: cartItems.map(c => ({
       item_code: c.item.icode,
