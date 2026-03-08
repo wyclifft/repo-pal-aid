@@ -1161,6 +1161,7 @@ const Index = () => {
       setWeight(0);
       setGrossWeight(0);
       setLastSavedWeight(0);
+      setDeliveredBy('owner'); // Reset for next farmer
       
       // Reset submitting state immediately
       setIsSubmitting(false);

@@ -918,12 +918,14 @@ const server = http.createServer(async (req, res) => {
           const productCode = body.product_code || '';
           const seasonCAN = body.season_code || '';
           
+          const deliveredBy = body.delivered_by || 'owner';
+          
           await pool.query(
             `INSERT INTO transactions 
               (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
                transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-               amount, icode, CAN, time, capType, entry_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?)`,
+               amount, icode, CAN, time, capType, entry_type, deliveredby)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?)`,
             [
               attemptTransrefno,
               attemptUploadrefno ? String(attemptUploadrefno) : '',
@@ -942,6 +944,7 @@ const server = http.createServer(async (req, res) => {
               seasonCAN,
               timestamp,
               body.entry_type || 'manual',
+              deliveredBy,
             ]
           );
 
