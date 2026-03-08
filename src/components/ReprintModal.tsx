@@ -109,7 +109,8 @@ export const ReprintModal = ({
     }
     
     if (printCopies === 0) {
-      toast.info('Printing disabled (0 copies configured)');
+      // PrintOption=0: Display receipt on screen instead of printing
+      setViewingReceipt(receipt);
       return;
     }
     
