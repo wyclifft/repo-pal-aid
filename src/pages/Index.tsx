@@ -1106,9 +1106,6 @@ const Index = () => {
       }
     }
 
-    // OPTIMIZED: Save receipt for reprinting in background (don't block UI)
-    addMilkReceipt(printData.collections, cumulativeFrequency).catch(() => {});
-    
     // Trigger refresh
     setRefreshTrigger(prev => prev + 1);
 
@@ -1117,6 +1114,7 @@ const Index = () => {
       // When printCopies === 0, show receipt modal on screen without printing
       // Calculate cumulative BEFORE showing modal so it displays correctly
       if (printCopies === 0) {
+        let computedCumulative: number | undefined = cumulativeFrequency;
         if (showCumulative && deviceFingerprint && capturedCollections.length > 0) {
           const firstCapture = capturedCollections[0];
           const cleanId = firstCapture.farmer_id.replace(/^#/, '').trim();
@@ -1130,25 +1128,26 @@ const Index = () => {
                 const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
                 await updateFarmerCumulative(cleanId, cloudCumulative, true);
                 const unsyncedWeight = await getUnsyncedWeightForFarmer(cleanId);
-                setCumulativeFrequency(cloudCumulative + unsyncedWeight);
+                computedCumulative = cloudCumulative + unsyncedWeight;
               } else {
                 const total = await getFarmerTotalCumulative(cleanId);
-                setCumulativeFrequency(total > 0 ? total : undefined);
+                computedCumulative = total > 0 ? total : undefined;
               }
             } else {
               // Offline: use cached baseCount + unsynced receipts
               const total = await getFarmerTotalCumulative(cleanId);
-              setCumulativeFrequency(total > 0 ? total : undefined);
+              computedCumulative = total > 0 ? total : undefined;
             }
           } catch {
             const total = await getFarmerTotalCumulative(cleanId);
-            setCumulativeFrequency(total > 0 ? total : undefined);
+            computedCumulative = total > 0 ? total : undefined;
           }
+          setCumulativeFrequency(computedCumulative);
         }
         setIsSubmitting(false);
         setReceiptModalOpen(true);
-        // Save receipt for reprinting (printCopies=0 path)
-        addMilkReceipt(printData.collections, cumulativeFrequency).catch(() => {});
+        // Save receipt for reprinting with the COMPUTED cumulative value
+        addMilkReceipt(printData.collections, computedCumulative).catch(() => {});
         window.dispatchEvent(new CustomEvent('syncComplete'));
         return;
       }
@@ -1226,6 +1225,9 @@ const Index = () => {
           clerkName: printData.clerkName,
           productName: printData.productName
         }).catch(err => console.warn('Background print failed:', err));
+        
+        // Save receipt for reprinting WITH the correct cumulative value
+        addMilkReceipt(printData.collections, cumulativeForPrint).catch(() => {});
       })();
     } else {
       // If not in collection view (shouldn't happen), fall back to modal
