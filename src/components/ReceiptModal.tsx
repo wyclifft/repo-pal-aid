@@ -11,6 +11,7 @@ interface ReceiptModalProps {
   onClose: () => void;
   onPrint?: () => void;
   cumulativeFrequency?: number;
+  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
   showCumulativeFrequency?: boolean;
   printCopies?: number;
   routeLabel?: string;
@@ -26,6 +27,7 @@ export const ReceiptModal = ({
   onClose, 
   onPrint,
   cumulativeFrequency,
+  cumulativeByProduct,
   showCumulativeFrequency = false,
   printCopies = 1,
   routeLabel = 'Route',
@@ -36,6 +38,7 @@ export const ReceiptModal = ({
   // Convert MilkCollection[] to unified ReceiptData format
   const receiptData = createMilkReceiptData(receipts, companyName, {
     cumulativeFrequency,
+    cumulativeByProduct,
     showCumulativeFrequency,
     printCopies,
     routeLabel,

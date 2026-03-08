@@ -1996,6 +1996,7 @@ export const printReceipt = async (data: {
     transrefno?: string;
   }>;
   cumulativeFrequency?: number;
+  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
   locationCode?: string;
   locationName?: string;
   collectionDate?: Date;
@@ -2052,6 +2053,13 @@ export const printReceipt = async (data: {
   
   if (data.cumulativeFrequency !== undefined) {
     receipt += formatLine('Cumulative    ', data.cumulativeFrequency.toFixed(1), W) + '\n';
+    // Per-product breakdown
+    if (data.cumulativeByProduct && data.cumulativeByProduct.length > 1) {
+      for (const prod of data.cumulativeByProduct) {
+        const label = (prod.product_name || prod.icode).substring(0, 18);
+        receipt += formatLine(`  ${label}`, prod.weight.toFixed(1), W) + '\n';
+      }
+    }
   }
   if (data.locationCode) {
     receipt += formatLine('Location      ', data.locationCode, W) + '\n';

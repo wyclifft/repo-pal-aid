@@ -5,7 +5,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 
 interface ReprintContextValue {
   printedReceipts: PrintedReceipt[];
-  addMilkReceipt: (collections: MilkCollection[], cumulativeWeight?: number) => Promise<boolean>;
+  addMilkReceipt: (collections: MilkCollection[], cumulativeWeight?: number, cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>) => Promise<boolean>;
   addStoreReceipt: (data: {
     farmerId: string;
     farmerName: string;
@@ -71,7 +71,7 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
   }, [dbReady, getPrintedReceipts]);
 
   // Save milk collection receipt
-  const addMilkReceipt = useCallback(async (collections: MilkCollection[], cumulativeWeight?: number): Promise<boolean> => {
+  const addMilkReceipt = useCallback(async (collections: MilkCollection[], cumulativeWeight?: number, cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>): Promise<boolean> => {
     if (collections.length === 0) return false;
 
     // Check for duplicate
