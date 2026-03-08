@@ -78,6 +78,9 @@ const Index = () => {
   
   // Captured collections for batch printing
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
+  
+  // Delivered by state for Buy/Sell portals
+  const [deliveredBy, setDeliveredBy] = useState('owner');
 
   const { 
     saveReceipt, 
@@ -805,6 +808,8 @@ const Index = () => {
       season_code: activeSession?.SCODE || '',
       // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
       transtype: collectionMode === 'sell' ? 2 : 1,
+      // Delivery tracking
+      delivered_by: deliveredBy || 'owner',
       // Coffee sack weighing - gross/tare/net (orgtype C only)
       ...(isCoffee && {
         gross_weight: parseFloat(Number(grossWeight).toFixed(2)),
