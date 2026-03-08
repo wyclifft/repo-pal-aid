@@ -1550,6 +1550,8 @@ const Index = () => {
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
           zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
+          deliveredBy={deliveredBy}
+          onDeliveredByChange={setDeliveredBy}
           isSubmitting={isSubmitting}
         />
       )}
