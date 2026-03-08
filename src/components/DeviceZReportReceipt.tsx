@@ -257,7 +257,13 @@ export const DeviceZReportReceipt = ({
           return (
             <div key={tx.transrefno || index}>
               {showItemSeparator && (
-                <div className="border-t-2 border-dotted border-muted-foreground my-0.5" />
+                <div className="my-1">
+                  <div className="border-t-2 border-dotted border-muted-foreground" />
+                  <div className="text-center text-[8px] font-semibold text-muted-foreground tracking-wide py-0.5">
+                    ── {tx.product_name || tx.product_code || 'OTHER'} ──
+                  </div>
+                  <div className="border-b border-dotted border-muted-foreground" />
+                </div>
               )}
               <div className="grid grid-cols-4 gap-0 text-center text-[10px] border-b border-dotted py-0.5">
                 <span className="truncate border-r border-dotted">{tx.farmer_id}</span>
