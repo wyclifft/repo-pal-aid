@@ -98,7 +98,12 @@ export const DeviceZReportReceipt = ({
     }
     
     // Sort by transtype (1=Buy first, then 2=Sell, then 3=AI)
-    return Array.from(typeMap.values()).sort((a, b) => a.transtype - b.transtype);
+    // Within each group, sort by product_code so dotted separators group items correctly
+    const sorted = Array.from(typeMap.values()).sort((a, b) => a.transtype - b.transtype);
+    sorted.forEach(group => {
+      group.transactions.sort((a, b) => (a.product_code || '').localeCompare(b.product_code || ''));
+    });
+    return sorted;
   }, [filteredTransactions]);
   
   // Calculate filtered totals
@@ -243,16 +248,26 @@ export const DeviceZReportReceipt = ({
         <span>TIME</span>
       </div>
 
-      {/* Transaction List - single row per transaction */}
+{/* Transaction List - single row per transaction, dotted separator between different item codes */}
       <div className="py-0.5">
-        {group.transactions.map((tx, index) => (
-          <div key={tx.transrefno || index} className="grid grid-cols-4 gap-0 text-center text-[10px] border-b border-dotted py-0.5">
-            <span className="truncate border-r border-dotted">{tx.farmer_id}</span>
-            <span className="truncate border-r border-dotted">{getShortRef(tx.refno)}</span>
-            <span className="border-r border-dotted">{tx.weight.toFixed(1)}</span>
-            <span>{tx.time.substring(0, 5)}</span>
-          </div>
-        ))}
+        {group.transactions.map((tx, index) => {
+          const prevTx = index > 0 ? group.transactions[index - 1] : null;
+          const showItemSeparator = prevTx && prevTx.product_code !== tx.product_code;
+          
+          return (
+            <div key={tx.transrefno || index}>
+              {showItemSeparator && (
+                <div className="border-t-2 border-dotted border-muted-foreground my-0.5" />
+              )}
+              <div className="grid grid-cols-4 gap-0 text-center text-[10px] border-b border-dotted py-0.5">
+                <span className="truncate border-r border-dotted">{tx.farmer_id}</span>
+                <span className="truncate border-r border-dotted">{getShortRef(tx.refno)}</span>
+                <span className="border-r border-dotted">{tx.weight.toFixed(1)}</span>
+                <span>{tx.time.substring(0, 5)}</span>
+              </div>
+            </div>
+          );
+        })}
         {group.transactions.length === 0 && (
           <div className="text-center text-muted-foreground italic text-[10px] py-1">
             No transactions

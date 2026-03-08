@@ -78,6 +78,9 @@ const Index = () => {
   
   // Captured collections for batch printing
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
+  
+  // Delivered by state for Buy/Sell portals
+  const [deliveredBy, setDeliveredBy] = useState('owner');
 
   const { 
     saveReceipt, 
@@ -805,6 +808,8 @@ const Index = () => {
       season_code: activeSession?.SCODE || '',
       // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
       transtype: collectionMode === 'sell' ? 2 : 1,
+      // Delivery tracking
+      delivered_by: deliveredBy || 'owner',
       // Coffee sack weighing - gross/tare/net (orgtype C only)
       ...(isCoffee && {
         gross_weight: parseFloat(Number(grossWeight).toFixed(2)),
@@ -965,6 +970,7 @@ const Index = () => {
             product_code: capture.product_code, // Pass selected product icode → DB: icode column
             season_code: capture.season_code, // Pass session SCODE → DB: CAN column
             transtype: capture.transtype, // Pass transtype: 1 = Buy, 2 = Sell
+            delivered_by: capture.delivered_by, // Delivery tracking
           });
 
           console.log(`📨 Submit result for ${referenceNo}:`, result);
@@ -1506,6 +1512,8 @@ const Index = () => {
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
           zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
+          deliveredBy={deliveredBy}
+          onDeliveredByChange={setDeliveredBy}
           isSubmitting={isSubmitting}
         />
       ) : (
@@ -1542,6 +1550,8 @@ const Index = () => {
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
           zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
+          deliveredBy={deliveredBy}
+          onDeliveredByChange={setDeliveredBy}
           isSubmitting={isSubmitting}
         />
       )}

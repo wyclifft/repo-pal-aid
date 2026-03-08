@@ -101,4 +101,6 @@ export interface MilkCollection {
   net_weight?: number;        // Calculated: gross_weight - tare_weight
   // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
   transtype?: number;         // → DB: Transtype (default: 1)
+  // Delivery tracking: who delivered the goods (default: "owner")
+  delivered_by?: string;      // → DB: deliveredby
 }
