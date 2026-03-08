@@ -466,19 +466,23 @@ export const ReprintModal = ({
     }
   };
 
-  const getReceiptTypeIcon = (type?: string) => {
+  const isCoffeeReceipt = (receipt: PrintedReceipt) => {
+    return receipt.collections?.some(c => c.gross_weight !== undefined && c.gross_weight !== null);
+  };
+
+  const getReceiptTypeIcon = (type?: string, receipt?: PrintedReceipt) => {
     switch (type) {
       case 'store': return <ShoppingCart className="h-3 w-3" />;
       case 'ai': return <Bot className="h-3 w-3" />;
-      default: return <Milk className="h-3 w-3" />;
+      default: return receipt && isCoffeeReceipt(receipt) ? <Coffee className="h-3 w-3" /> : <Milk className="h-3 w-3" />;
     }
   };
 
-  const getReceiptTypeLabel = (type?: string) => {
+  const getReceiptTypeLabel = (type?: string, receipt?: PrintedReceipt) => {
     switch (type) {
       case 'store': return 'Store';
       case 'ai': return 'AI';
-      default: return 'Milk';
+      default: return receipt && isCoffeeReceipt(receipt) ? 'Coffee' : 'Milk';
     }
   };
 
