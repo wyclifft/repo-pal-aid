@@ -778,10 +778,8 @@ export const ReprintModal = ({
         const createFn = viewingReceipt.type === 'store' ? createStoreReceiptData : createAIReceiptData;
         const receiptData = createFn(
           viewingReceipt.items.map(item => ({
-            item_code: item.item_code,
-            item_name: item.item_name,
+            item: { icode: item.item_code, descript: item.item_name, sprice: item.price },
             quantity: item.quantity,
-            price: item.price,
             lineTotal: item.lineTotal,
           })),
           { id: viewingReceipt.farmerId, name: viewingReceipt.farmerName, route: viewingReceipt.memberRoute },
