@@ -127,6 +127,7 @@ const getFromLocalStorage = (): DeviceConfig | null => {
  * CRITICAL: Preserves existing lastTrnId to maintain continuity during offline operations
  */
 export const storeDeviceConfig = async (companyName: string, devcode: string): Promise<void> => {
+  return withLock(async () => {
   // FIRST: Check if we already have a config with trnid to preserve
   const existingConfig = await getDeviceConfig();
   const existingLocalTrnId = existingConfig?.lastTrnId || 0;
@@ -185,6 +186,7 @@ export const storeDeviceConfig = async (companyName: string, devcode: string): P
     console.error('Failed to open IndexedDB:', error);
     // Config is still saved in localStorage, so don't throw
   }
+  }); // end withLock
 };
 
 /**
@@ -394,6 +396,7 @@ export const syncOfflineCounter = async (
   lastBackendStoreId?: number,
   lastBackendAiId?: number
 ): Promise<void> => {
+  return withLock(async () => {
   // Store devcode for reference generation
   localStorage.setItem('devcode', devcode);
   
@@ -438,6 +441,7 @@ export const syncOfflineCounter = async (
   });
   
   console.log(`🔄 Synced counters for devcode ${devcode}`);
+  }); // end withLock
 };
 
 /**
