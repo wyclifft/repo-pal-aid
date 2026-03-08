@@ -1574,6 +1574,7 @@ const Index = () => {
           setWeight(0);
           setGrossWeight(0); // Reset coffee gross weight
           setLastSavedWeight(0);
+          setDeliveredBy('owner'); // Reset for next farmer
           // Dispatch event to notify child components to focus input
           window.dispatchEvent(new CustomEvent('receiptModalClosed'));
         }}
