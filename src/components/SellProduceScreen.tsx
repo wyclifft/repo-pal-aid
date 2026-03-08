@@ -79,6 +79,8 @@ export const SellProduceScreen = ({
   sackTareWeight = 1,
   allowSackEdit = false,
   zeroOptBlocked = false,
+  deliveredBy = 'owner',
+  onDeliveredByChange,
   isSubmitting = false,
 }: SellProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
@@ -483,6 +485,18 @@ export const SellProduceScreen = ({
               {todayWeight > 0 ? todayWeight.toFixed(1) : '-'}
             </span>
           </div>
+        </div>
+
+        {/* Delivered By Input */}
+        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4">
+          <label className="text-xs sm:text-sm font-medium text-gray-600 mb-1 block">Delivered By</label>
+          <input
+            type="text"
+            placeholder="Enter name (default: owner)"
+            value={deliveredBy}
+            onChange={(e) => onDeliveredByChange?.(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+          />
         </div>
 
         {/* Action Buttons */}
