@@ -45,6 +45,9 @@ interface SellProduceScreenProps {
   allowSackEdit?: boolean;
   // zeroOpt: capture blocked until scale drops to ≤0.5 kg
   zeroOptBlocked?: boolean;
+  // Delivery tracking
+  deliveredBy?: string;
+  onDeliveredByChange?: (value: string) => void;
 }
 
 export const SellProduceScreen = ({
