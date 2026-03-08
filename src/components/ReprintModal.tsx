@@ -10,6 +10,7 @@ import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import type { CowDetails } from '@/components/CowDetailsModal';
+import { TransactionReceipt, createMilkReceiptData, createStoreReceiptData, createAIReceiptData } from './TransactionReceipt';
 
 // Store/AI item interface for reprinting
 export interface ReprintItem {
