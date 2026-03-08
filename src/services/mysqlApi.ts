@@ -933,16 +933,23 @@ export const authApi = {
 
 // ==================== FARMER FREQUENCY API ====================
 
+export interface ProductCumulative {
+  icode: string;
+  product_name: string;
+  weight: number;
+}
+
 export interface FarmerMonthlyFrequency {
   farmer_id: string;
   frequency?: number; // Deprecated: kept for backwards compatibility
   cumulative_weight: number; // Total weight sum for the month
+  by_product?: ProductCumulative[];
   month_start: string;
   month_end: string;
 }
 
 export interface FarmerMonthlyFrequencyBatch {
-  farmers: Array<{ farmer_id: string; cumulative_weight: number }>;
+  farmers: Array<{ farmer_id: string; cumulative_weight: number; by_product?: ProductCumulative[] }>;
   month_start: string;
   month_end: string;
   total_farmers: number;

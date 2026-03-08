@@ -731,7 +731,8 @@ export const useIndexedDB = () => {
             resolve({
               baseCount: request.result.baseCount || 0,
               localCount: request.result.localCount || 0,
-              month: request.result.month
+              month: request.result.month,
+              byProduct: request.result.byProduct || []
             });
           } else {
             resolve(null);
@@ -753,7 +754,8 @@ export const useIndexedDB = () => {
   const updateFarmerCumulative = useCallback(async (
     farmerId: string, 
     count: number, 
-    fromBackend: boolean = false
+    fromBackend: boolean = false,
+    byProduct?: Array<{ icode: string; product_name: string; weight: number }>
   ): Promise<void> => {
     if (!db) return;
     try {
@@ -781,6 +783,7 @@ export const useIndexedDB = () => {
               month,
               baseCount: count,
               localCount: 0,
+              byProduct: byProduct || [],
               lastUpdated: new Date().toISOString()
             };
           } else {
@@ -824,6 +827,7 @@ export const useIndexedDB = () => {
       const cleanFarmerId = farmerId.replace(/^#/, '').trim().toUpperCase();
 
       let totalWeight = 0;
+      const productWeights: Record<string, { icode: string; product_name: string; weight: number }> = {};
       for (const r of unsynced) {
         // Only count Buy (transtype=1) receipts
         if (r.transtype === 2) continue;
@@ -833,9 +837,17 @@ export const useIndexedDB = () => {
         const rDate = new Date(r.collection_date);
         if (rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear) {
           totalWeight += r.weight || 0;
+          // Track per-product weights
+          const icode = (r.product_code || r.icode || '').trim();
+          if (icode) {
+            if (!productWeights[icode]) {
+              productWeights[icode] = { icode, product_name: r.product_name || icode, weight: 0 };
+            }
+            productWeights[icode].weight += r.weight || 0;
+          }
         }
       }
-      return totalWeight;
+      return { total: totalWeight, byProduct: Object.values(productWeights) };
     } catch (err) {
       console.warn('Failed to get unsynced weight for farmer:', err);
       return 0;
