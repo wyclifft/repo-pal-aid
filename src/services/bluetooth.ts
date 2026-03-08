@@ -2313,7 +2313,21 @@ export const printZReport = async (data: {
     receipt += 'MNO......:REF..:QTY.:TIME\n';
     
     // Transaction rows - all on single line with dotted separators
-    for (const tx of typeGroup.transactions) {
+    // Sort by product_code for grouping
+    const sortedTxs = [...typeGroup.transactions].sort((a, b) => 
+      (a.product_code || '').localeCompare(b.product_code || '')
+    );
+    
+    let prevProductCode: string | undefined;
+    for (const tx of sortedTxs) {
+      // Add produce name separator when product changes
+      if (prevProductCode !== undefined && prevProductCode !== (tx.product_code || '')) {
+        const produceName = tx.product_name || tx.product_code || 'OTHER';
+        const label = `-- ${produceName} --`;
+        receipt += centerText(label, W) + '\n';
+      }
+      prevProductCode = tx.product_code || '';
+      
       const shortRef = (tx.refno || '').slice(-5);
       const mno = tx.farmer_id; // Show full MNO
       const ref = shortRef.padEnd(5);
