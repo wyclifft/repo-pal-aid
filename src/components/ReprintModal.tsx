@@ -10,6 +10,7 @@ import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import type { CowDetails } from '@/components/CowDetailsModal';
+import { TransactionReceipt, createMilkReceiptData, createStoreReceiptData, createAIReceiptData } from './TransactionReceipt';
 
 // Store/AI item interface for reprinting
 export interface ReprintItem {
@@ -75,6 +76,8 @@ export const ReprintModal = ({
   const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   const [activeTab, setActiveTab] = useState<'recent' | 'search'>('recent');
   const [searchQuery, setSearchQuery] = useState('');
+  // On-screen receipt viewing (for printCopies=0)
+  const [viewingReceipt, setViewingReceipt] = useState<PrintedReceipt | null>(null);
   
   // Filter receipts based on search query
   const filteredReceipts = useMemo(() => {
@@ -106,7 +109,8 @@ export const ReprintModal = ({
     }
     
     if (printCopies === 0) {
-      toast.info('Printing disabled (0 copies configured)');
+      // PrintOption=0: Display receipt on screen instead of printing
+      setViewingReceipt(receipt);
       return;
     }
     
@@ -497,6 +501,7 @@ export const ReprintModal = ({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="w-[95vw] max-w-md mx-auto p-4 sm:p-6 max-h-[90vh] flex flex-col" hideCloseButton>
         <DialogHeader className="pb-2 flex-shrink-0">
@@ -766,5 +771,45 @@ export const ReprintModal = ({
 
       </DialogContent>
     </Dialog>
+
+    {/* On-screen receipt viewer for printCopies=0 */}
+    {viewingReceipt && (() => {
+      if ((viewingReceipt.type === 'store' || viewingReceipt.type === 'ai') && viewingReceipt.items) {
+        const createFn = viewingReceipt.type === 'store' ? createStoreReceiptData : createAIReceiptData;
+        const receiptData = createFn(
+          viewingReceipt.items.map(item => ({
+            item: { icode: item.item_code, descript: item.item_name, sprice: item.price },
+            quantity: item.quantity,
+            lineTotal: item.lineTotal,
+          })),
+          { id: viewingReceipt.farmerId, name: viewingReceipt.farmerName, route: viewingReceipt.memberRoute },
+          { transrefno: viewingReceipt.uploadrefno || '', clerkName: viewingReceipt.clerkName || 'Unknown' },
+          companyName
+        );
+        return (
+          <TransactionReceipt
+            data={receiptData}
+            open={true}
+            onClose={() => setViewingReceipt(null)}
+          />
+        );
+      } else {
+        // Milk/Coffee receipt
+        const receiptData = createMilkReceiptData(viewingReceipt.collections, companyName, {
+          cumulativeFrequency: viewingReceipt.cumulativeWeight,
+          showCumulativeFrequency: viewingReceipt.cumulativeWeight !== undefined && viewingReceipt.cumulativeWeight > 0,
+          routeLabel,
+          locationName,
+        });
+        return (
+          <TransactionReceipt
+            data={receiptData}
+            open={true}
+            onClose={() => setViewingReceipt(null)}
+          />
+        );
+      }
+    })()}
+    </>
   );
 };
