@@ -591,7 +591,7 @@ const Store = () => {
         device_fingerprint: deviceFingerprint,
         items: batchItems,
         season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
-        delivered_by: deliveredBy || 'owner',
+        // delivered_by not used in Store transactions
         // Photo excluded - will upload in background after transaction
       };
 
@@ -628,7 +628,7 @@ const Store = () => {
             device_fingerprint: deviceFingerprint,
             photo: photoBase64, // Include photo for offline sync
             season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
-            delivered_by: deliveredBy || 'owner',
+            // delivered_by not used in Store transactions
           };
           await saveSale(sale);
         }
@@ -640,7 +640,7 @@ const Store = () => {
       const receipt = createStoreReceiptData(
         cart,
         { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
-        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName, deliveredBy: deliveredBy || 'owner' },
+        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
         companyName
       );
       setReceiptData(receipt);
