@@ -98,7 +98,12 @@ export const DeviceZReportReceipt = ({
     }
     
     // Sort by transtype (1=Buy first, then 2=Sell, then 3=AI)
-    return Array.from(typeMap.values()).sort((a, b) => a.transtype - b.transtype);
+    // Within each group, sort by product_code so dotted separators group items correctly
+    const sorted = Array.from(typeMap.values()).sort((a, b) => a.transtype - b.transtype);
+    sorted.forEach(group => {
+      group.transactions.sort((a, b) => (a.product_code || '').localeCompare(b.product_code || ''));
+    });
+    return sorted;
   }, [filteredTransactions]);
   
   // Calculate filtered totals
