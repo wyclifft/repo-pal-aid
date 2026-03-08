@@ -613,8 +613,8 @@ export const ReprintModal = ({
                       <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-2">
                         <span>{receipt.farmerId}</span>
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted flex items-center gap-1">
-                          {getReceiptTypeIcon(receipt.type)}
-                          {getReceiptTypeLabel(receipt.type)}
+                          {getReceiptTypeIcon(receipt.type, receipt)}
+                          {getReceiptTypeLabel(receipt.type, receipt)}
                         </span>
                       </div>
                     </div>
