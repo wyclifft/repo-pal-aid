@@ -76,6 +76,8 @@ export const ReprintModal = ({
   const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   const [activeTab, setActiveTab] = useState<'recent' | 'search'>('recent');
   const [searchQuery, setSearchQuery] = useState('');
+  // On-screen receipt viewing (for printCopies=0)
+  const [viewingReceipt, setViewingReceipt] = useState<PrintedReceipt | null>(null);
   
   // Filter receipts based on search query
   const filteredReceipts = useMemo(() => {
