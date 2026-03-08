@@ -770,5 +770,47 @@ export const ReprintModal = ({
 
       </DialogContent>
     </Dialog>
+
+    {/* On-screen receipt viewer for printCopies=0 */}
+    {viewingReceipt && (() => {
+      if ((viewingReceipt.type === 'store' || viewingReceipt.type === 'ai') && viewingReceipt.items) {
+        const createFn = viewingReceipt.type === 'store' ? createStoreReceiptData : createAIReceiptData;
+        const receiptData = createFn(
+          viewingReceipt.items.map(item => ({
+            item_code: item.item_code,
+            item_name: item.item_name,
+            quantity: item.quantity,
+            price: item.price,
+            lineTotal: item.lineTotal,
+          })),
+          { id: viewingReceipt.farmerId, name: viewingReceipt.farmerName, route: viewingReceipt.memberRoute },
+          { transrefno: viewingReceipt.uploadrefno || '', clerkName: viewingReceipt.clerkName || 'Unknown' },
+          companyName
+        );
+        return (
+          <TransactionReceipt
+            data={receiptData}
+            open={true}
+            onClose={() => setViewingReceipt(null)}
+          />
+        );
+      } else {
+        // Milk/Coffee receipt
+        const receiptData = createMilkReceiptData(viewingReceipt.collections, companyName, {
+          cumulativeFrequency: viewingReceipt.cumulativeWeight,
+          showCumulativeFrequency: viewingReceipt.cumulativeWeight !== undefined && viewingReceipt.cumulativeWeight > 0,
+          routeLabel,
+          locationName,
+        });
+        return (
+          <TransactionReceipt
+            data={receiptData}
+            open={true}
+            onClose={() => setViewingReceipt(null)}
+          />
+        );
+      }
+    })()}
+    </>
   );
 };
