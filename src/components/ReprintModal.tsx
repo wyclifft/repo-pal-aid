@@ -650,6 +650,18 @@ export const ReprintModal = ({
                     )}
                   </div>
 
+                  {/* Cumulative + Delivered By - only for milk/coffee receipts */}
+                  {(!receipt.type || receipt.type === 'milk') && receipt.collections?.length > 0 && (
+                    <div className="flex items-center justify-between text-[10px] sm:text-xs text-muted-foreground">
+                      {receipt.collections[0]?.delivered_by && (
+                        <span>Delivered By: <span className="font-medium text-foreground">{receipt.collections[0].delivered_by}</span></span>
+                      )}
+                      {receipt.collections[0]?.cumulative_weight !== undefined && receipt.collections[0]?.cumulative_weight !== null && (
+                        <span>Cumulative: <span className="font-medium text-foreground">{receipt.collections[0].cumulative_weight} Kg</span></span>
+                      )}
+                    </div>
+                  )}
+
                   {/* Action Buttons - Only show when not in delete mode */}
                   {!isDeleteMode && (
                     <div className="flex gap-2">
