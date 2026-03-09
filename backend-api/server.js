@@ -1912,6 +1912,7 @@ const server = http.createServer(async (req, res) => {
         console.log(`🛒 Batch sale: ${body.items.length} items, uploadrefno=${uploadrefno}`);
         
         const insertedRefs = [];
+        const duplicateRefs = [];
         
         // Insert each item with its unique transrefno
         // Get season (CAN) from request body for consistency across all transaction types
@@ -1920,68 +1921,91 @@ const server = http.createServer(async (req, res) => {
         for (const item of body.items) {
           const transrefno = item.transrefno;
           const amount = (item.quantity || 0) * (item.price || 0);
-          
-          await conn.query(
-            `INSERT INTO transactions 
-              (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
-               transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-               amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
-               cowname, cowbreed, noofcalfs, aibreed)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              transrefno,
-              uploadrefno,
-              body.user_id || body.sold_by || '', // userId (login user_id for tracking)
-              body.sold_by || '',                 // clerk (display name/username)
-              body.device_fingerprint || '',
-              body.farmer_id || '',
-              body.route || '',                   // route (from frontend - farmer's route)
-              item.quantity || 0,
-              '',
-              transdate,
-              transtime,
-              transtype,
-              0,
-              0,
-              ccode,
-              0,
-              item.price || 0,
-              amount,
-              item.item_code || '',
-              seasonCAN,                        // CAN (season ID for coffee orgtypes)
-              timestamp,
-              0,
-              '',
-              photoFilename,  // Same photo for all items
-              photoDirectory,
-              item.cow_name || '',
-              item.cow_breed || '',
-              item.number_of_calves || '',
-              item.other_details || ''
-            ]
-          );
-          
-          // Update stock balance for this item
-          await conn.query(
-            'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
-            [item.quantity || 0, item.item_code]
-          );
-          
-          insertedRefs.push(transrefno);
-          console.log(`✅ Inserted item: ${transrefno} - ${item.item_code} x ${item.quantity}`);
+
+          try {
+            await conn.query(
+              `INSERT INTO transactions 
+                (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+                 transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
+                 amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
+                 cowname, cowbreed, noofcalfs, aibreed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                transrefno,
+                uploadrefno,
+                body.user_id || body.sold_by || '', // userId (login user_id for tracking)
+                body.sold_by || '',                 // clerk (display name/username)
+                body.device_fingerprint || '',
+                body.farmer_id || '',
+                body.route || '',                   // route (from frontend - farmer's route)
+                item.quantity || 0,
+                '',
+                transdate,
+                transtime,
+                transtype,
+                0,
+                0,
+                ccode,
+                0,
+                item.price || 0,
+                amount,
+                item.item_code || '',
+                seasonCAN,                        // CAN (season ID for coffee orgtypes)
+                timestamp,
+                0,
+                '',
+                photoFilename,  // Same photo for all items
+                photoDirectory,
+                item.cow_name || '',
+                item.cow_breed || '',
+                item.number_of_calves || '',
+                item.other_details || ''
+              ]
+            );
+
+            // Update stock balance only for newly inserted rows
+            await conn.query(
+              'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
+              [item.quantity || 0, item.item_code]
+            );
+
+            insertedRefs.push(transrefno);
+            console.log(`✅ Inserted item: ${transrefno} - ${item.item_code} x ${item.quantity}`);
+          } catch (itemError) {
+            const isDuplicateRef =
+              itemError?.code === 'ER_DUP_ENTRY' &&
+              String(itemError?.sqlMessage || itemError?.message || '').includes('idx_transrefno_unique');
+
+            if (isDuplicateRef) {
+              duplicateRefs.push(transrefno);
+              console.warn(`⚠️ Duplicate item skipped (already synced): ${transrefno}`);
+              continue;
+            }
+
+            throw itemError;
+          }
         }
         
         await conn.commit();
         conn.release();
+
+        const insertedCount = insertedRefs.length;
+        const duplicateCount = duplicateRefs.length;
+        const allWereDuplicates = insertedCount === 0 && duplicateCount > 0;
         
         return sendJSON(res, { 
           success: true, 
-          message: `Batch sale recorded: ${body.items.length} items`,
+          message: allWereDuplicates
+            ? `Batch already synced (${duplicateCount} duplicate item${duplicateCount === 1 ? '' : 's'})`
+            : `Batch sale recorded: ${insertedCount} inserted, ${duplicateCount} duplicate`,
           uploadrefno,
           transrefnos: insertedRefs,
+          duplicate_transrefnos: duplicateRefs,
+          inserted_count: insertedCount,
+          duplicate_count: duplicateCount,
           photo_saved: !!photoFilename,
           photo_path: photoFilename ? `${photoDirectory}/${photoFilename}` : null
-        }, 201);
+        }, allWereDuplicates ? 200 : 201);
         
       } catch (error) {
         await conn.rollback();
