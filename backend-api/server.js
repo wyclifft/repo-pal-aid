@@ -1787,8 +1787,22 @@ const server = http.createServer(async (req, res) => {
           photo_path: photoFilename ? `${photoDirectory}/${photoFilename}` : null
         }, 201);
       } catch (error) {
+        const isDuplicateRef =
+          error?.code === 'ER_DUP_ENTRY' &&
+          String(error?.sqlMessage || error?.message || '').includes('idx_transrefno_unique');
+
         await conn.rollback();
         conn.release();
+
+        if (isDuplicateRef) {
+          return sendJSON(res, {
+            success: true,
+            duplicate: true,
+            sale_ref: body.transrefno || body.sale_ref || '',
+            message: 'Sale already exists, treated as synced'
+          }, 200);
+        }
+
         throw error;
       }
     }
