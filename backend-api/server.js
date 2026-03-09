@@ -1656,6 +1656,23 @@ const server = http.createServer(async (req, res) => {
             message: `${serviceName} operations are not enabled for this company. Please contact administrator.` 
           }, 403);
         }
+
+        // Idempotency guard: if transrefno already exists, treat as already synced
+        const [existingSaleRows] = await conn.query(
+          'SELECT ID FROM transactions WHERE transrefno = ? LIMIT 1',
+          [transrefno]
+        );
+
+        if (existingSaleRows.length > 0) {
+          await conn.rollback();
+          conn.release();
+          return sendJSON(res, {
+            success: true,
+            duplicate: true,
+            sale_ref: transrefno,
+            message: 'Sale already exists, treated as synced'
+          }, 200);
+        }
         
         console.log(`🟢 BACKEND: Creating ${transtype === 3 ? 'AI' : 'Store'} transaction`);
         console.log('📝 TransRefNo:', transrefno);
