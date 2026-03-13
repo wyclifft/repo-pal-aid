@@ -545,8 +545,8 @@ export const generateReferenceWithUploadRef = async (transactionType: Transactio
  * Generate ONLY a new transrefno (for additional captures that share an existing uploadrefno)
  * Used when farmer captures multiple buckets in same session - each gets unique transrefno but shares uploadrefno
  */
-export const generateTransRefOnly = async (clientFetch?: number): Promise<string | null> => {
-  return generateOfflineReference(clientFetch);
+export const generateTransRefOnly = async (): Promise<string | null> => {
+  return generateOfflineReference();
 };
 
 /**
