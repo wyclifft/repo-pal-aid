@@ -1180,7 +1180,7 @@ const Index = () => {
               computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
             }
           } catch {
-            const total = await getFarmerTotalCumulative(cleanId);
+            const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
             computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
           }
           setCumulativeFrequency(computedCumulative);
