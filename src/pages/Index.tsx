@@ -1252,7 +1252,7 @@ const Index = () => {
             }
           } catch {
             // Fallback: baseCount + unsynced receipts (already includes just-saved offline receipts)
-            const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+            const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
             cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
           }
         }
