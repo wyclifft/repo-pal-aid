@@ -560,7 +560,7 @@ const Index = () => {
         try {
           if (navigator.onLine) {
             const freqResult = await Promise.race([
-              mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint),
+              mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint, selectedRouteCode || undefined),
               new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
             ]);
             if (freqResult.success && freqResult.data) {
