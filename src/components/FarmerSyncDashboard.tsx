@@ -27,7 +27,7 @@ const getActiveRoute = (): string => {
     const data = localStorage.getItem('active_session_data');
     if (data) {
       const parsed = JSON.parse(data);
-      return parsed?.route?.tcode || '';
+      return (parsed?.route?.tcode || '').trim();
     }
   } catch {}
   return '';
