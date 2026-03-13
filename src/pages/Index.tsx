@@ -582,7 +582,7 @@ const Index = () => {
             }
           }
           // Offline or fetch failed: baseCount + fresh unsynced receipts (no double-counting)
-          const total = await getFarmerTotalCumulative(cleanFarmerId);
+          const total = await getFarmerTotalCumulative(cleanFarmerId, selectedRouteCode || undefined);
           const filtered = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
           setCumulativeFrequency(filtered);
           console.log(`📊 Offline cumulative for ${cleanFarmerId}: total=${total.total}`);
