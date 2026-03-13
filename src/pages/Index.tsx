@@ -568,7 +568,7 @@ const Index = () => {
               const cloudByProduct = freqResult.data.by_product || [];
               await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct);
               // Fresh unsynced weight from actual IndexedDB receipts (no cached localCount)
-              const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId);
+              const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId, selectedRouteCode || undefined);
               // Merge by-product
               const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
               for (const p of cloudByProduct) merged[p.icode] = { ...p };
