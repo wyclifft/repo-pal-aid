@@ -1247,7 +1247,7 @@ const Index = () => {
             
             // Offline or cloud fetch failed: use baseCount + fresh unsynced receipts
             if (cumulativeForPrint === undefined) {
-              const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+              const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
               cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
             }
           } catch {
