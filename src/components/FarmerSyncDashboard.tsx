@@ -84,10 +84,8 @@ export const FarmerSyncDashboard = () => {
       if (triggerSync && navigator.onLine) {
         setProgressInfo({ current: 0, total: 0, status: 'Syncing offline receipts to server...' });
         window.dispatchEvent(new CustomEvent('syncStart'));
-        // Wait briefly for sync to begin processing
         await new Promise(r => setTimeout(r, 2000));
 
-        // Fetch fresh cumulative totals from server batch API and update IndexedDB
         setProgressInfo({ current: 0, total: 0, status: 'Fetching cumulative totals from server...' });
         const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
         if (deviceFingerprint) {
@@ -96,7 +94,6 @@ export const FarmerSyncDashboard = () => {
             if (batchResult.success && batchResult.data && batchResult.data.farmers) {
               const batchFarmers = batchResult.data.farmers;
               console.log(`[SyncDash] Batch API returned ${batchFarmers.length} cumulative records`);
-              // Write updated cumulatives to IndexedDB
               const WRITE_BATCH = 50;
               for (let i = 0; i < batchFarmers.length; i += WRITE_BATCH) {
                 const batch = batchFarmers.slice(i, i + WRITE_BATCH);
@@ -113,7 +110,7 @@ export const FarmerSyncDashboard = () => {
         setProgressInfo({ current: 0, total: 0, status: 'Refreshing cumulative data...' });
       }
 
-      const [farmers, unsyncedReceipts] = await Promise.all([
+      const [allFarmers, unsyncedReceipts] = await Promise.all([
         fetchFarmerList(),
         getUnsyncedReceipts(),
       ]);
@@ -121,12 +118,75 @@ export const FarmerSyncDashboard = () => {
       setUnsyncedCount(unsyncedReceipts.filter((r: any) => r.orderId !== 'PRINTED_RECEIPTS').length);
 
       const deviceCcode = localStorage.getItem('device_ccode') || '';
-      // Only include farmers qualifying for cumulative sync (ccode match + currqty=1 + route match)
-      let filteredFarmers = deviceCcode
-        ? farmers.filter((f: Farmer) => f.ccode === deviceCcode && Number(f.currqty) === 1)
-        : farmers.filter((f: Farmer) => Number(f.currqty) === 1);
-      
-      // Filter by active route if one is selected
+      let filteredFarmers: Farmer[] = [];
+
+      // When a route is selected, use the batch cumulative API as the primary source
+      // because farmers may deliver to a route different from their fm_tanks registration route.
+      if (activeRoute && navigator.onLine) {
+        setProgressInfo({ current: 0, total: 0, status: 'Fetching route transaction data...' });
+        const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
+        try {
+          const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, activeRoute);
+          if (batchResult.success && batchResult.data && batchResult.data.farmers) {
+            const batchFarmers = batchResult.data.farmers;
+            console.log(`[SyncDash] Route ${activeRoute}: batch API returned ${batchFarmers.length} farmers from transactions`);
+
+            // Build a lookup map from the full fm_tanks list (no route filter) for names/metadata
+            const farmerLookup = new Map<string, Farmer>();
+            allFarmers.forEach((f: Farmer) => farmerLookup.set(f.farmer_id.trim(), f));
+
+            const total = batchFarmers.length;
+            setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} farmers...` });
+
+            const results: FarmerSyncEntry[] = [];
+            for (let i = 0; i < batchFarmers.length; i += BATCH_SIZE) {
+              if (cancelledRef.current) break;
+              const batch = batchFarmers.slice(i, i + BATCH_SIZE);
+
+              const batchResults = await Promise.all(
+                batch.map(async (bf) => {
+                  const fId = bf.farmer_id.trim();
+                  const farmerMeta = farmerLookup.get(fId);
+                  const cumData = await getFarmerCumulative(fId);
+                  return {
+                    farmer_id: fId,
+                    name: farmerMeta?.name || bf.farmer_name || fId,
+                    route: farmerMeta?.route?.trim() || activeRoute,
+                    cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : bf.cumulative_weight || 0,
+                    baseCount: cumData?.baseCount || bf.cumulative_weight || 0,
+                    localCount: cumData?.localCount || 0,
+                    isCached: !!cumData,
+                  };
+                })
+              );
+              results.push(...batchResults);
+
+              const processed = Math.min(i + BATCH_SIZE, batchFarmers.length);
+              setProgressInfo({ current: processed, total, status: `Processing ${processed} of ${total} farmers...` });
+              if (i + BATCH_SIZE < batchFarmers.length) {
+                await new Promise(r => setTimeout(r, 0));
+              }
+            }
+
+            results.sort((a, b) => {
+              if (a.isCached !== b.isCached) return a.isCached ? -1 : 1;
+              return a.name.localeCompare(b.name);
+            });
+
+            setEntries(results);
+            setProgressInfo({ current: total, total, status: 'Complete' });
+            return; // done — skip the fm_tanks-based path below
+          }
+        } catch (err) {
+          console.warn('[SyncDash] Batch route fetch failed, falling back to fm_tanks filter:', err);
+        }
+      }
+
+      // Fallback / no-route path: filter fm_tanks by currqty=1 and optional route
+      filteredFarmers = deviceCcode
+        ? allFarmers.filter((f: Farmer) => f.ccode === deviceCcode && Number(f.currqty) === 1)
+        : allFarmers.filter((f: Farmer) => Number(f.currqty) === 1);
+
       if (activeRoute) {
         filteredFarmers = filteredFarmers.filter((f: Farmer) => f.route.trim() === activeRoute);
       }
@@ -138,9 +198,9 @@ export const FarmerSyncDashboard = () => {
 
       for (let i = 0; i < filteredFarmers.length; i += BATCH_SIZE) {
         if (cancelledRef.current) break;
-        
+
         const batch = filteredFarmers.slice(i, i + BATCH_SIZE);
-        
+
         const batchResults = await Promise.all(
           batch.map(async (farmer) => {
             const cumData = await getFarmerCumulative(farmer.farmer_id);
@@ -155,7 +215,7 @@ export const FarmerSyncDashboard = () => {
             };
           })
         );
-        
+
         results.push(...batchResults);
 
         const processed = Math.min(i + BATCH_SIZE, filteredFarmers.length);
@@ -170,7 +230,6 @@ export const FarmerSyncDashboard = () => {
         }
       }
 
-      // Sort: cached first, then by name
       results.sort((a, b) => {
         if (a.isCached !== b.isCached) return a.isCached ? -1 : 1;
         return a.name.localeCompare(b.name);
@@ -184,7 +243,7 @@ export const FarmerSyncDashboard = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [isReady, fetchFarmerList, getFarmerCumulative, getUnsyncedReceipts]);
+  }, [isReady, activeRoute, fetchFarmerList, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative]);
 
   useEffect(() => {
     loadData(false);
