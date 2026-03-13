@@ -816,7 +816,7 @@ export const useIndexedDB = () => {
    * Calculate cumulative weight from unsynced receipts in IndexedDB for a farmer in the current month.
    * This ensures offline cumulative is accurate even if the farmer_cumulative cache was never seeded.
    */
-  const getUnsyncedWeightForFarmer = useCallback(async (farmerId: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
+  const getUnsyncedWeightForFarmer = useCallback(async (farmerId: string, routeFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
     if (!db) return { total: 0, byProduct: [] };
     try {
       const unsynced = await getUnsyncedReceipts();
@@ -825,6 +825,7 @@ export const useIndexedDB = () => {
       const currentYear = now.getFullYear();
       // Normalize farmerId consistently
       const cleanFarmerId = farmerId.replace(/^#/, '').trim().toUpperCase();
+      const cleanRoute = routeFilter ? routeFilter.trim().toUpperCase() : '';
 
       let totalWeight = 0;
       const productWeights: Record<string, { icode: string; product_name: string; weight: number }> = {};
@@ -833,6 +834,11 @@ export const useIndexedDB = () => {
         if (r.transtype === 2) continue;
         const rFarmerId = (r.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
         if (rFarmerId !== cleanFarmerId) continue;
+        // Filter by route if specified
+        if (cleanRoute) {
+          const rRoute = (r.route || '').trim().toUpperCase();
+          if (rRoute !== cleanRoute) continue;
+        }
         // Check same month
         const rDate = new Date(r.collection_date);
         if (rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear) {
@@ -859,12 +865,12 @@ export const useIndexedDB = () => {
    * This avoids double-counting by NOT using localCount (which duplicates unsynced receipt data).
    * Returns { total, byProduct } with merged per-product breakdown.
    */
-  const getFarmerTotalCumulative = useCallback(async (farmerId: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
+  const getFarmerTotalCumulative = useCallback(async (farmerId: string, routeFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
     const cached = await getFarmerCumulative(farmerId);
     const baseCount = cached?.baseCount || 0;
     const baseProd = cached?.byProduct || [];
     // Always recalculate from actual unsynced receipts instead of using cached localCount
-    const unsynced = await getUnsyncedWeightForFarmer(farmerId);
+    const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter);
     const total = baseCount + unsynced.total;
     
     // Merge by-product: base + unsynced
