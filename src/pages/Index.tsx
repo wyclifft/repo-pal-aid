@@ -268,7 +268,7 @@ const Index = () => {
           const cached = await getFarmerCumulative(cleanId);
           const baseCount = cached?.baseCount || 0;
           const baseProd = cached?.byProduct || [];
-          const unsynced = await getUnsyncedWeightForFarmer(cleanId);
+           const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
           // Merge by-product
           const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
           for (const p of baseProd) merged[p.icode] = { ...p };
