@@ -128,7 +128,7 @@ export const FarmerSyncDashboard = () => {
       
       // Filter by active route if one is selected
       if (activeRoute) {
-        filteredFarmers = filteredFarmers.filter((f: Farmer) => f.route === activeRoute);
+        filteredFarmers = filteredFarmers.filter((f: Farmer) => f.route.trim() === activeRoute);
       }
 
       const total = filteredFarmers.length;

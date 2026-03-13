@@ -595,7 +595,7 @@ const Index = () => {
 
   const handleRouteChange = (selectedRoute: Route | null) => {
     if (selectedRoute) {
-      setSelectedRouteCode(selectedRoute.tcode);
+      setSelectedRouteCode(selectedRoute.tcode.trim());
       setSelectedRouteMprefix(selectedRoute.mprefix || '');
       setRouteName(selectedRoute.descript);
       // Clear farmer when route changes
