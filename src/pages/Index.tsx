@@ -276,7 +276,7 @@ const Index = () => {
             if (merged[p.icode]) merged[p.icode].weight += p.weight;
             else merged[p.icode] = { ...p };
           }
-          setCumulativeFrequency({ total: baseCount + unsynced.total, byProduct: Object.values(merged) });
+          setCumulativeFrequency(filterCumulativeByProduct({ total: baseCount + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode));
         }
       } catch (err) {
         console.warn(`Cumulative refresh (${reason}) failed:`, err);
