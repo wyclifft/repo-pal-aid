@@ -508,7 +508,7 @@ const Index = () => {
       // NOTE: We do NOT set cancelled or reset the guard here.
       // The sync continues running even if the component re-renders.
     };
-  }, [isReady, showCumulative, deviceFingerprint, updateFarmerCumulative, saveFarmers, getFarmerCumulative]);
+  }, [isReady, showCumulative, deviceFingerprint, selectedRouteCode, updateFarmerCumulative, saveFarmers, getFarmerCumulative]);
 
   // NOTE: Printed receipts are now loaded from ReprintContext, no need to load here
   // The ReprintProvider handles loading from IndexedDB
