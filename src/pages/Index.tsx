@@ -576,7 +576,7 @@ const Index = () => {
                 if (merged[p.icode]) merged[p.icode].weight += p.weight;
                 else merged[p.icode] = { ...p };
               }
-              setCumulativeFrequency({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) });
+              setCumulativeFrequency(filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode));
               console.log(`📊 Pre-fetched cumulative for ${cleanFarmerId}: cloud=${cloudCumulative}, unsynced=${unsynced.total}`);
               return;
             }
