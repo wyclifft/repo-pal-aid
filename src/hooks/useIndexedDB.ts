@@ -865,12 +865,12 @@ export const useIndexedDB = () => {
    * This avoids double-counting by NOT using localCount (which duplicates unsynced receipt data).
    * Returns { total, byProduct } with merged per-product breakdown.
    */
-  const getFarmerTotalCumulative = useCallback(async (farmerId: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
+  const getFarmerTotalCumulative = useCallback(async (farmerId: string, routeFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
     const cached = await getFarmerCumulative(farmerId);
     const baseCount = cached?.baseCount || 0;
     const baseProd = cached?.byProduct || [];
     // Always recalculate from actual unsynced receipts instead of using cached localCount
-    const unsynced = await getUnsyncedWeightForFarmer(farmerId);
+    const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter);
     const total = baseCount + unsynced.total;
     
     // Merge by-product: base + unsynced
