@@ -448,7 +448,7 @@ const Index = () => {
                 const results = await Promise.allSettled(batch.map(async (farmer) => {
                   const fId = farmer.farmer_id.replace(/^#/, '').trim();
                   const res = await Promise.race([
-                    mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint),
+                    mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint, selectedRouteCode || undefined),
                     new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), TIMEOUT))
                   ]);
                   if (res.success && res.data) {
