@@ -351,7 +351,7 @@ export const generateOfflineReference = async (clientFetch?: number): Promise<st
       await updateConfig({ lastTrnId: nextTrnId });
       let reference: string;
       if (clientFetch) {
-        reference = `${config.devcode}${clientFetch}${String(nextTrnId).padStart(7, '0')}`;
+        reference = `${config.devcode}${clientFetch}${String(nextTrnId).padStart(8, '0')}`;
       } else {
         reference = `${config.devcode}${String(nextTrnId).padStart(8, '0')}`;
       }
