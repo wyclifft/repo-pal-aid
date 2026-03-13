@@ -1,4 +1,4 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.8.1: Fix reference_no missing on Store/AI receipts + fix trnid padding (8 digits)
-export const APP_VERSION = '2.8.1';
-export const APP_VERSION_CODE = 20;
+// v2.8.2: Filter cumulative totals by selected produce type (icode)
+export const APP_VERSION = '2.8.2';
+export const APP_VERSION_CODE = 21;

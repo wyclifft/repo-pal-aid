@@ -21,6 +21,18 @@ import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/re
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
 import { toast } from 'sonner';
 
+// Helper: filter cumulative data to only the selected produce type
+const filterCumulativeByProduct = (
+  cumData: { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined,
+  productIcode?: string
+): { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined => {
+  if (!cumData || !productIcode || cumData.byProduct.length === 0) return cumData;
+  const match = cumData.byProduct.find(p => p.icode === productIcode);
+  return match
+    ? { total: match.weight, byProduct: [match] }
+    : { total: 0, byProduct: [] };
+};
+
 const Index = () => {
   const navigate = useNavigate();
   const { currentUser, isOffline, login, logout, isAuthenticated } = useAuth();
@@ -264,7 +276,7 @@ const Index = () => {
             if (merged[p.icode]) merged[p.icode].weight += p.weight;
             else merged[p.icode] = { ...p };
           }
-          setCumulativeFrequency({ total: baseCount + unsynced.total, byProduct: Object.values(merged) });
+          setCumulativeFrequency(filterCumulativeByProduct({ total: baseCount + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode));
         }
       } catch (err) {
         console.warn(`Cumulative refresh (${reason}) failed:`, err);
@@ -308,7 +320,7 @@ const Index = () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       clearInterval(intervalId);
     };
-  }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers, getFarmerCumulative]);
+  }, [selectedFarmer, selectedProduct, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers, getFarmerCumulative]);
 
   // ========== FAST CUMULATIVE PRE-FETCH (BATCH API) ==========
   // Uses single batch endpoint instead of 3558 individual API calls
@@ -564,14 +576,15 @@ const Index = () => {
                 if (merged[p.icode]) merged[p.icode].weight += p.weight;
                 else merged[p.icode] = { ...p };
               }
-              setCumulativeFrequency({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) });
+              setCumulativeFrequency(filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode));
               console.log(`📊 Pre-fetched cumulative for ${cleanFarmerId}: cloud=${cloudCumulative}, unsynced=${unsynced.total}`);
               return;
             }
           }
           // Offline or fetch failed: baseCount + fresh unsynced receipts (no double-counting)
           const total = await getFarmerTotalCumulative(cleanFarmerId);
-          setCumulativeFrequency(total.total > 0 ? total : undefined);
+          const filtered = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
+          setCumulativeFrequency(filtered);
           console.log(`📊 Offline cumulative for ${cleanFarmerId}: total=${total.total}`);
         } catch (err) {
           console.warn('Failed to pre-fetch cumulative:', err);
@@ -947,6 +960,7 @@ const Index = () => {
       productName: selectedProduct?.descript,
       shouldShowCumulativeForFarmer: showCumulative,
       farmerIdForCumulative: selectedFarmer?.farmer_id?.replace(/^#/, '').trim() || '',
+      productIcode: selectedProduct?.icode, // Capture for background print filtering
     };
 
     // OPTIMIZED: Process submissions in parallel batches for faster throughput
@@ -1155,18 +1169,18 @@ const Index = () => {
                   if (merged[p.icode]) merged[p.icode].weight += p.weight;
                   else merged[p.icode] = { ...p };
                 }
-                computedCumulative = { total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) };
+                computedCumulative = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
               } else {
                 const total = await getFarmerTotalCumulative(cleanId);
-                computedCumulative = total.total > 0 ? total : undefined;
+                computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
               }
             } else {
               const total = await getFarmerTotalCumulative(cleanId);
-              computedCumulative = total.total > 0 ? total : undefined;
+              computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
             }
           } catch {
             const total = await getFarmerTotalCumulative(cleanId);
-            computedCumulative = total.total > 0 ? total : undefined;
+            computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
           }
           setCumulativeFrequency(computedCumulative);
         }
@@ -1224,7 +1238,7 @@ const Index = () => {
                   if (merged[p.icode]) merged[p.icode].weight += p.weight;
                   else merged[p.icode] = { ...p };
                 }
-                cumulativeForPrint = { total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) };
+                cumulativeForPrint = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, printData.productIcode);
                 // Update cache in background
                 updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct).catch(() => {});
               }
@@ -1232,11 +1246,13 @@ const Index = () => {
             
             // Offline or cloud fetch failed: use baseCount + fresh unsynced receipts
             if (cumulativeForPrint === undefined) {
-              cumulativeForPrint = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+              const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+              cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
             }
           } catch {
             // Fallback: baseCount + unsynced receipts (already includes just-saved offline receipts)
-            cumulativeForPrint = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+            const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative);
+            cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
           }
         }
         
