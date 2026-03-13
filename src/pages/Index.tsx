@@ -320,7 +320,7 @@ const Index = () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       clearInterval(intervalId);
     };
-  }, [selectedFarmer, selectedProduct, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers, getFarmerCumulative]);
+  }, [selectedFarmer, selectedProduct, selectedRouteCode, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers, getFarmerCumulative]);
 
   // ========== FAST CUMULATIVE PRE-FETCH (BATCH API) ==========
   // Uses single batch endpoint instead of 3558 individual API calls
