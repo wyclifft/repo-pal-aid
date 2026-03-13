@@ -1238,7 +1238,7 @@ const Index = () => {
                   if (merged[p.icode]) merged[p.icode].weight += p.weight;
                   else merged[p.icode] = { ...p };
                 }
-                cumulativeForPrint = { total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) };
+                cumulativeForPrint = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, printData.productIcode);
                 // Update cache in background
                 updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct).catch(() => {});
               }
