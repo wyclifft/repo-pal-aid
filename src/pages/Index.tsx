@@ -1173,15 +1173,15 @@ const Index = () => {
                 computedCumulative = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
               } else {
                 const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
-                computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
+                computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
               }
             } else {
               const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
-              computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
+              computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
             }
           } catch {
             const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
-            computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
+            computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
           }
           setCumulativeFrequency(computedCumulative);
         }

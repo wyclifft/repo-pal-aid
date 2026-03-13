@@ -325,7 +325,7 @@ const getNextTrnId = async (): Promise<number> => {
  * CRITICAL: Uses mutex lock to prevent race conditions when multiple
  * references are generated simultaneously (e.g., rapid button taps)
  */
-export const generateOfflineReference = async (clientFetch?: number): Promise<string | null> => {
+export const generateOfflineReference = async (): Promise<string | null> => {
   return withLock(async () => {
     const devcode = localStorage.getItem('devcode');
     
@@ -334,14 +334,9 @@ export const generateOfflineReference = async (clientFetch?: number): Promise<st
       const lastUsed = config?.lastTrnId || 0;
       const nextTrnId = lastUsed + 1;
       await updateConfig({ lastTrnId: nextTrnId });
-      // For store/AI transactions, insert clientFetch digit after devcode
-      let reference: string;
-      if (clientFetch) {
-        reference = `${devcode}${clientFetch}${String(nextTrnId).padStart(8, '0')}`;
-      } else {
-        reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
-      }
-      console.log(`⚡ Reference: ${reference} (devcode: ${devcode}, trnid: ${nextTrnId}, clientFetch: ${clientFetch || 'none'})`);
+      // transrefno is always devcode + 8-digit trnid (no clientFetch)
+      const reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
+      console.log(`⚡ Reference: ${reference} (devcode: ${devcode}, trnid: ${nextTrnId})`);
       return reference;
     }
     
@@ -349,12 +344,7 @@ export const generateOfflineReference = async (clientFetch?: number): Promise<st
     if (config?.devcode) {
       const nextTrnId = (config.lastTrnId || 0) + 1;
       await updateConfig({ lastTrnId: nextTrnId });
-      let reference: string;
-      if (clientFetch) {
-        reference = `${config.devcode}${clientFetch}${String(nextTrnId).padStart(8, '0')}`;
-      } else {
-        reference = `${config.devcode}${String(nextTrnId).padStart(8, '0')}`;
-      }
+      const reference = `${config.devcode}${String(nextTrnId).padStart(8, '0')}`;
       console.log(`⚡ Reference (from config): ${reference}`);
       return reference;
     }
