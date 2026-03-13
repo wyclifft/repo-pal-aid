@@ -960,6 +960,7 @@ const Index = () => {
       productName: selectedProduct?.descript,
       shouldShowCumulativeForFarmer: showCumulative,
       farmerIdForCumulative: selectedFarmer?.farmer_id?.replace(/^#/, '').trim() || '',
+      productIcode: selectedProduct?.icode, // Capture for background print filtering
     };
 
     // OPTIMIZED: Process submissions in parallel batches for faster throughput
