@@ -714,6 +714,7 @@ export const createStoreReceiptData = (
     // Store transactions do NOT have deliveredBy - only Buy/Sell portals do
     transactionDate: new Date(),
     items: cartItems.map(c => ({
+      reference_no: transactionInfo.transrefno,
       item_code: c.item.icode,
       item_name: c.item.descript,
       quantity: c.quantity,
