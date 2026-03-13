@@ -1223,7 +1223,7 @@ const Index = () => {
             if (navigator.onLine) {
               // Very short timeout - prioritize fast printing over accurate cumulative
               const freqResult = await Promise.race([
-                mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint),
+                mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint, printData.routeCode || undefined),
                 new Promise<{ success: false }>((resolve) => 
                   setTimeout(() => resolve({ success: false }), 1500)
                 )
