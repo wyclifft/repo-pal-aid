@@ -27,7 +27,7 @@ const getActiveRoute = (): string => {
     const data = localStorage.getItem('active_session_data');
     if (data) {
       const parsed = JSON.parse(data);
-      return parsed?.route?.tcode || '';
+      return (parsed?.route?.tcode || '').trim();
     }
   } catch {}
   return '';
@@ -128,7 +128,7 @@ export const FarmerSyncDashboard = () => {
       
       // Filter by active route if one is selected
       if (activeRoute) {
-        filteredFarmers = filteredFarmers.filter((f: Farmer) => f.route === activeRoute);
+        filteredFarmers = filteredFarmers.filter((f: Farmer) => f.route.trim() === activeRoute);
       }
 
       const total = filteredFarmers.length;
