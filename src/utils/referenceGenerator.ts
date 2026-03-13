@@ -337,7 +337,7 @@ export const generateOfflineReference = async (clientFetch?: number): Promise<st
       // For store/AI transactions, insert clientFetch digit after devcode
       let reference: string;
       if (clientFetch) {
-        reference = `${devcode}${clientFetch}${String(nextTrnId).padStart(7, '0')}`;
+        reference = `${devcode}${clientFetch}${String(nextTrnId).padStart(8, '0')}`;
       } else {
         reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
       }
