@@ -227,7 +227,7 @@ const Index = () => {
 
       try {
         console.log(`🔄 Cumulative refresh (${reason}): using batch API...`);
-        const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint);
+        const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
         if (batchResult.success && batchResult.data && batchResult.data.farmers) {
           const batchMap = new Map<string, number>();
           for (const f of batchResult.data.farmers) {
