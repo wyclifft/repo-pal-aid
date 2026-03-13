@@ -1232,7 +1232,7 @@ const Index = () => {
               if (freqResult.success && freqResult.data) {
                 const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
                 const cloudByProduct = freqResult.data.by_product || [];
-                const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative);
+                const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined);
                 const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
                 for (const p of cloudByProduct) merged[p.icode] = { ...p };
                 for (const p of unsynced.byProduct) {
