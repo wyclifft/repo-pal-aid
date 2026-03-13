@@ -1169,18 +1169,18 @@ const Index = () => {
                   if (merged[p.icode]) merged[p.icode].weight += p.weight;
                   else merged[p.icode] = { ...p };
                 }
-                computedCumulative = { total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) };
+                computedCumulative = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
               } else {
                 const total = await getFarmerTotalCumulative(cleanId);
-                computedCumulative = total.total > 0 ? total : undefined;
+                computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
               }
             } else {
               const total = await getFarmerTotalCumulative(cleanId);
-              computedCumulative = total.total > 0 ? total : undefined;
+              computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
             }
           } catch {
             const total = await getFarmerTotalCumulative(cleanId);
-            computedCumulative = total.total > 0 ? total : undefined;
+            computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
           }
           setCumulativeFrequency(computedCumulative);
         }
