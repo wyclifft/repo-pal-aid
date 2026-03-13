@@ -370,7 +370,7 @@ const Index = () => {
         // Step 2: Try batch endpoint first (1 request instead of 3558)
         let batchSuccess = false;
         try {
-          const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint);
+          const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
           if (batchResult.success && batchResult.data && batchResult.data.farmers) {
             const batchMap = new Map<string, number>();
             const batchByProductMap = new Map<string, Array<{ icode: string; product_name: string; weight: number }>>();
