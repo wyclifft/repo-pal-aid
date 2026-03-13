@@ -21,6 +21,18 @@ import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/re
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
 import { toast } from 'sonner';
 
+// Helper: filter cumulative data to only the selected produce type
+const filterCumulativeByProduct = (
+  cumData: { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined,
+  productIcode?: string
+): { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined => {
+  if (!cumData || !productIcode || cumData.byProduct.length === 0) return cumData;
+  const match = cumData.byProduct.find(p => p.icode === productIcode);
+  return match
+    ? { total: match.weight, byProduct: [match] }
+    : { total: 0, byProduct: [] };
+};
+
 const Index = () => {
   const navigate = useNavigate();
   const { currentUser, isOffline, login, logout, isAuthenticated } = useAuth();
