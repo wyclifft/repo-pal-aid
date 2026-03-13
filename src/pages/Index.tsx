@@ -27,7 +27,7 @@ const filterCumulativeByProduct = (
   productIcode?: string
 ): { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined => {
   if (!cumData || !productIcode || cumData.byProduct.length === 0) return cumData;
-  const match = cumData.byProduct.find(p => p.icode === productIcode);
+  const match = cumData.byProduct.find(p => p.icode.trim().toUpperCase() === productIcode.trim().toUpperCase());
   return match
     ? { total: match.weight, byProduct: [match] }
     : { total: 0, byProduct: [] };
