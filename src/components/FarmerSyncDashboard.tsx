@@ -150,7 +150,7 @@ export const FarmerSyncDashboard = () => {
                   const cumData = await getFarmerCumulative(fId);
                   return {
                     farmer_id: fId,
-                    name: farmerMeta?.name || bf.farmer_name || fId,
+                    name: farmerMeta?.name || fId,
                     route: farmerMeta?.route?.trim() || activeRoute,
                     cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : bf.cumulative_weight || 0,
                     baseCount: cumData?.baseCount || bf.cumulative_weight || 0,
