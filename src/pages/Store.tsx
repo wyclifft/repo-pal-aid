@@ -563,7 +563,7 @@ const Store = () => {
 
       // Additional items get new unique transrefnos (same pattern as Buy multi-capture)
       for (let i = 1; i < cart.length; i++) {
-        const newTransRef = await generateTransRefOnly(clientFetch);
+        const newTransRef = await generateTransRefOnly();
         if (!newTransRef) {
           toast.error('Failed to generate reference for item');
           setSubmitting(false);

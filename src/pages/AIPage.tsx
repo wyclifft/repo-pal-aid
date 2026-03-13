@@ -406,7 +406,7 @@ const AIPage = () => {
         const cartItem = cart[i];
         // First item uses the original transrefno; subsequent items get a new one
         if (i > 0) {
-          const newRef = await generateTransRefOnly(clientFetch);
+          const newRef = await generateTransRefOnly();
           if (!newRef) {
             toast.error('Failed to generate reference for item');
             continue;

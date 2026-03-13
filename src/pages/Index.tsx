@@ -27,7 +27,7 @@ const filterCumulativeByProduct = (
   productIcode?: string
 ): { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined => {
   if (!cumData || !productIcode || cumData.byProduct.length === 0) return cumData;
-  const match = cumData.byProduct.find(p => p.icode === productIcode);
+  const match = cumData.byProduct.find(p => p.icode.trim().toUpperCase() === productIcode.trim().toUpperCase());
   return match
     ? { total: match.weight, byProduct: [match] }
     : { total: 0, byProduct: [] };
@@ -583,7 +583,7 @@ const Index = () => {
           }
           // Offline or fetch failed: baseCount + fresh unsynced receipts (no double-counting)
           const total = await getFarmerTotalCumulative(cleanFarmerId, selectedRouteCode || undefined);
-          const filtered = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
+          const filtered = filterCumulativeByProduct(total, selectedProduct?.icode);
           setCumulativeFrequency(filtered);
           console.log(`📊 Offline cumulative for ${cleanFarmerId}: total=${total.total}`);
         } catch (err) {
@@ -1173,15 +1173,15 @@ const Index = () => {
                 computedCumulative = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
               } else {
                 const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
-                computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
+                computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
               }
             } else {
               const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
-              computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
+              computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
             }
           } catch {
             const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
-            computedCumulative = filterCumulativeByProduct(total.total > 0 ? total : undefined, selectedProduct?.icode);
+            computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
           }
           setCumulativeFrequency(computedCumulative);
         }
