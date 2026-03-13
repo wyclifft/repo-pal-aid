@@ -502,7 +502,7 @@ export const generateFormattedUploadRef = async (transactionType: TransactionTyp
   // e.g. BA05 + clientFetch=2 + padded id → BA0120000002
   let formatted: string;
   if ((transactionType === 'store' || transactionType === 'ai') && clientFetch) {
-    formatted = `${code}${clientFetch}${String(nextId).padStart(7, '0')}`;
+    formatted = `${code}${clientFetch}${String(nextId).padStart(8, '0')}`;
   } else {
     formatted = `${code}${String(nextId).padStart(8, '0')}`;
   }
