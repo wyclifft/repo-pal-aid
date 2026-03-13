@@ -961,6 +961,7 @@ const Index = () => {
       shouldShowCumulativeForFarmer: showCumulative,
       farmerIdForCumulative: selectedFarmer?.farmer_id?.replace(/^#/, '').trim() || '',
       productIcode: selectedProduct?.icode, // Capture for background print filtering
+      routeCode: selectedRouteCode, // Capture route for background cumulative filtering
     };
 
     // OPTIMIZED: Process submissions in parallel batches for faster throughput
