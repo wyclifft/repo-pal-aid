@@ -528,11 +528,11 @@ export const generateReferenceWithUploadRef = async (transactionType: Transactio
   transrefno: string;
   uploadrefno: string;
 } | null> => {
-  // For store/AI transactions, pass clientFetch to embed prefix in transrefno too
-  const cfForTransref = (transactionType === 'store' || transactionType === 'ai') ? clientFetch : undefined;
-  const transrefno = await generateOfflineReference(cfForTransref);
+  // transrefno never includes clientFetch — backend parses trnid by stripping devcode
+  const transrefno = await generateOfflineReference();
   if (!transrefno) return null;
   
+  // uploadrefno includes clientFetch for store/AI routing
   const uploadrefno = await generateFormattedUploadRef(transactionType, clientFetch);
   if (!uploadrefno) return null;
   
