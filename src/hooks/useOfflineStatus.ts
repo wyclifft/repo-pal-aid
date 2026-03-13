@@ -15,7 +15,7 @@ export const useOfflineStatus = () => {
     effectiveType: '4g'
   }));
   
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const updateStatus = useCallback((updates: Partial<OfflineStatus>) => {
     // Debounce rapid updates

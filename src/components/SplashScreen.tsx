@@ -7,8 +7,8 @@ interface SplashScreenProps {
 export const SplashScreen = memo(({ onComplete }: SplashScreenProps) => {
   const [isVisible, setIsVisible] = useState(true);
   const mountedRef = useRef(true);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const completeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasCompletedRef = useRef(false);
 
   useEffect(() => {

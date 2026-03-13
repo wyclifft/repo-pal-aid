@@ -41,7 +41,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
   const [stableReadingProgress, setStableReadingProgress] = useState(0);
   const [lastRawWeight, setLastRawWeight] = useState(0);
   const stableReadingsRef = useRef<number[]>([]);
-  const stableTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const stableTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Get settings
   const appSettings = useAppSettings();
