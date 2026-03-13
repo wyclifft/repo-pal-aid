@@ -175,7 +175,7 @@ const App = () => {
   const [isReady, setIsReady] = useState(false);
   const [hasError, setHasError] = useState(false);
   const mountedRef = useRef(true);
-  const initTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const initTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Preload critical assets and request permissions on mount
   useEffect(() => {

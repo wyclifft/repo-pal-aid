@@ -39,7 +39,7 @@ export const useDataSync = () => {
   // Offline-first mode from psettings.online
   const [offlineFirstMode, setOfflineFirstMode] = useState(getOfflineFirstMode);
   const mountedRef = useRef(true);
-  const periodicSyncRef = useRef<NodeJS.Timeout | null>(null);
+  const periodicSyncRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncInProgressRef = useRef(false); // Extra guard against concurrent syncs
   
   const { 
