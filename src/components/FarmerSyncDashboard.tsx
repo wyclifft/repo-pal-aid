@@ -46,60 +46,175 @@ export const FarmerSyncDashboard = () => {
   const activeRoute = getActiveRoute();
 
   /**
-   * Fetch the authoritative farmer list.
-   * Priority: API (complete, unfiltered) → IndexedDB fallback (offline).
+   * Build a name lookup map from cm_members (IndexedDB or API).
+   * Used only for display names — never for filtering the farmer list.
    */
-  const fetchFarmerList = useCallback(async (): Promise<Farmer[]> => {
+  const buildNameLookup = useCallback(async (): Promise<Map<string, Farmer>> => {
+    const lookup = new Map<string, Farmer>();
     const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
-    
-    // Try API first — this returns ALL farmers, no route filter
+
+    // Try API first for the most complete list
     if (navigator.onLine && deviceFingerprint) {
       try {
         const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
         if (response.success && response.data && response.data.length > 0) {
-          console.log(`[SyncDash] Fetched ${response.data.length} farmers from API`);
-          return response.data as Farmer[];
+          (response.data as Farmer[]).forEach(f => lookup.set(f.farmer_id.trim(), f));
+          console.log(`[SyncDash] Name lookup: ${lookup.size} farmers from API`);
+          return lookup;
         }
       } catch (err) {
-        console.warn('[SyncDash] API fetch failed, falling back to IndexedDB:', err);
+        console.warn('[SyncDash] API name lookup failed, using IndexedDB:', err);
       }
     }
-    
-    // Fallback: IndexedDB
+
+    // Fallback: IndexedDB cached farmers
     const farmers = await getFarmers();
-    console.log(`[SyncDash] Fetched ${farmers.length} farmers from IndexedDB`);
-    return farmers;
+    farmers.forEach(f => lookup.set(f.farmer_id.trim(), f));
+    console.log(`[SyncDash] Name lookup: ${lookup.size} farmers from IndexedDB`);
+    return lookup;
   }, [getFarmers]);
+
+  /**
+   * Online path: use batch cumulative API as the sole source of the farmer list.
+   * Returns null if the batch API call fails (caller should fall back to offline).
+   */
+  const loadFromBatchAPI = useCallback(async (
+    nameLookup: Map<string, Farmer>,
+    route?: string
+  ): Promise<FarmerSyncEntry[] | null> => {
+    const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
+    if (!deviceFingerprint) return null;
+
+    try {
+      const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(
+        deviceFingerprint,
+        route || undefined
+      );
+
+      if (!batchResult.success || !batchResult.data?.farmers) return null;
+
+      const batchFarmers = batchResult.data.farmers;
+      console.log(`[SyncDash] Batch API returned ${batchFarmers.length} farmers${route ? ` for route ${route}` : ''}`);
+
+      const total = batchFarmers.length;
+      setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} farmers...` });
+
+      const results: FarmerSyncEntry[] = [];
+
+      for (let i = 0; i < batchFarmers.length; i += BATCH_SIZE) {
+        if (cancelledRef.current) break;
+        const batch = batchFarmers.slice(i, i + BATCH_SIZE);
+
+        const batchResults = await Promise.all(
+          batch.map(async (bf) => {
+            const fId = bf.farmer_id.trim();
+            const farmerMeta = nameLookup.get(fId);
+            const cumData = await getFarmerCumulative(fId);
+            return {
+              farmer_id: fId,
+              name: farmerMeta?.name || fId,
+              route: farmerMeta?.route?.trim() || route || 'N/A',
+              cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : bf.cumulative_weight || 0,
+              baseCount: cumData?.baseCount || bf.cumulative_weight || 0,
+              localCount: cumData?.localCount || 0,
+              isCached: !!cumData,
+            };
+          })
+        );
+        results.push(...batchResults);
+
+        const processed = Math.min(i + BATCH_SIZE, batchFarmers.length);
+        setProgressInfo({ current: processed, total, status: `Processing ${processed} of ${total} farmers...` });
+        if (i + BATCH_SIZE < batchFarmers.length) {
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+
+      return results;
+    } catch (err) {
+      console.warn('[SyncDash] Batch API failed:', err);
+      return null;
+    }
+  }, [getFarmerCumulative]);
+
+  /**
+   * Offline fallback: use IndexedDB cached farmers filtered by ccode/route + cumulative cache.
+   */
+  const loadFromOfflineCache = useCallback(async (): Promise<FarmerSyncEntry[]> => {
+    const farmers = await getFarmers();
+    const deviceCcode = localStorage.getItem('device_ccode') || '';
+
+    let filtered = deviceCcode
+      ? farmers.filter((f: Farmer) => f.ccode === deviceCcode && Number(f.currqty) === 1)
+      : farmers.filter((f: Farmer) => Number(f.currqty) === 1);
+
+    if (activeRoute) {
+      filtered = filtered.filter((f: Farmer) => f.route.trim() === activeRoute);
+    }
+
+    const total = filtered.length;
+    setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} cached farmers...` });
+
+    const results: FarmerSyncEntry[] = [];
+
+    for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
+      if (cancelledRef.current) break;
+      const batch = filtered.slice(i, i + BATCH_SIZE);
+
+      const batchResults = await Promise.all(
+        batch.map(async (farmer) => {
+          const cumData = await getFarmerCumulative(farmer.farmer_id);
+          return {
+            farmer_id: farmer.farmer_id,
+            name: farmer.name || '',
+            route: farmer.route || 'N/A',
+            cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : 0,
+            baseCount: cumData?.baseCount || 0,
+            localCount: cumData?.localCount || 0,
+            isCached: !!cumData,
+          };
+        })
+      );
+
+      results.push(...batchResults);
+      const processed = Math.min(i + BATCH_SIZE, filtered.length);
+      setProgressInfo({ current: processed, total, status: `Processing ${processed} of ${total} farmers...` });
+      if (i + BATCH_SIZE < filtered.length) {
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+
+    return results;
+  }, [getFarmers, getFarmerCumulative, activeRoute]);
 
   const loadData = useCallback(async (triggerSync = false) => {
     if (!isReady) return;
     cancelledRef.current = false;
     setIsLoading(true);
     setVisibleCount(PAGE_SIZE);
-    setProgressInfo({ current: 0, total: 0, status: triggerSync ? 'Syncing offline receipts...' : 'Fetching farmers list...' });
+    setProgressInfo({ current: 0, total: 0, status: triggerSync ? 'Syncing offline receipts...' : 'Loading...' });
 
     try {
-      // If triggerSync requested, dispatch syncStart to trigger background sync first,
-      // then re-fetch cumulative totals from the server batch API
+      // Step 1: Sync offline receipts if requested
       if (triggerSync && navigator.onLine) {
         setProgressInfo({ current: 0, total: 0, status: 'Syncing offline receipts to server...' });
         window.dispatchEvent(new CustomEvent('syncStart'));
         await new Promise(r => setTimeout(r, 2000));
 
+        // Refresh cumulative cache from server
         setProgressInfo({ current: 0, total: 0, status: 'Fetching cumulative totals from server...' });
         const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
         if (deviceFingerprint) {
           try {
             const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, activeRoute || undefined);
-            if (batchResult.success && batchResult.data && batchResult.data.farmers) {
+            if (batchResult.success && batchResult.data?.farmers) {
               const batchFarmers = batchResult.data.farmers;
-              console.log(`[SyncDash] Batch API returned ${batchFarmers.length} cumulative records`);
+              console.log(`[SyncDash] Batch API returned ${batchFarmers.length} cumulative records for cache refresh`);
               const WRITE_BATCH = 50;
               for (let i = 0; i < batchFarmers.length; i += WRITE_BATCH) {
-                const batch = batchFarmers.slice(i, i + WRITE_BATCH);
-                await Promise.all(batch.map(async (f) => {
-                  const fId = f.farmer_id.trim();
-                  await updateFarmerCumulative(fId, f.cumulative_weight, true, f.by_product || []);
+                const wb = batchFarmers.slice(i, i + WRITE_BATCH);
+                await Promise.all(wb.map(async (f) => {
+                  await updateFarmerCumulative(f.farmer_id.trim(), f.cumulative_weight, true, f.by_product || []);
                 }));
               }
             }
@@ -107,173 +222,50 @@ export const FarmerSyncDashboard = () => {
             console.warn('[SyncDash] Batch cumulative refresh failed:', err);
           }
         }
-        setProgressInfo({ current: 0, total: 0, status: 'Refreshing cumulative data...' });
       }
 
-      const [allFarmers, unsyncedReceipts] = await Promise.all([
-        fetchFarmerList(),
-        getUnsyncedReceipts(),
-      ]);
-
+      // Step 2: Get unsynced receipts count
+      const unsyncedReceipts = await getUnsyncedReceipts();
       setUnsyncedCount(unsyncedReceipts.filter((r: any) => r.orderId !== 'PRINTED_RECEIPTS').length);
 
-      const deviceCcode = localStorage.getItem('device_ccode') || '';
-      let filteredFarmers: Farmer[] = [];
+      // Step 3: Load farmer list — transaction-driven (online) or cached (offline)
+      let results: FarmerSyncEntry[] | null = null;
 
-      // When a route is selected, use the batch cumulative API as the primary source
-      // because farmers may deliver to a route different from their fm_tanks registration route.
-      if (activeRoute && navigator.onLine) {
-        setProgressInfo({ current: 0, total: 0, status: 'Fetching route transaction data...' });
-        const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
-        try {
-          const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, activeRoute);
-          if (batchResult.success && batchResult.data && batchResult.data.farmers) {
-            const batchFarmers = batchResult.data.farmers;
-            console.log(`[SyncDash] Route ${activeRoute}: batch API returned ${batchFarmers.length} farmers from transactions`);
+      if (navigator.onLine) {
+        // Build name lookup from cm_members (for display names only)
+        setProgressInfo({ current: 0, total: 0, status: 'Fetching farmer names...' });
+        const nameLookup = await buildNameLookup();
 
-            // Build a lookup map from the full fm_tanks list (no route filter) for names/metadata
-            const farmerLookup = new Map<string, Farmer>();
-            allFarmers.forEach((f: Farmer) => farmerLookup.set(f.farmer_id.trim(), f));
-
-            const total = batchFarmers.length;
-            setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} farmers...` });
-
-            const results: FarmerSyncEntry[] = [];
-            for (let i = 0; i < batchFarmers.length; i += BATCH_SIZE) {
-              if (cancelledRef.current) break;
-              const batch = batchFarmers.slice(i, i + BATCH_SIZE);
-
-              const batchResults = await Promise.all(
-                batch.map(async (bf) => {
-                  const fId = bf.farmer_id.trim();
-                  const farmerMeta = farmerLookup.get(fId);
-                  const cumData = await getFarmerCumulative(fId);
-                  return {
-                    farmer_id: fId,
-                    name: farmerMeta?.name || fId,
-                    route: farmerMeta?.route?.trim() || activeRoute,
-                    cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : bf.cumulative_weight || 0,
-                    baseCount: cumData?.baseCount || bf.cumulative_weight || 0,
-                    localCount: cumData?.localCount || 0,
-                    isCached: !!cumData,
-                  };
-                })
-              );
-              results.push(...batchResults);
-
-              const processed = Math.min(i + BATCH_SIZE, batchFarmers.length);
-              setProgressInfo({ current: processed, total, status: `Processing ${processed} of ${total} farmers...` });
-              if (i + BATCH_SIZE < batchFarmers.length) {
-                await new Promise(r => setTimeout(r, 0));
-              }
-            }
-
-            // Merge in fm_tanks farmers registered on this route but NOT in batch results
-            const batchFarmerIds = new Set(results.map(r => r.farmer_id));
-            const routeRegisteredFarmers = allFarmers.filter((f: Farmer) => {
-              const fId = f.farmer_id.trim();
-              return f.route.trim() === activeRoute && Number(f.currqty) === 1 && !batchFarmerIds.has(fId);
-            });
-
-            if (routeRegisteredFarmers.length > 0) {
-              console.log(`[SyncDash] Merging ${routeRegisteredFarmers.length} fm_tanks-registered farmers not in batch results`);
-              for (const farmer of routeRegisteredFarmers) {
-                const fId = farmer.farmer_id.trim();
-                const cumData = await getFarmerCumulative(fId);
-                results.push({
-                  farmer_id: fId,
-                  name: farmer.name || fId,
-                  route: farmer.route?.trim() || activeRoute,
-                  cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : 0,
-                  baseCount: cumData?.baseCount || 0,
-                  localCount: cumData?.localCount || 0,
-                  isCached: !!cumData,
-                });
-              }
-            }
-
-            const finalTotal = results.length;
-            results.sort((a, b) => {
-              if (a.isCached !== b.isCached) return a.isCached ? -1 : 1;
-              return a.name.localeCompare(b.name);
-            });
-
-            setEntries(results);
-            setProgressInfo({ current: finalTotal, total: finalTotal, status: 'Complete' });
-            return; // done — skip the fm_tanks-based path below
-          }
-        } catch (err) {
-          console.warn('[SyncDash] Batch route fetch failed, falling back to fm_tanks filter:', err);
-        }
+        // Use batch API as the sole source of the farmer list
+        setProgressInfo({ current: 0, total: 0, status: 'Fetching transaction data...' });
+        results = await loadFromBatchAPI(nameLookup, activeRoute || undefined);
       }
 
-      // Fallback / no-route path: filter fm_tanks by currqty=1 and optional route
-      filteredFarmers = deviceCcode
-        ? allFarmers.filter((f: Farmer) => f.ccode === deviceCcode && Number(f.currqty) === 1)
-        : allFarmers.filter((f: Farmer) => Number(f.currqty) === 1);
-
-      if (activeRoute) {
-        filteredFarmers = filteredFarmers.filter((f: Farmer) => f.route.trim() === activeRoute);
+      // Offline fallback or batch API failure
+      if (!results) {
+        setProgressInfo({ current: 0, total: 0, status: 'Loading from offline cache...' });
+        results = await loadFromOfflineCache();
       }
 
-      const total = filteredFarmers.length;
-      setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} qualifying farmers...` });
-
-      const results: FarmerSyncEntry[] = [];
-
-      for (let i = 0; i < filteredFarmers.length; i += BATCH_SIZE) {
-        if (cancelledRef.current) break;
-
-        const batch = filteredFarmers.slice(i, i + BATCH_SIZE);
-
-        const batchResults = await Promise.all(
-          batch.map(async (farmer) => {
-            const cumData = await getFarmerCumulative(farmer.farmer_id);
-            return {
-              farmer_id: farmer.farmer_id,
-              name: farmer.name || '',
-              route: farmer.route || 'N/A',
-              cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : 0,
-              baseCount: cumData?.baseCount || 0,
-              localCount: cumData?.localCount || 0,
-              isCached: !!cumData,
-            };
-          })
-        );
-
-        results.push(...batchResults);
-
-        const processed = Math.min(i + BATCH_SIZE, filteredFarmers.length);
-        setProgressInfo({
-          current: processed,
-          total,
-          status: `Processing ${processed} of ${total} farmers...`,
-        });
-
-        if (i + BATCH_SIZE < filteredFarmers.length) {
-          await new Promise(r => setTimeout(r, 0));
-        }
-      }
-
+      // Sort: cached first, then alphabetical
       results.sort((a, b) => {
         if (a.isCached !== b.isCached) return a.isCached ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
 
       setEntries(results);
-      setProgressInfo({ current: total, total, status: 'Complete' });
+      setProgressInfo({ current: results.length, total: results.length, status: 'Complete' });
     } catch (err) {
-      console.error('Failed to load farmer sync data:', err);
+      console.error('[SyncDash] Failed to load farmer sync data:', err);
       setProgressInfo(prev => ({ ...prev, status: 'Error loading data' }));
     } finally {
       setIsLoading(false);
     }
-  }, [isReady, activeRoute, fetchFarmerList, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative]);
+  }, [isReady, activeRoute, buildNameLookup, loadFromBatchAPI, loadFromOfflineCache, getUnsyncedReceipts, updateFarmerCumulative]);
 
   useEffect(() => {
     loadData(false);
 
-    // Listen for background sync progress events
     const handleProgress = (e: any) => {
       setBgProgress(e.detail);
     };
@@ -413,7 +405,7 @@ export const FarmerSyncDashboard = () => {
         {/* Farmer list */}
         {!isLoading && filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-4">
-            {totalCount === 0 ? 'No farmers cached locally for this device\'s company code.' : 'No matching farmers found.'}
+            {totalCount === 0 ? 'No farmers with transactions found for this selection.' : 'No matching farmers found.'}
           </p>
         ) : !isLoading ? (
           <div className="max-h-64 overflow-y-auto space-y-1">
