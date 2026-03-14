@@ -168,13 +168,38 @@ export const FarmerSyncDashboard = () => {
               }
             }
 
+            // Merge in fm_tanks farmers registered on this route but NOT in batch results
+            const batchFarmerIds = new Set(results.map(r => r.farmer_id));
+            const routeRegisteredFarmers = allFarmers.filter((f: Farmer) => {
+              const fId = f.farmer_id.trim();
+              return f.route.trim() === activeRoute && Number(f.currqty) === 1 && !batchFarmerIds.has(fId);
+            });
+
+            if (routeRegisteredFarmers.length > 0) {
+              console.log(`[SyncDash] Merging ${routeRegisteredFarmers.length} fm_tanks-registered farmers not in batch results`);
+              for (const farmer of routeRegisteredFarmers) {
+                const fId = farmer.farmer_id.trim();
+                const cumData = await getFarmerCumulative(fId);
+                results.push({
+                  farmer_id: fId,
+                  name: farmer.name || fId,
+                  route: farmer.route?.trim() || activeRoute,
+                  cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : 0,
+                  baseCount: cumData?.baseCount || 0,
+                  localCount: cumData?.localCount || 0,
+                  isCached: !!cumData,
+                });
+              }
+            }
+
+            const finalTotal = results.length;
             results.sort((a, b) => {
               if (a.isCached !== b.isCached) return a.isCached ? -1 : 1;
               return a.name.localeCompare(b.name);
             });
 
             setEntries(results);
-            setProgressInfo({ current: total, total, status: 'Complete' });
+            setProgressInfo({ current: finalTotal, total: finalTotal, status: 'Complete' });
             return; // done — skip the fm_tanks-based path below
           }
         } catch (err) {

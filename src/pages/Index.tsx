@@ -962,6 +962,8 @@ const Index = () => {
       farmerIdForCumulative: selectedFarmer?.farmer_id?.replace(/^#/, '').trim() || '',
       productIcode: selectedProduct?.icode, // Capture for background print filtering
       routeCode: selectedRouteCode, // Capture route for background cumulative filtering
+      previousCumulativeTotal: cumulativeFrequency?.total ?? 0, // For race condition guard
+      justSubmittedWeight: capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0), // Weight being submitted
     };
 
     // OPTIMIZED: Process submissions in parallel batches for faster throughput
