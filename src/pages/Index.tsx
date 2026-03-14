@@ -962,6 +962,8 @@ const Index = () => {
       farmerIdForCumulative: selectedFarmer?.farmer_id?.replace(/^#/, '').trim() || '',
       productIcode: selectedProduct?.icode, // Capture for background print filtering
       routeCode: selectedRouteCode, // Capture route for background cumulative filtering
+      previousCumulativeTotal: cumulativeFrequency?.total ?? 0, // For race condition guard
+      justSubmittedWeight: capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0), // Weight being submitted
     };
 
     // OPTIMIZED: Process submissions in parallel batches for faster throughput
@@ -1153,6 +1155,11 @@ const Index = () => {
         if (showCumulative && deviceFingerprint && capturedCollections.length > 0) {
           const firstCapture = capturedCollections[0];
           const cleanId = firstCapture.farmer_id.replace(/^#/, '').trim();
+
+          // Calculate just-submitted weight to guard against race conditions
+          const previousCumTotal = cumulativeFrequency?.total ?? 0;
+          const justSubmittedWeight = capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0);
+
           try {
             if (navigator.onLine) {
               const freqResult = await Promise.race([
@@ -1160,8 +1167,15 @@ const Index = () => {
                 new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
               ]);
               if (freqResult.success && freqResult.data) {
-                const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+                let cloudCumulative = freqResult.data.cumulative_weight ?? 0;
                 const cloudByProduct = freqResult.data.by_product || [];
+
+                // Race condition guard: if cloud hasn't caught up, add just-submitted weight
+                if (cloudCumulative < previousCumTotal + justSubmittedWeight) {
+                  console.log(`[CUMULATIVE] Race guard: cloud=${cloudCumulative}, prev=${previousCumTotal}, submitted=${justSubmittedWeight}. Adjusting.`);
+                  cloudCumulative = previousCumTotal + justSubmittedWeight;
+                }
+
                 await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct);
                 const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
                 const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
@@ -1230,8 +1244,17 @@ const Index = () => {
               ]);
 
               if (freqResult.success && freqResult.data) {
-                const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+                let cloudCumulative = freqResult.data.cumulative_weight ?? 0;
                 const cloudByProduct = freqResult.data.by_product || [];
+
+                // Race condition guard: ensure cloud total reflects just-submitted weight
+                const prevCum = printData.previousCumulativeTotal ?? 0;
+                const justSubmitted = printData.justSubmittedWeight ?? 0;
+                if (cloudCumulative < prevCum + justSubmitted) {
+                  console.log(`[CUMULATIVE-PRINT] Race guard: cloud=${cloudCumulative}, prev=${prevCum}, submitted=${justSubmitted}. Adjusting.`);
+                  cloudCumulative = prevCum + justSubmitted;
+                }
+
                 const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined);
                 const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
                 for (const p of cloudByProduct) merged[p.icode] = { ...p };
