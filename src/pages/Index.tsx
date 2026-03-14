@@ -1242,8 +1242,17 @@ const Index = () => {
               ]);
 
               if (freqResult.success && freqResult.data) {
-                const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+                let cloudCumulative = freqResult.data.cumulative_weight ?? 0;
                 const cloudByProduct = freqResult.data.by_product || [];
+
+                // Race condition guard: ensure cloud total reflects just-submitted weight
+                const prevCum = printData.previousCumulativeTotal ?? 0;
+                const justSubmitted = printData.justSubmittedWeight ?? 0;
+                if (cloudCumulative < prevCum + justSubmitted) {
+                  console.log(`[CUMULATIVE-PRINT] Race guard: cloud=${cloudCumulative}, prev=${prevCum}, submitted=${justSubmitted}. Adjusting.`);
+                  cloudCumulative = prevCum + justSubmitted;
+                }
+
                 const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined);
                 const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
                 for (const p of cloudByProduct) merged[p.icode] = { ...p };
