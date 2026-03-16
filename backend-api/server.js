@@ -2270,8 +2270,8 @@ const server = http.createServer(async (req, res) => {
         );
         if (lastRefRows.length > 0 && lastRefRows[0].transrefno) {
           const lastRef = lastRefRows[0].transrefno;
-          const seqPart = lastRef.slice(deviceData.devcode.length);
-          lastTrnId = parseInt(seqPart, 10) || 0;
+          // Extract trnid using last 8 digits to avoid clientFetch corruption
+          lastTrnId = parseInt(lastRef.slice(-8), 10) || 0;
         }
       }
       deviceData.trnid = lastTrnId;

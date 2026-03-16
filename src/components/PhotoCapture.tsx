@@ -120,12 +120,14 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
       console.error('Native camera error:', error);
       if (error.message?.includes('cancelled') || error.message?.includes('canceled')) {
         // User cancelled - just close
+        nativeCaptureInProgress = false;
         onClose();
         return;
       }
       setCameraError('Failed to capture photo. Please try again.');
     } finally {
       setIsLoading(false);
+      nativeCaptureInProgress = false;
     }
   };
 
