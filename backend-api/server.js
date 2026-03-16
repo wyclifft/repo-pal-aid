@@ -956,7 +956,8 @@ const server = http.createServer(async (req, res) => {
           );
           if (devRows.length > 0 && devRows[0].devcode) {
             const devcode = devRows[0].devcode;
-            const insertedTrnId = parseInt(attemptTransrefno.substring(devcode.length));
+            // Extract trnid using last 8 digits to avoid clientFetch corruption
+            const insertedTrnId = parseInt(attemptTransrefno.slice(-8), 10);
             if (!isNaN(insertedTrnId)) {
               await pool.query(
                 `UPDATE devsettings SET 
