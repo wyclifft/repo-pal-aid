@@ -224,6 +224,7 @@ const Store = () => {
             const storeRoute = routes.find((route: { allowStore?: boolean; clientFetch?: number }) => route.allowStore === true);
             if (storeRoute?.clientFetch) {
               setClientFetch(storeRoute.clientFetch);
+              localStorage.setItem('store_clientFetch', String(storeRoute.clientFetch));
               console.log('[Store] clientFetch from route:', storeRoute.clientFetch);
             }
             
