@@ -142,7 +142,11 @@ const Index = () => {
     }
   }, [isCoffee, sackTareWeight]);
 
-  // Session blacklist for farmers with multOpt=0
+  // Clear cumulative when route or product changes to prevent stale display
+  useEffect(() => {
+    setCumulativeFrequency(undefined);
+  }, [selectedRouteCode, selectedProduct?.icode]);
+
   const [loadedFarmers, setLoadedFarmers] = useState<Farmer[]>([]);
   const [lastSessionType, setLastSessionType] = useState<'AM' | 'PM' | null>(null);
   const activeSessionTimeFrom = activeSession ? 
