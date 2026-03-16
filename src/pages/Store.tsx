@@ -243,6 +243,9 @@ const Store = () => {
         } catch (err) {
           setHasRoutes(true);
           setStoreEnabled(true);
+          // Restore clientFetch from cache for offline use
+          const cachedCF = localStorage.getItem('store_clientFetch');
+          if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
         }
       } else {
         setHasRoutes(true);
