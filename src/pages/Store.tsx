@@ -205,6 +205,9 @@ const Store = () => {
           if (response.status === 404) {
             setHasRoutes(true);
             setStoreEnabled(true);
+            // Restore clientFetch from cache on 404 fallback
+            const cached404 = localStorage.getItem('store_clientFetch');
+            if (cached404) setClientFetch(parseInt(cached404, 10));
           } else if (response.ok) {
             const data = await response.json();
             const routes = data.data || [];
