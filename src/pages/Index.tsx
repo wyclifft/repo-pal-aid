@@ -638,6 +638,8 @@ const Index = () => {
     setLastSavedWeight(0);
     // Reset zeroOpt capture lock when farmer is cleared
     setCaptureLocked(false);
+    // Clear cumulative to prevent stale data display
+    setCumulativeFrequency(undefined);
     // Keep route selection when clearing farmer
     toast.info('Farmer details cleared');
   };
