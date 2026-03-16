@@ -656,6 +656,8 @@ const Index = () => {
     setWeight(0);
     setCapturedCollections([]);
     setLastSavedWeight(0);
+    // Clear cumulative to prevent stale data display
+    setCumulativeFrequency(undefined);
     toast.info('Route and farmer cleared');
   };
 
