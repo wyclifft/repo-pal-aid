@@ -16,6 +16,10 @@ interface PhotoCaptureProps {
   targetSizeKB?: number;
 }
 
+// Module-level flag to survive Android activity recreation (React re-mounts)
+// Prevents the native camera from triggering twice when the WebView is destroyed/recreated
+let nativeCaptureInProgress = false;
+
 const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo', targetSizeKB = 100 }: PhotoCaptureProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,9 +32,6 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [useNativeCamera, setUseNativeCamera] = useState(false);
-
-  // Track if native camera is already being triggered to prevent double capture
-  const nativeCameraTriggeredRef = useRef(false);
 
   // Check if we should use native camera on mount
   useEffect(() => {
