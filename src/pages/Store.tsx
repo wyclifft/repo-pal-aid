@@ -250,6 +250,9 @@ const Store = () => {
       } else {
         setHasRoutes(true);
         setStoreEnabled(true);
+        // Restore clientFetch from cache when offline
+        const cachedOffline = localStorage.getItem('store_clientFetch');
+        if (cachedOffline) setClientFetch(parseInt(cachedOffline, 10));
       }
       
       await loadItems();
