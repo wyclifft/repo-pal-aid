@@ -554,7 +554,7 @@ export const Dashboard = ({
               <div className="flex justify-center pt-1">
                 <button
                   onClick={handleNewSession}
-                  disabled={!selectedRoute || !selectedSession || (availableProductCount > 1 && !selectedProduct)}
+                  disabled={!selectedRoute || !selectedSession || (availableProductCount !== 1 && !selectedProduct)}
                   className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md min-h-[2.75rem]"
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >

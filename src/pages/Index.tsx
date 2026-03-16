@@ -142,7 +142,11 @@ const Index = () => {
     }
   }, [isCoffee, sackTareWeight]);
 
-  // Session blacklist for farmers with multOpt=0
+  // Clear cumulative when route or product changes to prevent stale display
+  useEffect(() => {
+    setCumulativeFrequency(undefined);
+  }, [selectedRouteCode, selectedProduct?.icode]);
+
   const [loadedFarmers, setLoadedFarmers] = useState<Farmer[]>([]);
   const [lastSessionType, setLastSessionType] = useState<'AM' | 'PM' | null>(null);
   const activeSessionTimeFrom = activeSession ? 
@@ -598,11 +602,12 @@ const Index = () => {
       setSelectedRouteCode(selectedRoute.tcode.trim());
       setSelectedRouteMprefix(selectedRoute.mprefix || '');
       setRouteName(selectedRoute.descript);
-      // Clear farmer when route changes
+      // Clear farmer and cumulative when route changes
       setFarmerId('');
       setFarmerName('');
       setRoute('');
       setSearchValue('');
+      setCumulativeFrequency(undefined);
     } else {
       setSelectedRouteCode('');
       setSelectedRouteMprefix('');
@@ -611,6 +616,7 @@ const Index = () => {
       setFarmerName('');
       setRoute('');
       setSearchValue('');
+      setCumulativeFrequency(undefined);
     }
   };
 
@@ -636,6 +642,8 @@ const Index = () => {
     setLastSavedWeight(0);
     // Reset zeroOpt capture lock when farmer is cleared
     setCaptureLocked(false);
+    // Clear cumulative to prevent stale data display
+    setCumulativeFrequency(undefined);
     // Keep route selection when clearing farmer
     toast.info('Farmer details cleared');
   };
@@ -652,6 +660,8 @@ const Index = () => {
     setWeight(0);
     setCapturedCollections([]);
     setLastSavedWeight(0);
+    // Clear cumulative to prevent stale data display
+    setCumulativeFrequency(undefined);
     toast.info('Route and farmer cleared');
   };
 
