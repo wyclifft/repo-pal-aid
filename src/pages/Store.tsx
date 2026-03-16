@@ -205,6 +205,9 @@ const Store = () => {
           if (response.status === 404) {
             setHasRoutes(true);
             setStoreEnabled(true);
+            // Restore clientFetch from cache on 404 fallback
+            const cached404 = localStorage.getItem('store_clientFetch');
+            if (cached404) setClientFetch(parseInt(cached404, 10));
           } else if (response.ok) {
             const data = await response.json();
             const routes = data.data || [];
@@ -224,6 +227,7 @@ const Store = () => {
             const storeRoute = routes.find((route: { allowStore?: boolean; clientFetch?: number }) => route.allowStore === true);
             if (storeRoute?.clientFetch) {
               setClientFetch(storeRoute.clientFetch);
+              localStorage.setItem('store_clientFetch', String(storeRoute.clientFetch));
               console.log('[Store] clientFetch from route:', storeRoute.clientFetch);
             }
             
@@ -239,10 +243,16 @@ const Store = () => {
         } catch (err) {
           setHasRoutes(true);
           setStoreEnabled(true);
+          // Restore clientFetch from cache for offline use
+          const cachedCF = localStorage.getItem('store_clientFetch');
+          if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
         }
       } else {
         setHasRoutes(true);
         setStoreEnabled(true);
+        // Restore clientFetch from cache when offline
+        const cachedOffline = localStorage.getItem('store_clientFetch');
+        if (cachedOffline) setClientFetch(parseInt(cachedOffline, 10));
       }
       
       await loadItems();
