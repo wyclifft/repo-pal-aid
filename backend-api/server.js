@@ -641,7 +641,8 @@ const server = http.createServer(async (req, res) => {
         
         if (lastTransRows.length > 0) {
           const lastRef = lastTransRows[0].transrefno;
-          const lastNumber = parseInt(lastRef.substring(devcode.length));
+          // Extract trnid using last 8 digits to avoid clientFetch corruption
+          const lastNumber = parseInt(lastRef.slice(-8), 10);
           if (!isNaN(lastNumber)) {
             startNumber = lastNumber + 1;
           }
