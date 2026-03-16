@@ -598,11 +598,12 @@ const Index = () => {
       setSelectedRouteCode(selectedRoute.tcode.trim());
       setSelectedRouteMprefix(selectedRoute.mprefix || '');
       setRouteName(selectedRoute.descript);
-      // Clear farmer when route changes
+      // Clear farmer and cumulative when route changes
       setFarmerId('');
       setFarmerName('');
       setRoute('');
       setSearchValue('');
+      setCumulativeFrequency(undefined);
     } else {
       setSelectedRouteCode('');
       setSelectedRouteMprefix('');
@@ -611,6 +612,7 @@ const Index = () => {
       setFarmerName('');
       setRoute('');
       setSearchValue('');
+      setCumulativeFrequency(undefined);
     }
   };
 
