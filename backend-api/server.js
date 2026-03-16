@@ -1781,6 +1781,28 @@ const server = http.createServer(async (req, res) => {
         await conn.commit();
         conn.release();
         
+        // Update storeid/aiid counter in devsettings (same pattern as milk collection)
+        if (body.device_fingerprint) {
+          try {
+            const insertedTrnId = parseInt(transrefno.slice(-8), 10);
+            const typeId = uploadrefno ? parseInt(String(uploadrefno).slice(-8), 10) : 0;
+            const counterField = transtype === 3 ? 'aiid' : 'storeid';
+            if (!isNaN(insertedTrnId)) {
+              await pool.query(
+                `UPDATE devsettings SET 
+                  trnid = GREATEST(IFNULL(trnid, 0), ?),
+                  ${counterField} = GREATEST(IFNULL(${counterField}, 0), ?)
+                 WHERE uniquedevcode = ?`,
+                [insertedTrnId, typeId, body.device_fingerprint]
+              );
+              console.log(`📊 Updated devsettings: trnid=${insertedTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
+            }
+          } catch (counterErr) {
+            console.error('⚠️ Failed to update sale counters in devsettings:', counterErr);
+            // Don't fail the sale response - counter update is non-critical
+          }
+        }
+        
         return sendJSON(res, { 
           success: true, 
           message: 'Sale recorded', 
