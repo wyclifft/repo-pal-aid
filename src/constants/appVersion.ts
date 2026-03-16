@@ -1,4 +1,4 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.8.9: Fix trnid parsing (last 8 digits) to prevent clientFetch corruption; fix camera double-trigger on Android
-export const APP_VERSION = '2.8.9';
-export const APP_VERSION_CODE = 27;
+// v2.9.0: Persist storeid/aiid counters in devsettings after store/AI sales to prevent counter reset on reconnect
+export const APP_VERSION = '2.9.0';
+export const APP_VERSION_CODE = 28;
