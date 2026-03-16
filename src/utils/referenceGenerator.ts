@@ -399,10 +399,17 @@ export const syncOfflineCounter = async (
   
   // Use the MAXIMUM of local and backend to ensure we never go backwards
   // This prevents duplicate references when device goes offline and comes back
-  const backendTrnId = (lastBackendTrnId !== undefined && lastBackendTrnId > 0) ? lastBackendTrnId : 0;
+  let backendTrnId = (lastBackendTrnId !== undefined && lastBackendTrnId > 0) ? lastBackendTrnId : 0;
   const backendMilkId = (lastBackendMilkId !== undefined && lastBackendMilkId > 0) ? lastBackendMilkId : 0;
   const backendStoreId = (lastBackendStoreId !== undefined && lastBackendStoreId > 0) ? lastBackendStoreId : 0;
   const backendAiId = (lastBackendAiId !== undefined && lastBackendAiId > 0) ? lastBackendAiId : 0;
+  
+  // SAFETY: Detect corrupted trnid from backend (e.g. clientFetch digit parsed as part of trnid)
+  // A trnid > 10,000,000 likely means the backend parsed a clientFetch-prefixed reference incorrectly
+  if (backendTrnId > 10000000) {
+    console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is unreasonably large — possible clientFetch corruption. Ignoring backend value.`);
+    backendTrnId = 0;
+  }
   
   const safeTrnId = Math.max(currentLocalTrnId, backendTrnId);
   const safeMilkId = Math.max(currentLocalMilkId, backendMilkId);

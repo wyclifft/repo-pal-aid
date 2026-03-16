@@ -550,8 +550,8 @@ const server = http.createServer(async (req, res) => {
         
         if (lastTransRows.length > 0) {
           const lastRef = lastTransRows[0].transrefno;
-          // Extract the trnid (everything after the devcode prefix)
-          const lastNumber = parseInt(lastRef.substring(devcode.length));
+          // Extract trnid using last 8 digits to avoid clientFetch corruption
+          const lastNumber = parseInt(lastRef.slice(-8), 10);
           if (!isNaN(lastNumber)) {
             nextTrnId = lastNumber + 1;
           }
@@ -641,7 +641,8 @@ const server = http.createServer(async (req, res) => {
         
         if (lastTransRows.length > 0) {
           const lastRef = lastTransRows[0].transrefno;
-          const lastNumber = parseInt(lastRef.substring(devcode.length));
+          // Extract trnid using last 8 digits to avoid clientFetch corruption
+          const lastNumber = parseInt(lastRef.slice(-8), 10);
           if (!isNaN(lastNumber)) {
             startNumber = lastNumber + 1;
           }
@@ -955,7 +956,8 @@ const server = http.createServer(async (req, res) => {
           );
           if (devRows.length > 0 && devRows[0].devcode) {
             const devcode = devRows[0].devcode;
-            const insertedTrnId = parseInt(attemptTransrefno.substring(devcode.length));
+            // Extract trnid using last 8 digits to avoid clientFetch corruption
+            const insertedTrnId = parseInt(attemptTransrefno.slice(-8), 10);
             if (!isNaN(insertedTrnId)) {
               await pool.query(
                 `UPDATE devsettings SET 
@@ -2268,8 +2270,8 @@ const server = http.createServer(async (req, res) => {
         );
         if (lastRefRows.length > 0 && lastRefRows[0].transrefno) {
           const lastRef = lastRefRows[0].transrefno;
-          const seqPart = lastRef.slice(deviceData.devcode.length);
-          lastTrnId = parseInt(seqPart, 10) || 0;
+          // Extract trnid using last 8 digits to avoid clientFetch corruption
+          lastTrnId = parseInt(lastRef.slice(-8), 10) || 0;
         }
       }
       deviceData.trnid = lastTrnId;
