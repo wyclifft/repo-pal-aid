@@ -43,14 +43,14 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
     if (open && !useNativeCamera) {
       startWebCamera();
     } else if (open && useNativeCamera) {
-      // For native, trigger camera only once per dialog open
-      if (!nativeCameraTriggeredRef.current) {
-        nativeCameraTriggeredRef.current = true;
+      // Use module-level flag to prevent double trigger on Android activity recreation
+      if (!nativeCaptureInProgress) {
+        nativeCaptureInProgress = true;
         captureWithNativeCamera();
       }
     } else {
       // Dialog closed - reset state
-      nativeCameraTriggeredRef.current = false;
+      nativeCaptureInProgress = false;
       stopCamera();
       setCapturedImage(null);
       setCapturedBlob(null);
