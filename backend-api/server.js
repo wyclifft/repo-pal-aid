@@ -2013,6 +2013,27 @@ const server = http.createServer(async (req, res) => {
         await conn.commit();
         conn.release();
 
+        // Update storeid/aiid counter in devsettings (same pattern as milk collection)
+        if (body.device_fingerprint && insertedRefs.length > 0) {
+          try {
+            const maxTrnId = Math.max(...insertedRefs.map(ref => parseInt(ref.slice(-8), 10)));
+            const typeId = uploadrefno ? parseInt(String(uploadrefno).slice(-8), 10) : 0;
+            const counterField = transtype === 3 ? 'aiid' : 'storeid';
+            if (!isNaN(maxTrnId)) {
+              await pool.query(
+                `UPDATE devsettings SET 
+                  trnid = GREATEST(IFNULL(trnid, 0), ?),
+                  ${counterField} = GREATEST(IFNULL(${counterField}, 0), ?)
+                 WHERE uniquedevcode = ?`,
+                [maxTrnId, typeId, body.device_fingerprint]
+              );
+              console.log(`📊 Batch: Updated devsettings: trnid=${maxTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
+            }
+          } catch (counterErr) {
+            console.error('⚠️ Failed to update batch sale counters in devsettings:', counterErr);
+          }
+        }
+
         const insertedCount = insertedRefs.length;
         const duplicateCount = duplicateRefs.length;
         const allWereDuplicates = insertedCount === 0 && duplicateCount > 0;
