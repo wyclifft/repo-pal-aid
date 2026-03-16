@@ -1,121 +1,112 @@
-# App Bug Audit and Improvement Plan
 
-## Critical Bugs Found
+Goal: deliver a full root-cause review of cumulative inconsistencies and version mismatch, then implement hard fixes (not partial patches).
 
-### 1. Hardcoded stale version in Dashboard "About" button
+What I found (from current code)
 
-**File:** `src/components/Dashboard.tsx` (line 409)
-The About button shows `"Milk Collection App v1.5"` -- this is hardcoded and out of date (actual version is 2.5). Should read the version dynamically from `build.gradle` or a shared constant.
+1) Version mismatch is real (not just UI perception)
+- `src/constants/appVersion.ts` is `2.9.2`.
+- `android/app/build.gradle` is still `versionName "2.8.4"` / `versionCode 23`.
+- Result: web “About” can show 2.9.2, while Android package metadata still reports 2.8.4.
+- Also, web can remain on older bundle due aggressive SW cache strategy (`public/sw.js` uses cache-first + effectively non-expiring static cache).
 
-**Fix:** Create a shared `APP_VERSION` constant and use it in both Dashboard and `build.gradle`.
+2) Primary cumulative break: “false success” during sync can delete local records without creating new backend records
+- In `backend-api/server.js` (`/api/milk-collection`), duplicate `transrefno` (`ER_DUP_ENTRY`) is treated as success (idempotent) and returned as successful create.
+- In `useDataSync.ts`, sync logic treats that as synced and deletes local receipt after only checking “reference exists”.
+- If that reference belongs to an older/different transaction, offline total (base + unsynced) drops to lower backend total after sync.
+- This exactly matches symptom pattern: offline higher (e.g. 35.5), post-sync lower (e.g. 24.5).
 
-### 2. Memory leak: IndexedDB cleanup closes shared singleton
+3) Secondary cumulative break: multOpt duplicate skip path can remove weight from local without adding backend
+- `useDataSync.ts` has a pre-insert duplicate workflow check for `multOpt=0`.
+- If it decides existing workflow differs, it marks local as synced/deletes it.
+- If user captured offline entries that later fail this rule, cumulative drops on reconnect.
 
-**File:** `src/hooks/useIndexedDB.ts` (lines 158-163)
-The `useEffect` cleanup calls `dbInstance.close()` and nullifies the singleton. Since multiple components use `useIndexedDB()`, unmounting one component closes the DB for ALL other components, causing "InvalidStateError: database connection is closing" crashes.
+4) Product-specific cumulative merge is not normalization-safe
+- Multiple merge paths use raw `icode` object keys (`"S001"` vs `"S001   "` become separate buckets).
+- Later filtering does trim/uppercase, but `find()` returns first match only, so totals can be undercounted in selected-product view after route/product switching or mixed-source merges.
 
-**Fix:** Remove the cleanup function entirely -- the `dbInstance` singleton should live for the app lifetime. Only close on full app teardown.
+5) Post-sync UI refresh can overwrite with stale backend snapshot
+- `Index.tsx` refreshes cumulative on `syncComplete` after fixed 3s delay.
+- No “floor guard” there (guard exists in submit receipt path, not in this post-sync refresh path).
+- If backend read is lagging or partial, UI can regress to lower value.
 
-### 3. `saveSale` uses `await store.put()` incorrectly
+6) Current preview logs show device unauthorized (401 on routes/sessions/farmers/items)
+- So production discrepancy cannot be replayed in this preview state.
+- Root causes above come directly from code-path inspection.
 
-**File:** `src/hooks/useIndexedDB.ts` (line 393)
-`store.put()` returns an `IDBRequest`, not a `Promise`. Using `await` on it won't actually wait for the operation to complete. The sale may silently fail without error handling.
+End-to-end flow where it breaks
 
-**Fix:** Wrap in a proper Promise like `saveReceipt` does.
+```text
+Offline capture/submit
+  -> IndexedDB unsynced receipt saved
+  -> cumulative shown as base + unsynced (e.g. 24.5 + 11 = 35.5)
 
-### 4. `useEffect` dependency array issue in `useAppSettings`
+Reconnect / auto-sync
+  -> syncOfflineReceipts()
+     -> POST /milk-collection
+        Case A: transref duplicate treated as success by backend
+        Case B: multOpt workflow check skips/deletes local
+     -> local receipt deleted
+  -> syncComplete event
+  -> cumulative refresh reads backend only (or stale backend)
+  -> displayed cumulative drops (e.g. back to 24.5)
+```
 
-**File:** `src/hooks/useAppSettings.ts` (line ~237)  
-The splash timeout `useEffect` in `App.tsx` (line 237) references `showSplash` in the callback but not in the dependency array, causing the timeout to potentially fire with a stale `showSplash` value.
+Implementation plan (complete, production-hardening)
 
-### 5. Excessive debug logging in production
+Phase 1 — Correctness hard-stop (no silent data loss)
+1. Backend create endpoint: stop returning blind success on duplicate `transrefno`.
+   - On duplicate, fetch existing row and compare critical payload fields (`memberno`, `route`, `weight`, `session`, `transdate`, `Uploadrefno`, `icode`, `ccode`).
+   - Return success only if truly same record (idempotent retry).
+   - Return conflict if payload mismatch (reference collision), so frontend can regenerate reference and retry.
+2. Frontend sync verifier (`useDataSync.ts`):
+   - Verify synced row by `reference_no` + key fields, not existence-only.
+   - If mismatch, do NOT delete local record; regenerate reference and retry once.
 
-**File:** `src/pages/Index.tsx` (lines 1419, 1458)
-`console.log('📋 Dashboard - User supervisor value:...')` runs on EVERY render of the Index component (it's outside `useEffect`). Since `getCaptureMode` is called in the render body, this logs on every single re-render, flooding the console and slowing down the app.
+Phase 2 — Cumulative math integrity
+3. Normalize `icode` consistently before all merge keys (`trim().toUpperCase()`).
+   - Apply in:
+     - `useIndexedDB.ts` merge in `getFarmerTotalCumulative`
+     - `Index.tsx` merge paths (prefetch/refresh/post-submit background print)
+4. Add post-sync cumulative floor guard in `syncComplete` refresh path.
+   - Prevent UI from regressing below known previous cumulative + synced just-now weights until confirmed refreshed snapshot.
 
-**Fix:** Move inside `useMemo` or remove.
+Phase 3 — multOpt behavior safety
+5. In `multOpt=0` skip path during background sync, do not immediately delete local on ambiguous cases.
+   - Keep a “requires review/retry” state unless existing upload workflow match is definitive.
+   - Prevent silent cumulative drops.
 
-### 6. `useSessionBlacklist` makes N sequential API calls
+Phase 4 — Version and release consistency
+6. Align app versions in all surfaces:
+   - `src/constants/appVersion.ts`
+   - `android/app/build.gradle` (`versionName` + `versionCode`)
+7. SW release policy:
+   - bump cache version on release
+   - ensure update banner flow forces activation/reload reliably for web clients.
 
-**File:** `src/hooks/useSessionBlacklist.ts` (lines 83-99)
-For each `multOpt=0` farmer, the code makes a sequential API call (`for...of` loop with `await`). With many farmers, this blocks the UI thread for seconds.
+Validation matrix I will run after fixes
 
-**Fix:** Batch the API calls using `Promise.all` with a concurrency limit, or use a single batch endpoint.
+1) Offline → online cumulative continuity
+- Create offline receipt for farmer/product/route.
+- Confirm pre-sync cumulative = base + unsynced.
+- Sync online.
+- Confirm post-sync cumulative is identical (no drop).
 
----
+2) Route switch + product switch
+- Switch route and `icode` (`S001`/`S002`) with same farmer.
+- Confirm cumulative always reflects active route + active product only, no stale carryover.
 
-## Potential Crash Causes
+3) multOpt=0 cases
+- Same workflow multi-capture allowed.
+- New workflow same session/day blocked without deleting valid unsynced records incorrectly.
 
-### 7. Non-null assertion on `activeSession` when rendering collection screens
+4) Collision simulation
+- Force duplicate reference scenario.
+- Confirm frontend retries with new reference and cumulative remains stable.
 
-**File:** `src/pages/Index.tsx` (lines 1484, 1521)
-`session={activeSession!}` uses non-null assertion. If `activeSession` is null (e.g., session expires between render cycles), this passes `null` to child components that don't guard against it, potentially causing crashes.
+5) Version verification
+- About dialog, Android app metadata, and deployed build all show same version.
 
-**Fix:** Add a null guard: return to dashboard if `activeSession` is null.
-
-### 8. `saveZReport` and `savePeriodicReport` use `await store.put()` incorrectly
-
-**File:** `src/hooks/useIndexedDB.ts` (lines 476, 510)
-Same issue as `saveSale` -- `store.put()` returns `IDBRequest`, not a Promise.
-
-### 9. No error boundary around lazy-loaded pages
-
-**File:** `src/App.tsx` (lines 157-167)
-If a lazy-loaded page fails to load (chunk error), the `Suspense` fallback shows but no recovery mechanism exists beyond the global `ErrorBoundary`. The chunk error handler in line 261 tries to reload, but this creates an infinite reload loop if the chunk is persistently unavailable (e.g., new deployment with cache mismatch).
-
-**Fix:** Add retry logic with a max-attempt counter stored in `sessionStorage`.
-
----
-
-## Improvements Needed
-
-### 10. `useDataSync` `syncAllData` dependency array is incomplete
-
-**File:** `src/hooks/useDataSync.ts` (line 542)
-`syncAllData` depends on `syncOfflineReceipts` but the memo doesn't list it, which could lead to stale closures.
-
-### 11. `currentUser` accessed without null check in capture
-
-**File:** `src/pages/Index.tsx` (line 698)
-`getCaptureMode(currentUser?.supervisor)` is safe, but `currentUser?.user_id || 'unknown'` at line 793 could mean receipts get saved with `user_id: 'unknown'`, which would be hard to trace in the database.
-
-### 12. Dashboard renders inside conditional without early return
-
-**File:** `src/pages/Index.tsx` (lines 1414-1451)
-The `if (!showCollection)` block doesn't use `return` consistently -- the `return` is inside a block that's easy to accidentally break with future edits. The pattern `if (!showCollection) { ... return (...); }` is fragile.
-
----
-
-## Implementation Plan
-
-### Phase 1: Critical Bug Fixes
-
-1. **Fix IndexedDB singleton cleanup** -- remove the `useEffect` cleanup that closes the shared `dbInstance` in `useIndexedDB.ts`
-2. **Fix `saveSale`/`saveZReport`/`savePeriodicReport**` -- wrap `store.put()` in proper Promises
-3. **Add null guard for `activeSession**` -- check before rendering collection screens in `Index.tsx`
-4. **Remove render-time console.log calls** -- move debug logging out of the render path in `Index.tsx`
-
-### Phase 2: Stability Improvements
-
-5. **Fix stale version string** -- create `APP_VERSION` constant, use in Dashboard About button
-6. **Add chunk load retry counter** -- prevent infinite reload loops in `App.tsx`
-7. **Batch blacklist API calls** -- use `Promise.all` with concurrency limit in `useSessionBlacklist.ts`
-8. `If no coffee/milk type is selected and there is one to be selected disable new session/season button`
-
-### Phase 3: Version Bump
-
-8. **Update version** to 2.6 (versionCode 17) in `android/app/build.gradle`
-
----
-
-## Files to Modify
-
-
-| File                               | Changes                                                                                 |
-| ---------------------------------- | --------------------------------------------------------------------------------------- |
-| `src/hooks/useIndexedDB.ts`        | Remove singleton cleanup, fix `saveSale`/`saveZReport`/`savePeriodicReport`             |
-| `src/pages/Index.tsx`              | Add `activeSession` null guard, remove render-time logging, add shared version constant |
-| `src/components/Dashboard.tsx`     | Use dynamic version string                                                              |
-| `src/App.tsx`                      | Add chunk reload retry counter                                                          |
-| `src/hooks/useSessionBlacklist.ts` | Batch API calls                                                                         |
-| `android/app/build.gradle`         | Version bump to 2.6                                                                     |
+Deliverables after implementation
+- Root-cause fixes in sync + backend idempotency + cumulative normalization.
+- Deterministic cumulative behavior across offline/online/route/product transitions.
+- Unified versioning and cache-update behavior for release confidence.
