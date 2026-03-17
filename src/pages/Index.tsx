@@ -266,21 +266,37 @@ const Index = () => {
           }
         }
 
-        // Update currently selected farmer's display immediately
+        // Update currently selected farmer's display immediately with FLOOR GUARD
         if (selectedFarmer) {
           const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
           const cached = await getFarmerCumulative(cleanId);
           const baseCount = cached?.baseCount || 0;
           const baseProd = cached?.byProduct || [];
-           const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
-          // Merge by-product
+          const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
+          // Merge by-product (normalized keys)
           const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
-          for (const p of baseProd) merged[p.icode] = { ...p };
-          for (const p of unsynced.byProduct) {
-            if (merged[p.icode]) merged[p.icode].weight += p.weight;
-            else merged[p.icode] = { ...p };
+          for (const p of baseProd) {
+            const key = (p.icode || '').trim().toUpperCase();
+            merged[key] = { ...p, icode: key };
           }
-          setCumulativeFrequency(filterCumulativeByProduct({ total: baseCount + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode));
+          for (const p of unsynced.byProduct) {
+            const key = (p.icode || '').trim().toUpperCase();
+            if (merged[key]) merged[key].weight += p.weight;
+            else merged[key] = { ...p, icode: key };
+          }
+          const newCumulative = filterCumulativeByProduct({ total: baseCount + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
+          
+          // FLOOR GUARD: After sync, cumulative should never regress below previously displayed value
+          // This prevents temporary drops caused by backend read lag or stale snapshots
+          setCumulativeFrequency(prev => {
+            if (prev && newCumulative && reason === 'post-sync') {
+              if (newCumulative.total < prev.total) {
+                console.warn(`🛡️ Floor guard: preventing cumulative drop from ${prev.total} to ${newCumulative.total} (post-sync lag)`);
+                return prev;
+              }
+            }
+            return newCumulative;
+          });
         }
       } catch (err) {
         console.warn(`Cumulative refresh (${reason}) failed:`, err);
