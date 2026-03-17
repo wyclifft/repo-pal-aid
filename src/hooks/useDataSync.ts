@@ -194,19 +194,15 @@ export const useDataSync = () => {
                   ) {
                     console.log(`[SYNC] multOpt=0: uploadrefno matches (${incomingUploadRef}); proceeding: ${receipt.reference_no}`);
                   } else {
-                    console.log(`[SKIP] multOpt=0 duplicate workflow detected: ${receipt.reference_no}`);
-                    // Mark as synced in native storage before deleting from IndexedDB
+                    // SAFETY: Do NOT delete local record on ambiguous multOpt=0 cases
+                    // Instead, mark as failed so it can be retried or reviewed
+                    // This prevents silent cumulative drops when the existing record
+                    // is from a different workflow
+                    console.warn(`[SYNC] multOpt=0 conflict: existing uploadrefno=${existingUploadRef}, incoming=${incomingUploadRef}. Keeping local record for review: ${receipt.reference_no}`);
                     if (useNativeStorage) {
-                      await markNativeRecordSynced(receipt.reference_no);
+                      await markNativeRecordFailed(receipt.reference_no, `multOpt=0 conflict: existing workflow ${existingUploadRef} differs from ${incomingUploadRef}`);
                     }
-                    if (receipt.orderId && typeof receipt.orderId === 'number') {
-                      try {
-                        await deleteReceipt(receipt.orderId);
-                      } catch (deleteErr) {
-                        console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
-                      }
-                    }
-                    synced++;
+                    failed++;
                     continue;
                   }
                 }
@@ -236,18 +232,76 @@ export const useDataSync = () => {
 
             console.log(`[API] Response for ${receipt.reference_no}:`, JSON.stringify(result));
 
+            // Handle REFERENCE_COLLISION: regenerate reference and retry once
+            if (!result.success && (result as any).collision) {
+              console.warn(`[SYNC] Reference collision for ${receipt.reference_no}, regenerating and retrying...`);
+              try {
+                const { generateOfflineReference } = await import('@/utils/referenceGenerator');
+                const newRef = await generateOfflineReference();
+                if (newRef) {
+                  console.log(`[SYNC] Retrying with new reference: ${newRef} (was: ${receipt.reference_no})`);
+                  const retryResult = await mysqlApi.milkCollection.create({
+                    ...{
+                      reference_no: newRef,
+                      uploadrefno: receipt.uploadrefno,
+                      farmer_id: String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+                      farmer_name: String(receipt.farmer_name || '').trim(),
+                      route: String(receipt.route || '').trim(),
+                      session: normalizedSession,
+                      weight: receipt.weight,
+                      user_id: receipt.user_id,
+                      clerk_name: receipt.clerk_name,
+                      collection_date: receipt.collection_date,
+                      device_fingerprint: deviceFingerprint,
+                      entry_type: receipt.entry_type,
+                      product_code: receipt.product_code,
+                      season_code: receipt.season_code,
+                      transtype: receipt.transtype,
+                      delivered_by: receipt.delivered_by,
+                    }
+                  });
+                  if (retryResult.success) {
+                    if (useNativeStorage) await markNativeRecordSynced(receipt.reference_no);
+                    if (receipt.orderId && typeof receipt.orderId === 'number') {
+                      try { await deleteReceipt(receipt.orderId); } catch {}
+                    }
+                    synced++;
+                    console.log(`[SUCCESS] Collision retry synced: ${newRef}`);
+                    continue;
+                  }
+                }
+              } catch (retryErr) {
+                console.error(`[ERROR] Collision retry failed for ${receipt.reference_no}:`, retryErr);
+              }
+              failed++;
+              if (useNativeStorage) await markNativeRecordFailed(receipt.reference_no, 'Reference collision - retry failed');
+              continue;
+            }
+
             if (result.success) {
-              // CRITICAL: Verify the record is actually in the database before deleting locally
+              // CRITICAL: Verify the record payload matches before deleting locally
               let confirmed = false;
               try {
                 const verifyResult = await mysqlApi.milkCollection.getByReference(receipt.reference_no);
-                confirmed = !!verifyResult;
-                if (!confirmed) {
+                if (verifyResult) {
+                  // Verify critical fields match to prevent false-success data loss
+                  const vFarmerId = String((verifyResult as any).memberno || '').trim();
+                  const lFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
+                  const vWeight = Number((verifyResult as any).weight || 0);
+                  const lWeight = Number(receipt.weight || 0);
+                  if (vFarmerId === lFarmerId && Math.abs(vWeight - lWeight) < 0.01) {
+                    confirmed = true;
+                  } else {
+                    console.warn(`[SYNC] Payload mismatch on verify: ref=${receipt.reference_no}, remote farmer=${vFarmerId}/weight=${vWeight}, local farmer=${lFarmerId}/weight=${lWeight}`);
+                    // Do NOT delete local — data mismatch
+                    confirmed = false;
+                  }
+                } else {
                   console.warn(`[SYNC] API said success but record not found: ${receipt.reference_no}`);
                 }
               } catch (verifyErr) {
                 console.warn(`[SYNC] Verification check failed for ${receipt.reference_no}:`, verifyErr);
-                confirmed = true;
+                confirmed = true; // On verify failure, trust API response to avoid stuck records
               }
 
               if (confirmed) {
@@ -266,24 +320,58 @@ export const useDataSync = () => {
                     console.warn(`[WARN] Failed to delete synced receipt ${receipt.orderId}:`, deleteErr);
                   }
                 }
+                synced++;
+              } else {
+                // Payload mismatch or not found — keep local, count as failed for retry
+                failed++;
+                if (useNativeStorage) {
+                  await markNativeRecordFailed(receipt.reference_no, 'Post-sync verification mismatch');
+                }
               }
-              synced++;
               console.log(`[SUCCESS] Synced ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
             } else {
               const errorMsg = (result.error || result.message || '').toLowerCase();
               if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
-                console.log(`[SKIP] Already synced (server duplicate): ${receipt.reference_no}`);
-                if (useNativeStorage) {
-                  await markNativeRecordSynced(receipt.reference_no);
+                // Duplicate response: verify payload matches before deleting local
+                let safeToDelete = false;
+                try {
+                  const existingRecord = await mysqlApi.milkCollection.getByReference(receipt.reference_no);
+                  if (existingRecord) {
+                    const eFarmerId = String((existingRecord as any).memberno || '').trim();
+                    const lFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
+                    const eWeight = Number((existingRecord as any).weight || 0);
+                    const lWeight = Number(receipt.weight || 0);
+                    safeToDelete = (eFarmerId === lFarmerId && Math.abs(eWeight - lWeight) < 0.01);
+                    if (!safeToDelete) {
+                      console.warn(`[SYNC] Duplicate ref ${receipt.reference_no} but payload mismatch! Keeping local record.`);
+                    }
+                  } else {
+                    safeToDelete = true; // Can't verify, trust server
+                  }
+                } catch {
+                  safeToDelete = true; // Verification failed, trust server
                 }
-                if (receipt.orderId && typeof receipt.orderId === 'number') {
-                  try {
-                    await deleteReceipt(receipt.orderId);
-                  } catch (deleteErr) {
-                    console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+
+                if (safeToDelete) {
+                  console.log(`[SKIP] Already synced (server duplicate): ${receipt.reference_no}`);
+                  if (useNativeStorage) {
+                    await markNativeRecordSynced(receipt.reference_no);
+                  }
+                  if (receipt.orderId && typeof receipt.orderId === 'number') {
+                    try {
+                      await deleteReceipt(receipt.orderId);
+                    } catch (deleteErr) {
+                      console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
+                    }
+                  }
+                  synced++;
+                } else {
+                  // Payload mismatch on duplicate — keep local, mark failed for reference regeneration
+                  failed++;
+                  if (useNativeStorage) {
+                    await markNativeRecordFailed(receipt.reference_no, 'Duplicate reference with payload mismatch');
                   }
                 }
-                synced++;
               } else {
                 failed++;
                 // Log failure in native storage for retry tracking

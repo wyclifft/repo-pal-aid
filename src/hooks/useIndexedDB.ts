@@ -844,7 +844,7 @@ export const useIndexedDB = () => {
         if (rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear) {
           totalWeight += r.weight || 0;
           // Track per-product weights
-          const icode = (r.product_code || '').trim();
+          const icode = (r.product_code || '').trim().toUpperCase();
           if (icode) {
             if (!productWeights[icode]) {
               productWeights[icode] = { icode, product_name: r.product_name || icode, weight: 0 };
@@ -873,16 +873,18 @@ export const useIndexedDB = () => {
     const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter);
     const total = baseCount + unsynced.total;
     
-    // Merge by-product: base + unsynced
+    // Merge by-product: base + unsynced (normalize icode keys to prevent fragmentation)
     const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
     for (const p of baseProd) {
-      merged[p.icode] = { ...p };
+      const key = (p.icode || '').trim().toUpperCase();
+      merged[key] = { ...p, icode: key };
     }
     for (const p of unsynced.byProduct) {
-      if (merged[p.icode]) {
-        merged[p.icode].weight += p.weight;
+      const key = (p.icode || '').trim().toUpperCase();
+      if (merged[key]) {
+        merged[key].weight += p.weight;
       } else {
-        merged[p.icode] = { ...p };
+        merged[key] = { ...p, icode: key };
       }
     }
     return { total, byProduct: Object.values(merged) };

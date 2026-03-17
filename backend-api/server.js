@@ -975,9 +975,46 @@ const server = http.createServer(async (req, res) => {
         } catch (error) {
           // Check if it's a duplicate entry error
           if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
-            // IDEMPOTENT: Return success acknowledging record already exists
-            // This prevents frontend from retrying and creating duplicate records
-            console.log(`ℹ️ Record with reference ${attemptTransrefno} already exists (idempotent success)`);
+            // SAFE IDEMPOTENCY: Fetch existing row and compare critical payload fields
+            // Only return success if the existing record truly matches this submission
+            try {
+              const [existingRows] = await pool.query(
+                'SELECT transrefno, memberno, route, weight, session, transdate, Uploadrefno, icode, ccode FROM transactions WHERE transrefno = ? LIMIT 1',
+                [attemptTransrefno]
+              );
+              if (existingRows.length > 0) {
+                const existing = existingRows[0];
+                const payloadMatch = (
+                  String(existing.memberno || '').trim() === String(cleanFarmerId || '').trim() &&
+                  Math.abs(Number(existing.weight || 0) - Number(body.weight || 0)) < 0.01 &&
+                  String(existing.session || '').trim().toUpperCase() === String(normalizedSession || '').trim().toUpperCase()
+                );
+                if (payloadMatch) {
+                  console.log(`ℹ️ Record ${attemptTransrefno} already exists with matching payload (true idempotent retry)`);
+                  return { 
+                    success: true, 
+                    reference_no: attemptTransrefno, 
+                    uploadrefno: attemptUploadrefno, 
+                    isNew: false,
+                    message: 'Record already exists (duplicate reference)'
+                  };
+                } else {
+                  // Payload mismatch — this is a reference COLLISION, not a retry
+                  console.warn(`⚠️ Reference collision: ${attemptTransrefno} exists with different payload. Existing: member=${existing.memberno}, weight=${existing.weight}. New: member=${cleanFarmerId}, weight=${body.weight}`);
+                  return { 
+                    success: false, 
+                    collision: true,
+                    reference_no: attemptTransrefno,
+                    error: 'REFERENCE_COLLISION',
+                    message: 'Reference number belongs to a different transaction. Please regenerate reference and retry.'
+                  };
+                }
+              }
+            } catch (lookupErr) {
+              console.error('❌ Failed to lookup existing record for collision check:', lookupErr);
+            }
+            // Fallback: if lookup fails, treat as idempotent success to avoid data loss
+            console.log(`ℹ️ Record with reference ${attemptTransrefno} already exists (idempotent fallback)`);
             return { 
               success: true, 
               reference_no: attemptTransrefno, 
