@@ -844,7 +844,7 @@ export const useIndexedDB = () => {
         if (rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear) {
           totalWeight += r.weight || 0;
           // Track per-product weights
-          const icode = (r.product_code || '').trim();
+          const icode = (r.product_code || '').trim().toUpperCase();
           if (icode) {
             if (!productWeights[icode]) {
               productWeights[icode] = { icode, product_name: r.product_name || icode, weight: 0 };

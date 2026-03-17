@@ -591,10 +591,14 @@ const Index = () => {
               const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId, selectedRouteCode || undefined);
               // Merge by-product
               const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
-              for (const p of cloudByProduct) merged[p.icode] = { ...p };
+              for (const p of cloudByProduct) {
+                const key = (p.icode || '').trim().toUpperCase();
+                merged[key] = { ...p, icode: key };
+              }
               for (const p of unsynced.byProduct) {
-                if (merged[p.icode]) merged[p.icode].weight += p.weight;
-                else merged[p.icode] = { ...p };
+                const key = (p.icode || '').trim().toUpperCase();
+                if (merged[key]) merged[key].weight += p.weight;
+                else merged[key] = { ...p, icode: key };
               }
               setCumulativeFrequency(filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode));
               console.log(`📊 Pre-fetched cumulative for ${cleanFarmerId}: cloud=${cloudCumulative}, unsynced=${unsynced.total}`);

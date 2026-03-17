@@ -194,19 +194,15 @@ export const useDataSync = () => {
                   ) {
                     console.log(`[SYNC] multOpt=0: uploadrefno matches (${incomingUploadRef}); proceeding: ${receipt.reference_no}`);
                   } else {
-                    console.log(`[SKIP] multOpt=0 duplicate workflow detected: ${receipt.reference_no}`);
-                    // Mark as synced in native storage before deleting from IndexedDB
+                    // SAFETY: Do NOT delete local record on ambiguous multOpt=0 cases
+                    // Instead, mark as failed so it can be retried or reviewed
+                    // This prevents silent cumulative drops when the existing record
+                    // is from a different workflow
+                    console.warn(`[SYNC] multOpt=0 conflict: existing uploadrefno=${existingUploadRef}, incoming=${incomingUploadRef}. Keeping local record for review: ${receipt.reference_no}`);
                     if (useNativeStorage) {
-                      await markNativeRecordSynced(receipt.reference_no);
+                      await markNativeRecordFailed(receipt.reference_no, `multOpt=0 conflict: existing workflow ${existingUploadRef} differs from ${incomingUploadRef}`);
                     }
-                    if (receipt.orderId && typeof receipt.orderId === 'number') {
-                      try {
-                        await deleteReceipt(receipt.orderId);
-                      } catch (deleteErr) {
-                        console.warn(`[WARN] Failed to delete duplicate receipt ${receipt.orderId}:`, deleteErr);
-                      }
-                    }
-                    synced++;
+                    failed++;
                     continue;
                   }
                 }
