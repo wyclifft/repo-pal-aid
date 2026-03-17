@@ -260,12 +260,17 @@ export const useIndexedDB = () => {
         const store = tx.objectStore('receipts');
         const request = store.getAll();
         request.onsuccess = () => {
-          // Filter out synced receipts and special storage entries
+          // Filter out synced receipts, special storage entries, and invalid records
           const unsynced = (request.result || []).filter((r: any) => {
             // Skip special storage entries
             if (r.orderId === 'PRINTED_RECEIPTS') return false;
             // Only include unsynced receipts
-            return !r.synced;
+            if (r.synced) return false;
+            // Skip sale records (synced via different path)
+            if (r.type === 'sale') return false;
+            // Must have required sync fields to be considered pending
+            if (!r.reference_no || !r.farmer_id || !r.weight) return false;
+            return true;
           });
           resolve(unsynced);
         };
