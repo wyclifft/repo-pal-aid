@@ -338,7 +338,7 @@ export const useDataSync = () => {
                 try {
                   const existingRecord = await mysqlApi.milkCollection.getByReference(receipt.reference_no);
                   if (existingRecord) {
-                    const eFarmerId = String((existingRecord as any).memberno || '').trim();
+                    const eFarmerId = String((existingRecord as any).farmer_id || (existingRecord as any).memberno || '').trim();
                     const lFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                     const eWeight = Number((existingRecord as any).weight || 0);
                     const lWeight = Number(receipt.weight || 0);
