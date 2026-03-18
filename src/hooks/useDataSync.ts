@@ -285,7 +285,7 @@ export const useDataSync = () => {
                 const verifyResult = await mysqlApi.milkCollection.getByReference(receipt.reference_no);
                 if (verifyResult) {
                   // Verify critical fields match to prevent false-success data loss
-                  const vFarmerId = String((verifyResult as any).memberno || '').trim();
+                  const vFarmerId = String((verifyResult as any).farmer_id || (verifyResult as any).memberno || '').trim();
                   const lFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                   const vWeight = Number((verifyResult as any).weight || 0);
                   const lWeight = Number(receipt.weight || 0);
