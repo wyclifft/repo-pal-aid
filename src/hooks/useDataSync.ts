@@ -321,14 +321,15 @@ export const useDataSync = () => {
                   }
                 }
                 synced++;
+                console.log(`[SUCCESS] Synced ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
               } else {
                 // Payload mismatch or not found — keep local, count as failed for retry
                 failed++;
                 if (useNativeStorage) {
                   await markNativeRecordFailed(receipt.reference_no, 'Post-sync verification mismatch');
                 }
+                console.warn(`[FAILED] Verification failed ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
               }
-              console.log(`[SUCCESS] Synced ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
             } else {
               const errorMsg = (result.error || result.message || '').toLowerCase();
               if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
