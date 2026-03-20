@@ -228,6 +228,9 @@ const AIPage = () => {
           }
         } catch (err) {
           setHasRoutes(true);
+          // Restore clientFetch from cache for offline use
+          const cachedCF = localStorage.getItem('ai_clientFetch');
+          if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
         }
       } else {
         setHasRoutes(true);
