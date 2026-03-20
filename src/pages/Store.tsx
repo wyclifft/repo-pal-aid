@@ -723,6 +723,11 @@ const Store = () => {
               <ArrowLeft className="h-5 w-5" />
             </button>
             <h1 className="text-xl font-semibold">Store</h1>
+            {pendingSalesCount > 0 && (
+              <span className="bg-amber-500 text-amber-900 text-xs font-bold px-2 py-0.5 rounded-full">
+                {pendingSalesCount} pending
+              </span>
+            )}
           </div>
           <button
             onClick={() => setShowPhotoAudit(true)}

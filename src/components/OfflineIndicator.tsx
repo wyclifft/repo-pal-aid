@@ -9,7 +9,7 @@ export const OfflineIndicator = () => {
   const [visible, setVisible] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
-  const { isReady, getUnsyncedReceipts } = useIndexedDB();
+  const { isReady, getUnsyncedReceipts, getUnsyncedSales } = useIndexedDB();
 
   // Update pending count - includes milk receipts + store/AI sales
   const updatePendingCount = useCallback(async () => {

@@ -448,24 +448,29 @@ export const useDataSync = () => {
     }
   }, [isReady, getUnsyncedReceipts, deleteReceipt]);
 
-  // Update pending count
+  // Update pending count - includes milk receipts + store/AI sales
   const updatePendingCount = useCallback(async () => {
     if (!isReady) return;
     try {
       const unsynced = await getUnsyncedReceipts();
-      // Filter out non-receipt entries and sales
+      // Filter out non-receipt entries and sales (sales counted separately)
       const receiptsOnly = unsynced.filter((r: any) => {
         if (r.orderId === 'PRINTED_RECEIPTS') return false;
         if (r.type === 'sale') return false;
         return true;
       });
+      
+      // Also count pending store/AI sales
+      const unsyncedSales = await getUnsyncedSales();
+      const salesCount = unsyncedSales.length;
+      
       if (mountedRef.current) {
-        setPendingCount(receiptsOnly.length);
+        setPendingCount(receiptsOnly.length + salesCount);
       }
     } catch (err) {
       console.error('Pending count error:', err);
     }
-  }, [isReady, getUnsyncedReceipts]);
+  }, [isReady, getUnsyncedReceipts, getUnsyncedSales]);
 
   const syncAllData = useCallback(async (silent = false, showMemberBanner = false) => {
     // Use global lock to prevent concurrent syncs
