@@ -246,7 +246,7 @@ const Store = () => {
             
             // Extract clientFetch from the first store-enabled route
             const storeRoute = routes.find((route: { allowStore?: boolean; clientFetch?: number }) => route.allowStore === true);
-            if (storeRoute?.clientFetch) {
+            if (storeRoute?.clientFetch !== undefined && storeRoute?.clientFetch !== null) {
               setClientFetch(storeRoute.clientFetch);
               localStorage.setItem('store_clientFetch', String(storeRoute.clientFetch));
               console.log('[Store] clientFetch from route:', storeRoute.clientFetch);
@@ -260,6 +260,9 @@ const Store = () => {
           } else {
             setHasRoutes(true);
             setStoreEnabled(true);
+            // Restore clientFetch from cache for non-ok responses
+            const cachedCF = localStorage.getItem('store_clientFetch');
+            if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
           }
         } catch (err) {
           setHasRoutes(true);
@@ -560,6 +563,18 @@ const Store = () => {
       toast.error('Please capture buyer photo first');
       setShowPhotoCapture(true);
       return;
+    }
+
+    // Guard: block submission if devcode is missing (device not approved)
+    const devcode = localStorage.getItem('devcode');
+    if (!devcode) {
+      toast.error('Device not configured. Please ensure device is approved.');
+      return;
+    }
+
+    // Warn if clientFetch is missing — uploadrefno will lack routing digit
+    if (clientFetch === undefined) {
+      console.warn('[Store] clientFetch is undefined — uploadrefno will not include routing digit');
     }
 
     setSubmitting(true);

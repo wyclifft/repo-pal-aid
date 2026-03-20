@@ -209,8 +209,9 @@ const AIPage = () => {
             
             // Extract clientFetch from the first AI-enabled route
             const aiRoute = routes.find((route: { allowAI?: boolean; clientFetch?: number }) => route.allowAI === true);
-            if (aiRoute?.clientFetch) {
+            if (aiRoute?.clientFetch !== undefined && aiRoute?.clientFetch !== null) {
               setClientFetch(aiRoute.clientFetch);
+              localStorage.setItem('ai_clientFetch', String(aiRoute.clientFetch));
               console.log('[AI] clientFetch from route:', aiRoute.clientFetch);
             }
             
@@ -221,9 +222,15 @@ const AIPage = () => {
             }
           } else {
             setHasRoutes(true);
+            // Restore clientFetch from cache for non-ok responses
+            const cachedCF = localStorage.getItem('ai_clientFetch');
+            if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
           }
         } catch (err) {
           setHasRoutes(true);
+          // Restore clientFetch from cache for offline use
+          const cachedCF = localStorage.getItem('ai_clientFetch');
+          if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
         }
       } else {
         setHasRoutes(true);
@@ -386,6 +393,17 @@ const AIPage = () => {
     if (cart.length === 0) {
       toast.error('Please add items to cart');
       return;
+    }
+
+    // Guard: block submission if devcode is missing (device not approved)
+    const devcode = localStorage.getItem('devcode');
+    if (!devcode) {
+      toast.error('Device not configured. Please ensure device is approved.');
+      return;
+    }
+
+    if (clientFetch === undefined) {
+      console.warn('[AI] clientFetch is undefined — uploadrefno will not include routing digit');
     }
 
     setSubmitting(true);
