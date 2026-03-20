@@ -1,36 +1,61 @@
-# App Bug Audit and Improvement Plan
 
-## ✅ Completed in v2.10.0 (versionCode 31)
 
-### Phase 1 — Backend Duplicate Detection (DONE)
-- `backend-api/server.js`: On duplicate `transrefno`, now fetches existing row and compares `memberno`, `weight`, `session`. Returns success only on true match; returns `REFERENCE_COLLISION` on payload mismatch.
+## Problem
 
-### Phase 2 — Frontend Sync Verification (DONE)
-- `src/hooks/useDataSync.ts`: On `REFERENCE_COLLISION`, auto-regenerates reference and retries once. Post-sync verification now compares `memberno` + `weight` before deleting local records.
+Store sales saved offline are invisible in the pending receipts UI because:
 
-### Phase 3 — multOpt=0 Safety (DONE)
-- `src/hooks/useDataSync.ts`: Ambiguous multOpt=0 cases no longer delete local records. Instead marked as `failed` for retry, preventing silent cumulative drops.
+1. **`getUnsyncedReceipts` (useIndexedDB.ts, line ~422)** filters to exclude `type === 'sale'` records — this was added in the recent fix to align with milk sync, but it also hides store sales from all pending indicators.
 
-### Phase 4 — icode Normalization (DONE)
-- `src/hooks/useIndexedDB.ts`: All `icode` merge keys now use `trim().toUpperCase()` in both `getUnsyncedWeightForFarmer` and `getFarmerTotalCumulative`.
-- `src/pages/Index.tsx`: All merge paths (pre-fetch, post-sync refresh, farmer select) use normalized icode keys.
+2. **`updatePendingCount` (useDataSync.ts, line ~458)** also explicitly excludes `type === 'sale'`.
 
-### Phase 5 — Cumulative Floor Guard (DONE)
-- `src/pages/Index.tsx`: Post-sync cumulative refresh now prevents UI regression below previously displayed value when reason is `post-sync`.
+3. **`OfflineIndicator`** uses `getUnsyncedReceipts`, so store sales are excluded there too.
 
-### Phase 6 — Version Alignment (DONE)
-- `src/constants/appVersion.ts`: v2.10.0, code 31
-- `android/app/build.gradle`: v2.10.0, code 31
-- `public/sw.js`: CACHE_VERSION bumped to v17
+4. **Store page** has no pending sales indicator at all — the `ReceiptList` component exists but is never rendered.
 
----
+Store sales are synced separately via `useSalesSync` / `Store.syncPendingSales`, but the user has no visibility that they exist.
 
-## Previous fixes (v2.9.x)
-- IndexedDB singleton cleanup removed
-- saveSale/saveZReport/savePeriodicReport wrapped in proper Promises
-- activeSession null guard added
-- Render-time console.log removed
-- Chunk reload retry counter added
-- Session blacklist batched
-- Cumulative reset on route/product/mode switch
-- New Session button guard fixed
+## Fix
+
+### 1. Add store/AI sales to pending count (useDataSync.ts)
+
+In `updatePendingCount`, also query `getUnsyncedSales()` and combine both counts:
+
+```javascript
+const updatePendingCount = useCallback(async () => {
+  if (!isReady) return;
+  try {
+    const unsynced = await getUnsyncedReceipts();
+    const receiptsOnly = unsynced.filter((r: any) => {
+      if (r.orderId === 'PRINTED_RECEIPTS') return false;
+      return true;
+    });
+    
+    // Also count pending store/AI sales
+    const unsyncedSales = await getUnsyncedSales();
+    const salesCount = unsyncedSales.length;
+    
+    if (mountedRef.current) {
+      setPendingCount(receiptsOnly.length + salesCount);
+    }
+  } catch (err) {
+    console.error('Pending count error:', err);
+  }
+}, [isReady, getUnsyncedReceipts, getUnsyncedSales]);
+```
+
+This requires importing `getUnsyncedSales` from the existing `useIndexedDB` hook in `useDataSync.ts`.
+
+### 2. Add store/AI sales to OfflineIndicator count
+
+Same approach: also call `getUnsyncedSales()` in `OfflineIndicator.tsx` and add to `pendingCount`.
+
+### 3. Add pending sales banner to Store page
+
+Add a small pending count indicator in the Store page header showing how many offline sales are queued, using `getUnsyncedSales` count with a "Sync Now" action.
+
+### Files changed
+- `src/hooks/useDataSync.ts` — add `getUnsyncedSales` to combined pending count
+- `src/components/OfflineIndicator.tsx` — include sales in pending count
+- `src/pages/Store.tsx` — add pending sales indicator in header
+- `src/constants/appVersion.ts` — bump to v2.10.4
+
