@@ -209,7 +209,7 @@ const AIPage = () => {
             
             // Extract clientFetch from the first AI-enabled route
             const aiRoute = routes.find((route: { allowAI?: boolean; clientFetch?: number }) => route.allowAI === true);
-            if (aiRoute?.clientFetch) {
+            if (aiRoute?.clientFetch !== undefined && aiRoute?.clientFetch !== null) {
               setClientFetch(aiRoute.clientFetch);
               console.log('[AI] clientFetch from route:', aiRoute.clientFetch);
             }
