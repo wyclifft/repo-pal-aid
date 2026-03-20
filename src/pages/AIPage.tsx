@@ -211,6 +211,7 @@ const AIPage = () => {
             const aiRoute = routes.find((route: { allowAI?: boolean; clientFetch?: number }) => route.allowAI === true);
             if (aiRoute?.clientFetch !== undefined && aiRoute?.clientFetch !== null) {
               setClientFetch(aiRoute.clientFetch);
+              localStorage.setItem('ai_clientFetch', String(aiRoute.clientFetch));
               console.log('[AI] clientFetch from route:', aiRoute.clientFetch);
             }
             
