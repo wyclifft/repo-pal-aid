@@ -246,7 +246,7 @@ const Store = () => {
             
             // Extract clientFetch from the first store-enabled route
             const storeRoute = routes.find((route: { allowStore?: boolean; clientFetch?: number }) => route.allowStore === true);
-            if (storeRoute?.clientFetch) {
+            if (storeRoute?.clientFetch !== undefined && storeRoute?.clientFetch !== null) {
               setClientFetch(storeRoute.clientFetch);
               localStorage.setItem('store_clientFetch', String(storeRoute.clientFetch));
               console.log('[Store] clientFetch from route:', storeRoute.clientFetch);
