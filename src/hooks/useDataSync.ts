@@ -50,6 +50,7 @@ export const useDataSync = () => {
     saveRoutes,
     saveSessions,
     getUnsyncedReceipts,
+    getUnsyncedSales,
     deleteReceipt,
     isReady 
   } = useIndexedDB();
