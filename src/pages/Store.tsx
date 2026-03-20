@@ -421,6 +421,8 @@ const Store = () => {
       }
     } catch (error) {
       console.error('[SYNC] Failed to sync sales:', error);
+    } finally {
+      updatePendingSalesCount();
     }
   };
 
