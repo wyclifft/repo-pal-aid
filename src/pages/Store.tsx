@@ -104,6 +104,27 @@ const Store = () => {
   const { addStoreReceipt } = useReprint();
   const { queuePhotoUpload } = useBackgroundPhotoUpload();
 
+  // Pending sales count for header indicator
+  const [pendingSalesCount, setPendingSalesCount] = useState(0);
+
+  // Update pending sales count
+  const updatePendingSalesCount = useCallback(async () => {
+    if (!isReady) return;
+    try {
+      const sales = await getUnsyncedSales();
+      const storeSales = sales.filter((r: any) => r.type === 'sale');
+      setPendingSalesCount(storeSales.length);
+    } catch {
+      // ignore
+    }
+  }, [isReady, getUnsyncedSales]);
+
+  useEffect(() => {
+    updatePendingSalesCount();
+    const interval = setInterval(updatePendingSalesCount, 10000);
+    return () => clearInterval(interval);
+  }, [updatePendingSalesCount]);
+
   // Fetch active session on mount
   const loadActiveSession = async () => {
     try {
