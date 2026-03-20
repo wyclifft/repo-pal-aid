@@ -221,6 +221,9 @@ const AIPage = () => {
             }
           } else {
             setHasRoutes(true);
+            // Restore clientFetch from cache for non-ok responses
+            const cachedCF = localStorage.getItem('ai_clientFetch');
+            if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
           }
         } catch (err) {
           setHasRoutes(true);
