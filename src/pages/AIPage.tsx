@@ -391,6 +391,17 @@ const AIPage = () => {
       return;
     }
 
+    // Guard: block submission if devcode is missing (device not approved)
+    const devcode = localStorage.getItem('devcode');
+    if (!devcode) {
+      toast.error('Device not configured. Please ensure device is approved.');
+      return;
+    }
+
+    if (clientFetch === undefined) {
+      console.warn('[AI] clientFetch is undefined — uploadrefno will not include routing digit');
+    }
+
     setSubmitting(true);
     const deviceFingerprint = await generateDeviceFingerprint();
 
