@@ -565,6 +565,18 @@ const Store = () => {
       return;
     }
 
+    // Guard: block submission if devcode is missing (device not approved)
+    const devcode = localStorage.getItem('devcode');
+    if (!devcode) {
+      toast.error('Device not configured. Please ensure device is approved.');
+      return;
+    }
+
+    // Warn if clientFetch is missing — uploadrefno will lack routing digit
+    if (clientFetch === undefined) {
+      console.warn('[Store] clientFetch is undefined — uploadrefno will not include routing digit');
+    }
+
     setSubmitting(true);
     setSyncing(true);
     const deviceFingerprint = await generateDeviceFingerprint();
