@@ -104,6 +104,27 @@ const Store = () => {
   const { addStoreReceipt } = useReprint();
   const { queuePhotoUpload } = useBackgroundPhotoUpload();
 
+  // Pending sales count for header indicator
+  const [pendingSalesCount, setPendingSalesCount] = useState(0);
+
+  // Update pending sales count
+  const updatePendingSalesCount = useCallback(async () => {
+    if (!isReady) return;
+    try {
+      const sales = await getUnsyncedSales();
+      const storeSales = sales.filter((r: any) => r.type === 'sale');
+      setPendingSalesCount(storeSales.length);
+    } catch {
+      // ignore
+    }
+  }, [isReady, getUnsyncedSales]);
+
+  useEffect(() => {
+    updatePendingSalesCount();
+    const interval = setInterval(updatePendingSalesCount, 10000);
+    return () => clearInterval(interval);
+  }, [updatePendingSalesCount]);
+
   // Fetch active session on mount
   const loadActiveSession = async () => {
     try {
@@ -400,6 +421,8 @@ const Store = () => {
       }
     } catch (error) {
       console.error('[SYNC] Failed to sync sales:', error);
+    } finally {
+      updatePendingSalesCount();
     }
   };
 
@@ -723,6 +746,11 @@ const Store = () => {
               <ArrowLeft className="h-5 w-5" />
             </button>
             <h1 className="text-xl font-semibold">Store</h1>
+            {pendingSalesCount > 0 && (
+              <span className="bg-amber-500 text-amber-900 text-xs font-bold px-2 py-0.5 rounded-full">
+                {pendingSalesCount} pending
+              </span>
+            )}
           </div>
           <button
             onClick={() => setShowPhotoAudit(true)}
