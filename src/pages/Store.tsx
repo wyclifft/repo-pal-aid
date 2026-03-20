@@ -260,6 +260,9 @@ const Store = () => {
           } else {
             setHasRoutes(true);
             setStoreEnabled(true);
+            // Restore clientFetch from cache for non-ok responses
+            const cachedCF = localStorage.getItem('store_clientFetch');
+            if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
           }
         } catch (err) {
           setHasRoutes(true);
