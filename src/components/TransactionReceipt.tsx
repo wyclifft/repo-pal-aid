@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, X, RefreshCw, Check, AlertTriangle } from 'lucide-react';
-import { printReceipt } from '@/services/bluetooth';
+import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
