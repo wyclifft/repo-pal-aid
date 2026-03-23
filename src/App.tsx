@@ -320,11 +320,13 @@ const App = () => {
       }}
     >
       <AuthProvider>
-        <ReprintProvider>
-          <Toaster />
-          <Sonner position="top-center" richColors closeButton />
-          <AppContent />
-        </ReprintProvider>
+        <ReprintErrorBoundary>
+          <ReprintProvider>
+            <Toaster />
+            <Sonner position="top-center" richColors closeButton />
+            <AppContent />
+          </ReprintProvider>
+        </ReprintErrorBoundary>
       </AuthProvider>
     </PersistQueryClientProvider>
   );

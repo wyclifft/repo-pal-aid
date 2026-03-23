@@ -1323,7 +1323,8 @@ const Index = () => {
           cumulativeByProduct: cumulativeForPrint?.byProduct,
           showCumulativeFrequency: printData.shouldShowCumulativeForFarmer,
           clerkName: printData.clerkName,
-          productName: printData.productName
+          productName: printData.productName,
+          deliveredBy: printData.deliveredBy,
         }).catch(err => console.warn('Background print failed:', err));
         
         // Save receipt for reprinting WITH the correct cumulative value
