@@ -994,6 +994,7 @@ const Index = () => {
       routeCode: selectedRouteCode, // Capture route for background cumulative filtering
       previousCumulativeTotal: cumulativeFrequency?.total ?? 0, // For race condition guard
       justSubmittedWeight: capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0), // Weight being submitted
+      deliveredBy: deliveredBy || 'owner', // Pass deliveredBy for receipt printing
     };
 
     // OPTIMIZED: Process submissions in parallel batches for faster throughput
