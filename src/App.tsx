@@ -13,6 +13,23 @@ import { BackendStatusBanner } from "@/components/BackendStatusBanner";
 import { ServiceWorkerUpdateBanner } from "@/components/ServiceWorkerUpdateBanner";
 import { preloadCriticalAssets } from "@/utils/precachePages";
 import { requestAllPermissions } from "@/utils/permissionRequests";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+
+// Error boundary specifically for ReprintProvider — falls back to rendering children without reprint
+class ReprintErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error: Error) {
+    console.error('[ReprintErrorBoundary] ReprintProvider crashed, sync will still work:', error);
+  }
+  render() {
+    if (this.state.hasError) {
+      // Render children without ReprintProvider so sync/core app still works
+      return this.props.children;
+    }
+    return this.props.children;
+  }
+}
 
 // Lazy load route components for better performance
 const Index = lazy(() => import("./pages/Index"));
@@ -320,11 +337,13 @@ const App = () => {
       }}
     >
       <AuthProvider>
-        <ReprintProvider>
-          <Toaster />
-          <Sonner position="top-center" richColors closeButton />
-          <AppContent />
-        </ReprintProvider>
+        <ReprintErrorBoundary>
+          <ReprintProvider>
+            <Toaster />
+            <Sonner position="top-center" richColors closeButton />
+            <AppContent />
+          </ReprintProvider>
+        </ReprintErrorBoundary>
       </AuthProvider>
     </PersistQueryClientProvider>
   );
