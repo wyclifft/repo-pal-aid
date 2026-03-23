@@ -2000,6 +2000,7 @@ export const printReceipt = async (data: {
   locationCode?: string;
   locationName?: string;
   collectionDate?: Date;
+  deliveredBy?: string;
 }): Promise<{ success: boolean; error?: string }> => {
   const companyName = data.companyName || 'DAIRY COLLECTION';
   const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
