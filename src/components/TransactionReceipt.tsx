@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, X, RefreshCw, Check, AlertTriangle } from 'lucide-react';
-import { printReceipt } from '@/services/bluetooth';
+import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
@@ -382,24 +382,52 @@ export const TransactionReceipt = ({
     }));
 
     for (let copy = 0; copy < printCopies; copy++) {
-      const result = await printReceipt({
-        companyName,
-        farmerName: memberName,
-        farmerId: memberId,
-        route: memberRoute || '',
-        routeLabel,
-        session: session || '',
-        periodLabel,
-        productName,
-        uploadRefNo: uploadrefno || transrefno,
-        collectorName: clerkName,
-        collections,
-        cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined,
-        cumulativeByProduct: showCumulativeFrequency ? cumulativeByProduct : undefined,
-        locationCode,
-        locationName,
-        collectionDate: transactionDate
-      });
+      let result: { success: boolean; error?: string };
+
+      if (transtype === 2 || transtype === 3) {
+        // Store/AI receipts — use printStoreAIReceipt with full item details
+        result = await printStoreAIReceipt({
+          companyName,
+          memberName,
+          memberId,
+          memberRoute: memberRoute || '',
+          uploadRefNo: uploadrefno || transrefno,
+          clerkName,
+          deliveredBy,
+          items: items.map(item => ({
+            item_code: item.item_code || '',
+            item_name: item.item_name || '',
+            quantity: item.quantity || 1,
+            price: item.price || 0,
+            lineTotal: item.lineTotal || 0,
+            cowDetails: item.cowDetails,
+          })),
+          totalAmount: totalAmount || 0,
+          transactionDate,
+          receiptType: transtype === 2 ? 'store' : 'ai',
+        });
+      } else {
+        // Milk/Coffee receipts — use printReceipt
+        result = await printReceipt({
+          companyName,
+          farmerName: memberName,
+          farmerId: memberId,
+          route: memberRoute || '',
+          routeLabel,
+          session: session || '',
+          periodLabel,
+          productName,
+          uploadRefNo: uploadrefno || transrefno,
+          collectorName: clerkName,
+          deliveredBy,
+          collections,
+          cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined,
+          cumulativeByProduct: showCumulativeFrequency ? cumulativeByProduct : undefined,
+          locationCode,
+          locationName,
+          collectionDate: transactionDate
+        });
+      }
 
       if (!result.success) {
         if (result.error?.includes('No printer connected')) {

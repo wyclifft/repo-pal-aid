@@ -14,6 +14,7 @@ interface DirectPrintOptions {
   showCumulativeFrequency?: boolean;
   clerkName: string;
   productName?: string;
+  deliveredBy?: string;
 }
 
 /**
@@ -64,6 +65,7 @@ export const printMilkReceiptDirect = async (
         productName: options.productName || first.product_name,
         uploadRefNo: first.uploadrefno || first.reference_no,
         collectorName: options.clerkName,
+        deliveredBy: options.deliveredBy,
         collections,
         cumulativeFrequency: options.showCumulativeFrequency ? options.cumulativeFrequency : undefined,
         cumulativeByProduct: options.showCumulativeFrequency ? options.cumulativeByProduct : undefined,

@@ -2000,6 +2000,7 @@ export const printReceipt = async (data: {
   locationCode?: string;
   locationName?: string;
   collectionDate?: Date;
+  deliveredBy?: string;
 }): Promise<{ success: boolean; error?: string }> => {
   const companyName = data.companyName || 'DAIRY COLLECTION';
   const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
@@ -2069,6 +2070,9 @@ export const printReceipt = async (data: {
   }
   receipt += formatLine('Member Region ', data.route || '', W) + '\n';
   receipt += formatLine('Clerk Name    ', data.collectorName, W) + '\n';
+  if (data.deliveredBy && data.deliveredBy !== 'owner') {
+    receipt += formatLine('Delivered By  ', data.deliveredBy, W) + '\n';
+  }
   
   // Use periodLabel (Session/Season) with the session value
   const periodLabel = data.periodLabel || 'Session';
@@ -2108,6 +2112,7 @@ export const printStoreAIReceipt = async (data: {
   memberRoute?: string;
   uploadRefNo?: string;
   clerkName: string;
+  deliveredBy?: string;
   items: StoreAIReceiptItem[];
   totalAmount: number;
   transactionDate?: Date;
@@ -2170,26 +2175,22 @@ export const printStoreAIReceipt = async (data: {
   
   receipt += centerText(companyName, W) + '\n';
   receipt += centerText(receiptTitle, W) + '\n';
-  receipt += '\n';
-  
   receipt += formatLine('Member NO     ', '#' + data.memberId, W) + '\n';
   receipt += formatLine('Member Name   ', data.memberName, W) + '\n';
   receipt += formatLine('Reference NO  ', data.uploadRefNo || '', W) + '\n';
   receipt += formatLine('Date          ', formattedDate + ' ' + formattedTime, W) + '\n';
-  receipt += '\n';
-  
   receipt += sep + '\n';
   receipt += itemsText;
   receipt += sep + '\n';
-  
   const totalStr = data.totalAmount.toFixed(0);
   receipt += formatLine('Total [KES]   ', totalStr, W) + '\n';
-  receipt += '\n';
-  
   if (data.memberRoute) {
     receipt += formatLine('Member Region ', data.memberRoute, W) + '\n';
   }
   receipt += formatLine('Clerk Name    ', data.clerkName, W) + '\n';
+  if (data.deliveredBy && data.deliveredBy !== 'owner') {
+    receipt += formatLine('Delivered By  ', data.deliveredBy, W) + '\n';
+  }
   receipt += formatLine('', formattedDate + ' ' + formattedTime, W) + '\n';
 
   // Try Classic Bluetooth printer first (for built-in POS printers)
