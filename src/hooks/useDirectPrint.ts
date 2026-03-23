@@ -14,6 +14,7 @@ interface DirectPrintOptions {
   showCumulativeFrequency?: boolean;
   clerkName: string;
   productName?: string;
+  deliveredBy?: string;
 }
 
 /**
