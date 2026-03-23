@@ -2032,28 +2032,27 @@ export const printReceipt = async (data: {
   
   receipt += centerText(companyName, W) + '\n';
   receipt += centerText('CUSTOMER DELIVERY RECEIPT', W) + '\n';
-  receipt += '\n';
+  receipt += sep + '\n';
   
-  receipt += formatLine('Member NO     ', '#' + data.farmerId, W) + '\n';
-  receipt += formatLine('Member Name   ', data.farmerName, W) + '\n';
-  receipt += formatLine('Reference NO  ', data.uploadRefNo || '', W) + '\n';
-  receipt += formatLine('Date          ', formattedDate + ' ' + formattedTime, W) + '\n';
+  receipt += formatLine('MNO       ', '#' + data.farmerId, W) + '\n';
+  receipt += formatLine('Name      ', data.farmerName, W) + '\n';
+  receipt += formatLine('Ref       ', data.uploadRefNo || '', W) + '\n';
+  receipt += formatLine('Date      ', formattedDate + ' ' + formattedTime, W) + '\n';
   
   // Product name (for milk/coffee types)
   if (data.productName) {
-    receipt += formatLine('Product       ', data.productName, W) + '\n';
+    receipt += formatLine('Product   ', data.productName, W) + '\n';
   }
-  receipt += '\n';
-  
-  receipt += collectionsText;
-  receipt += '\n';
-  
-  const totalStr = totalWeight.toFixed(2);
-  receipt += formatLine('Total Weight[Kgs]', totalStr, W) + '\n';
   receipt += sep + '\n';
   
+  receipt += collectionsText;
+  receipt += sep + '\n';
+  
+  const totalStr = totalWeight.toFixed(2);
+  receipt += formatLine('Total Kgs ', totalStr, W) + '\n';
+  
   if (data.cumulativeFrequency !== undefined) {
-    receipt += formatLine('Cumulative    ', data.cumulativeFrequency.toFixed(1), W) + '\n';
+    receipt += formatLine('Cumulative', data.cumulativeFrequency.toFixed(1), W) + '\n';
     // Per-product breakdown
     if (data.cumulativeByProduct && data.cumulativeByProduct.length > 1) {
       for (const prod of data.cumulativeByProduct) {
@@ -2062,22 +2061,25 @@ export const printReceipt = async (data: {
       }
     }
   }
-  if (data.locationCode) {
-    receipt += formatLine('Location      ', data.locationCode, W) + '\n';
+  receipt += sep + '\n';
+  
+  // Merge location code + name into single line
+  if (data.locationCode || data.locationName) {
+    const locValue = data.locationCode && data.locationName
+      ? `${data.locationCode} - ${data.locationName}`
+      : (data.locationCode || data.locationName || '');
+    receipt += formatLine('Loc       ', locValue, W) + '\n';
   }
-  if (data.locationName) {
-    receipt += formatLine('Location Name ', data.locationName, W) + '\n';
-  }
-  receipt += formatLine('Member Region ', data.route || '', W) + '\n';
-  receipt += formatLine('Clerk Name    ', data.collectorName, W) + '\n';
+  receipt += formatLine('Route     ', data.route || '', W) + '\n';
+  receipt += formatLine('Clerk     ', data.collectorName, W) + '\n';
   if (data.deliveredBy && data.deliveredBy !== 'owner') {
-    receipt += formatLine('Delivered By  ', data.deliveredBy, W) + '\n';
+    receipt += formatLine('Delivered ', data.deliveredBy, W) + '\n';
   }
   
   // Use periodLabel (Session/Season) with the session value
   const periodLabel = data.periodLabel || 'Session';
-  receipt += formatLine(periodLabel.padEnd(14), data.session || '', W) + '\n';
-  receipt += formatLine('', formattedDate + ' ' + formattedTime, W) + '\n';
+  receipt += formatLine((periodLabel.length <= 10 ? periodLabel.padEnd(10) : periodLabel), data.session || '', W) + '\n';
+  receipt += sep + '\n';
 
   // Try Classic Bluetooth printer first (for built-in POS printers)
   if (isClassicPrinterConnected()) {
