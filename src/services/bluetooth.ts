@@ -2070,6 +2070,9 @@ export const printReceipt = async (data: {
   }
   receipt += formatLine('Member Region ', data.route || '', W) + '\n';
   receipt += formatLine('Clerk Name    ', data.collectorName, W) + '\n';
+  if (data.deliveredBy && data.deliveredBy !== 'owner') {
+    receipt += formatLine('Delivered By  ', data.deliveredBy, W) + '\n';
+  }
   
   // Use periodLabel (Session/Season) with the session value
   const periodLabel = data.periodLabel || 'Session';
