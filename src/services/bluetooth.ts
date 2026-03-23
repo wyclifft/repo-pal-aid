@@ -2112,6 +2112,7 @@ export const printStoreAIReceipt = async (data: {
   memberRoute?: string;
   uploadRefNo?: string;
   clerkName: string;
+  deliveredBy?: string;
   items: StoreAIReceiptItem[];
   totalAmount: number;
   transactionDate?: Date;
