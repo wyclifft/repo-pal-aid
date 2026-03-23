@@ -1,94 +1,58 @@
+## Compress Milk/Coffee Receipt Layout
 
+### Current Issues
 
-## Fix: Store Receipt Printing — Item Names, DeliveredBy, and Layout Optimization
+The receipt has several lines that waste space:
 
-### Issues
+- Blank line after header (`\n` on line 2035)
+- Blank line after product name (`\n` on line 2046)
+- Blank line after collections list (`\n` on line 2049)
+- `Member NO`, `Member Name`, `Reference NO` labels use 14-char padding — can be shortened
+- Duplicate date/time printed twice (line 2040 and again at line 2080)
+- `Location` and `Location Name` are two separate lines — can merge
+- `Member Region` label is verbose
 
-1. **Item names not printing**: `TransactionReceipt.handlePrint()` always calls `printReceipt()` (the milk/coffee printer), even for Store (transtype=2) and AI (transtype=3) receipts. `printReceipt` formats output as `index: refno weight` — no item names, no prices.
+### Optimized Layout (32-char wide)
 
-2. **DeliveredBy not printed**: Neither `printReceipt` nor `printStoreAIReceipt` accept a `deliveredBy` parameter. The field shows in the on-screen receipt but is never sent to the thermal printer.
-
-3. **Receipt layout**: `printStoreAIReceipt` uses generous spacing that can be tightened.
-
-### Fix Plan
-
-**File: `src/components/TransactionReceipt.tsx`** — `handlePrint()` method (~line 370)
-
-Route printing by `transtype`:
-- **transtype 1** (milk/coffee): continue using `printReceipt()` (unchanged)
-- **transtype 2 or 3** (store/AI): call `printStoreAIReceipt()` with proper item data
-
-```javascript
-// Inside handlePrint, replace the single printReceipt call:
-if (transtype === 2 || transtype === 3) {
-  // Use Store/AI printer with full item details
-  const result = await printStoreAIReceipt({
-    companyName,
-    memberName,
-    memberId,
-    memberRoute,
-    uploadRefNo: uploadrefno || transrefno,
-    clerkName,
-    deliveredBy,
-    items: items.map(item => ({
-      item_code: item.item_code || '',
-      item_name: item.item_name || '',
-      quantity: item.quantity || 1,
-      price: item.price || 0,
-      lineTotal: item.lineTotal || 0,
-      cowDetails: item.cowDetails,
-    })),
-    totalAmount: totalAmount || 0,
-    transactionDate,
-    receiptType: transtype === 2 ? 'store' : 'ai',
-  });
-  // handle result...
-} else {
-  // existing printReceipt call for milk/coffee
-}
+```text
+    COMPANY NAME HERE
+  CUSTOMER DELIVERY RECEIPT
+--------------------------------
+MNO       #12345
+Name      John Doe
+Ref       ABC123456
+Date      2025-01-15 14:30:05
+Product   Fresh Milk
+--------------------------------
+1: REF001                  10.5
+2: REF002                  12.0
+--------------------------------
+Total Kgs              22.50
+Cumulative             135.5
+--------------------------------
+Loc       ABC - Location Name
+Route     Route A
+Clerk     Jane Smith
+Delivered By   Driver Name
+Session   Morning
+--------------------------------
 ```
 
-Import `printStoreAIReceipt` alongside existing `printReceipt`.
+### Changes
 
-**File: `src/services/bluetooth.ts`** — `printStoreAIReceipt` function (~line 2104)
+**File: `src/services/bluetooth.ts**` (lines 2031-2080)
 
-1. Add `deliveredBy?: string` to the function signature
-2. Add `deliveredBy` line to receipt output (after Clerk Name, before timestamp)
-3. Optimize layout: reduce blank lines, tighten spacing
+1. Remove 3 blank lines (after header, after product, after collections)
+2. Shorten labels: `Member NO` → `MNO`, `Member Name` → `Name`, `Reference NO` → `Ref`, `Member Region` → `Route`, `Clerk Name` → `Clerk`, `Location` → `Loc`
+3. Use 10-char label padding instead of 14
+4. Merge `locationCode` + `locationName` into single line: `Loc  CODE - Name`
+5. Remove duplicate date/time at bottom (line 2080) — already shown on line 2040
+6. Add separator lines before collections and after total for visual clarity
+7. Keep all data fields — nothing omitted
 
-Also add `deliveredBy` to `printReceipt` for Buy/Sell milk receipts:
-1. Add `deliveredBy?: string` parameter
-2. Print after Clerk Name line when present
+**File: `src/constants/appVersion.ts**` — Bump to v2.10.7
 
-**File: `src/services/bluetooth.ts`** — `printReceipt` function (~line 1982)
+### Space Savings
 
-1. Add `deliveredBy?: string` to the function signature
-2. After the "Clerk Name" line (~line 2071), conditionally add:
-```
-receipt += formatLine('Delivered By  ', data.deliveredBy || '', W) + '\n';
-```
-
-**File: `src/hooks/useDirectPrint.ts`** — pass `deliveredBy` through to `printReceipt`
-
-Add `deliveredBy` to the options interface and pass it in the `printReceipt` call.
-
-**File: `src/constants/appVersion.ts`** — Bump to v2.10.6
-
-### Layout Optimization (printStoreAIReceipt)
-
-Current layout has unnecessary blank lines. Optimized version:
-- Remove blank line between header and member info
-- Remove blank line between member info and items
-- Compact item format: `ItemName x2 500` (already done)
-- Add DeliveredBy after Clerk line
-- Remove trailing blank line before print
-
-### Files Changed
-
-| File | Change |
-|------|--------|
-| `src/components/TransactionReceipt.tsx` | Route Store/AI prints to `printStoreAIReceipt`; import it |
-| `src/services/bluetooth.ts` | Add `deliveredBy` to both `printReceipt` and `printStoreAIReceipt`; optimize layout |
-| `src/hooks/useDirectPrint.ts` | Pass `deliveredBy` through to printer |
-| `src/constants/appVersion.ts` | Bump to v2.10.6 |
-
+- ~6-7 fewer printed lines per receipt
+- Faster print, less paper, same information
