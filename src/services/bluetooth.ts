@@ -2175,26 +2175,22 @@ export const printStoreAIReceipt = async (data: {
   
   receipt += centerText(companyName, W) + '\n';
   receipt += centerText(receiptTitle, W) + '\n';
-  receipt += '\n';
-  
   receipt += formatLine('Member NO     ', '#' + data.memberId, W) + '\n';
   receipt += formatLine('Member Name   ', data.memberName, W) + '\n';
   receipt += formatLine('Reference NO  ', data.uploadRefNo || '', W) + '\n';
   receipt += formatLine('Date          ', formattedDate + ' ' + formattedTime, W) + '\n';
-  receipt += '\n';
-  
   receipt += sep + '\n';
   receipt += itemsText;
   receipt += sep + '\n';
-  
   const totalStr = data.totalAmount.toFixed(0);
   receipt += formatLine('Total [KES]   ', totalStr, W) + '\n';
-  receipt += '\n';
-  
   if (data.memberRoute) {
     receipt += formatLine('Member Region ', data.memberRoute, W) + '\n';
   }
   receipt += formatLine('Clerk Name    ', data.clerkName, W) + '\n';
+  if (data.deliveredBy && data.deliveredBy !== 'owner') {
+    receipt += formatLine('Delivered By  ', data.deliveredBy, W) + '\n';
+  }
   receipt += formatLine('', formattedDate + ' ' + formattedTime, W) + '\n';
 
   // Try Classic Bluetooth printer first (for built-in POS printers)
