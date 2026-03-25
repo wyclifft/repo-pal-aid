@@ -1,62 +1,39 @@
 
 
-# Fix: App Crash on Android 7.0 POS Device
+# Fix Login & Android Communication Issues
 
-## Root Cause Analysis
+## Problem Summary
 
-The screenshot shows the Android WebView error "Webpage not available" at URL `https://app//offline.html`. This happens because:
+Three distinct issues prevent the app from working:
 
-1. **Malformed error path URL** -- The Capacitor config has `errorPath: '/offline.html'` with a leading slash. Combined with `hostname: 'app'` and `androidScheme: 'https'`, the WebView resolves this to `https://app//offline.html` (double slash), which is an invalid URL.
+1. **Login POST fails** — The preview environment's fetch proxy intercepts POST requests. GET requests work fine (device checks return 200), but the POST to `/api/auth/login` fails with "Failed to fetch".
 
-2. **CSS incompatibility crashes rendering on old WebView** -- The `index.html` uses `100dvh` (dynamic viewport height), which is NOT supported on Chrome 51 (the default WebView on Android 7.0 POS devices). This can cause the layout to break completely, triggering the error fallback.
+2. **Android 7 crash** — A static `import { Capacitor }` in `nativeInit.ts` crashes on older WebViews before the bridge is ready, breaking the entire app on Android 7 POS devices.
 
-3. **Google Fonts blocks on no-internet POS devices** -- The `<link rel="preload">` and `<link rel="stylesheet">` for Google Fonts attempts a network fetch. On a POS device with no internet, this can block or delay page rendering significantly.
+3. **Build errors** — 10 files reference `NodeJS.Timeout` but the TypeScript config lacks Node types.
 
----
+## Changes
 
-## Fix Plan
+### Step 1: Fix POST login requests
+**File: `src/services/mysqlApi.ts`**
+- Add a `nativeFetch()` helper that tries `fetch` first, and falls back to `XMLHttpRequest` for POST requests when fetch fails. This bypasses the proxy.
 
-### 1. Fix Capacitor `errorPath` (capacitor.config.ts)
+### Step 2: Fix Android Capacitor crash
+**File: `src/utils/nativeInit.ts`**
+- Replace static `import { Capacitor } from '@capacitor/core'` with defensive `(window as any).Capacitor` checks throughout.
 
-Remove the leading slash from `errorPath` so it resolves correctly:
+### Step 3: Fix build errors
+**File: `src/vite-env.d.ts`**
+- Add `NodeJS.Timeout` namespace declaration and module declarations for `@capacitor/device` and `@vitejs/plugin-legacy`.
 
-```
-errorPath: '/offline.html'  -->  errorPath: 'offline.html'
-```
+### Step 4: Fix Service Worker POST handling
+**Files: `sw.js` and `public/sw.js`**
+- For non-GET requests, `return;` immediately instead of `event.respondWith(fetch(request))` — let POST requests go straight to the network.
 
-### 2. Add CSS fallback for `100dvh` (index.html)
+### Step 5: Update backend CORS headers
+**File: `backend-api/.htaccess`**
+- Add `X-App-Origin` and `X-Device-Fingerprint` to `Access-Control-Allow-Headers`.
 
-Add `100vh` as a fallback before `100dvh` so older WebViews that don't understand `dvh` still get a valid height:
-
-```css
-height: 100vh;       /* fallback for old WebViews */
-height: 100dvh;      /* modern browsers override */
-max-height: 100vh;   /* fallback */
-max-height: 100dvh;  /* modern browsers override */
-```
-
-### 3. Make Google Fonts non-blocking (index.html)
-
-Change the font stylesheet to load asynchronously so it doesn't block rendering on offline POS devices:
-
-```html
-<link rel="stylesheet" href="https://fonts.googleapis.com/..." media="print" onload="this.media='all'" />
-```
-
-### 4. Bump version (android/app/build.gradle)
-
-Increment to versionCode 18 / versionName "2.7".
-
----
-
-## Files to Modify
-
-| File | Change |
-|------|--------|
-| `capacitor.config.ts` | Fix `errorPath` to `'offline.html'` (no leading slash) |
-| `index.html` | Add `100vh` CSS fallback before `100dvh`; make Google Fonts non-blocking |
-| `android/app/build.gradle` | Version bump to 2.7 (versionCode 18) |
-| `src/constants/appVersion.ts` | Update `APP_VERSION` to "2.7" |
-
-No existing functionality will be broken -- these are purely additive fallbacks and a config fix.
+## What stays the same
+- No changes to backend `server.js`, fingerprint generation, login UI, offline login, or Capacitor config.
 
