@@ -409,26 +409,28 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         localStorage.removeItem(SETTINGS_STORAGE_KEY);
         localStorage.removeItem(SETTINGS_CCODE_KEY);
         setSettings(DEFAULT_SETTINGS);
-      } else if (response.status === 500) {
-        // Server error - could be database issue or stale code
-        // Try to register the device anyway as it might not exist
-        console.log('⚠️ Server error (500), attempting device registration...');
-        const registered = await registerDevice(fingerprint);
-        
-        if (registered) {
-          console.log('✅ Device registered successfully despite server error');
-          setIsPendingApproval(true);
-        } else {
-          console.log('❌ Device registration also failed');
+      } else if (response.status >= 500 && response.status <= 504) {
+        // 5xx = transient server error (overload, maintenance, etc.)
+        // Treat like a network error: use cached auth if previously authorized
+        console.warn(`⚠️ Server returned ${response.status} - treating as transient error`);
+        const cachedAuth = localStorage.getItem('device_authorized');
+        if (cachedAuth === 'true') {
+          const cached = loadCachedSettings();
+          setSettings(cached);
+          setIsDeviceAuthorized(true);
           setIsPendingApproval(false);
+          console.log(`📴 Server ${response.status} - using cached authorization`);
+        } else {
+          // Not previously authorized - try to register for approval
+          console.log('🆕 Server error & no cached auth, attempting registration...');
+          const registered = await registerDevice(fingerprint);
+          setIsPendingApproval(registered);
+          setIsDeviceAuthorized(false);
+          localStorage.setItem('device_authorized', 'false');
+          localStorage.removeItem(SETTINGS_STORAGE_KEY);
+          localStorage.removeItem(SETTINGS_CCODE_KEY);
+          setSettings(DEFAULT_SETTINGS);
         }
-        
-        // Block access until backend is fixed and device is approved
-        setIsDeviceAuthorized(false);
-        localStorage.setItem('device_authorized', 'false');
-        localStorage.removeItem(SETTINGS_STORAGE_KEY);
-        localStorage.removeItem(SETTINGS_CCODE_KEY);
-        setSettings(DEFAULT_SETTINGS);
       } else {
         // Other error - treat as unauthorized for safety
         setIsDeviceAuthorized(false);

@@ -1,13 +1,22 @@
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
+import { Capacitor } from "@capacitor/core";
 
 const NotFound = () => {
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     console.error("404 Error: User attempted to access non-existent route:", location.pathname);
-  }, [location.pathname]);
+    
+    // On Capacitor (native) apps, auto-redirect to home since there's no address bar
+    if (Capacitor.isNativePlatform()) {
+      console.log("📱 Native app detected - auto-redirecting to home from 404");
+      navigate("/", { replace: true });
+    }
+  }, [location.pathname, navigate]);
 
+  // Web users see the 404 page; native users are redirected before this renders
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-100">
       <div className="text-center">
