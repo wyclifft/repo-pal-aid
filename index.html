@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <!-- globalThis polyfill for WebView < 71 (Android 7–8 POS devices) -->
+    <script>if(typeof globalThis==='undefined'){window.globalThis=window;}</script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Milk Collection App</title>
