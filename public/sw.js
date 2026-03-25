@@ -179,7 +179,7 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
   
-  // Skip non-GET requests
+  // Skip non-GET requests — let POST/PUT/DELETE go straight to network
   if (request.method !== 'GET') {
     return;
   }

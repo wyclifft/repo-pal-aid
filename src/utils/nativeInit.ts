@@ -3,7 +3,11 @@
  * Initializes Capacitor plugins and native platform features
  * Production-ready with timeout handling and retry logic
  */
-import { Capacitor } from '@capacitor/core';
+// Defensive Capacitor access — avoids static import crash on Android 7 (Chrome 51)
+const getCapacitor = () => (window as any).Capacitor;
+const isNativePlatform = () => getCapacitor()?.isNativePlatform?.() ?? false;
+const getCapPlatform = (): string => getCapacitor()?.getPlatform?.() ?? 'web';
+
 import { generateDeviceFingerprint, getDeviceName, getDeviceInfo } from './deviceFingerprint';
 import { API_CONFIG } from '@/config/api';
 
@@ -52,7 +56,7 @@ const storePendingNativeRegistration = (fingerprint: string, deviceInfo: string)
         fingerprint, 
         deviceInfo, 
         timestamp: Date.now(),
-        platform: Capacitor.getPlatform(),
+        platform: getCapPlatform(),
         attempts: 1 
       });
       localStorage.setItem('pending_device_registrations', JSON.stringify(pending));
@@ -222,12 +226,12 @@ const ensureDeviceRegistered = async (): Promise<void> => {
  * Call this early in app startup
  */
 export const initializeNativePlatform = async (): Promise<void> => {
-  const isNativePlatform = Capacitor.isNativePlatform();
-  const platform = Capacitor.getPlatform();
+  const native = isNativePlatform();
+  const platform = getCapPlatform();
   
-  console.log('📱 Platform detection - isNative:', isNativePlatform, 'platform:', platform);
+  console.log('📱 Platform detection - isNative:', native, 'platform:', platform);
   
-  if (!isNativePlatform) {
+  if (!native) {
     console.log('📱 Running in web mode');
     return;
   }
@@ -279,7 +283,7 @@ const initStatusBar = async (): Promise<void> => {
     await StatusBar.setBackgroundColor({ color: '#1a1a2e' });
     
     // Make status bar overlay content on iOS for edge-to-edge design
-    if (Capacitor.getPlatform() === 'ios') {
+    if (getCapPlatform() === 'ios') {
       await StatusBar.setOverlaysWebView({ overlay: true });
     }
     
@@ -389,7 +393,7 @@ const initAppStateListener = async (): Promise<void> => {
  * Call this when the app is fully loaded
  */
 export const hideSplashScreen = async (): Promise<void> => {
-  if (!Capacitor.isNativePlatform()) return;
+  if (!isNativePlatform()) return;
   
   try {
     const { SplashScreen } = await import('@capacitor/splash-screen');
@@ -404,14 +408,14 @@ export const hideSplashScreen = async (): Promise<void> => {
  * Check if running on native platform
  */
 export const isNative = (): boolean => {
-  return Capacitor.isNativePlatform();
+  return isNativePlatform();
 };
 
 /**
  * Get current platform
  */
 export const getPlatform = (): 'ios' | 'android' | 'web' => {
-  return Capacitor.getPlatform() as 'ios' | 'android' | 'web';
+  return getCapPlatform() as 'ios' | 'android' | 'web';
 };
 
 /**
