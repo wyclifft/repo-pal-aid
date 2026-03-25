@@ -1,4 +1,4 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.9.1: Add globalThis polyfill for WebView < 71 (Android 7-8 POS devices)
-export const APP_VERSION = '2.9.1';
-export const APP_VERSION_CODE = 21;
+// v2.9.2: Fix 404 auto-redirect on Capacitor, treat 5xx as transient (not auth block)
+export const APP_VERSION = '2.9.2';
+export const APP_VERSION_CODE = 22;
