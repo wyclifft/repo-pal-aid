@@ -175,18 +175,7 @@ async function apiRequest<T>(
 
     return data;
   } catch (error) {
-    clearTimeout(timeoutId);
-    
-    // Handle timeout specifically
-    if (error instanceof Error && error.name === 'AbortError') {
-      console.warn(`API request timeout: ${endpoint}`);
-      return {
-        success: false,
-        error: 'Request timed out. Please check your connection.',
-      };
-    }
-    
-    console.error(`API request failed: ${endpoint}`, error);
+    console.error(`API response processing failed: ${endpoint}`, error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
