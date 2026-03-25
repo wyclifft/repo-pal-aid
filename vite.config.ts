@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [
   react(),
   legacy({
-    targets: ["chrome >= 51", "android >= 7"],
+    targets: ["chrome >= 51"],
     modernPolyfills: true,
     renderLegacyChunks: true,
     // Explicit polyfills for Chrome 51 (Android 7) compatibility
