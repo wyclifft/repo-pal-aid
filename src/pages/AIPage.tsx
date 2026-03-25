@@ -8,11 +8,17 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSalesSync } from '@/hooks/useSalesSync';
 import { useFarmerResolution } from '@/hooks/useFarmerResolution';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-import { Haptics, ImpactStyle } from '@capacitor/haptics';
+// Haptics loaded dynamically to prevent crash on Android 7
+const safeHapticImpact = async () => {
+  try {
+    const { Haptics, ImpactStyle } = await import('@capacitor/haptics');
+    await Haptics.impact({ style: ImpactStyle.Medium });
+  } catch {}
+};
 import { API_CONFIG } from '@/config/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CowDetailsModal, type CowDetails } from '@/components/CowDetailsModal';
-import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
+import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createAIReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useReprint } from '@/contexts/ReprintContext';
@@ -71,11 +77,6 @@ const AIPage = () => {
 
   // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
-
-
-
-  // clientFetch from route data (3=AI)
-  const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
 
   const { getFarmers, getItems, isReady } = useIndexedDB();
   const { saveOfflineSale, syncPendingSales } = useSalesSync();
@@ -207,14 +208,6 @@ const AIPage = () => {
             const routesExist = data.success && routes.length > 0;
             setHasRoutes(routesExist);
             
-            // Extract clientFetch from the first AI-enabled route
-            const aiRoute = routes.find((route: { allowAI?: boolean; clientFetch?: number }) => route.allowAI === true);
-            if (aiRoute?.clientFetch !== undefined && aiRoute?.clientFetch !== null) {
-              setClientFetch(aiRoute.clientFetch);
-              localStorage.setItem('ai_clientFetch', String(aiRoute.clientFetch));
-              console.log('[AI] clientFetch from route:', aiRoute.clientFetch);
-            }
-            
             if (!routesExist) {
               setItems([]);
               setLoading(false);
@@ -222,15 +215,9 @@ const AIPage = () => {
             }
           } else {
             setHasRoutes(true);
-            // Restore clientFetch from cache for non-ok responses
-            const cachedCF = localStorage.getItem('ai_clientFetch');
-            if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
           }
         } catch (err) {
           setHasRoutes(true);
-          // Restore clientFetch from cache for offline use
-          const cachedCF = localStorage.getItem('ai_clientFetch');
-          if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
         }
       } else {
         setHasRoutes(true);
@@ -302,7 +289,7 @@ const AIPage = () => {
     setFarmerId('');
     setSelectedFarmer(null);
     setCart([]);
-    try { Haptics.impact({ style: ImpactStyle.Light }); } catch { }
+    safeHapticImpact();
   };
 
   // Filter items for search
@@ -329,7 +316,7 @@ const AIPage = () => {
     setPendingItem(item);
     setShowCowDetailsModal(true);
     
-    try { Haptics.impact({ style: ImpactStyle.Medium }); } catch { }
+    safeHapticImpact();
   };
 
   // Handle saving cow details - adds item to cart with details
@@ -360,7 +347,7 @@ const AIPage = () => {
     setShowCowDetailsModal(false);
     
     toast.success(`Added ${pendingItem.descript} with cow details`);
-    try { Haptics.impact({ style: ImpactStyle.Medium }); } catch { }
+    safeHapticImpact();
   };
 
   // Handle closing cow details modal without saving
@@ -395,44 +382,22 @@ const AIPage = () => {
       return;
     }
 
-    // Guard: block submission if devcode is missing (device not approved)
-    const devcode = localStorage.getItem('devcode');
-    if (!devcode) {
-      toast.error('Device not configured. Please ensure device is approved.');
-      return;
-    }
-
-    if (clientFetch === undefined) {
-      console.warn('[AI] clientFetch is undefined — uploadrefno will not include routing digit');
-    }
-
     setSubmitting(true);
     const deviceFingerprint = await generateDeviceFingerprint();
 
     try {
       // Generate AI transaction reference (transtype = 3 for AI)
-      const refs = await generateReferenceWithUploadRef('ai', clientFetch);
+      const refs = await generateReferenceWithUploadRef('ai');
       if (!refs) {
         toast.error('Failed to generate reference number');
         setSubmitting(false);
         return;
       }
 
-      // Build AI transaction data — each cart item needs a unique transrefno
-      let currentTransRefNo = refs.transrefno;
-      for (let i = 0; i < cart.length; i++) {
-        const cartItem = cart[i];
-        // First item uses the original transrefno; subsequent items get a new one
-        if (i > 0) {
-          const newRef = await generateTransRefOnly();
-          if (!newRef) {
-            toast.error('Failed to generate reference for item');
-            continue;
-          }
-          currentTransRefNo = newRef;
-        }
+      // Build AI transaction data
+      for (const cartItem of cart) {
         const aiTransaction = {
-          transrefno: currentTransRefNo,
+          transrefno: refs.transrefno,
           uploadrefno: refs.uploadrefno,
           transtype: 3, // AI transaction type
           farmer_id: selectedFarmer.farmer_id,
@@ -468,7 +433,7 @@ const AIPage = () => {
       const receipt = createAIReceiptData(
         cart,
         { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
-        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
+        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName: clerkName },
         companyName
       );
       setReceiptData(receipt);
@@ -498,7 +463,7 @@ const AIPage = () => {
       const statusMsg = navigator.onLine ? '' : ' (saved offline)';
       toast.success(`AI Service completed${statusMsg}: KES${cartTotal.toFixed(0)} [${refs.transrefno}]`);
       setCart([]);
-      try { Haptics.impact({ style: ImpactStyle.Heavy }); } catch { }
+      safeHapticImpact();
     } catch (error) {
       console.error('AI transaction error:', error);
       toast.error('Failed to complete AI transaction');
@@ -692,7 +657,6 @@ const AIPage = () => {
             </div>
           )}
         </div>
-
 
         {/* Total */}
         <div className="bg-white rounded-lg p-4 shadow">

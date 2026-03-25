@@ -1,7 +1,13 @@
 import { useCallback } from 'react';
 import { type Farmer } from '@/lib/supabase';
 import { toast } from 'sonner';
-import { Haptics, ImpactStyle } from '@capacitor/haptics';
+// Haptics loaded dynamically to prevent crash on Android 7
+const safeHapticImpact = async () => {
+  try {
+    const { Haptics, ImpactStyle } = await import('@capacitor/haptics');
+    await Haptics.impact({ style: ImpactStyle.Medium });
+  } catch {}
+};
 
 interface UseFarmerResolutionProps {
   farmers: Farmer[];
@@ -83,7 +89,7 @@ export const useFarmerResolution = ({
     const farmer = resolveFarmerId(input);
     if (farmer) {
       onSelect(farmer);
-      try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
+      safeHapticImpact();
       return true;
     } else if (input.trim()) {
       toast.error('Member not found');

@@ -19,7 +19,7 @@ const RETRY_DELAY_MS = 5000;
 export const useBackgroundPhotoUpload = () => {
   const uploadQueueRef = useRef<PhotoUploadTask[]>([]);
   const isProcessingRef = useRef(false);
-  const processingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const processingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Convert blob to base64
   const blobToBase64 = (blob: Blob): Promise<string> => {

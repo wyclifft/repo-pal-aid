@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, ShieldAlert, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-import { hasDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
+import { storeDeviceConfig, hasDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
 import { API_CONFIG } from '@/config/api';
 
 interface DeviceAuthStatusProps {
@@ -26,6 +26,14 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
   const hasInitialized = useRef(false);
   const fetchAttempted = useRef(false);
 
+  const initializeDeviceConfig = useCallback(async (companyNameValue: string, deviceCode: string) => {
+    try {
+      await storeDeviceConfig(companyNameValue, deviceCode);
+      console.log('✅ Device config initialized for offline generation');
+    } catch (error) {
+      console.error('⚠️ Failed to initialize device config:', error);
+    }
+  }, []);
 
   // Fetch company name from psettings based on ccode
   const fetchCompanyNameByCcode = useCallback(async (ccode: string): Promise<string | null> => {
@@ -147,7 +155,8 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
               await syncOfflineCounter(data.data.devcode, lastTrnId, lastMilkId, lastStoreId, lastAiId);
               console.log('📦 Synced devcode:', data.data.devcode, 'counters: trnid=', lastTrnId, 'milkid=', lastMilkId, 'storeid=', lastStoreId, 'aiid=', lastAiId);
             }
-            // Note: initializeDeviceConfig removed here — syncOfflineCounter above already persists devcode and counters
+            const deviceCode = String(data.data.devcode || data.data.uniquedevcode || '00000').slice(-5);
+            await initializeDeviceConfig(fetchedCompanyName, data.data.devcode || deviceCode);
           }
         }
       }
@@ -161,7 +170,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
       setLoading(false);
       fetchAttempted.current = true;
     }
-  }, [onAuthorizationChange, onCompanyNameChange, fetchCompanyNameByCcode]);
+  }, [onAuthorizationChange, onCompanyNameChange, initializeDeviceConfig, fetchCompanyNameByCcode]);
 
   // Immediately notify parent of cached values on mount
   useEffect(() => {

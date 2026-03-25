@@ -16,10 +16,6 @@ interface PhotoCaptureProps {
   targetSizeKB?: number;
 }
 
-// Module-level flag to survive Android activity recreation (React re-mounts)
-// Prevents the native camera from triggering twice when the WebView is destroyed/recreated
-let nativeCaptureInProgress = false;
-
 const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo', targetSizeKB = 100 }: PhotoCaptureProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -33,6 +29,9 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [useNativeCamera, setUseNativeCamera] = useState(false);
 
+  // Track if native camera is already being triggered to prevent double capture
+  const nativeCameraTriggeredRef = useRef(false);
+
   // Check if we should use native camera on mount
   useEffect(() => {
     setUseNativeCamera(Capacitor.isNativePlatform());
@@ -43,14 +42,14 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
     if (open && !useNativeCamera) {
       startWebCamera();
     } else if (open && useNativeCamera) {
-      // Use module-level flag to prevent double trigger on Android activity recreation
-      if (!nativeCaptureInProgress) {
-        nativeCaptureInProgress = true;
+      // For native, trigger camera only once per dialog open
+      if (!nativeCameraTriggeredRef.current) {
+        nativeCameraTriggeredRef.current = true;
         captureWithNativeCamera();
       }
     } else {
       // Dialog closed - reset state
-      nativeCaptureInProgress = false;
+      nativeCameraTriggeredRef.current = false;
       stopCamera();
       setCapturedImage(null);
       setCapturedBlob(null);
@@ -120,14 +119,12 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
       console.error('Native camera error:', error);
       if (error.message?.includes('cancelled') || error.message?.includes('canceled')) {
         // User cancelled - just close
-        nativeCaptureInProgress = false;
         onClose();
         return;
       }
       setCameraError('Failed to capture photo. Please try again.');
     } finally {
       setIsLoading(false);
-      nativeCaptureInProgress = false;
     }
   };
 

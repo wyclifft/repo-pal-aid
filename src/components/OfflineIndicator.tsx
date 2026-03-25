@@ -9,19 +9,18 @@ export const OfflineIndicator = () => {
   const [visible, setVisible] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
-  const { isReady, getUnsyncedReceipts, getUnsyncedSales } = useIndexedDB();
+  const { isReady, getUnsyncedReceipts } = useIndexedDB();
 
-  // Update pending count - includes milk receipts + store/AI sales
+  // Update pending count
   const updatePendingCount = useCallback(async () => {
     if (!isReady) return;
     try {
       const unsyncedReceipts = await getUnsyncedReceipts();
-      const unsyncedSales = await getUnsyncedSales();
-      setPendingCount((unsyncedReceipts?.length || 0) + (unsyncedSales?.length || 0));
+      setPendingCount(unsyncedReceipts?.length || 0);
     } catch (error) {
       console.warn('Failed to get pending count:', error);
     }
-  }, [isReady, getUnsyncedReceipts, getUnsyncedSales]);
+  }, [isReady, getUnsyncedReceipts]);
 
   // Check pending count on mount and periodically
   useEffect(() => {

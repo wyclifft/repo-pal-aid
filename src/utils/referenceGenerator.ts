@@ -127,7 +127,6 @@ const getFromLocalStorage = (): DeviceConfig | null => {
  * CRITICAL: Preserves existing lastTrnId to maintain continuity during offline operations
  */
 export const storeDeviceConfig = async (companyName: string, devcode: string): Promise<void> => {
-  return withLock(async () => {
   // FIRST: Check if we already have a config with trnid to preserve
   const existingConfig = await getDeviceConfig();
   const existingLocalTrnId = existingConfig?.lastTrnId || 0;
@@ -186,7 +185,6 @@ export const storeDeviceConfig = async (companyName: string, devcode: string): P
     console.error('Failed to open IndexedDB:', error);
     // Config is still saved in localStorage, so don't throw
   }
-  }); // end withLock
 };
 
 /**
@@ -334,7 +332,6 @@ export const generateOfflineReference = async (): Promise<string | null> => {
       const lastUsed = config?.lastTrnId || 0;
       const nextTrnId = lastUsed + 1;
       await updateConfig({ lastTrnId: nextTrnId });
-      // transrefno is always devcode + 8-digit trnid (no clientFetch)
       const reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
       console.log(`⚡ Reference: ${reference} (devcode: ${devcode}, trnid: ${nextTrnId})`);
       return reference;
@@ -386,7 +383,6 @@ export const syncOfflineCounter = async (
   lastBackendStoreId?: number,
   lastBackendAiId?: number
 ): Promise<void> => {
-  return withLock(async () => {
   // Store devcode for reference generation
   localStorage.setItem('devcode', devcode);
   
@@ -399,17 +395,10 @@ export const syncOfflineCounter = async (
   
   // Use the MAXIMUM of local and backend to ensure we never go backwards
   // This prevents duplicate references when device goes offline and comes back
-  let backendTrnId = (lastBackendTrnId !== undefined && lastBackendTrnId > 0) ? lastBackendTrnId : 0;
+  const backendTrnId = (lastBackendTrnId !== undefined && lastBackendTrnId > 0) ? lastBackendTrnId : 0;
   const backendMilkId = (lastBackendMilkId !== undefined && lastBackendMilkId > 0) ? lastBackendMilkId : 0;
   const backendStoreId = (lastBackendStoreId !== undefined && lastBackendStoreId > 0) ? lastBackendStoreId : 0;
   const backendAiId = (lastBackendAiId !== undefined && lastBackendAiId > 0) ? lastBackendAiId : 0;
-  
-  // SAFETY: Detect corrupted trnid from backend (e.g. clientFetch digit parsed as part of trnid)
-  // A trnid > 10,000,000 likely means the backend parsed a clientFetch-prefixed reference incorrectly
-  if (backendTrnId > 10000000) {
-    console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is unreasonably large — possible clientFetch corruption. Ignoring backend value.`);
-    backendTrnId = 0;
-  }
   
   const safeTrnId = Math.max(currentLocalTrnId, backendTrnId);
   const safeMilkId = Math.max(currentLocalMilkId, backendMilkId);
@@ -438,7 +427,6 @@ export const syncOfflineCounter = async (
   });
   
   console.log(`🔄 Synced counters for devcode ${devcode}`);
-  }); // end withLock
 };
 
 /**
@@ -482,7 +470,7 @@ export const getNextTypeId = async (transactionType: TransactionType): Promise<n
  * Generate formatted uploadrefno string (devcode + 8-digit padded ID)
  * Example: BA0500000031 for device BA05 with milkId 31
  */
-export const generateFormattedUploadRef = async (transactionType: TransactionType, clientFetch?: number): Promise<string | null> => {
+export const generateFormattedUploadRef = async (transactionType: TransactionType): Promise<string | null> => {
   const devcode = localStorage.getItem('devcode');
   if (!devcode) {
     const config = await getDeviceConfig();
@@ -494,17 +482,9 @@ export const generateFormattedUploadRef = async (transactionType: TransactionTyp
   
   const nextId = await getNextTypeId(transactionType);
   const code = devcode || (await getDeviceConfig())?.devcode || '';
+  const formatted = `${code}${String(nextId).padStart(8, '0')}`;
   
-  // For store/ai transactions, insert clientFetch digit after devcode
-  // e.g. BA05 + clientFetch=2 + padded id → BA0120000002
-  let formatted: string;
-  if ((transactionType === 'store' || transactionType === 'ai') && clientFetch !== undefined && clientFetch !== null) {
-    formatted = `${code}${clientFetch}${String(nextId).padStart(8, '0')}`;
-  } else {
-    formatted = `${code}${String(nextId).padStart(8, '0')}`;
-  }
-  
-  console.log(`⚡ Formatted uploadrefno: ${formatted} (${transactionType}Id: ${nextId}, clientFetch: ${clientFetch || 'none'})`);
+  console.log(`⚡ Formatted uploadrefno: ${formatted} (${transactionType}Id: ${nextId})`);
   return formatted;
 };
 
@@ -531,19 +511,17 @@ export const getCurrentTypeId = async (transactionType: TransactionType): Promis
  * Generate transaction reference with type-specific uploadrefno
  * Returns both transrefno (devcode + trnid) and uploadrefno (formatted string: devcode + typeId)
  */
-export const generateReferenceWithUploadRef = async (transactionType: TransactionType, clientFetch?: number): Promise<{
+export const generateReferenceWithUploadRef = async (transactionType: TransactionType): Promise<{
   transrefno: string;
   uploadrefno: string;
 } | null> => {
-  // transrefno never includes clientFetch — backend parses trnid by stripping devcode
   const transrefno = await generateOfflineReference();
   if (!transrefno) return null;
   
-  // uploadrefno includes clientFetch for store/AI routing
-  const uploadrefno = await generateFormattedUploadRef(transactionType, clientFetch);
+  const uploadrefno = await generateFormattedUploadRef(transactionType);
   if (!uploadrefno) return null;
   
-  console.log(`⚡ Generated: transrefno=${transrefno}, uploadrefno=${uploadrefno} (type=${transactionType}, clientFetch=${clientFetch || 'none'})`);
+  console.log(`⚡ Generated: transrefno=${transrefno}, uploadrefno=${uploadrefno} (type=${transactionType})`);
   
   return { transrefno, uploadrefno };
 };
@@ -571,27 +549,25 @@ export const resetOfflineCounter = async (): Promise<void> => {
  * Reset device configuration (for testing or when changing device)
  */
 export const resetDeviceConfig = async (): Promise<void> => {
-  return withLock(async () => {
-    // Clear localStorage
-    try {
-      localStorage.removeItem(LOCALSTORAGE_KEY);
-      localStorage.removeItem('devcode');
-      console.log('🗑️ Cleared localStorage config');
-    } catch (error) {
-      console.error('Failed to clear localStorage:', error);
-    }
-    
-    // Clear IndexedDB
-    try {
-      const db = await getDB();
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      await store.delete('config');
-      console.log('🗑️ Device config reset in IndexedDB');
-    } catch (error) {
-      console.error('Failed to reset IndexedDB config:', error);
-    }
-  });
+  // Clear localStorage
+  try {
+    localStorage.removeItem(LOCALSTORAGE_KEY);
+    localStorage.removeItem('devcode');
+    console.log('🗑️ Cleared localStorage config');
+  } catch (error) {
+    console.error('Failed to clear localStorage:', error);
+  }
+  
+  // Clear IndexedDB
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    await store.delete('config');
+    console.log('🗑️ Device config reset in IndexedDB');
+  } catch (error) {
+    console.error('Failed to reset IndexedDB config:', error);
+  }
 };
 
 /**
