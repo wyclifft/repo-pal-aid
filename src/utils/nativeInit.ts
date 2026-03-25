@@ -3,7 +3,11 @@
  * Initializes Capacitor plugins and native platform features
  * Production-ready with timeout handling and retry logic
  */
-import { Capacitor } from '@capacitor/core';
+// Defensive Capacitor access — avoids static import crash on Android 7 (Chrome 51)
+const getCapacitor = () => (window as any).Capacitor;
+const isNativePlatform = () => getCapacitor()?.isNativePlatform?.() ?? false;
+const getCapPlatform = (): string => getCapacitor()?.getPlatform?.() ?? 'web';
+
 import { generateDeviceFingerprint, getDeviceName, getDeviceInfo } from './deviceFingerprint';
 import { API_CONFIG } from '@/config/api';
 
