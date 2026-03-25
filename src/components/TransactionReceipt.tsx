@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, X, RefreshCw, Check, AlertTriangle } from 'lucide-react';
-import { printReceipt } from '@/services/bluetooth';
+import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
@@ -35,6 +35,8 @@ export interface ReceiptData {
   memberRoute?: string;
   // Clerk/Collector info
   clerkName: string;
+  // Delivery tracking
+  deliveredBy?: string;
   // Date/Time
   transactionDate: Date;
   // Items/Collections
@@ -46,6 +48,7 @@ export interface ReceiptData {
   session?: string;
   productName?: string;
   cumulativeFrequency?: number;
+  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
   showCumulativeFrequency?: boolean;
   locationCode?: string;
   locationName?: string;
@@ -110,6 +113,7 @@ export const TransactionReceipt = ({
     memberName,
     memberRoute,
     clerkName,
+    deliveredBy,
     transactionDate,
     items,
     totalWeight,
@@ -117,6 +121,7 @@ export const TransactionReceipt = ({
     session,
     productName,
     cumulativeFrequency,
+    cumulativeByProduct,
     showCumulativeFrequency = false,
     locationCode,
     locationName,
@@ -377,23 +382,52 @@ export const TransactionReceipt = ({
     }));
 
     for (let copy = 0; copy < printCopies; copy++) {
-      const result = await printReceipt({
-        companyName,
-        farmerName: memberName,
-        farmerId: memberId,
-        route: memberRoute || '',
-        routeLabel,
-        session: session || '',
-        periodLabel,
-        productName,
-        uploadRefNo: uploadrefno || transrefno,
-        collectorName: clerkName,
-        collections,
-        cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined,
-        locationCode,
-        locationName,
-        collectionDate: transactionDate
-      });
+      let result: { success: boolean; error?: string };
+
+      if (transtype === 2 || transtype === 3) {
+        // Store/AI receipts — use printStoreAIReceipt with full item details
+        result = await printStoreAIReceipt({
+          companyName,
+          memberName,
+          memberId,
+          memberRoute: memberRoute || '',
+          uploadRefNo: uploadrefno || transrefno,
+          clerkName,
+          deliveredBy,
+          items: items.map(item => ({
+            item_code: item.item_code || '',
+            item_name: item.item_name || '',
+            quantity: item.quantity || 1,
+            price: item.price || 0,
+            lineTotal: item.lineTotal || 0,
+            cowDetails: item.cowDetails,
+          })),
+          totalAmount: totalAmount || 0,
+          transactionDate,
+          receiptType: transtype === 2 ? 'store' : 'ai',
+        });
+      } else {
+        // Milk/Coffee receipts — use printReceipt
+        result = await printReceipt({
+          companyName,
+          farmerName: memberName,
+          farmerId: memberId,
+          route: memberRoute || '',
+          routeLabel,
+          session: session || '',
+          periodLabel,
+          productName,
+          uploadRefNo: uploadrefno || transrefno,
+          collectorName: clerkName,
+          deliveredBy,
+          collections,
+          cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined,
+          cumulativeByProduct: showCumulativeFrequency ? cumulativeByProduct : undefined,
+          locationCode,
+          locationName,
+          collectionDate: transactionDate
+        });
+      }
 
       if (!result.success) {
         if (result.error?.includes('No printer connected')) {
@@ -538,6 +572,16 @@ export const TransactionReceipt = ({
                 <span className="font-medium">{cumulativeFrequency.toFixed(1)}</span>
               </div>
             )}
+            {showCumulativeFrequency && cumulativeByProduct && cumulativeByProduct.length > 1 && (
+              <div className="space-y-0.5 pl-2">
+                {cumulativeByProduct.map((prod) => (
+                  <div key={prod.icode} className="flex justify-between text-[10px]">
+                    <span className="text-muted-foreground">{prod.product_name || prod.icode}</span>
+                    <span>{prod.weight.toFixed(1)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             {locationCode && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Location</span>
@@ -560,6 +604,12 @@ export const TransactionReceipt = ({
               <span className="text-muted-foreground">Clerk Name</span>
               <span className="font-medium">{clerkName}</span>
             </div>
+            {deliveredBy && (transtype === 1 || transtype === 2) && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Delivered By</span>
+                <span className="font-medium">{deliveredBy}</span>
+              </div>
+            )}
             {session && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{periodLabel}</span>
@@ -622,10 +672,12 @@ export const createMilkReceiptData = (
     season_code?: string;
     entry_type?: string;
     transtype?: number;
+    delivered_by?: string;
   }>,
   companyName: string,
   options?: {
     cumulativeFrequency?: number;
+    cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
     showCumulativeFrequency?: boolean;
     printCopies?: number;
     routeLabel?: string;
@@ -648,6 +700,7 @@ export const createMilkReceiptData = (
     memberName: first.farmer_name,
     memberRoute: first.route,
     clerkName: first.clerk_name,
+    deliveredBy: first.delivered_by || undefined,
     transactionDate: new Date(first.collection_date),
     // Use session_descript for display if available, otherwise fall back to session code
     session: first.session_descript || first.session,
@@ -674,7 +727,7 @@ export const createStoreReceiptData = (
     lineTotal: number;
   }>,
   memberInfo: { id: string; name: string; route?: string },
-  transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string },
+  transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string; deliveredBy?: string },
   companyName: string
 ): ReceiptData => {
   return {
@@ -686,8 +739,10 @@ export const createStoreReceiptData = (
     memberName: memberInfo.name,
     memberRoute: memberInfo.route,
     clerkName: transactionInfo.clerkName,
+    // Store transactions do NOT have deliveredBy - only Buy/Sell portals do
     transactionDate: new Date(),
     items: cartItems.map(c => ({
+      reference_no: transactionInfo.transrefno,
       item_code: c.item.icode,
       item_name: c.item.descript,
       quantity: c.quantity,
@@ -707,7 +762,7 @@ export const createAIReceiptData = (
     cowDetails?: CowDetails;
   }>,
   memberInfo: { id: string; name: string; route?: string },
-  transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string },
+  transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string; deliveredBy?: string },
   companyName: string
 ): ReceiptData => {
   return {
@@ -719,8 +774,10 @@ export const createAIReceiptData = (
     memberName: memberInfo.name,
     memberRoute: memberInfo.route,
     clerkName: transactionInfo.clerkName,
+    // AI transactions do NOT have deliveredBy - only Buy/Sell portals do
     transactionDate: new Date(),
     items: cartItems.map(c => ({
+      reference_no: transactionInfo.transrefno,
       item_code: c.item.icode,
       item_name: c.item.descript,
       quantity: c.quantity,

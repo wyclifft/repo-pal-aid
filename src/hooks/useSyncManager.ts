@@ -46,7 +46,7 @@ const checkAndReleaseStaleLock = () => {
 };
 
 export const useSyncManager = () => {
-  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
   const acquireLock = useCallback((): boolean => {
