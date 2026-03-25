@@ -17,6 +17,33 @@ export default defineConfig(({ mode }) => ({
     targets: ["chrome >= 51", "android >= 7"],
     modernPolyfills: true,
     renderLegacyChunks: true,
+    // Explicit polyfills for Chrome 51 (Android 7) compatibility
+    polyfills: [
+      'es.promise',
+      'es.promise.finally',
+      'es.symbol',
+      'es.symbol.description',
+      'es.array.iterator',
+      'es.object.assign',
+      'es.object.keys',
+      'es.object.values',
+      'es.object.entries',
+      'es.array.from',
+      'es.array.includes',
+      'es.string.includes',
+      'es.string.starts-with',
+      'es.string.ends-with',
+      'es.string.pad-start',
+      'es.string.pad-end',
+      'es.map',
+      'es.set',
+      'es.weak-map',
+      'es.weak-set',
+      'web.url',
+      'web.url-search-params',
+    ],
+    // Ensure regenerator-runtime is included for async/await transpilation
+    additionalLegacyPolyfills: ['regenerator-runtime/runtime'],
   }),
   mode === "development" && componentTagger(),
 ].filter(Boolean),
@@ -32,15 +59,10 @@ export default defineConfig(({ mode }) => ({
     cssMinify: true,
     sourcemap: false,
     // Aggressive code splitting for better caching
+    // NOTE: manualChunks removed — it conflicts with @vitejs/plugin-legacy
+    // chunk generation and causes untranspiled syntax in legacy bundles.
     rollupOptions: {
       output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom'],
-          'router': ['react-router-dom'],
-          'query': ['@tanstack/react-query', '@tanstack/react-query-persist-client'],
-          'ui': ['@radix-ui/react-dialog', '@radix-ui/react-select', '@radix-ui/react-toast'],
-        },
-        // Consistent chunk names for better caching
         chunkFileNames: 'assets/[name]-[hash].js',
         entryFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash].[ext]',
