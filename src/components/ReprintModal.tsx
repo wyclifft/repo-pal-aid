@@ -3,14 +3,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import type { MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check, Coffee } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import type { CowDetails } from '@/components/CowDetailsModal';
-import { TransactionReceipt, createMilkReceiptData, createStoreReceiptData, createAIReceiptData } from './TransactionReceipt';
 
 // Store/AI item interface for reprinting
 export interface ReprintItem {
@@ -37,9 +36,6 @@ export interface PrintedReceipt {
   clerkName?: string;
   memberRoute?: string;
   transactionDate?: Date;
-  // Cumulative weight for milk/coffee receipts
-  cumulativeWeight?: number;
-  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
 }
 
 interface ReprintModalProps {
@@ -77,8 +73,6 @@ export const ReprintModal = ({
   const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   const [activeTab, setActiveTab] = useState<'recent' | 'search'>('recent');
   const [searchQuery, setSearchQuery] = useState('');
-  // On-screen receipt viewing (for printCopies=0)
-  const [viewingReceipt, setViewingReceipt] = useState<PrintedReceipt | null>(null);
   
   // Filter receipts based on search query
   const filteredReceipts = useMemo(() => {
@@ -110,8 +104,7 @@ export const ReprintModal = ({
     }
     
     if (printCopies === 0) {
-      // PrintOption=0: Display receipt on screen instead of printing
-      setViewingReceipt(receipt);
+      toast.info('Printing disabled (0 copies configured)');
       return;
     }
     
@@ -177,8 +170,6 @@ export const ReprintModal = ({
             uploadRefNo: receipt.uploadrefno || firstReceipt.uploadrefno || firstReceipt.reference_no,
             collectorName: firstReceipt.clerk_name,
             collections,
-            cumulativeFrequency: receipt.cumulativeWeight,
-            cumulativeByProduct: receipt.cumulativeByProduct,
             locationName: locationName || firstReceipt.route,
             collectionDate: collectionDateTime
           });
@@ -475,23 +466,19 @@ export const ReprintModal = ({
     }
   };
 
-  const isCoffeeReceipt = (receipt: PrintedReceipt) => {
-    return receipt.collections?.some(c => c.gross_weight !== undefined && c.gross_weight !== null);
-  };
-
-  const getReceiptTypeIcon = (type?: string, receipt?: PrintedReceipt) => {
+  const getReceiptTypeIcon = (type?: string) => {
     switch (type) {
       case 'store': return <ShoppingCart className="h-3 w-3" />;
       case 'ai': return <Bot className="h-3 w-3" />;
-      default: return receipt && isCoffeeReceipt(receipt) ? <Coffee className="h-3 w-3" /> : <Milk className="h-3 w-3" />;
+      default: return <Milk className="h-3 w-3" />;
     }
   };
 
-  const getReceiptTypeLabel = (type?: string, receipt?: PrintedReceipt) => {
+  const getReceiptTypeLabel = (type?: string) => {
     switch (type) {
       case 'store': return 'Store';
       case 'ai': return 'AI';
-      default: return receipt && isCoffeeReceipt(receipt) ? 'Coffee' : 'Milk';
+      default: return 'Milk';
     }
   };
 
@@ -504,7 +491,6 @@ export const ReprintModal = ({
   };
 
   return (
-    <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="w-[95vw] max-w-md mx-auto p-4 sm:p-6 max-h-[90vh] flex flex-col" hideCloseButton>
         <DialogHeader className="pb-2 flex-shrink-0">
@@ -623,8 +609,8 @@ export const ReprintModal = ({
                       <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-2">
                         <span>{receipt.farmerId}</span>
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted flex items-center gap-1">
-                          {getReceiptTypeIcon(receipt.type, receipt)}
-                          {getReceiptTypeLabel(receipt.type, receipt)}
+                          {getReceiptTypeIcon(receipt.type)}
+                          {getReceiptTypeLabel(receipt.type)}
                         </span>
                       </div>
                     </div>
@@ -659,18 +645,6 @@ export const ReprintModal = ({
                       </span>
                     )}
                   </div>
-
-                  {/* Cumulative + Delivered By - only for milk/coffee receipts */}
-                  {(!receipt.type || receipt.type === 'milk') && receipt.collections?.length > 0 && (
-                    <div className="flex items-center justify-between text-[10px] sm:text-xs text-muted-foreground">
-                      {receipt.collections[0]?.delivered_by && (
-                        <span>Delivered By: <span className="font-medium text-foreground">{receipt.collections[0].delivered_by}</span></span>
-                      )}
-                      {receipt.cumulativeWeight !== undefined && receipt.cumulativeWeight !== null && receipt.cumulativeWeight > 0 && (
-                        <span>Cumulative: <span className="font-medium text-foreground">{receipt.cumulativeWeight} Kg</span></span>
-                      )}
-                    </div>
-                  )}
 
                   {/* Action Buttons - Only show when not in delete mode */}
                   {!isDeleteMode && (
@@ -774,46 +748,5 @@ export const ReprintModal = ({
 
       </DialogContent>
     </Dialog>
-
-    {/* On-screen receipt viewer for printCopies=0 */}
-    {viewingReceipt && (() => {
-      if ((viewingReceipt.type === 'store' || viewingReceipt.type === 'ai') && viewingReceipt.items) {
-        const createFn = viewingReceipt.type === 'store' ? createStoreReceiptData : createAIReceiptData;
-        const receiptData = createFn(
-          viewingReceipt.items.map(item => ({
-            item: { icode: item.item_code, descript: item.item_name, sprice: item.price },
-            quantity: item.quantity,
-            lineTotal: item.lineTotal,
-          })),
-          { id: viewingReceipt.farmerId, name: viewingReceipt.farmerName, route: viewingReceipt.memberRoute },
-          { transrefno: viewingReceipt.uploadrefno || '', clerkName: viewingReceipt.clerkName || 'Unknown' },
-          companyName
-        );
-        return (
-          <TransactionReceipt
-            data={receiptData}
-            open={true}
-            onClose={() => setViewingReceipt(null)}
-          />
-        );
-      } else {
-        // Milk/Coffee receipt
-        const receiptData = createMilkReceiptData(viewingReceipt.collections, companyName, {
-          cumulativeFrequency: viewingReceipt.cumulativeWeight,
-          cumulativeByProduct: viewingReceipt.cumulativeByProduct,
-          showCumulativeFrequency: viewingReceipt.cumulativeWeight !== undefined && viewingReceipt.cumulativeWeight > 0,
-          routeLabel,
-          locationName,
-        });
-        return (
-          <TransactionReceipt
-            data={receiptData}
-            open={true}
-            onClose={() => setViewingReceipt(null)}
-          />
-        );
-      }
-    })()}
-    </>
   );
 };

@@ -2,12 +2,27 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
-import { initializeNativePlatform } from "./utils/nativeInit";
 import "./index.css";
 import "./utils/errorHandler";
 
 // Initialize native platform features FIRST (critical for device registration)
-initializeNativePlatform().catch(console.error);
+// Dynamic import to prevent module-level crashes from @capacitor/core on Android 7 WebView
+(async () => {
+  try {
+    const [{ initializeNativePlatform }, { generateDeviceFingerprint }] = await Promise.all([
+      import("./utils/nativeInit"),
+      import("./utils/deviceFingerprint"),
+    ]);
+
+    await initializeNativePlatform();
+
+    // Ensure fingerprint exists immediately on startup (used by login/device auth)
+    const fingerprint = await generateDeviceFingerprint();
+    window.dispatchEvent(new CustomEvent('deviceFingerprintReady', { detail: { fingerprint } }));
+  } catch (err) {
+    console.warn('Native init failed:', err);
+  }
+})();
 
 // Prevent zoom on double tap for native feel
 document.addEventListener('touchstart', (e) => {
@@ -38,7 +53,11 @@ createRoot(document.getElementById("root")!).render(
 // Use multiple checks for reliable Capacitor detection (bridge may not be ready immediately)
 const isCapacitorApp = (): boolean => {
   try {
-    // Check for Capacitor global object
+    // Reliable native detection even before Capacitor bridge is fully ready
+    if (window.location.hostname === 'app' || window.location.protocol === 'capacitor:') {
+      return true;
+    }
+
     const capGlobal = (window as any).Capacitor;
     if (!capGlobal) return false;
     
@@ -150,6 +169,26 @@ if ('serviceWorker' in navigator && !isCapacitor) {
   });
 } else if (isCapacitor) {
   console.log('📱 Capacitor native app - skipping Service Worker registration');
+
+  // Safety: remove any previously registered web service workers on native startup
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.getRegistrations()
+        .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+        .then(() => console.log('🧹 Cleared legacy Service Workers on native app startup'))
+        .catch(() => {});
+    });
+  }
+
+  // Safety: clear browser caches that may trap old offline responses
+  if ('caches' in window) {
+    window.addEventListener('load', () => {
+      caches.keys()
+        .then((cacheNames) => Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName))))
+        .then(() => console.log('🧹 Cleared legacy web caches on native app startup'))
+        .catch(() => {});
+    });
+  }
 }
 
 // Handle online/offline status

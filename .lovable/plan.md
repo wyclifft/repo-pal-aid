@@ -1,75 +1,62 @@
 
 
-## Fix: DeliveredBy Missing from Milk/Coffee Receipt + Sync Crash
+# Fix: App Crash on Android 7.0 POS Device
 
-### Issue 1: DeliveredBy Not Printed on Milk/Coffee Receipts
+## Root Cause Analysis
 
-**Root Cause**: In `src/pages/Index.tsx`, the `printData` object (lines 981-997) does not capture `deliveredBy`. When `printMilkReceiptDirect` is called (lines 1314-1326), `deliveredBy` is never passed in the options.
+The screenshot shows the Android WebView error "Webpage not available" at URL `https://app//offline.html`. This happens because:
 
-The `printReceipt` function in `bluetooth.ts` already supports `deliveredBy` (line 2003, 2075-2077), and `useDirectPrint.ts` already accepts it in its interface (line 17) and passes it through (line 68). The only missing link is in `Index.tsx`.
+1. **Malformed error path URL** -- The Capacitor config has `errorPath: '/offline.html'` with a leading slash. Combined with `hostname: 'app'` and `androidScheme: 'https'`, the WebView resolves this to `https://app//offline.html` (double slash), which is an invalid URL.
 
-**Fix** — `src/pages/Index.tsx`:
+2. **CSS incompatibility crashes rendering on old WebView** -- The `index.html` uses `100dvh` (dynamic viewport height), which is NOT supported on Chrome 51 (the default WebView on Android 7.0 POS devices). This can cause the layout to break completely, triggering the error fallback.
 
-1. Add `deliveredBy` to the `printData` object (~line 996):
-```javascript
-deliveredBy: deliveredBy || 'owner',
+3. **Google Fonts blocks on no-internet POS devices** -- The `<link rel="preload">` and `<link rel="stylesheet">` for Google Fonts attempts a network fetch. On a POS device with no internet, this can block or delay page rendering significantly.
+
+---
+
+## Fix Plan
+
+### 1. Fix Capacitor `errorPath` (capacitor.config.ts)
+
+Remove the leading slash from `errorPath` so it resolves correctly:
+
+```
+errorPath: '/offline.html'  -->  errorPath: 'offline.html'
 ```
 
-2. Pass it in the `printMilkReceiptDirect` call (~line 1325):
-```javascript
-deliveredBy: printData.deliveredBy,
+### 2. Add CSS fallback for `100dvh` (index.html)
+
+Add `100vh` as a fallback before `100dvh` so older WebViews that don't understand `dvh` still get a valid height:
+
+```css
+height: 100vh;       /* fallback for old WebViews */
+height: 100dvh;      /* modern browsers override */
+max-height: 100vh;   /* fallback */
+max-height: 100dvh;  /* modern browsers override */
 ```
 
-### Issue 2: App Crash Blocking Sync
+### 3. Make Google Fonts non-blocking (index.html)
 
-**Root Cause**: Console logs show `ReprintProvider` crashes with `TypeError: Cannot read properties of null (reading 'useState')` at `useIndexedDB`. This crashes the entire component tree, preventing `AppContent` (which runs `useDataSync()`) from ever mounting — so no sync runs at all.
+Change the font stylesheet to load asynchronously so it doesn't block rendering on offline POS devices:
 
-This is likely caused by a stale build or HMR issue where React's module reference becomes null. The fix is to wrap the `ReprintProvider` in its own error boundary so a failure there doesn't take down the entire app and sync system.
-
-**Fix** — `src/App.tsx`:
-
-Wrap `ReprintProvider` in an error boundary with a fallback that renders children without reprint functionality:
-
-```javascript
-<AuthProvider>
-  <ReprintErrorBoundary>
-    <ReprintProvider>
-      <Toaster />
-      <Sonner ... />
-      <AppContent />
-    </ReprintProvider>
-  </ReprintErrorBoundary>
-</AuthProvider>
+```html
+<link rel="stylesheet" href="https://fonts.googleapis.com/..." media="print" onload="this.media='all'" />
 ```
 
-Where `ReprintErrorBoundary` catches errors and renders children directly (without the reprint context) as a fallback, ensuring sync and core app functionality remain operational.
+### 4. Bump version (android/app/build.gradle)
 
-Alternatively, add a try-catch guard in `ReprintProvider` itself to handle the case where `useIndexedDB` fails, falling back to a no-op state.
+Increment to versionCode 18 / versionName "2.7".
 
-### Issue 2 Alternative (simpler): Guard ReprintProvider
+---
 
-In `src/contexts/ReprintContext.tsx`, wrap the `useIndexedDB` call in a try-catch or use a lazy initialization pattern that doesn't crash if the hook fails. Provide empty defaults so the rest of the app works:
-
-```javascript
-export const ReprintProvider = ({ children }: ReprintProviderProps) => {
-  const [printedReceipts, setPrintedReceipts] = useState<PrintedReceipt[]>([]);
-  
-  let dbFunctions = { savePrintedReceipts: async (_: any) => {}, getPrintedReceipts: async () => [] as any[], isReady: false };
-  try {
-    dbFunctions = useIndexedDB();
-  } catch (e) {
-    console.error('[REPRINT] useIndexedDB failed, reprint disabled:', e);
-  }
-  // ... rest uses dbFunctions
-```
-
-**Note**: You cannot try-catch a hook call — hooks must be called unconditionally. The correct approach is the error boundary wrapper in `App.tsx`.
-
-### Files Changed
+## Files to Modify
 
 | File | Change |
 |------|--------|
-| `src/pages/Index.tsx` | Add `deliveredBy` to `printData` and pass to `printMilkReceiptDirect` |
-| `src/App.tsx` | Add error boundary around `ReprintProvider` to prevent sync-blocking crashes |
-| `src/constants/appVersion.ts` | Bump to v2.10.8 |
+| `capacitor.config.ts` | Fix `errorPath` to `'offline.html'` (no leading slash) |
+| `index.html` | Add `100vh` CSS fallback before `100dvh`; make Google Fonts non-blocking |
+| `android/app/build.gradle` | Version bump to 2.7 (versionCode 18) |
+| `src/constants/appVersion.ts` | Update `APP_VERSION` to "2.7" |
+
+No existing functionality will be broken -- these are purely additive fallbacks and a config fix.
 

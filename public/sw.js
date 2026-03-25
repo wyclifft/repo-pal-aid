@@ -1,5 +1,5 @@
 // ============= NATIVE-LIKE PWA SERVICE WORKER v15 =============
-const CACHE_VERSION = 'v17';
+const CACHE_VERSION = 'v16';
 const CACHE_NAMES = {
   STATIC: `milk-collection-static-${CACHE_VERSION}`,
   DYNAMIC: `milk-collection-dynamic-${CACHE_VERSION}`,
@@ -187,6 +187,15 @@ self.addEventListener('fetch', (event) => {
   // Skip chrome-extension and other non-http
   if (!url.protocol.startsWith('http')) {
     return;
+  }
+
+  // CRITICAL: On Capacitor (hostname 'app'), let the WebView serve local files directly
+  // Do NOT intercept navigation or local asset requests - they are served from the APK
+  if (url.hostname === 'app' || url.hostname === 'localhost') {
+    // Only intercept external API calls, not local files
+    if (!url.hostname.includes('supabase.co') && !url.hostname.includes('2backend.maddasystems.co.ke')) {
+      return;
+    }
   }
 
   // API calls - network first with cache fallback

@@ -66,7 +66,7 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   const [stableReadingProgress, setStableReadingProgress] = useState(0);
   const [lastRawWeight, setLastRawWeight] = useState(0);
   const stableReadingsRef = useRef<number[]>([]);
-  const stableTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stableTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Get settings
   const appSettings = useAppSettings();
