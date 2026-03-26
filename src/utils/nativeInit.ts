@@ -89,7 +89,8 @@ const registerDeviceForApproval = async (fingerprint: string, attempt = 1): Prom
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
     
-    const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
+    const { nativeHttpRequest } = await import('@/utils/nativeHttp');
+    const response = await nativeHttpRequest(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),

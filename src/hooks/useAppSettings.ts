@@ -192,7 +192,8 @@ const registerDevice = async (fingerprint: string, retryCount = 0): Promise<bool
     console.log('📱 Request payload:', JSON.stringify(requestBody));
     console.log('📱 Platform:', platform, 'isNative:', isNative);
     
-    const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
+    const { nativeHttpRequest } = await import('@/utils/nativeHttp');
+    const response = await nativeHttpRequest(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
@@ -293,7 +294,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
       
-      const response = await fetch(
+      const { nativeHttpRequest } = await import('@/utils/nativeHttp');
+      const response = await nativeHttpRequest(
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
         { signal: controller.signal }
       );

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { AlertTriangle, RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { API_CONFIG } from '@/config/api';
+import { nativeHttpRequest } from '@/utils/nativeHttp';
 
 /**
  * Banner that shows when the backend is outdated or has issues
@@ -16,7 +17,7 @@ export const BackendStatusBanner = () => {
   useEffect(() => {
     const checkBackendVersion = async () => {
       try {
-        const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/version`, {
+        const response = await nativeHttpRequest(`${API_CONFIG.MYSQL_API_URL}/api/version`, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -60,7 +61,7 @@ export const BackendStatusBanner = () => {
       const pending = JSON.parse(localStorage.getItem('pending_device_registrations') || '[]');
       
       for (const device of pending) {
-        const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
+        const response = await nativeHttpRequest(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
