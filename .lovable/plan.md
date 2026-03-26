@@ -1,33 +1,99 @@
 
 
-# Fix 404 Route & 503 Backend Blocking
+# Fix Android 7 CORS: CapacitorHttp for Native Builds
 
-## Bug 1: 404 on Startup
+## Root Cause
 
-The `NotFound` component logs "404 Error: User attempted to access non-existent route" — but looking at the router in `App.tsx`, there IS a catch-all `<Route path="*">` pointing to `NotFound`. The 404 is likely triggered by the Capacitor WebView loading an initial URL path that doesn't match (e.g. the Android WebView may navigate to a deep path from history or a stale URL).
+All HTTP calls use browser `fetch()`, which on Android 7 WebView 52 triggers CORS preflight requests that the cPanel backend returns 503 for. Android 11+ works because modern Capacitor patches `fetch()` to route through native HTTP automatically, but Android 7's old WebView doesn't get this patch.
 
-The catch-all route already exists and works correctly — it redirects to NotFound. The "fix" is to make NotFound auto-redirect to `/` instead of showing a dead-end page, since on a Capacitor app there's no address bar to manually navigate.
+## Solution
 
-### Changes: `src/pages/NotFound.tsx`
-- Add `useNavigate()` and auto-redirect to `/` after a short delay (or immediately) when running in a Capacitor context
-- Keep the 404 page visible for web users but auto-redirect on native
+Create a single `nativeHttp` utility that detects native platform and routes requests through `CapacitorHttp.request()` (which bypasses WebView CORS entirely), falling back to regular `fetch()` on web/preview. Then wire it into the one central `apiRequest` function and the few direct `fetch()` call sites.
 
-## Bug 2: 503 Blocking Access
+**Important**: On Capacitor 7, `CapacitorHttp` is available from `@capacitor/core` — no new dependencies needed. However, because `nativeInit.ts` uses defensive `window.Capacitor` access (to avoid crashing Android 7 with static imports), the utility must also use defensive dynamic access for `CapacitorHttp`.
 
-The log `⚠️ Unexpected response status: 503 - blocking access` comes from `useAppSettings.ts` line 440. When the `/api/devices/fingerprint/:fingerprint` endpoint returns 503 (e.g. server overloaded or preflight fails), the code falls into the catch-all `else` branch at line 432 which treats ANY non-200/non-404 status as "unauthorized" and blocks access.
+## Changes
 
-A 503 is a **transient server error**, not a security decision. It should be treated like a network error (use cached auth if available), not like "device unauthorized".
+### Step 1: Create `src/utils/nativeHttp.ts` (new file)
 
-### Changes: `src/hooks/useAppSettings.ts`
-- Add a check for 5xx status codes (500, 502, 503, 504) before the catch-all `else` block
-- For 5xx errors, treat them like network errors: use cached authorization if `device_authorized === 'true'` in localStorage, otherwise block
-- This prevents a temporary server hiccup from permanently locking out an already-approved device
+A ~60-line utility exporting `nativeHttpRequest(url, options)` that:
+- Checks `window.Capacitor?.isNativePlatform()` defensively (no static import)
+- If native: uses `CapacitorHttp.request()` from `@capacitor/core` (dynamic import to avoid Android 7 crash), returns a `Response`-compatible object
+- If web: calls regular `fetch()` as-is
+- Handles both GET and POST, passes headers/body through
 
-### Changes: `src/components/BackendStatusBanner.tsx`
-- The version check fetch already has a try/catch that swallows errors — no changes needed here, the 503 is coming from `useAppSettings.ts`
+```typescript
+export async function nativeHttpRequest(url: string, init?: RequestInit): Promise<Response> {
+  const isNative = (window as any).Capacitor?.isNativePlatform?.() ?? false;
+  
+  if (isNative) {
+    const { CapacitorHttp } = await import('@capacitor/core');
+    const method = (init?.method || 'GET').toUpperCase();
+    const response = await CapacitorHttp.request({
+      url,
+      method,
+      headers: init?.headers as Record<string,string>,
+      data: init?.body ? JSON.parse(init.body as string) : undefined,
+    });
+    // Wrap in Response-like object so all existing parsing code works unchanged
+    return new Response(JSON.stringify(response.data), {
+      status: response.status,
+      headers: new Headers(response.headers),
+    });
+  }
+  
+  return fetch(url, init);
+}
+```
 
-## What stays the same
-- No router structure changes in App.tsx
-- No backend changes
-- No changes to login flow, fingerprint generation, or offline logic
+### Step 2: Update `src/services/mysqlApi.ts` (2 lines changed)
+
+Replace the `fetch()` call in `apiRequest` (line 98) with `nativeHttpRequest()`. The XHR fallback for POST stays as-is (it only triggers on web when `fetch` fails).
+
+```diff
++ import { nativeHttpRequest } from '@/utils/nativeHttp';
+
+- response = await fetch(fullUrl, {
++ response = await nativeHttpRequest(fullUrl, {
+```
+
+This single change covers **all** API calls: login, device check, farmer sync, milk collection, sales, Z reports — everything flows through `apiRequest`.
+
+### Step 3: Update `src/hooks/useAppSettings.ts` (2 call sites)
+
+Two direct `fetch()` calls:
+1. **Line 195** — device registration POST → replace with `nativeHttpRequest()`
+2. **Line 296** — device fingerprint GET → replace with `nativeHttpRequest()`
+
+### Step 4: Update `src/components/DeviceAuthStatus.tsx` (2 call sites)
+
+1. **Line 49** — psettings GET → replace with `nativeHttpRequest()`
+2. **Line 90** — fingerprint GET → replace with `nativeHttpRequest()`
+
+### Step 5: Update `src/utils/nativeInit.ts` (1 call site)
+
+**Line 92** — device registration POST → replace with `nativeHttpRequest()`
+
+### Step 6: Update `src/components/BackendStatusBanner.tsx` (2 call sites)
+
+1. Version check GET → replace with `nativeHttpRequest()`
+2. Retry registration POST → replace with `nativeHttpRequest()`
+
+## What does NOT change
+
+- No changes to response parsing, error handling, or business logic anywhere
+- No changes to the login flow, auth state, session management
+- No changes to offline/sync logic
+- No changes to routing or UI
+- No changes to `capacitor.config.ts` or Android manifest
+- No changes to any Android Java/Kotlin code
+- `fetch()` still works on web/preview (the utility delegates to it)
+- Android 11+ continues to work identically (CapacitorHttp is the same mechanism modern Capacitor uses internally)
+- The XHR fallback in `mysqlApi.ts` remains as secondary safety net for web environments
+
+## Risk Assessment
+
+- **Low risk**: The change is purely in the HTTP transport layer — replacing `fetch()` with a wrapper that calls `fetch()` on web and `CapacitorHttp` on native
+- **No breaking changes**: All response shapes remain identical; existing `.json()`, `.ok`, `.status` checks work on the `Response` object returned by the wrapper
+- **Testable**: Web preview continues to work exactly as before; Android 7 gains native HTTP which bypasses CORS entirely
 
