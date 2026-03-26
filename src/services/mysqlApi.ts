@@ -4,6 +4,7 @@
  */
 
 import { API_CONFIG } from '@/config/api';
+import { nativeHttpRequest } from '@/utils/nativeHttp';
 
 const API_BASE_URL = `${API_CONFIG.MYSQL_API_URL}/api`;
 
@@ -95,7 +96,7 @@ async function apiRequest<T>(
 
   let response: Response;
   try {
-    response = await fetch(fullUrl, {
+    response = await nativeHttpRequest(fullUrl, {
       ...options,
       mode: 'cors',
       cache: 'no-store',
