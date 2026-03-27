@@ -5,14 +5,27 @@ export async function nativeHttpRequest(url: string, init?: RequestInit): Promis
   if (isNative && cap?.Plugins?.CapacitorHttp) {
     try {
       const method = (init?.method || 'GET').toUpperCase();
-      const bodyData = init?.body ? JSON.parse(init.body as string) : undefined;
+      const headers = (init?.headers as Record<string, string>) || {};
 
-      const response = await cap.Plugins.CapacitorHttp.request({
-        url,
-        method,
-        headers: (init?.headers as Record<string, string>) || {},
-        data: bodyData,
-      });
+      // Only parse and include body data if it exists
+      let bodyData: any = undefined;
+      if (init?.body && typeof init.body === 'string' && init.body.length > 0) {
+        try {
+          bodyData = JSON.parse(init.body);
+        } catch {
+          bodyData = init.body;
+        }
+      }
+
+      // Build request options - only include data key if we have data
+      const requestOptions: any = { url, method, headers };
+      if (bodyData !== undefined) {
+        requestOptions.data = bodyData;
+      }
+
+      console.log('[NativeHTTP] Attempting request:', method, url);
+      const response = await cap.Plugins.CapacitorHttp.request(requestOptions);
+      console.log('[NativeHTTP] Success:', response.status);
 
       return new Response(JSON.stringify(response.data), {
         status: response.status,
