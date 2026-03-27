@@ -88,11 +88,18 @@ async function apiRequest<T>(
 
   const fullUrl = `${API_BASE_URL}${endpoint}`;
   const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const cap = typeof window !== 'undefined' ? (window as any).Capacitor : undefined;
+  const isNativePlatform = cap?.isNativePlatform?.() ?? false;
   const mergedHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-App-Origin': appOrigin,
     ...(options.headers as Record<string, string> || {}),
   };
+
+  // Preview/Web CORS preflight fails when backend doesn't allow X-App-Origin.
+  // Keep this header for native app traffic only.
+  if (isNativePlatform && appOrigin) {
+    mergedHeaders['X-App-Origin'] = appOrigin;
+  }
 
   let response: Response;
   try {
