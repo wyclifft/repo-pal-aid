@@ -38,7 +38,7 @@ const getCorsHeaders = (origin) => {
     'Access-Control-Allow-Origin': allowOrigin,
     'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-    'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, Origin',
+    'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, Origin, X-App-Origin, X-Device-Fingerprint',
     'Access-Control-Max-Age': '86400'
   };
 };
