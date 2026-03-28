@@ -1680,11 +1680,11 @@ const server = http.createServer(async (req, res) => {
         // transtype 3 (AI): requires clientFetch = 3
         const requiredClientFetch = transtype;
         const [allowedRoutes] = await conn.query(
-          'SELECT COUNT(*) as routeCount FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ?',
+          'SELECT tcode FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
           [ccode, requiredClientFetch]
         );
         
-        if (allowedRoutes[0].routeCount === 0) {
+        if (allowedRoutes.length === 0) {
           const serviceName = transtype === 3 ? 'AI Services' : 'Store';
           console.log(`❌ clientFetch enforcement: ${serviceName} disabled for company ${ccode} (no routes with clientFetch=${requiredClientFetch})`);
           await conn.rollback();
@@ -1695,6 +1695,9 @@ const server = http.createServer(async (req, res) => {
             message: `${serviceName} operations are not enabled for this company. Please contact administrator.` 
           }, 403);
         }
+        
+        // Use fm_tanks.tcode for route instead of body.route (cm_members.route)
+        const storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
 
         // Idempotency guard: if transrefno already exists, treat as already synced
         const [existingSaleRows] = await conn.query(
@@ -1783,7 +1786,7 @@ const server = http.createServer(async (req, res) => {
             body.sold_by || '',                 // clerk (display name/username)
             body.device_fingerprint || '',      // deviceserial
             body.farmer_id || '',               // memberno
-            body.route || '',                   // route (from frontend - farmer's route)
+            storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
             body.quantity || 0,                 // weight (using quantity)
             '',                                 // session (empty for store/AI sales)
             transdate,                          // transdate
@@ -1916,11 +1919,11 @@ const server = http.createServer(async (req, res) => {
         // clientFetch enforcement for Store/AI
         const requiredClientFetch = transtype;
         const [allowedRoutes] = await conn.query(
-          'SELECT COUNT(*) as routeCount FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ?',
+          'SELECT tcode FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
           [ccode, requiredClientFetch]
         );
         
-        if (allowedRoutes[0].routeCount === 0) {
+        if (allowedRoutes.length === 0) {
           const serviceName = transtype === 3 ? 'AI Services' : 'Store';
           await conn.rollback();
           conn.release();
@@ -1930,6 +1933,9 @@ const server = http.createServer(async (req, res) => {
             message: `${serviceName} operations are not enabled for this company.` 
           }, 403);
         }
+        
+        // Use fm_tanks.tcode for route instead of body.route (cm_members.route)
+        const storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
         
         // Handle photo upload ONCE (shared by all items)
         let photoFilename = null;
@@ -1998,7 +2004,7 @@ const server = http.createServer(async (req, res) => {
                 body.sold_by || '',                 // clerk (display name/username)
                 body.device_fingerprint || '',
                 body.farmer_id || '',
-                body.route || '',                   // route (from frontend - farmer's route)
+                storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
                 item.quantity || 0,
                 '',
                 transdate,
