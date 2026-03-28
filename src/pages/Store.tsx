@@ -8,13 +8,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSalesSync } from '@/hooks/useSalesSync';
 import { useFarmerResolution } from '@/hooks/useFarmerResolution';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-// Haptics loaded dynamically to prevent crash on Android 7
-const safeHapticImpact = async () => {
-  try {
-    const { Haptics, ImpactStyle } = await import('@capacitor/haptics');
-    await Haptics.impact({ style: ImpactStyle.Medium });
-  } catch {}
-};
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { API_CONFIG } from '@/config/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import PhotoCapture from '@/components/PhotoCapture';
@@ -419,7 +413,7 @@ const Store = () => {
     if (farmer) {
       setSelectedFarmer(farmer);
       setFarmerId(farmer.farmer_id);
-      safeHapticImpact();
+      try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
     } else {
       toast.error('Member not found');
     }
@@ -430,7 +424,7 @@ const Store = () => {
     setFarmerId('');
     setSelectedFarmer(null);
     setCart([]);
-    safeHapticImpact();
+    try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
   };
 
   // Filter items for search
@@ -460,7 +454,7 @@ const Store = () => {
     }
     setShowItemSearch(false);
     setItemSearchQuery('');
-    safeHapticImpact();
+    try { Haptics.impact({ style: ImpactStyle.Medium }); } catch {}
   };
 
   // Update item quantity
@@ -667,7 +661,7 @@ const Store = () => {
         URL.revokeObjectURL(capturedPhoto.preview);
       }
       setCapturedPhoto(null);
-      safeHapticImpact();
+      try { Haptics.impact({ style: ImpactStyle.Heavy }); } catch {}
     } catch (error) {
       console.error('Sale error:', error);
       toast.error('Failed to complete sale');

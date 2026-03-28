@@ -38,7 +38,7 @@ const getCorsHeaders = (origin) => {
     'Access-Control-Allow-Origin': allowOrigin,
     'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-    'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, Origin, X-App-Origin, X-Device-Fingerprint',
+    'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, Origin',
     'Access-Control-Max-Age': '86400'
   };
 };
@@ -550,8 +550,8 @@ const server = http.createServer(async (req, res) => {
         
         if (lastTransRows.length > 0) {
           const lastRef = lastTransRows[0].transrefno;
-          // Extract trnid using last 8 digits to avoid clientFetch corruption
-          const lastNumber = parseInt(lastRef.slice(-8), 10);
+          // Extract the trnid (everything after the devcode prefix)
+          const lastNumber = parseInt(lastRef.substring(devcode.length));
           if (!isNaN(lastNumber)) {
             nextTrnId = lastNumber + 1;
           }
@@ -641,8 +641,7 @@ const server = http.createServer(async (req, res) => {
         
         if (lastTransRows.length > 0) {
           const lastRef = lastTransRows[0].transrefno;
-          // Extract trnid using last 8 digits to avoid clientFetch corruption
-          const lastNumber = parseInt(lastRef.slice(-8), 10);
+          const lastNumber = parseInt(lastRef.substring(devcode.length));
           if (!isNaN(lastNumber)) {
             startNumber = lastNumber + 1;
           }
@@ -919,14 +918,12 @@ const server = http.createServer(async (req, res) => {
           const productCode = body.product_code || '';
           const seasonCAN = body.season_code || '';
           
-          const deliveredBy = body.delivered_by || 'owner';
-          
           await pool.query(
             `INSERT INTO transactions 
               (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
                transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-               amount, icode, CAN, time, capType, entry_type, deliveredby)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?)`,
+               amount, icode, CAN, time, capType, entry_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?)`,
             [
               attemptTransrefno,
               attemptUploadrefno ? String(attemptUploadrefno) : '',
@@ -945,7 +942,6 @@ const server = http.createServer(async (req, res) => {
               seasonCAN,
               timestamp,
               body.entry_type || 'manual',
-              deliveredBy,
             ]
           );
 
@@ -956,8 +952,7 @@ const server = http.createServer(async (req, res) => {
           );
           if (devRows.length > 0 && devRows[0].devcode) {
             const devcode = devRows[0].devcode;
-            // Extract trnid using last 8 digits to avoid clientFetch corruption
-            const insertedTrnId = parseInt(attemptTransrefno.slice(-8), 10);
+            const insertedTrnId = parseInt(attemptTransrefno.substring(devcode.length));
             if (!isNaN(insertedTrnId)) {
               await pool.query(
                 `UPDATE devsettings SET 
@@ -975,46 +970,9 @@ const server = http.createServer(async (req, res) => {
         } catch (error) {
           // Check if it's a duplicate entry error
           if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
-            // SAFE IDEMPOTENCY: Fetch existing row and compare critical payload fields
-            // Only return success if the existing record truly matches this submission
-            try {
-              const [existingRows] = await pool.query(
-                'SELECT transrefno, memberno, route, weight, session, transdate, Uploadrefno, icode, ccode FROM transactions WHERE transrefno = ? LIMIT 1',
-                [attemptTransrefno]
-              );
-              if (existingRows.length > 0) {
-                const existing = existingRows[0];
-                const payloadMatch = (
-                  String(existing.memberno || '').trim() === String(cleanFarmerId || '').trim() &&
-                  Math.abs(Number(existing.weight || 0) - Number(body.weight || 0)) < 0.01 &&
-                  String(existing.session || '').trim().toUpperCase() === String(normalizedSession || '').trim().toUpperCase()
-                );
-                if (payloadMatch) {
-                  console.log(`ℹ️ Record ${attemptTransrefno} already exists with matching payload (true idempotent retry)`);
-                  return { 
-                    success: true, 
-                    reference_no: attemptTransrefno, 
-                    uploadrefno: attemptUploadrefno, 
-                    isNew: false,
-                    message: 'Record already exists (duplicate reference)'
-                  };
-                } else {
-                  // Payload mismatch — this is a reference COLLISION, not a retry
-                  console.warn(`⚠️ Reference collision: ${attemptTransrefno} exists with different payload. Existing: member=${existing.memberno}, weight=${existing.weight}. New: member=${cleanFarmerId}, weight=${body.weight}`);
-                  return { 
-                    success: false, 
-                    collision: true,
-                    reference_no: attemptTransrefno,
-                    error: 'REFERENCE_COLLISION',
-                    message: 'Reference number belongs to a different transaction. Please regenerate reference and retry.'
-                  };
-                }
-              }
-            } catch (lookupErr) {
-              console.error('❌ Failed to lookup existing record for collision check:', lookupErr);
-            }
-            // Fallback: if lookup fails, treat as idempotent success to avoid data loss
-            console.log(`ℹ️ Record with reference ${attemptTransrefno} already exists (idempotent fallback)`);
+            // IDEMPOTENT: Return success acknowledging record already exists
+            // This prevents frontend from retrying and creating duplicate records
+            console.log(`ℹ️ Record with reference ${attemptTransrefno} already exists (idempotent success)`);
             return { 
               success: true, 
               reference_no: attemptTransrefno, 
@@ -1159,7 +1117,7 @@ const server = http.createServer(async (req, res) => {
         FROM transactions t
         LEFT JOIN cm_members cm ON t.memberno = cm.mcode AND t.ccode = cm.ccode
         WHERE t.Transtype = 1 
-          AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+          AND t.transdate BETWEEN ? AND ?
           AND t.ccode = ?
           AND t.deviceserial = ?
       `;
@@ -1230,7 +1188,7 @@ const server = http.createServer(async (req, res) => {
          FROM transactions t
          LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
          WHERE t.memberno = ? 
-           AND CAST(t.transdate AS DATE) BETWEEN ? AND ? 
+           AND t.transdate BETWEEN ? AND ? 
            AND t.Transtype = 1 
            AND t.ccode = ?
            AND t.deviceserial = ?
@@ -1251,7 +1209,7 @@ const server = http.createServer(async (req, res) => {
         FROM transactions t
         WHERE t.memberno = ? 
           AND t.Transtype = 1 
-          AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+          AND t.transdate BETWEEN ? AND ?
           AND t.ccode = ?
           AND t.deviceserial = ?
         ORDER BY t.transdate ASC, t.transtime ASC`,
@@ -1695,23 +1653,6 @@ const server = http.createServer(async (req, res) => {
             message: `${serviceName} operations are not enabled for this company. Please contact administrator.` 
           }, 403);
         }
-
-        // Idempotency guard: if transrefno already exists, treat as already synced
-        const [existingSaleRows] = await conn.query(
-          'SELECT ID FROM transactions WHERE transrefno = ? LIMIT 1',
-          [transrefno]
-        );
-
-        if (existingSaleRows.length > 0) {
-          await conn.rollback();
-          conn.release();
-          return sendJSON(res, {
-            success: true,
-            duplicate: true,
-            sale_ref: transrefno,
-            message: 'Sale already exists, treated as synced'
-          }, 200);
-        }
         
         console.log(`🟢 BACKEND: Creating ${transtype === 3 ? 'AI' : 'Store'} transaction`);
         console.log('📝 TransRefNo:', transrefno);
@@ -1818,28 +1759,6 @@ const server = http.createServer(async (req, res) => {
         await conn.commit();
         conn.release();
         
-        // Update storeid/aiid counter in devsettings (same pattern as milk collection)
-        if (body.device_fingerprint) {
-          try {
-            const insertedTrnId = parseInt(transrefno.slice(-8), 10);
-            const typeId = uploadrefno ? parseInt(String(uploadrefno).slice(-8), 10) : 0;
-            const counterField = transtype === 3 ? 'aiid' : 'storeid';
-            if (!isNaN(insertedTrnId)) {
-              await pool.query(
-                `UPDATE devsettings SET 
-                  trnid = GREATEST(IFNULL(trnid, 0), ?),
-                  ${counterField} = GREATEST(IFNULL(${counterField}, 0), ?)
-                 WHERE uniquedevcode = ?`,
-                [insertedTrnId, typeId, body.device_fingerprint]
-              );
-              console.log(`📊 Updated devsettings: trnid=${insertedTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
-            }
-          } catch (counterErr) {
-            console.error('⚠️ Failed to update sale counters in devsettings:', counterErr);
-            // Don't fail the sale response - counter update is non-critical
-          }
-        }
-        
         return sendJSON(res, { 
           success: true, 
           message: 'Sale recorded', 
@@ -1848,22 +1767,8 @@ const server = http.createServer(async (req, res) => {
           photo_path: photoFilename ? `${photoDirectory}/${photoFilename}` : null
         }, 201);
       } catch (error) {
-        const isDuplicateRef =
-          error?.code === 'ER_DUP_ENTRY' &&
-          String(error?.sqlMessage || error?.message || '').includes('idx_transrefno_unique');
-
         await conn.rollback();
         conn.release();
-
-        if (isDuplicateRef) {
-          return sendJSON(res, {
-            success: true,
-            duplicate: true,
-            sale_ref: body.transrefno || body.sale_ref || '',
-            message: 'Sale already exists, treated as synced'
-          }, 200);
-        }
-
         throw error;
       }
     }
@@ -1973,7 +1878,6 @@ const server = http.createServer(async (req, res) => {
         console.log(`🛒 Batch sale: ${body.items.length} items, uploadrefno=${uploadrefno}`);
         
         const insertedRefs = [];
-        const duplicateRefs = [];
         
         // Insert each item with its unique transrefno
         // Get season (CAN) from request body for consistency across all transaction types
@@ -1982,112 +1886,68 @@ const server = http.createServer(async (req, res) => {
         for (const item of body.items) {
           const transrefno = item.transrefno;
           const amount = (item.quantity || 0) * (item.price || 0);
-
-          try {
-            await conn.query(
-              `INSERT INTO transactions 
-                (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
-                 transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-                 amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
-                 cowname, cowbreed, noofcalfs, aibreed)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                transrefno,
-                uploadrefno,
-                body.user_id || body.sold_by || '', // userId (login user_id for tracking)
-                body.sold_by || '',                 // clerk (display name/username)
-                body.device_fingerprint || '',
-                body.farmer_id || '',
-                body.route || '',                   // route (from frontend - farmer's route)
-                item.quantity || 0,
-                '',
-                transdate,
-                transtime,
-                transtype,
-                0,
-                0,
-                ccode,
-                0,
-                item.price || 0,
-                amount,
-                item.item_code || '',
-                seasonCAN,                        // CAN (season ID for coffee orgtypes)
-                timestamp,
-                0,
-                '',
-                photoFilename,  // Same photo for all items
-                photoDirectory,
-                item.cow_name || '',
-                item.cow_breed || '',
-                item.number_of_calves || '',
-                item.other_details || ''
-              ]
-            );
-
-            // Update stock balance only for newly inserted rows
-            await conn.query(
-              'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
-              [item.quantity || 0, item.item_code]
-            );
-
-            insertedRefs.push(transrefno);
-            console.log(`✅ Inserted item: ${transrefno} - ${item.item_code} x ${item.quantity}`);
-          } catch (itemError) {
-            const isDuplicateRef =
-              itemError?.code === 'ER_DUP_ENTRY' &&
-              String(itemError?.sqlMessage || itemError?.message || '').includes('idx_transrefno_unique');
-
-            if (isDuplicateRef) {
-              duplicateRefs.push(transrefno);
-              console.warn(`⚠️ Duplicate item skipped (already synced): ${transrefno}`);
-              continue;
-            }
-
-            throw itemError;
-          }
+          
+          await conn.query(
+            `INSERT INTO transactions 
+              (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+               transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
+               amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
+               cowname, cowbreed, noofcalfs, aibreed)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              transrefno,
+              uploadrefno,
+              body.user_id || body.sold_by || '', // userId (login user_id for tracking)
+              body.sold_by || '',                 // clerk (display name/username)
+              body.device_fingerprint || '',
+              body.farmer_id || '',
+              body.route || '',                   // route (from frontend - farmer's route)
+              item.quantity || 0,
+              '',
+              transdate,
+              transtime,
+              transtype,
+              0,
+              0,
+              ccode,
+              0,
+              item.price || 0,
+              amount,
+              item.item_code || '',
+              seasonCAN,                        // CAN (season ID for coffee orgtypes)
+              timestamp,
+              0,
+              '',
+              photoFilename,  // Same photo for all items
+              photoDirectory,
+              item.cow_name || '',
+              item.cow_breed || '',
+              item.number_of_calves || '',
+              item.other_details || ''
+            ]
+          );
+          
+          // Update stock balance for this item
+          await conn.query(
+            'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
+            [item.quantity || 0, item.item_code]
+          );
+          
+          insertedRefs.push(transrefno);
+          console.log(`✅ Inserted item: ${transrefno} - ${item.item_code} x ${item.quantity}`);
         }
         
         await conn.commit();
         conn.release();
-
-        // Update storeid/aiid counter in devsettings (same pattern as milk collection)
-        if (body.device_fingerprint && insertedRefs.length > 0) {
-          try {
-            const maxTrnId = Math.max(...insertedRefs.map(ref => parseInt(ref.slice(-8), 10)));
-            const typeId = uploadrefno ? parseInt(String(uploadrefno).slice(-8), 10) : 0;
-            const counterField = transtype === 3 ? 'aiid' : 'storeid';
-            if (!isNaN(maxTrnId)) {
-              await pool.query(
-                `UPDATE devsettings SET 
-                  trnid = GREATEST(IFNULL(trnid, 0), ?),
-                  ${counterField} = GREATEST(IFNULL(${counterField}, 0), ?)
-                 WHERE uniquedevcode = ?`,
-                [maxTrnId, typeId, body.device_fingerprint]
-              );
-              console.log(`📊 Batch: Updated devsettings: trnid=${maxTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
-            }
-          } catch (counterErr) {
-            console.error('⚠️ Failed to update batch sale counters in devsettings:', counterErr);
-          }
-        }
-
-        const insertedCount = insertedRefs.length;
-        const duplicateCount = duplicateRefs.length;
-        const allWereDuplicates = insertedCount === 0 && duplicateCount > 0;
         
         return sendJSON(res, { 
           success: true, 
-          message: allWereDuplicates
-            ? `Batch already synced (${duplicateCount} duplicate item${duplicateCount === 1 ? '' : 's'})`
-            : `Batch sale recorded: ${insertedCount} inserted, ${duplicateCount} duplicate`,
+          message: `Batch sale recorded: ${body.items.length} items`,
           uploadrefno,
           transrefnos: insertedRefs,
-          duplicate_transrefnos: duplicateRefs,
-          inserted_count: insertedCount,
-          duplicate_count: duplicateCount,
           photo_saved: !!photoFilename,
           photo_path: photoFilename ? `${photoDirectory}/${photoFilename}` : null
-        }, allWereDuplicates ? 200 : 201);
+        }, 201);
         
       } catch (error) {
         await conn.rollback();
@@ -2350,8 +2210,8 @@ const server = http.createServer(async (req, res) => {
         );
         if (lastRefRows.length > 0 && lastRefRows[0].transrefno) {
           const lastRef = lastRefRows[0].transrefno;
-          // Extract trnid using last 8 digits to avoid clientFetch corruption
-          lastTrnId = parseInt(lastRef.slice(-8), 10) || 0;
+          const seqPart = lastRef.slice(deviceData.devcode.length);
+          lastTrnId = parseInt(seqPart, 10) || 0;
         }
       }
       deviceData.trnid = lastTrnId;
@@ -2745,7 +2605,7 @@ const server = http.createServer(async (req, res) => {
     // ==================== BATCH CUMULATIVE ENDPOINT ====================
     // Returns cumulative weights for ALL farmers under a device's ccode in ONE query
     if (path === '/api/farmer-monthly-frequency-batch' && method === 'GET') {
-      const { uniquedevcode, route } = parsedUrl.query;
+      const { uniquedevcode } = parsedUrl.query;
       
       if (!uniquedevcode) {
         return sendJSON(res, { 
@@ -2806,56 +2666,28 @@ const server = http.createServer(async (req, res) => {
         console.log('⚠️ Could not detect orgtype for cumulative, using monthly range:', e.message);
       }
       
-      // Two queries: 1) per-farmer totals, 2) per-farmer per-product breakdown
-      const routeFilter = route ? ' AND TRIM(route) = TRIM(?)' : '';
-      const baseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
-      
-      const [totalRows] = await pool.query(
+      // Single query: get cumulative weights for ALL farmers at once
+      // Uses TRIM() and CAST() to handle transactions posted by external sources
+      // that may have whitespace or different type formatting
+      const [rows] = await pool.query(
         `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
          WHERE TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}
+         AND CAST(transdate AS DATE) BETWEEN ? AND ?
          GROUP BY TRIM(memberno)`,
-        baseParams
+        [ccode, periodStart, periodEnd]
       );
-      
-      const tRouteFilter = route ? ' AND TRIM(t.route) = TRIM(?)' : '';
-      const tBaseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
-      
-      const [productRows] = await pool.query(
-        `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
-                IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
-                IFNULL(SUM(t.weight), 0) as weight 
-         FROM transactions t
-         LEFT JOIN fm_items fi ON TRIM(fi.icode) = TRIM(t.icode) AND TRIM(fi.ccode) = TRIM(t.ccode)
-         WHERE TRIM(t.ccode) = TRIM(?) AND CAST(t.Transtype AS UNSIGNED) = 1
-         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${tRouteFilter}
-         GROUP BY TRIM(t.memberno), TRIM(t.icode)`,
-        tBaseParams
-      );
-      
-      // Build per-farmer product map
-      const productMap = {};
-      for (const r of productRows) {
-        if (!productMap[r.farmer_id]) productMap[r.farmer_id] = [];
-        productMap[r.farmer_id].push({
-          icode: r.icode || '',
-          product_name: r.product_name || r.icode || '',
-          weight: parseFloat(r.weight) || 0
-        });
-      }
       
       return sendJSON(res, { 
         success: true, 
         data: {
-          farmers: totalRows.map(r => ({
+          farmers: rows.map(r => ({
             farmer_id: r.farmer_id,
-            cumulative_weight: parseFloat(r.cumulative_weight) || 0,
-            by_product: productMap[r.farmer_id] || []
+            cumulative_weight: parseFloat(r.cumulative_weight) || 0
           })),
           month_start: periodStart,
           month_end: periodEnd,
-          total_farmers: totalRows.length
+          total_farmers: rows.length
         }
       });
     }
@@ -2863,7 +2695,7 @@ const server = http.createServer(async (req, res) => {
     // Farmer monthly cumulative frequency endpoint
     // Returns the count of collections for a farmer in the current month
     if (path === '/api/farmer-monthly-frequency' && method === 'GET') {
-      const { farmer_id, uniquedevcode, route } = parsedUrl.query;
+      const { farmer_id, uniquedevcode } = parsedUrl.query;
       
       if (!farmer_id || !uniquedevcode) {
         return sendJSON(res, { 
@@ -2924,47 +2756,23 @@ const server = http.createServer(async (req, res) => {
         console.log('⚠️ Could not detect orgtype for individual cumulative, using monthly range:', e.message);
       }
       
-      // Total weight for this farmer
-      const indRouteFilter = route ? ' AND TRIM(route) = TRIM(?)' : '';
-      const indParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
-      
+      // Sum total weight for this farmer in the period
+      // Uses TRIM() and CAST() to handle transactions posted by external sources
       const [sumRows] = await pool.query(
         `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
          WHERE TRIM(memberno) = TRIM(?) AND TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?${indRouteFilter}`,
-        indParams
-      );
-      
-      // Per-product breakdown for this farmer
-      const indTRouteFilter = route ? ' AND TRIM(t.route) = TRIM(?)' : '';
-      const indTParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
-      
-      const [productRows] = await pool.query(
-        `SELECT TRIM(t.icode) as icode, 
-                IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
-                IFNULL(SUM(t.weight), 0) as weight 
-         FROM transactions t
-         LEFT JOIN fm_items fi ON TRIM(fi.icode) = TRIM(t.icode) AND TRIM(fi.ccode) = TRIM(t.ccode)
-         WHERE TRIM(t.memberno) = TRIM(?) AND TRIM(t.ccode) = TRIM(?) AND CAST(t.Transtype AS UNSIGNED) = 1
-         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${indTRouteFilter}
-         GROUP BY TRIM(t.icode)`,
-        indTParams
+         AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
+        [farmer_id, ccode, periodStart, periodEnd]
       );
       
       const cumulativeWeight = sumRows.length > 0 ? parseFloat(sumRows[0].cumulative_weight) || 0 : 0;
-      const byProduct = productRows.map(r => ({
-        icode: r.icode || '',
-        product_name: r.product_name || r.icode || '',
-        weight: parseFloat(r.weight) || 0
-      }));
       
       return sendJSON(res, { 
         success: true, 
         data: {
           farmer_id,
           cumulative_weight: cumulativeWeight,
-          by_product: byProduct,
           month_start: periodStart,
           month_end: periodEnd
         }

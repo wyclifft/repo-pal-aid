@@ -1,25 +1,5 @@
 // Global error handling utilities for production stability
-// NOTE: Do NOT import @capacitor/core statically here - this file runs at startup
-// and Capacitor bridge may not be ready on Android 7 (Chrome 51)
-
-const getSafePlatform = (): string => {
-  try {
-    const cap = (window as any).Capacitor;
-    if (cap && typeof cap.getPlatform === 'function') return cap.getPlatform();
-    if (cap && cap.platform) return cap.platform;
-  } catch {}
-  return 'web';
-};
-
-const isNativePlatformSafe = (): boolean => {
-  try {
-    const cap = (window as any).Capacitor;
-    if (cap && typeof cap.isNativePlatform === 'function') return cap.isNativePlatform();
-    const p = cap?.platform || cap?.getPlatform?.();
-    return p === 'android' || p === 'ios';
-  } catch {}
-  return false;
-};
+import { Capacitor } from '@capacitor/core';
 
 // Track errors to avoid duplicate logging
 const errorLog = new Set<string>();
@@ -80,7 +60,7 @@ const createErrorReport = (error: unknown, context?: string): ErrorReport => {
     context,
     severity: getErrorSeverity(error, context),
     timestamp: Date.now(),
-    platform: getSafePlatform(),
+    platform: Capacitor.getPlatform(),
     url: typeof window !== 'undefined' ? window.location.href : '',
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
   };
@@ -189,7 +169,7 @@ export const logError = (error: unknown, context?: string): void => {
   storeError(report);
   
   // In production on native, we could send to a crash reporting service
-  if (isNativePlatformSafe()) {
+  if (Capacitor.isNativePlatform()) {
     // Future: Send to crash reporting service like Sentry, Crashlytics
   }
 };

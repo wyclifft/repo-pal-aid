@@ -3,11 +3,7 @@
  * Initializes Capacitor plugins and native platform features
  * Production-ready with timeout handling and retry logic
  */
-// Defensive Capacitor access — avoids static import crash on Android 7 (Chrome 51)
-const getCapacitor = () => (window as any).Capacitor;
-const isNativePlatform = () => getCapacitor()?.isNativePlatform?.() ?? false;
-const getCapPlatform = (): string => getCapacitor()?.getPlatform?.() ?? 'web';
-
+import { Capacitor } from '@capacitor/core';
 import { generateDeviceFingerprint, getDeviceName, getDeviceInfo } from './deviceFingerprint';
 import { API_CONFIG } from '@/config/api';
 
@@ -56,7 +52,7 @@ const storePendingNativeRegistration = (fingerprint: string, deviceInfo: string)
         fingerprint, 
         deviceInfo, 
         timestamp: Date.now(),
-        platform: getCapPlatform(),
+        platform: Capacitor.getPlatform(),
         attempts: 1 
       });
       localStorage.setItem('pending_device_registrations', JSON.stringify(pending));
@@ -89,8 +85,7 @@ const registerDeviceForApproval = async (fingerprint: string, attempt = 1): Prom
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
     
-    const { nativeHttpRequest } = await import('@/utils/nativeHttp');
-    const response = await nativeHttpRequest(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
+    const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
@@ -227,12 +222,12 @@ const ensureDeviceRegistered = async (): Promise<void> => {
  * Call this early in app startup
  */
 export const initializeNativePlatform = async (): Promise<void> => {
-  const native = isNativePlatform();
-  const platform = getCapPlatform();
+  const isNativePlatform = Capacitor.isNativePlatform();
+  const platform = Capacitor.getPlatform();
   
-  console.log('📱 Platform detection - isNative:', native, 'platform:', platform);
+  console.log('📱 Platform detection - isNative:', isNativePlatform, 'platform:', platform);
   
-  if (!native) {
+  if (!isNativePlatform) {
     console.log('📱 Running in web mode');
     return;
   }
@@ -284,7 +279,7 @@ const initStatusBar = async (): Promise<void> => {
     await StatusBar.setBackgroundColor({ color: '#1a1a2e' });
     
     // Make status bar overlay content on iOS for edge-to-edge design
-    if (getCapPlatform() === 'ios') {
+    if (Capacitor.getPlatform() === 'ios') {
       await StatusBar.setOverlaysWebView({ overlay: true });
     }
     
@@ -394,7 +389,7 @@ const initAppStateListener = async (): Promise<void> => {
  * Call this when the app is fully loaded
  */
 export const hideSplashScreen = async (): Promise<void> => {
-  if (!isNativePlatform()) return;
+  if (!Capacitor.isNativePlatform()) return;
   
   try {
     const { SplashScreen } = await import('@capacitor/splash-screen');
@@ -409,14 +404,14 @@ export const hideSplashScreen = async (): Promise<void> => {
  * Check if running on native platform
  */
 export const isNative = (): boolean => {
-  return isNativePlatform();
+  return Capacitor.isNativePlatform();
 };
 
 /**
  * Get current platform
  */
 export const getPlatform = (): 'ios' | 'android' | 'web' => {
-  return getCapPlatform() as 'ios' | 'android' | 'web';
+  return Capacitor.getPlatform() as 'ios' | 'android' | 'web';
 };
 
 /**

@@ -190,26 +190,11 @@ const Index = () => {
   }, [activeSession?.descript, clearBlacklist]);
 
   // Refresh cumulative cache after sync completes OR periodically to detect external DB changes
-  // Uses a concurrency guard to prevent overlapping refreshes that cause partial updates
   useEffect(() => {
     if (!deviceFingerprint || !showCumulative) return;
 
-    let refreshInProgress = false;
-    let pendingRefresh: string | null = null;
-
     const refreshCumulativesBatch = async (reason: string) => {
       if (!navigator.onLine) return;
-
-      // If a refresh is already running, queue this one (only keep latest)
-      if (refreshInProgress) {
-        console.log(`🔄 Cumulative refresh (${reason}): queued (another refresh in progress)`);
-        pendingRefresh = reason;
-        return;
-      }
-
-      refreshInProgress = true;
-      pendingRefresh = null;
-
       try {
         console.log(`🔄 Cumulative refresh (${reason}): using batch API...`);
         const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint);
@@ -227,9 +212,8 @@ const Index = () => {
             const qualifying = (deviceCcode ? response.data.filter(f => f.ccode === deviceCcode) : response.data)
               .filter(f => Number(f.currqty) === 1);
 
-            // Write ALL updated cumulatives atomically in batches — do not abort early
+            // Write updated cumulatives in batches
             const WRITE_BATCH = 50;
-            let written = 0;
             for (let i = 0; i < qualifying.length; i += WRITE_BATCH) {
               const batch = qualifying.slice(i, i + WRITE_BATCH);
               await Promise.all(batch.map(async (farmer) => {
@@ -237,12 +221,11 @@ const Index = () => {
                 const weight = batchMap.get(fId) ?? 0;
                 await updateFarmerCumulative(fId, weight, true);
               }));
-              written += batch.length;
               if (i + WRITE_BATCH < qualifying.length) {
                 await new Promise(r => setTimeout(r, 0));
               }
             }
-            console.log(`✅ Cumulative refresh (${reason}): ${written}/${qualifying.length} farmers updated completely`);
+            console.log(`✅ Cumulative refresh (${reason}): ${qualifying.length} farmers updated`);
           }
         }
 
@@ -256,44 +239,22 @@ const Index = () => {
         }
       } catch (err) {
         console.warn(`Cumulative refresh (${reason}) failed:`, err);
-      } finally {
-        refreshInProgress = false;
-        // If another refresh was queued while we were running, execute it now
-        if (pendingRefresh) {
-          const nextReason = pendingRefresh;
-          pendingRefresh = null;
-          // Small delay to avoid rapid-fire API calls
-          setTimeout(() => refreshCumulativesBatch(nextReason), 500);
-        }
       }
     };
 
-    // On syncComplete: refresh with a delay to let server commit all records
-    const handleSyncComplete = () => {
-      setTimeout(() => refreshCumulativesBatch('post-sync'), 3000);
-    };
+    // On syncComplete: refresh to pick up newly synced records
+    const handleSyncComplete = () => refreshCumulativesBatch('post-sync');
     window.addEventListener('syncComplete', handleSyncComplete);
 
-    // On syncStart: no longer refresh pre-sync (wasteful + can conflict with post-sync)
-
-    // Refresh when app returns to foreground (catches external transactions)
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && navigator.onLine && !(window as any).__cumulativeSyncRunning) {
-        refreshCumulativesBatch('visibility');
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    // Periodic refresh every 3 minutes to detect external DB changes
+    // Periodic refresh every 10 minutes to detect external DB changes
     const intervalId = setInterval(() => {
       if (navigator.onLine && !(window as any).__cumulativeSyncRunning) {
         refreshCumulativesBatch('periodic');
       }
-    }, 3 * 60 * 1000);
+    }, 10 * 60 * 1000);
 
     return () => {
       window.removeEventListener('syncComplete', handleSyncComplete);
-      document.removeEventListener('visibilitychange', handleVisibility);
       clearInterval(intervalId);
     };
   }, [selectedFarmer, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers, getFarmerCumulative]);
@@ -1412,7 +1373,11 @@ const Index = () => {
 
   // Show Dashboard first
   if (!showCollection) {
+  // Get capture mode from user's supervisor setting
   const captureMode = getCaptureMode(currentUser?.supervisor);
+  
+  // Debug logging for supervisor mode
+  console.log('📋 Dashboard - User supervisor value:', currentUser?.supervisor, '| Capture mode:', captureMode);
   
   return (
     <>
@@ -1450,6 +1415,9 @@ const Index = () => {
   // Get capture mode from supervisor setting
   const captureMode = getCaptureMode(currentUser?.supervisor);
   
+  // Debug logging for supervisor mode in collection view
+  console.log('📋 Collection View - User supervisor value:', currentUser?.supervisor, '| Capture mode:', captureMode);
+  
   // For multOpt=0: Allow unlimited weight captures, only disable Submit after first successful submission
   const cleanFarmerIdForCheck = farmerId?.replace(/^#/, '').trim() || '';
   
@@ -1471,10 +1439,10 @@ const Index = () => {
 
   return (
     <>
-      {!activeSession ? null : collectionMode === 'buy' ? (
+      {collectionMode === 'buy' ? (
         <BuyProduceScreen
           route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
-          session={activeSession}
+          session={activeSession!}
           userName={currentUser?.username || currentUser?.user_id || 'User'}
           weight={weight}
           capturedCollections={capturedCollections}
@@ -1511,7 +1479,7 @@ const Index = () => {
       ) : (
         <SellProduceScreen
           route={{ tcode: selectedRouteCode, descript: routeName, mprefix: selectedRouteMprefix } as Route}
-          session={activeSession}
+          session={activeSession!}
           userName={currentUser?.username || currentUser?.user_id || 'User'}
           weight={weight}
           capturedCollections={capturedCollections}

@@ -8,13 +8,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSalesSync } from '@/hooks/useSalesSync';
 import { useFarmerResolution } from '@/hooks/useFarmerResolution';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
-// Haptics loaded dynamically to prevent crash on Android 7
-const safeHapticImpact = async () => {
-  try {
-    const { Haptics, ImpactStyle } = await import('@capacitor/haptics');
-    await Haptics.impact({ style: ImpactStyle.Medium });
-  } catch {}
-};
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { API_CONFIG } from '@/config/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CowDetailsModal, type CowDetails } from '@/components/CowDetailsModal';
@@ -289,7 +283,7 @@ const AIPage = () => {
     setFarmerId('');
     setSelectedFarmer(null);
     setCart([]);
-    safeHapticImpact();
+    try { Haptics.impact({ style: ImpactStyle.Light }); } catch { }
   };
 
   // Filter items for search
@@ -316,7 +310,7 @@ const AIPage = () => {
     setPendingItem(item);
     setShowCowDetailsModal(true);
     
-    safeHapticImpact();
+    try { Haptics.impact({ style: ImpactStyle.Medium }); } catch { }
   };
 
   // Handle saving cow details - adds item to cart with details
@@ -347,7 +341,7 @@ const AIPage = () => {
     setShowCowDetailsModal(false);
     
     toast.success(`Added ${pendingItem.descript} with cow details`);
-    safeHapticImpact();
+    try { Haptics.impact({ style: ImpactStyle.Medium }); } catch { }
   };
 
   // Handle closing cow details modal without saving
@@ -463,7 +457,7 @@ const AIPage = () => {
       const statusMsg = navigator.onLine ? '' : ' (saved offline)';
       toast.success(`AI Service completed${statusMsg}: KES${cartTotal.toFixed(0)} [${refs.transrefno}]`);
       setCart([]);
-      safeHapticImpact();
+      try { Haptics.impact({ style: ImpactStyle.Heavy }); } catch { }
     } catch (error) {
       console.error('AI transaction error:', error);
       toast.error('Failed to complete AI transaction');

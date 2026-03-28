@@ -4,7 +4,6 @@
  */
 
 import { API_CONFIG } from '@/config/api';
-import { nativeHttpRequest } from '@/utils/nativeHttp';
 
 const API_BASE_URL = `${API_CONFIG.MYSQL_API_URL}/api`;
 
@@ -31,43 +30,6 @@ function isDeviceRefColumnError(error: string | undefined): boolean {
   );
 }
 
-/**
- * XMLHttpRequest fallback for POST requests when fetch is intercepted by proxies
- * Returns a Response-like object with json() method
- */
-function xhrFetch(url: string, options: RequestInit): Promise<Response> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open(options.method || 'GET', url, true);
-    
-    // Set headers
-    const headers = options.headers as Record<string, string> || {};
-    Object.entries(headers).forEach(([key, value]) => {
-      xhr.setRequestHeader(key, value);
-    });
-    
-    xhr.timeout = 15000;
-    xhr.onload = () => {
-      const responseHeaders = new Headers();
-      const rawHeaders = xhr.getAllResponseHeaders().trim().split('\r\n');
-      rawHeaders.forEach(line => {
-        const parts = line.split(': ');
-        if (parts.length === 2) responseHeaders.set(parts[0], parts[1]);
-      });
-      
-      resolve(new Response(xhr.responseText, {
-        status: xhr.status,
-        statusText: xhr.statusText,
-        headers: responseHeaders,
-      }));
-    };
-    xhr.onerror = () => reject(new Error('XHR request failed'));
-    xhr.ontimeout = () => reject(new Error('XHR request timed out'));
-    
-    xhr.send(options.body as string || null);
-  });
-}
-
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -86,59 +48,17 @@ async function apiRequest<T>(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  const fullUrl = `${API_BASE_URL}${endpoint}`;
-  const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-  const cap = typeof window !== 'undefined' ? (window as any).Capacitor : undefined;
-  const isNativePlatform = cap?.isNativePlatform?.() ?? false;
-  const mergedHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> || {}),
-  };
-
-  // Preview/Web CORS preflight fails when backend doesn't allow X-App-Origin.
-  // Keep this header for native app traffic only.
-  if (isNativePlatform && appOrigin) {
-    mergedHeaders['X-App-Origin'] = appOrigin;
-  }
-
-  let response: Response;
   try {
-    response = await nativeHttpRequest(fullUrl, {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
-      mode: 'cors',
-      cache: 'no-store',
       signal: controller.signal,
-      headers: mergedHeaders,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
     });
-    clearTimeout(timeoutId);
-  } catch (fetchError) {
-    clearTimeout(timeoutId);
-    
-    // For POST/PUT/DELETE, retry with XMLHttpRequest to bypass fetch proxies
-    const method = (options.method || 'GET').toUpperCase();
-    if (method !== 'GET' && !(fetchError instanceof Error && fetchError.name === 'AbortError')) {
-      console.warn(`[API] fetch failed for ${method} ${endpoint}, retrying with XHR...`);
-      try {
-        response = await xhrFetch(fullUrl, { ...options, method, headers: mergedHeaders });
-      } catch (xhrError) {
-        console.error(`[API] XHR fallback also failed for ${endpoint}:`, xhrError);
-        return {
-          success: false,
-          error: xhrError instanceof Error ? xhrError.message : 'Request failed',
-        };
-      }
-    } else {
-      // GET request or abort — handle normally
-      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-        console.warn(`API request timeout: ${endpoint}`);
-        return { success: false, error: 'Request timed out. Please check your connection.' };
-      }
-      console.error(`API request failed: ${endpoint}`, fetchError);
-      return { success: false, error: fetchError instanceof Error ? fetchError.message : 'Unknown error' };
-    }
-  }
 
-  try {
+    clearTimeout(timeoutId);
 
     // Check if response is JSON
     const contentType = response.headers.get('content-type');
@@ -183,7 +103,18 @@ async function apiRequest<T>(
 
     return data;
   } catch (error) {
-    console.error(`API response processing failed: ${endpoint}`, error);
+    clearTimeout(timeoutId);
+    
+    // Handle timeout specifically
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.warn(`API request timeout: ${endpoint}`);
+      return {
+        success: false,
+        error: 'Request timed out. Please check your connection.',
+      };
+    }
+    
+    console.error(`API request failed: ${endpoint}`, error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -978,7 +909,7 @@ export interface AuthUser {
   email?: string;
   ccode?: string;
   admin?: boolean;
-  supervisor?: number;
+  supervisor?: boolean;
   dcode?: string;
   groupid?: string;
   depart?: string;
@@ -988,15 +919,10 @@ export const authApi = {
   /**
    * Login with userid and password
    */
-  login: async (userid: string, password: string, deviceFingerprint?: string): Promise<ApiResponse<AuthUser>> => {
+  login: async (userid: string, password: string): Promise<ApiResponse<AuthUser>> => {
     return apiRequest<AuthUser>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({
-        userid,
-        password,
-        device_fingerprint: deviceFingerprint,
-        deviceFingerprint,
-      }),
+      body: JSON.stringify({ userid, password }),
     });
   },
 };

@@ -192,8 +192,7 @@ const registerDevice = async (fingerprint: string, retryCount = 0): Promise<bool
     console.log('📱 Request payload:', JSON.stringify(requestBody));
     console.log('📱 Platform:', platform, 'isNative:', isNative);
     
-    const { nativeHttpRequest } = await import('@/utils/nativeHttp');
-    const response = await nativeHttpRequest(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
+    const response = await fetch(`${API_CONFIG.MYSQL_API_URL}/api/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
@@ -294,8 +293,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
       
-      const { nativeHttpRequest } = await import('@/utils/nativeHttp');
-      const response = await nativeHttpRequest(
+      const response = await fetch(
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
         { signal: controller.signal }
       );
@@ -411,28 +409,26 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         localStorage.removeItem(SETTINGS_STORAGE_KEY);
         localStorage.removeItem(SETTINGS_CCODE_KEY);
         setSettings(DEFAULT_SETTINGS);
-      } else if (response.status >= 500 && response.status <= 504) {
-        // 5xx = transient server error (overload, maintenance, etc.)
-        // Treat like a network error: use cached auth if previously authorized
-        console.warn(`⚠️ Server returned ${response.status} - treating as transient error`);
-        const cachedAuth = localStorage.getItem('device_authorized');
-        if (cachedAuth === 'true') {
-          const cached = loadCachedSettings();
-          setSettings(cached);
-          setIsDeviceAuthorized(true);
-          setIsPendingApproval(false);
-          console.log(`📴 Server ${response.status} - using cached authorization`);
+      } else if (response.status === 500) {
+        // Server error - could be database issue or stale code
+        // Try to register the device anyway as it might not exist
+        console.log('⚠️ Server error (500), attempting device registration...');
+        const registered = await registerDevice(fingerprint);
+        
+        if (registered) {
+          console.log('✅ Device registered successfully despite server error');
+          setIsPendingApproval(true);
         } else {
-          // Not previously authorized - try to register for approval
-          console.log('🆕 Server error & no cached auth, attempting registration...');
-          const registered = await registerDevice(fingerprint);
-          setIsPendingApproval(registered);
-          setIsDeviceAuthorized(false);
-          localStorage.setItem('device_authorized', 'false');
-          localStorage.removeItem(SETTINGS_STORAGE_KEY);
-          localStorage.removeItem(SETTINGS_CCODE_KEY);
-          setSettings(DEFAULT_SETTINGS);
+          console.log('❌ Device registration also failed');
+          setIsPendingApproval(false);
         }
+        
+        // Block access until backend is fixed and device is approved
+        setIsDeviceAuthorized(false);
+        localStorage.setItem('device_authorized', 'false');
+        localStorage.removeItem(SETTINGS_STORAGE_KEY);
+        localStorage.removeItem(SETTINGS_CCODE_KEY);
+        setSettings(DEFAULT_SETTINGS);
       } else {
         // Other error - treat as unauthorized for safety
         setIsDeviceAuthorized(false);

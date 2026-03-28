@@ -1,4 +1,5 @@
-// Lazy-load @capacitor/core to prevent triggerEvent crash on Android 7 (Chrome 51)
+import { registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 
 export interface OfflineStoragePlugin {
   saveRecord(options: {
@@ -17,32 +18,13 @@ export interface OfflineStoragePlugin {
   getStats(): Promise<{ total: number; synced: number; unsynced: number }>;
 }
 
-let _offlineStorage: OfflineStoragePlugin | null = null;
-
-const getOfflineStorage = async (): Promise<OfflineStoragePlugin | null> => {
-  if (_offlineStorage) return _offlineStorage;
-  try {
-    const { registerPlugin } = await import('@capacitor/core');
-    _offlineStorage = registerPlugin<OfflineStoragePlugin>('OfflineStorage');
-    return _offlineStorage;
-  } catch {
-    return null;
-  }
-};
+const OfflineStorage = registerPlugin<OfflineStoragePlugin>('OfflineStorage');
 
 /**
  * Check if native storage is available (Android app running via Capacitor)
  */
 export const isNativeStorageAvailable = (): boolean => {
-  try {
-    const cap = (window as any).Capacitor;
-    if (!cap) return false;
-    const isNative = typeof cap.isNativePlatform === 'function' ? cap.isNativePlatform() : false;
-    const platform = cap.getPlatform?.() || cap.platform || 'web';
-    return isNative && platform === 'android';
-  } catch {
-    return false;
-  }
+  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 };
 
 /**
@@ -63,9 +45,7 @@ export const saveToLocalDB = async (
   }
   
   try {
-    const storage = await getOfflineStorage();
-    if (!storage) return null;
-    const result = await storage.saveRecord({ 
+    const result = await OfflineStorage.saveRecord({ 
       referenceNo, 
       recordType, 
       payload, 
@@ -89,9 +69,7 @@ export const getUnsyncedFromLocalDB = async (type?: string): Promise<any[]> => {
   }
   
   try {
-    const storage = await getOfflineStorage();
-    if (!storage) return [];
-    const result = await storage.getUnsyncedRecords(type ? { type } : undefined);
+    const result = await OfflineStorage.getUnsyncedRecords(type ? { type } : undefined);
     const records = JSON.parse(result.records);
     console.log(`[STORAGE] Retrieved ${records.length} unsynced from native DB`);
     return records;
@@ -113,9 +91,7 @@ export const markNativeRecordSynced = async (
   }
   
   try {
-    const storage = await getOfflineStorage();
-    if (!storage) return false;
-    const result = await storage.markAsSynced({ referenceNo, backendId });
+    const result = await OfflineStorage.markAsSynced({ referenceNo, backendId });
     if (result.success) {
       console.log(`[STORAGE] Marked synced in native DB: ${referenceNo}`);
     }
@@ -138,9 +114,7 @@ export const markNativeRecordFailed = async (
   }
   
   try {
-    const storage = await getOfflineStorage();
-    if (!storage) return false;
-    const result = await storage.markSyncFailed({ referenceNo, error });
+    const result = await OfflineStorage.markSyncFailed({ referenceNo, error });
     return result.success;
   } catch (e) {
     console.error('[STORAGE] Failed to mark failed in native DB:', e);
@@ -157,9 +131,7 @@ export const getLocalDBStats = async (): Promise<{ total: number; synced: number
   }
   
   try {
-    const storage = await getOfflineStorage();
-    if (!storage) return { total: 0, synced: 0, unsynced: 0 };
-    return await storage.getStats();
+    return await OfflineStorage.getStats();
   } catch (e) {
     console.error('[STORAGE] Failed to get stats from native DB:', e);
     return { total: 0, synced: 0, unsynced: 0 };
@@ -175,13 +147,11 @@ export const triggerNativeSync = async (): Promise<{ triggered: boolean; pending
   }
   
   try {
-    const storage = await getOfflineStorage();
-    if (!storage) return { triggered: false, pendingCount: 0 };
-    return await storage.triggerSync();
+    return await OfflineStorage.triggerSync();
   } catch (e) {
     console.error('[STORAGE] Failed to trigger native sync:', e);
     return { triggered: false, pendingCount: 0 };
   }
 };
 
-export { getOfflineStorage };
+export { OfflineStorage };

@@ -44,8 +44,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
       
-      const { nativeHttpRequest } = await import('@/utils/nativeHttp');
-      const response = await nativeHttpRequest(
+      const response = await fetch(
         `${apiUrl}/api/psettings?ccode=${encodeURIComponent(ccode)}`,
         { signal: controller.signal }
       );
@@ -88,8 +87,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout (faster)
       
-      const { nativeHttpRequest: nativeHttp } = await import('@/utils/nativeHttp');
-      const response = await nativeHttp(
+      const response = await fetch(
         `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(fingerprint)}`,
         { signal: controller.signal }
       );

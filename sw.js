@@ -172,17 +172,10 @@ self.addEventListener('fetch', (event) => {
     const { request } = event;
     const url = new URL(request.url);
     
-    // Skip non-GET requests — let POST/PUT/DELETE go straight to network
+    // Skip non-GET requests for caching
     if (request.method !== 'GET') {
+      event.respondWith(fetch(request));
       return;
-    }
-
-    // CRITICAL: On Capacitor (hostname 'app'), let the WebView serve local files directly
-    // Do NOT intercept navigation or local asset requests - they are served from the APK
-    if (url.hostname === 'app' || url.hostname === 'localhost') {
-      if (!url.hostname.includes('supabase.co') && !url.hostname.includes('2backend.maddasystems.co.ke')) {
-        return;
-      }
     }
 
     // Network-first for Supabase API calls

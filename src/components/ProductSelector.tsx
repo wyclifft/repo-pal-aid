@@ -10,15 +10,13 @@ interface ProductSelectorProps {
   onProductChange: (product: Item | null) => void;
   routeCode?: string; // Route tcode to filter products
   disabled?: boolean;
-  onProductsLoaded?: (count: number) => void; // Notify parent of available product count
 }
 
 export const ProductSelector = ({ 
   selectedProduct, 
   onProductChange, 
   routeCode,
-  disabled,
-  onProductsLoaded
+  disabled 
 }: ProductSelectorProps) => {
   const [products, setProducts] = useState<Item[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -79,13 +77,6 @@ export const ProductSelector = ({
       setHasLoaded(true);
     }
   }, [isReady, getItems, selectedProduct, onProductChange]);
-
-  // Notify parent whenever product count changes
-  useEffect(() => {
-    if (hasLoaded && onProductsLoaded) {
-      onProductsLoaded(products.length);
-    }
-  }, [products.length, hasLoaded, onProductsLoaded]);
 
   // Load products on mount and when route changes
   useEffect(() => {

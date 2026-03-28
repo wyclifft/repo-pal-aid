@@ -1,63 +1,32 @@
-# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
-PassengerAppRoot "/home/maddasys/public_html/sync-service"
-PassengerBaseURI "/"
-PassengerNodejs "/home/maddasys/nodevenv/public_html/sync-service/19/bin/node"
-PassengerAppType node
-PassengerStartupFile server.js
-# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
-# ============================================================================
-# Milk Collection Sync Service - cPanel Configuration
-# Domain: 2backend.maddasystems.co.ke
-# Directory: /public_html/sync-service/
-# ============================================================================
+# IMPORTANT: Replace 'username' below with your actual cPanel username
+# Example: If your username is 'maddasys', change /home/username/ to /home/maddasys/
+
 PassengerEnabled on
-PassengerAppRoot /home/maddasys/public_html/sync-service
+PassengerAppRoot /home/username/public_html/api/milk-collection-api
 PassengerAppType node
 PassengerStartupFile server.js
 PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node
+
 SetEnv NODE_ENV production
 SetEnv MYSQL_HOST localhost
 SetEnv MYSQL_DATABASE maddasys_milk_collection_pwa
-SetEnv MYSQL_USER maddasys_wycliff
+SetEnv MYSQL_USER maddasys_tesh
 SetEnv MYSQL_PASSWORD 0741899183Mutee
 SetEnv MYSQL_PORT 3306
-SetEnv PORT 3001
-# Remote API Configuration (optional - for syncing to external systems)
-# SetEnv REMOTE_API_URL https://api.example.com
-# SetEnv REMOTE_API_KEY your_api_key_here
-# Sync Configuration
-SetEnv SYNC_BATCH_SIZE 100
-SetEnv SYNC_INTERVAL_MS 300000
-# ENABLE HEADERS MODULE
-<IfModule mod_headers.c>
-  Header always set Access-Control-Allow-Origin "*"
-  Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-  Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
-  Header always set Access-Control-Max-Age "86400"
-</IfModule>
-# HANDLE OPTIONS PRE-FLIGHT CORRECTLY
-<IfModule mod_rewrite.c>
-  RewriteEngine On
-  RewriteCond %{REQUEST_METHOD} OPTIONS
-  RewriteRule ^(.*)$ - [L]
-</IfModule>
-# Block direct access to sensitive files
-<FilesMatch "^(server\.js|package\.json|package-lock\.json|\.env|node_modules)$">
-    Order allow,deny
-    Deny from all
-</FilesMatch>
-# Prevent directory listing
-Options -Indexes
-# Disable server signature
-ServerSignature Off
-# DO NOT REMOVE OR MODIFY. CLOUDLINUX ENV VARS CONFIGURATION BEGIN
-<IfModule Litespeed>
-SetEnv MYSQL_DATABASE maddasys_milk_collection_pwa
-SetEnv MYSQL_HOST localhost
-SetEnv MYSQL_PASSWORD 0741899183Mutee
-SetEnv MYSQL_PORT 3306
-SetEnv NODE_ENV production
-SetEnv PORT 3001
-SetEnv MYSQL_USER maddasys_wycliff
-</IfModule>
-# DO NOT REMOVE OR MODIFY. CLOUDLINUX ENV VARS CONFIGURATION END
+SetEnv PORT 3000
+
+# CORS headers for all origins (including Capacitor app and Netlify)
+Header always set Access-Control-Allow-Origin "*"
+Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+Header always set Access-Control-Allow-Headers "Content-Type, Accept, Authorization, X-Requested-With, Origin"
+Header always set Access-Control-Max-Age "86400"
+
+# Handle OPTIONS preflight requests at Apache level
+RewriteEngine On
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ $1 [R=200,L]
+
+<Files "*.js">
+  Order Deny,Allow
+  Deny from all
+</Files>
