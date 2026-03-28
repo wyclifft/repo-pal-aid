@@ -1,75 +1,66 @@
 
 
-## Fix: DeliveredBy Missing from Milk/Coffee Receipt + Sync Crash
+## Analysis: Batch Store Sync — Race Conditions & fm_tanks.tcode Optimization
 
-### Issue 1: DeliveredBy Not Printed on Milk/Coffee Receipts
+### Current State
 
-**Root Cause**: In `src/pages/Index.tsx`, the `printData` object (lines 981-997) does not capture `deliveredBy`. When `printMilkReceiptDirect` is called (lines 1314-1326), `deliveredBy` is never passed in the options.
+Both store endpoints query `fm_tanks` with `SELECT COUNT(*)`:
+- **Single-item** (~line 1682): one query per request
+- **Batch** (~line 1918): one query per batch (not per item) — already inside a transaction
 
-The `printReceipt` function in `bluetooth.ts` already supports `deliveredBy` (line 2003, 2075-2077), and `useDirectPrint.ts` already accepts it in its interface (line 17) and passes it through (line 68). The only missing link is in `Index.tsx`.
+### Race Condition Assessment
 
-**Fix** — `src/pages/Index.tsx`:
+**Low risk.** The `fm_tanks.tcode` value is administrative config data — it changes rarely (only when an admin reconfigures a center). Both endpoints already run inside `BEGIN TRANSACTION` / `COMMIT` blocks, so within a single batch all items use the same connection and see the same data.
 
-1. Add `deliveredBy` to the `printData` object (~line 996):
+Multiple concurrent batch requests each get their own connection and each do one `fm_tanks` lookup — this is safe because:
+1. `fm_tanks.tcode` is read-only config (not a counter or balance)
+2. Each batch does exactly **one** lookup, not per-item
+3. MySQL `InnoDB` consistent reads ensure each transaction sees a snapshot
+
+### The Real Concern: 100 Transactions = 100 Single-Item Requests?
+
+If the APK syncs 100 transactions as **individual** `/api/sales` calls (not using `/api/sales/batch`), then yes — 100 separate `fm_tanks` queries. This is wasteful but not a race condition. Each is an independent insert with its own connection + transaction.
+
+### Proposed Fix
+
+Apply the approved `tcode` fix to both endpoints, with one optimization for the batch path:
+
+**File: `backend-api/server.js`** — 2 locations:
+
+#### 1. Single-item store insert (~line 1682)
 ```javascript
-deliveredBy: deliveredBy || 'owner',
+// Change SELECT COUNT(*) to SELECT tcode
+const [allowedRoutes] = await conn.query(
+  'SELECT tcode FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
+  [ccode, requiredClientFetch]
+);
+if (allowedRoutes.length === 0) { /* existing reject logic */ }
+const storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
 ```
+Then use `storeRoute` in the INSERT at line 1786 instead of `body.route || ''`.
 
-2. Pass it in the `printMilkReceiptDirect` call (~line 1325):
-```javascript
-deliveredBy: printData.deliveredBy,
-```
+#### 2. Batch store insert (~line 1918)
+Same change — already one lookup per batch, so no per-item overhead. Use `storeRoute` in the per-item INSERT at line 2001 instead of `body.route || ''`.
 
-### Issue 2: App Crash Blocking Sync
+#### 3. No caching layer needed
+- `fm_tanks` is config data, not hot-path — one query per request/batch is acceptable
+- Adding an in-memory cache would introduce staleness risk and complexity for negligible gain
+- The batch endpoint already does only one lookup for all items
 
-**Root Cause**: Console logs show `ReprintProvider` crashes with `TypeError: Cannot read properties of null (reading 'useState')` at `useIndexedDB`. This crashes the entire component tree, preventing `AppContent` (which runs `useDataSync()`) from ever mounting — so no sync runs at all.
+### Safety Summary
 
-This is likely caused by a stale build or HMR issue where React's module reference becomes null. The fix is to wrap the `ReprintProvider` in its own error boundary so a failure there doesn't take down the entire app and sync system.
-
-**Fix** — `src/App.tsx`:
-
-Wrap `ReprintProvider` in an error boundary with a fallback that renders children without reprint functionality:
-
-```javascript
-<AuthProvider>
-  <ReprintErrorBoundary>
-    <ReprintProvider>
-      <Toaster />
-      <Sonner ... />
-      <AppContent />
-    </ReprintProvider>
-  </ReprintErrorBoundary>
-</AuthProvider>
-```
-
-Where `ReprintErrorBoundary` catches errors and renders children directly (without the reprint context) as a fallback, ensuring sync and core app functionality remain operational.
-
-Alternatively, add a try-catch guard in `ReprintProvider` itself to handle the case where `useIndexedDB` fails, falling back to a no-op state.
-
-### Issue 2 Alternative (simpler): Guard ReprintProvider
-
-In `src/contexts/ReprintContext.tsx`, wrap the `useIndexedDB` call in a try-catch or use a lazy initialization pattern that doesn't crash if the hook fails. Provide empty defaults so the rest of the app works:
-
-```javascript
-export const ReprintProvider = ({ children }: ReprintProviderProps) => {
-  const [printedReceipts, setPrintedReceipts] = useState<PrintedReceipt[]>([]);
-  
-  let dbFunctions = { savePrintedReceipts: async (_: any) => {}, getPrintedReceipts: async () => [] as any[], isReady: false };
-  try {
-    dbFunctions = useIndexedDB();
-  } catch (e) {
-    console.error('[REPRINT] useIndexedDB failed, reprint disabled:', e);
-  }
-  // ... rest uses dbFunctions
-```
-
-**Note**: You cannot try-catch a hook call — hooks must be called unconditionally. The correct approach is the error boundary wrapper in `App.tsx`.
+| Concern | Status |
+|---------|--------|
+| Race conditions on tcode | **Safe** — read-only config, InnoDB snapshots |
+| Batch overhead (100 items) | **Safe** — one fm_tanks query per batch, not per item |
+| 100 individual requests | **Acceptable** — each is independent; no shared mutable state |
+| APK compatibility | **Safe** — server overrides `body.route`, APK unchanged |
+| Fallback | **Safe** — falls back to `body.route` if tcode is empty |
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/pages/Index.tsx` | Add `deliveredBy` to `printData` and pass to `printMilkReceiptDirect` |
-| `src/App.tsx` | Add error boundary around `ReprintProvider` to prevent sync-blocking crashes |
-| `src/constants/appVersion.ts` | Bump to v2.10.8 |
+| `backend-api/server.js` | Replace `SELECT COUNT(*)` with `SELECT tcode LIMIT 1` in both store endpoints; use `storeRoute` in INSERTs |
+| `src/constants/appVersion.ts` | Bump to v2.10.9 |
 
