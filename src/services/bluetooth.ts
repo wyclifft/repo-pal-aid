@@ -1996,9 +1996,11 @@ export const printReceipt = async (data: {
     transrefno?: string;
   }>;
   cumulativeFrequency?: number;
+  cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
   locationCode?: string;
   locationName?: string;
   collectionDate?: Date;
+  deliveredBy?: string;
 }): Promise<{ success: boolean; error?: string }> => {
   const companyName = data.companyName || 'DAIRY COLLECTION';
   const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
@@ -2030,42 +2032,54 @@ export const printReceipt = async (data: {
   
   receipt += centerText(companyName, W) + '\n';
   receipt += centerText('CUSTOMER DELIVERY RECEIPT', W) + '\n';
-  receipt += '\n';
+  receipt += sep + '\n';
   
-  receipt += formatLine('Member NO     ', '#' + data.farmerId, W) + '\n';
-  receipt += formatLine('Member Name   ', data.farmerName, W) + '\n';
-  receipt += formatLine('Reference NO  ', data.uploadRefNo || '', W) + '\n';
-  receipt += formatLine('Date          ', formattedDate + ' ' + formattedTime, W) + '\n';
+  receipt += formatLine('MNO       ', '#' + data.farmerId, W) + '\n';
+  receipt += formatLine('Name      ', data.farmerName, W) + '\n';
+  receipt += formatLine('Ref       ', data.uploadRefNo || '', W) + '\n';
+  receipt += formatLine('Date      ', formattedDate + ' ' + formattedTime, W) + '\n';
   
   // Product name (for milk/coffee types)
   if (data.productName) {
-    receipt += formatLine('Product       ', data.productName, W) + '\n';
+    receipt += formatLine('Product   ', data.productName, W) + '\n';
   }
-  receipt += '\n';
-  
-  receipt += collectionsText;
-  receipt += '\n';
-  
-  const totalStr = totalWeight.toFixed(2);
-  receipt += formatLine('Total Weight[Kgs]', totalStr, W) + '\n';
   receipt += sep + '\n';
   
+  receipt += collectionsText;
+  receipt += sep + '\n';
+  
+  const totalStr = totalWeight.toFixed(2);
+  receipt += formatLine('Total Kgs ', totalStr, W) + '\n';
+  
   if (data.cumulativeFrequency !== undefined) {
-    receipt += formatLine('Cumulative    ', data.cumulativeFrequency.toFixed(1), W) + '\n';
+    receipt += formatLine('Cumulative', data.cumulativeFrequency.toFixed(1), W) + '\n';
+    // Per-product breakdown
+    if (data.cumulativeByProduct && data.cumulativeByProduct.length > 1) {
+      for (const prod of data.cumulativeByProduct) {
+        const label = (prod.product_name || prod.icode).substring(0, 18);
+        receipt += formatLine(`  ${label}`, prod.weight.toFixed(1), W) + '\n';
+      }
+    }
   }
-  if (data.locationCode) {
-    receipt += formatLine('Location      ', data.locationCode, W) + '\n';
+  receipt += sep + '\n';
+  
+  // Merge location code + name into single line
+  if (data.locationCode || data.locationName) {
+    const locValue = data.locationCode && data.locationName
+      ? `${data.locationCode} - ${data.locationName}`
+      : (data.locationCode || data.locationName || '');
+    receipt += formatLine('Loc       ', locValue, W) + '\n';
   }
-  if (data.locationName) {
-    receipt += formatLine('Location Name ', data.locationName, W) + '\n';
+  receipt += formatLine('Route     ', data.route || '', W) + '\n';
+  receipt += formatLine('Clerk     ', data.collectorName, W) + '\n';
+  if (data.deliveredBy && data.deliveredBy !== 'owner') {
+    receipt += formatLine('Delivered ', data.deliveredBy, W) + '\n';
   }
-  receipt += formatLine('Member Region ', data.route || '', W) + '\n';
-  receipt += formatLine('Clerk Name    ', data.collectorName, W) + '\n';
   
   // Use periodLabel (Session/Season) with the session value
   const periodLabel = data.periodLabel || 'Session';
-  receipt += formatLine(periodLabel.padEnd(14), data.session || '', W) + '\n';
-  receipt += formatLine('', formattedDate + ' ' + formattedTime, W) + '\n';
+  receipt += formatLine((periodLabel.length <= 10 ? periodLabel.padEnd(10) : periodLabel), data.session || '', W) + '\n';
+  receipt += sep + '\n';
 
   // Try Classic Bluetooth printer first (for built-in POS printers)
   if (isClassicPrinterConnected()) {
@@ -2100,6 +2114,7 @@ export const printStoreAIReceipt = async (data: {
   memberRoute?: string;
   uploadRefNo?: string;
   clerkName: string;
+  deliveredBy?: string;
   items: StoreAIReceiptItem[];
   totalAmount: number;
   transactionDate?: Date;
@@ -2162,26 +2177,22 @@ export const printStoreAIReceipt = async (data: {
   
   receipt += centerText(companyName, W) + '\n';
   receipt += centerText(receiptTitle, W) + '\n';
-  receipt += '\n';
-  
   receipt += formatLine('Member NO     ', '#' + data.memberId, W) + '\n';
   receipt += formatLine('Member Name   ', data.memberName, W) + '\n';
   receipt += formatLine('Reference NO  ', data.uploadRefNo || '', W) + '\n';
   receipt += formatLine('Date          ', formattedDate + ' ' + formattedTime, W) + '\n';
-  receipt += '\n';
-  
   receipt += sep + '\n';
   receipt += itemsText;
   receipt += sep + '\n';
-  
   const totalStr = data.totalAmount.toFixed(0);
   receipt += formatLine('Total [KES]   ', totalStr, W) + '\n';
-  receipt += '\n';
-  
   if (data.memberRoute) {
     receipt += formatLine('Member Region ', data.memberRoute, W) + '\n';
   }
   receipt += formatLine('Clerk Name    ', data.clerkName, W) + '\n';
+  if (data.deliveredBy && data.deliveredBy !== 'owner') {
+    receipt += formatLine('Delivered By  ', data.deliveredBy, W) + '\n';
+  }
   receipt += formatLine('', formattedDate + ' ' + formattedTime, W) + '\n';
 
   // Try Classic Bluetooth printer first (for built-in POS printers)
@@ -2313,7 +2324,21 @@ export const printZReport = async (data: {
     receipt += 'MNO......:REF..:QTY.:TIME\n';
     
     // Transaction rows - all on single line with dotted separators
-    for (const tx of typeGroup.transactions) {
+    // Sort by product_code for grouping
+    const sortedTxs = [...typeGroup.transactions].sort((a, b) => 
+      (a.product_code || '').localeCompare(b.product_code || '')
+    );
+    
+    let prevProductCode: string | undefined;
+    for (const tx of sortedTxs) {
+      // Add produce name separator when product changes
+      if (prevProductCode !== undefined && prevProductCode !== (tx.product_code || '')) {
+        const produceName = tx.product_name || tx.product_code || 'OTHER';
+        const label = `-- ${produceName} --`;
+        receipt += centerText(label, W) + '\n';
+      }
+      prevProductCode = tx.product_code || '';
+      
       const shortRef = (tx.refno || '').slice(-5);
       const mno = tx.farmer_id; // Show full MNO
       const ref = shortRef.padEnd(5);

@@ -13,6 +13,23 @@ import { BackendStatusBanner } from "@/components/BackendStatusBanner";
 import { ServiceWorkerUpdateBanner } from "@/components/ServiceWorkerUpdateBanner";
 import { preloadCriticalAssets } from "@/utils/precachePages";
 import { requestAllPermissions } from "@/utils/permissionRequests";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+
+// Error boundary specifically for ReprintProvider — falls back to rendering children without reprint
+class ReprintErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error: Error) {
+    console.error('[ReprintErrorBoundary] ReprintProvider crashed, sync will still work:', error);
+  }
+  render() {
+    if (this.state.hasError) {
+      // Render children without ReprintProvider so sync/core app still works
+      return this.props.children;
+    }
+    return this.props.children;
+  }
+}
 
 // Lazy load route components for better performance
 const Index = lazy(() => import("./pages/Index"));
@@ -175,7 +192,7 @@ const App = () => {
   const [isReady, setIsReady] = useState(false);
   const [hasError, setHasError] = useState(false);
   const mountedRef = useRef(true);
-  const initTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const initTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Preload critical assets and request permissions on mount
   useEffect(() => {
@@ -260,9 +277,24 @@ const App = () => {
       // Don't set hasError for minor errors that won't crash the app
       if (event.error?.message?.includes('ChunkLoadError') || 
           event.error?.message?.includes('Loading chunk')) {
-        // Try to recover from chunk load errors by reloading
-        console.log('Chunk load error detected, will reload...');
-        setTimeout(() => window.location.reload(), 1000);
+        // Retry with a counter to prevent infinite reload loops
+        const CHUNK_RELOAD_KEY = 'chunk_reload_count';
+        const MAX_RETRIES = 3;
+        try {
+          const count = parseInt(sessionStorage.getItem(CHUNK_RELOAD_KEY) || '0', 10);
+          if (count < MAX_RETRIES) {
+            sessionStorage.setItem(CHUNK_RELOAD_KEY, String(count + 1));
+            console.log(`Chunk load error detected, reload attempt ${count + 1}/${MAX_RETRIES}...`);
+            setTimeout(() => window.location.reload(), 1000);
+          } else {
+            console.error('Chunk load error: max retries exceeded');
+            sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+            setHasError(true);
+          }
+        } catch (e) {
+          // sessionStorage unavailable, just reload once
+          setTimeout(() => window.location.reload(), 1000);
+        }
       }
     };
     
@@ -305,11 +337,13 @@ const App = () => {
       }}
     >
       <AuthProvider>
-        <ReprintProvider>
-          <Toaster />
-          <Sonner position="top-center" richColors closeButton />
-          <AppContent />
-        </ReprintProvider>
+        <ReprintErrorBoundary>
+          <ReprintProvider>
+            <Toaster />
+            <Sonner position="top-center" richColors closeButton />
+            <AppContent />
+          </ReprintProvider>
+        </ReprintErrorBoundary>
       </AuthProvider>
     </PersistQueryClientProvider>
   );

@@ -71,8 +71,11 @@ const Store = () => {
   // Photo audit viewer state
   const [showPhotoAudit, setShowPhotoAudit] = useState(false);
 
-  // Active session state for CAN column
+   // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
+
+  // clientFetch from route data (2=Store, 3=AI)
+  const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
 
   // Scale weight state
   const [weight, setWeight] = useState(0);
@@ -100,6 +103,27 @@ const Store = () => {
   const { getFarmers, saveSale, getUnsyncedSales, deleteSale, getItems, isReady } = useIndexedDB();
   const { addStoreReceipt } = useReprint();
   const { queuePhotoUpload } = useBackgroundPhotoUpload();
+
+  // Pending sales count for header indicator
+  const [pendingSalesCount, setPendingSalesCount] = useState(0);
+
+  // Update pending sales count
+  const updatePendingSalesCount = useCallback(async () => {
+    if (!isReady) return;
+    try {
+      const sales = await getUnsyncedSales();
+      const storeSales = sales.filter((r: any) => r.type === 'sale');
+      setPendingSalesCount(storeSales.length);
+    } catch {
+      // ignore
+    }
+  }, [isReady, getUnsyncedSales]);
+
+  useEffect(() => {
+    updatePendingSalesCount();
+    const interval = setInterval(updatePendingSalesCount, 10000);
+    return () => clearInterval(interval);
+  }, [updatePendingSalesCount]);
 
   // Fetch active session on mount
   const loadActiveSession = async () => {
@@ -202,6 +226,9 @@ const Store = () => {
           if (response.status === 404) {
             setHasRoutes(true);
             setStoreEnabled(true);
+            // Restore clientFetch from cache on 404 fallback
+            const cached404 = localStorage.getItem('store_clientFetch');
+            if (cached404) setClientFetch(parseInt(cached404, 10));
           } else if (response.ok) {
             const data = await response.json();
             const routes = data.data || [];
@@ -217,6 +244,14 @@ const Store = () => {
             const hasStoreEnabled = routes.some((route: { allowStore?: boolean }) => route.allowStore === true);
             setStoreEnabled(hasStoreEnabled);
             
+            // Extract clientFetch from the first store-enabled route
+            const storeRoute = routes.find((route: { allowStore?: boolean; clientFetch?: number }) => route.allowStore === true);
+            if (storeRoute?.clientFetch !== undefined && storeRoute?.clientFetch !== null) {
+              setClientFetch(storeRoute.clientFetch);
+              localStorage.setItem('store_clientFetch', String(storeRoute.clientFetch));
+              console.log('[Store] clientFetch from route:', storeRoute.clientFetch);
+            }
+            
             if (!hasStoreEnabled) {
               setItems([]);
               setLoading(false);
@@ -225,14 +260,23 @@ const Store = () => {
           } else {
             setHasRoutes(true);
             setStoreEnabled(true);
+            // Restore clientFetch from cache for non-ok responses
+            const cachedCF = localStorage.getItem('store_clientFetch');
+            if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
           }
         } catch (err) {
           setHasRoutes(true);
           setStoreEnabled(true);
+          // Restore clientFetch from cache for offline use
+          const cachedCF = localStorage.getItem('store_clientFetch');
+          if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
         }
       } else {
         setHasRoutes(true);
         setStoreEnabled(true);
+        // Restore clientFetch from cache when offline
+        const cachedOffline = localStorage.getItem('store_clientFetch');
+        if (cachedOffline) setClientFetch(parseInt(cachedOffline, 10));
       }
       
       await loadItems();
@@ -380,6 +424,8 @@ const Store = () => {
       }
     } catch (error) {
       console.error('[SYNC] Failed to sync sales:', error);
+    } finally {
+      updatePendingSalesCount();
     }
   };
 
@@ -519,13 +565,25 @@ const Store = () => {
       return;
     }
 
+    // Guard: block submission if devcode is missing (device not approved)
+    const devcode = localStorage.getItem('devcode');
+    if (!devcode) {
+      toast.error('Device not configured. Please ensure device is approved.');
+      return;
+    }
+
+    // Warn if clientFetch is missing — uploadrefno will lack routing digit
+    if (clientFetch === undefined) {
+      console.warn('[Store] clientFetch is undefined — uploadrefno will not include routing digit');
+    }
+
     setSubmitting(true);
     setSyncing(true);
     const deviceFingerprint = await generateDeviceFingerprint();
 
     try {
       // Generate ONE uploadrefno for the entire batch (like Buy milk)
-      const refs = await generateReferenceWithUploadRef('store');
+      const refs = await generateReferenceWithUploadRef('store', clientFetch);
       if (!refs) {
         toast.error('Failed to generate reference number');
         setSubmitting(false);
@@ -581,6 +639,7 @@ const Store = () => {
         device_fingerprint: deviceFingerprint,
         items: batchItems,
         season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
+        // delivered_by not used in Store transactions
         // Photo excluded - will upload in background after transaction
       };
 
@@ -617,6 +676,7 @@ const Store = () => {
             device_fingerprint: deviceFingerprint,
             photo: photoBase64, // Include photo for offline sync
             season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
+            // delivered_by not used in Store transactions
           };
           await saveSale(sale);
         }
@@ -701,6 +761,11 @@ const Store = () => {
               <ArrowLeft className="h-5 w-5" />
             </button>
             <h1 className="text-xl font-semibold">Store</h1>
+            {pendingSalesCount > 0 && (
+              <span className="bg-amber-500 text-amber-900 text-xs font-bold px-2 py-0.5 rounded-full">
+                {pendingSalesCount} pending
+              </span>
+            )}
           </div>
           <button
             onClick={() => setShowPhotoAudit(true)}

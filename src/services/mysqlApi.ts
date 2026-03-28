@@ -349,6 +349,8 @@ export interface MilkCollection {
   gross_weight?: number;      // Gross weight from scale (before sack deduction)
   tare_weight?: number;       // Fixed sack weight (1 kg per sack)
   net_weight?: number;        // Calculated: gross_weight - tare_weight
+  // Delivery tracking: who delivered the goods (default: "owner")
+  delivered_by?: string;      // → DB: deliveredby
 }
 
 export const milkCollectionApi = {
@@ -775,6 +777,7 @@ export interface Sale {
   device_fingerprint?: string; // → DB: deviceserial
   photo?: string;       // Base64 encoded buyer photo for theft prevention
   season?: string;      // → DB: CAN (session.SCODE for all orgtypes)
+  delivered_by?: string; // → DB: deliveredby (who delivered the goods, default: "owner")
   // AI-specific fields (mapped to DB columns):
   // Frontend field → DB column
   cow_name?: string;          // → DB: cowname
@@ -794,6 +797,7 @@ export interface BatchSaleRequest {
   device_fingerprint: string;
   photo?: string;  // ONE photo for entire batch
   season?: string; // → DB: CAN (session.SCODE for all orgtypes)
+  delivered_by?: string; // → DB: deliveredby (who delivered the goods, default: "owner")
   items: Array<{
     transrefno: string;  // Unique per item
     item_code: string;
@@ -929,16 +933,23 @@ export const authApi = {
 
 // ==================== FARMER FREQUENCY API ====================
 
+export interface ProductCumulative {
+  icode: string;
+  product_name: string;
+  weight: number;
+}
+
 export interface FarmerMonthlyFrequency {
   farmer_id: string;
   frequency?: number; // Deprecated: kept for backwards compatibility
   cumulative_weight: number; // Total weight sum for the month
+  by_product?: ProductCumulative[];
   month_start: string;
   month_end: string;
 }
 
 export interface FarmerMonthlyFrequencyBatch {
-  farmers: Array<{ farmer_id: string; cumulative_weight: number }>;
+  farmers: Array<{ farmer_id: string; cumulative_weight: number; by_product?: ProductCumulative[] }>;
   month_start: string;
   month_end: string;
   total_farmers: number;
@@ -948,22 +959,20 @@ export const farmerFrequencyApi = {
   /**
    * Get farmer's monthly cumulative frequency (collection count for current month)
    */
-  getMonthlyFrequency: async (farmerId: string, uniquedevcode: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
-    return apiRequest<FarmerMonthlyFrequency>(
-      `/farmer-monthly-frequency?farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`
-    );
+  getMonthlyFrequency: async (farmerId: string, uniquedevcode: string, route?: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
+    let url = `/farmer-monthly-frequency?farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+    if (route) url += `&route=${encodeURIComponent(route)}`;
+    return apiRequest<FarmerMonthlyFrequency>(url);
   },
 
   /**
    * Get ALL farmers' monthly cumulative weights in a single batch request
    * Returns cumulative weights for every farmer under the device's ccode
    */
-  getMonthlyFrequencyBatch: async (uniquedevcode: string): Promise<ApiResponse<FarmerMonthlyFrequencyBatch>> => {
-    return apiRequest<FarmerMonthlyFrequencyBatch>(
-      `/farmer-monthly-frequency-batch?uniquedevcode=${encodeURIComponent(uniquedevcode)}`,
-      {},
-      30000 // 30s timeout for batch
-    );
+  getMonthlyFrequencyBatch: async (uniquedevcode: string, route?: string): Promise<ApiResponse<FarmerMonthlyFrequencyBatch>> => {
+    let url = `/farmer-monthly-frequency-batch?uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+    if (route) url += `&route=${encodeURIComponent(route)}`;
+    return apiRequest<FarmerMonthlyFrequencyBatch>(url, {}, 30000);
   },
 };
 

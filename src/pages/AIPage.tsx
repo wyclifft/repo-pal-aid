@@ -12,7 +12,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { API_CONFIG } from '@/config/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CowDetailsModal, type CowDetails } from '@/components/CowDetailsModal';
-import { generateReferenceWithUploadRef } from '@/utils/referenceGenerator';
+import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createAIReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useReprint } from '@/contexts/ReprintContext';
@@ -71,6 +71,11 @@ const AIPage = () => {
 
   // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
+
+
+
+  // clientFetch from route data (3=AI)
+  const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
 
   const { getFarmers, getItems, isReady } = useIndexedDB();
   const { saveOfflineSale, syncPendingSales } = useSalesSync();
@@ -202,6 +207,14 @@ const AIPage = () => {
             const routesExist = data.success && routes.length > 0;
             setHasRoutes(routesExist);
             
+            // Extract clientFetch from the first AI-enabled route
+            const aiRoute = routes.find((route: { allowAI?: boolean; clientFetch?: number }) => route.allowAI === true);
+            if (aiRoute?.clientFetch !== undefined && aiRoute?.clientFetch !== null) {
+              setClientFetch(aiRoute.clientFetch);
+              localStorage.setItem('ai_clientFetch', String(aiRoute.clientFetch));
+              console.log('[AI] clientFetch from route:', aiRoute.clientFetch);
+            }
+            
             if (!routesExist) {
               setItems([]);
               setLoading(false);
@@ -209,9 +222,15 @@ const AIPage = () => {
             }
           } else {
             setHasRoutes(true);
+            // Restore clientFetch from cache for non-ok responses
+            const cachedCF = localStorage.getItem('ai_clientFetch');
+            if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
           }
         } catch (err) {
           setHasRoutes(true);
+          // Restore clientFetch from cache for offline use
+          const cachedCF = localStorage.getItem('ai_clientFetch');
+          if (cachedCF) setClientFetch(parseInt(cachedCF, 10));
         }
       } else {
         setHasRoutes(true);
@@ -376,22 +395,44 @@ const AIPage = () => {
       return;
     }
 
+    // Guard: block submission if devcode is missing (device not approved)
+    const devcode = localStorage.getItem('devcode');
+    if (!devcode) {
+      toast.error('Device not configured. Please ensure device is approved.');
+      return;
+    }
+
+    if (clientFetch === undefined) {
+      console.warn('[AI] clientFetch is undefined — uploadrefno will not include routing digit');
+    }
+
     setSubmitting(true);
     const deviceFingerprint = await generateDeviceFingerprint();
 
     try {
       // Generate AI transaction reference (transtype = 3 for AI)
-      const refs = await generateReferenceWithUploadRef('ai');
+      const refs = await generateReferenceWithUploadRef('ai', clientFetch);
       if (!refs) {
         toast.error('Failed to generate reference number');
         setSubmitting(false);
         return;
       }
 
-      // Build AI transaction data
-      for (const cartItem of cart) {
+      // Build AI transaction data — each cart item needs a unique transrefno
+      let currentTransRefNo = refs.transrefno;
+      for (let i = 0; i < cart.length; i++) {
+        const cartItem = cart[i];
+        // First item uses the original transrefno; subsequent items get a new one
+        if (i > 0) {
+          const newRef = await generateTransRefOnly();
+          if (!newRef) {
+            toast.error('Failed to generate reference for item');
+            continue;
+          }
+          currentTransRefNo = newRef;
+        }
         const aiTransaction = {
-          transrefno: refs.transrefno,
+          transrefno: currentTransRefNo,
           uploadrefno: refs.uploadrefno,
           transtype: 3, // AI transaction type
           farmer_id: selectedFarmer.farmer_id,
@@ -427,7 +468,7 @@ const AIPage = () => {
       const receipt = createAIReceiptData(
         cart,
         { id: selectedFarmer.farmer_id, name: selectedFarmer.name, route: selectedFarmer.route },
-        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName: clerkName },
+        { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
         companyName
       );
       setReceiptData(receipt);
@@ -651,6 +692,7 @@ const AIPage = () => {
             </div>
           )}
         </div>
+
 
         {/* Total */}
         <div className="bg-white rounded-lg p-4 shadow">

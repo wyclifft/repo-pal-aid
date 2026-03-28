@@ -9,6 +9,7 @@ import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { SessionExpiredDialog } from '@/components/SessionExpiredDialog';
 
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
+import { APP_VERSION } from '@/constants/appVersion';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionClose } from '@/hooks/useSessionClose';
 import { useSessionExpiration } from '@/hooks/useSessionExpiration';
@@ -88,6 +89,7 @@ export const Dashboard = ({
   const [scaleConnected, setScaleConnected] = useState(() => isScaleConnected());
   const [printerConnected, setPrinterConnected] = useState(() => isPrinterConnected());
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [availableProductCount, setAvailableProductCount] = useState(0);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
   const { sessionPrintOnly, periodLabel } = useAppSettings();
   
@@ -187,6 +189,7 @@ export const Dashboard = ({
     setSelectedRoute(route);
     // Clear product when route changes (will auto-select if only one)
     setSelectedProduct(null);
+    setAvailableProductCount(0); // Reset until ProductSelector reloads
   };
 
   const handleSessionChange = (session: Session | null) => {
@@ -198,6 +201,10 @@ export const Dashboard = ({
   const handleProductChange = (product: Item | null) => {
     setSelectedProduct(product);
   };
+
+  const handleProductsLoaded = useCallback((count: number) => {
+    setAvailableProductCount(count);
+  }, []);
 
   const handleNewSession = () => {
     if (selectedRoute && selectedSession) {
@@ -406,7 +413,7 @@ export const Dashboard = ({
             <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>AI</span>
           </button>
 
-          <button onClick={() => toast.info('MADDA SYSTEMS LTD - Milk Collection App v1.5')} className="flex flex-col items-center active:scale-95 transition-transform">
+          <button onClick={() => toast.info(`MADDA SYSTEMS LTD - Milk Collection App v${APP_VERSION}`)} className="flex flex-col items-center active:scale-95 transition-transform">
             <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
               <BarChart3 className="h-6 w-6 sm:h-7 sm:w-7 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
@@ -538,6 +545,7 @@ export const Dashboard = ({
                     onProductChange={handleProductChange}
                     routeCode={selectedRoute.tcode}
                     disabled={false}
+                    onProductsLoaded={handleProductsLoaded}
                   />
                 </div>
               )}
@@ -546,7 +554,7 @@ export const Dashboard = ({
               <div className="flex justify-center pt-1">
                 <button
                   onClick={handleNewSession}
-                  disabled={!selectedRoute || !selectedSession}
+                  disabled={!selectedRoute || !selectedSession || (availableProductCount !== 1 && !selectedProduct)}
                   className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md min-h-[2.75rem]"
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >

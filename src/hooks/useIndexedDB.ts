@@ -155,12 +155,8 @@ export const useIndexedDB = () => {
       console.warn('[DB] IndexedDB upgrade blocked - close other tabs');
     };
 
-    return () => {
-      if (dbInstance && db) {
-        dbInstance.close();
-        dbInstance = null;
-      }
-    };
+    // NOTE: No cleanup — dbInstance is a singleton shared across all components.
+    // Closing it here would break other components using useIndexedDB().
   };
   
   openDatabase();
@@ -264,12 +260,17 @@ export const useIndexedDB = () => {
         const store = tx.objectStore('receipts');
         const request = store.getAll();
         request.onsuccess = () => {
-          // Filter out synced receipts and special storage entries
+          // Filter out synced receipts, special storage entries, and invalid records
           const unsynced = (request.result || []).filter((r: any) => {
             // Skip special storage entries
             if (r.orderId === 'PRINTED_RECEIPTS') return false;
             // Only include unsynced receipts
-            return !r.synced;
+            if (r.synced) return false;
+            // Skip sale records (synced via different path)
+            if (r.type === 'sale') return false;
+            // Must have required sync fields to be considered pending
+            if (!r.reference_no || !r.farmer_id || !r.weight) return false;
+            return true;
           });
           resolve(unsynced);
         };
@@ -375,27 +376,36 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
-  const saveSale = useCallback(async (sale: any) => {
-    if (!db) return;
+  const saveSale = useCallback((sale: any): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject(new Error('DB not ready'));
 
-    try {
-      const tx = db.transaction('receipts', 'readwrite');
-      const store = tx.objectStore('receipts');
-      
-      // Use receipts store for sales with a unique ID
-      const saleRecord = {
-        ...sale,
-        orderId: Date.now(),
-        type: 'sale',
-        synced: false,
-      };
-      
-      await store.put(saleRecord);
-      console.log('Sale saved to IndexedDB');
-    } catch (error) {
-      console.error('Failed to save sale to IndexedDB:', error);
-      throw error;
-    }
+      try {
+        const tx = db.transaction('receipts', 'readwrite');
+        const store = tx.objectStore('receipts');
+        
+        const saleRecord = {
+          ...sale,
+          orderId: Date.now(),
+          type: 'sale',
+          synced: false,
+        };
+        
+        const request = store.put(saleRecord);
+        request.onsuccess = () => {
+          console.log('Sale saved to IndexedDB');
+          resolve();
+        };
+        request.onerror = () => {
+          console.error('Failed to save sale to IndexedDB:', request.error);
+          reject(request.error);
+        };
+        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        console.error('Failed to save sale to IndexedDB:', error);
+        reject(error);
+      }
+    });
   }, [db]);
 
   const getUnsyncedSales = useCallback(async (): Promise<any[]> => {
@@ -468,16 +478,27 @@ export const useIndexedDB = () => {
   /**
    * Save Z Report data to IndexedDB
    */
-  const saveZReport = useCallback(async (date: string, data: any) => {
-    if (!db) return;
-    try {
-      const tx = db.transaction('z_reports', 'readwrite');
-      const store = tx.objectStore('z_reports');
-      await store.put({ date, data, timestamp: Date.now() });
-      console.log('Z Report cached successfully');
-    } catch (error) {
-      console.error('Failed to cache Z Report:', error);
-    }
+  const saveZReport = useCallback((date: string, data: any): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject(new Error('DB not ready'));
+      try {
+        const tx = db.transaction('z_reports', 'readwrite');
+        const store = tx.objectStore('z_reports');
+        const request = store.put({ date, data, timestamp: Date.now() });
+        request.onsuccess = () => {
+          console.log('Z Report cached successfully');
+          resolve();
+        };
+        request.onerror = () => {
+          console.error('Failed to cache Z Report:', request.error);
+          reject(request.error);
+        };
+        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        console.error('Failed to cache Z Report:', error);
+        reject(error);
+      }
+    });
   }, [db]);
 
   /**
@@ -502,16 +523,27 @@ export const useIndexedDB = () => {
   /**
    * Save Periodic Report data to IndexedDB
    */
-  const savePeriodicReport = useCallback(async (cacheKey: string, data: any) => {
-    if (!db) return;
-    try {
-      const tx = db.transaction('periodic_reports', 'readwrite');
-      const store = tx.objectStore('periodic_reports');
-      await store.put({ cacheKey, data, timestamp: Date.now() });
-      console.log('Periodic Report cached successfully');
-    } catch (error) {
-      console.error('Failed to cache Periodic Report:', error);
-    }
+  const savePeriodicReport = useCallback((cacheKey: string, data: any): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject(new Error('DB not ready'));
+      try {
+        const tx = db.transaction('periodic_reports', 'readwrite');
+        const store = tx.objectStore('periodic_reports');
+        const request = store.put({ cacheKey, data, timestamp: Date.now() });
+        request.onsuccess = () => {
+          console.log('Periodic Report cached successfully');
+          resolve();
+        };
+        request.onerror = () => {
+          console.error('Failed to cache Periodic Report:', request.error);
+          reject(request.error);
+        };
+        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        console.error('Failed to cache Periodic Report:', error);
+        reject(error);
+      }
+    });
   }, [db]);
 
   /**
@@ -686,12 +718,14 @@ export const useIndexedDB = () => {
    * - baseCount: last known count from backend
    * - localCount: collections added locally since last sync
    */
-  const getFarmerCumulative = useCallback(async (farmerId: string): Promise<{ baseCount: number; localCount: number; month: string } | null> => {
+  const getFarmerCumulative = useCallback(async (farmerId: string): Promise<{ baseCount: number; localCount: number; month: string; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | null> => {
     if (!db) return null;
     try {
+      // Normalize farmerId to prevent cache key mismatches across callers
+      const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const cacheKey = `${farmerId}_${month}`;
+      const cacheKey = `${cleanId}_${month}`;
       
       return new Promise((resolve, reject) => {
         const tx = db.transaction('farmer_cumulative', 'readonly');
@@ -702,7 +736,8 @@ export const useIndexedDB = () => {
             resolve({
               baseCount: request.result.baseCount || 0,
               localCount: request.result.localCount || 0,
-              month: request.result.month
+              month: request.result.month,
+              byProduct: request.result.byProduct || []
             });
           } else {
             resolve(null);
@@ -724,13 +759,16 @@ export const useIndexedDB = () => {
   const updateFarmerCumulative = useCallback(async (
     farmerId: string, 
     count: number, 
-    fromBackend: boolean = false
+    fromBackend: boolean = false,
+    byProduct?: Array<{ icode: string; product_name: string; weight: number }>
   ): Promise<void> => {
     if (!db) return;
     try {
+      // Normalize farmerId to prevent cache key mismatches across callers
+      const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const cacheKey = `${farmerId}_${month}`;
+      const cacheKey = `${cleanId}_${month}`;
       
       return new Promise((resolve, reject) => {
         const tx = db.transaction('farmer_cumulative', 'readwrite');
@@ -746,17 +784,18 @@ export const useIndexedDB = () => {
             // Backend sync: update baseCount, reset localCount
             newRecord = {
               cacheKey,
-              farmer_id: farmerId,
+              farmer_id: cleanId,
               month,
               baseCount: count,
               localCount: 0,
+              byProduct: byProduct || [],
               lastUpdated: new Date().toISOString()
             };
           } else {
             // Local collection: increment localCount
             newRecord = {
               cacheKey,
-              farmer_id: farmerId,
+              farmer_id: cleanId,
               month,
               baseCount: existing?.baseCount || 0,
               localCount: (existing?.localCount || 0) + count,
@@ -766,7 +805,7 @@ export const useIndexedDB = () => {
           
           const putRequest = store.put(newRecord);
           putRequest.onsuccess = () => {
-            console.log(`✅ Updated farmer cumulative: ${farmerId}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
+            console.log(`✅ Updated farmer cumulative: ${cleanId}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
             resolve();
           };
           putRequest.onerror = () => reject(putRequest.error);
@@ -782,44 +821,78 @@ export const useIndexedDB = () => {
    * Calculate cumulative weight from unsynced receipts in IndexedDB for a farmer in the current month.
    * This ensures offline cumulative is accurate even if the farmer_cumulative cache was never seeded.
    */
-  const getUnsyncedWeightForFarmer = useCallback(async (farmerId: string): Promise<number> => {
-    if (!db) return 0;
+  const getUnsyncedWeightForFarmer = useCallback(async (farmerId: string, routeFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
+    if (!db) return { total: 0, byProduct: [] };
     try {
       const unsynced = await getUnsyncedReceipts();
       const now = new Date();
       const currentMonth = now.getMonth();
       const currentYear = now.getFullYear();
+      // Normalize farmerId consistently
       const cleanFarmerId = farmerId.replace(/^#/, '').trim().toUpperCase();
+      const cleanRoute = routeFilter ? routeFilter.trim().toUpperCase() : '';
 
       let totalWeight = 0;
+      const productWeights: Record<string, { icode: string; product_name: string; weight: number }> = {};
       for (const r of unsynced) {
         // Only count Buy (transtype=1) receipts
         if (r.transtype === 2) continue;
         const rFarmerId = (r.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
         if (rFarmerId !== cleanFarmerId) continue;
+        // Filter by route if specified
+        if (cleanRoute) {
+          const rRoute = (r.route || '').trim().toUpperCase();
+          if (rRoute !== cleanRoute) continue;
+        }
         // Check same month
         const rDate = new Date(r.collection_date);
         if (rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear) {
           totalWeight += r.weight || 0;
+          // Track per-product weights
+          const icode = (r.product_code || '').trim().toUpperCase();
+          if (icode) {
+            if (!productWeights[icode]) {
+              productWeights[icode] = { icode, product_name: r.product_name || icode, weight: 0 };
+            }
+            productWeights[icode].weight += r.weight || 0;
+          }
         }
       }
-      return totalWeight;
+      return { total: totalWeight, byProduct: Object.values(productWeights) };
     } catch (err) {
       console.warn('Failed to get unsynced weight for farmer:', err);
-      return 0;
+      return { total: 0, byProduct: [] };
     }
   }, [db, getUnsyncedReceipts]);
 
   /**
    * Get total cumulative for farmer: baseCount (last backend total) + fresh unsynced weight from receipts.
    * This avoids double-counting by NOT using localCount (which duplicates unsynced receipt data).
+   * Returns { total, byProduct } with merged per-product breakdown.
    */
-  const getFarmerTotalCumulative = useCallback(async (farmerId: string): Promise<number> => {
+  const getFarmerTotalCumulative = useCallback(async (farmerId: string, routeFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
     const cached = await getFarmerCumulative(farmerId);
     const baseCount = cached?.baseCount || 0;
+    const baseProd = cached?.byProduct || [];
     // Always recalculate from actual unsynced receipts instead of using cached localCount
-    const unsyncedWeight = await getUnsyncedWeightForFarmer(farmerId);
-    return baseCount + unsyncedWeight;
+    const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter);
+    const total = baseCount + unsynced.total;
+    
+    // Merge by-product: base + unsynced (normalize icode keys to prevent fragmentation)
+    const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
+    for (const p of baseProd) {
+      const key = (p.icode || '').trim().toUpperCase();
+      merged[key] = { ...p, icode: key };
+    }
+    for (const p of unsynced.byProduct) {
+      const key = (p.icode || '').trim().toUpperCase();
+      if (merged[key]) {
+        merged[key].weight += p.weight;
+      } else {
+        merged[key] = { ...p, icode: key };
+      }
+    }
+    return { total, byProduct: Object.values(merged) };
   }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
 
   return {
