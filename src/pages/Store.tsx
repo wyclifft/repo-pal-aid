@@ -518,9 +518,13 @@ const Store = () => {
   // Calculate total
   const cartTotal = cart.reduce((sum, c) => sum + c.lineTotal, 0);
 
-  // Handle photo capture
+  // Handle photo capture — store ref so handleSubmit can use it immediately
+  const pendingPhotoRef = useRef<{ blob: Blob; preview: string } | null>(null);
+  
   const handlePhotoCaptured = (blob: Blob, preview: string) => {
-    setCapturedPhoto({ blob, preview });
+    const photoData = { blob, preview };
+    pendingPhotoRef.current = photoData;
+    setCapturedPhoto(photoData);
     toast.success('Photo captured');
   };
 
@@ -559,7 +563,9 @@ const Store = () => {
       toast.error('Please add items to cart');
       return;
     }
-    if (!capturedPhoto) {
+    // Use pendingPhotoRef to avoid React state timing issue (setState not yet flushed)
+    const photoToUse = pendingPhotoRef.current || capturedPhoto;
+    if (!photoToUse) {
       toast.error('Please capture buyer photo first');
       setShowPhotoCapture(true);
       return;
