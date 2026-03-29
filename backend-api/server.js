@@ -3062,16 +3062,32 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // ===== TRANSACTION PHOTOS ENDPOINT (Read-only for auditing) =====
+    // ===== TRANSACTION PHOTOS ENDPOINT (Read-only for auditing, filtered by ccode) =====
     if (path === '/api/transaction-photos' && method === 'GET') {
       const page = parseInt(parsedUrl.query.page) || 1;
       const limit = Math.min(parseInt(parsedUrl.query.limit) || 20, 100);
       const offset = (page - 1) * limit;
       const search = parsedUrl.query.search || '';
       const dateFilter = parsedUrl.query.date || '';
+      const deviceFingerprint = parsedUrl.query.device_fingerprint || '';
 
-      let whereClause = 'photo_filename IS NOT NULL AND photo_filename != ""';
-      const params = [];
+      // Require device_fingerprint for ccode isolation
+      if (!deviceFingerprint) {
+        return sendJSON(res, { success: false, error: 'Device fingerprint required' }, 400);
+      }
+
+      // Look up ccode from devsettings
+      const [deviceRows] = await pool.query(
+        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        [deviceFingerprint]
+      );
+      if (deviceRows.length === 0 || !deviceRows[0].authorized) {
+        return sendJSON(res, { success: false, error: 'Device not authorized' }, 401);
+      }
+      const ccode = deviceRows[0].ccode;
+
+      let whereClause = 'photo_filename IS NOT NULL AND photo_filename != "" AND ccode = ?';
+      const params = [ccode];
 
       // Add search filter (member, reference, clerk)
       if (search) {
@@ -3104,10 +3120,24 @@ const server = http.createServer(async (req, res) => {
         [...params, limit, offset]
       );
 
+      // Filter out rows where the photo file has been deleted from disk
+      const fs = require('fs');
+      const pathModule = require('path');
+      const uploadsBase = pathModule.join(__dirname, '');
+      const validRows = rows.filter(row => {
+        if (!row.photo_directory || !row.photo_filename) return false;
+        const filePath = pathModule.join(uploadsBase, row.photo_directory, row.photo_filename);
+        try {
+          return fs.existsSync(filePath);
+        } catch {
+          return false;
+        }
+      });
+
       return sendJSON(res, {
         success: true,
-        data: rows,
-        total,
+        data: validRows,
+        total: validRows.length < rows.length ? total - (rows.length - validRows.length) : total,
         page,
         limit,
         totalPages: Math.ceil(total / limit)
