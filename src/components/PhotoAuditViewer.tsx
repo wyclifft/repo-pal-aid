@@ -191,7 +191,7 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {photos.map((photo) => (
+                  {photos.filter(p => !brokenPhotoIds.has(p.ID)).map((photo) => (
                     <button
                       key={photo.ID}
                       onClick={() => setSelectedPhoto(photo)}
@@ -203,13 +203,10 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
                           alt={`Transaction ${photo.transrefno}`}
                           className="w-full h-full object-cover"
                           onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                            e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                            // Photo deleted on server — hide this card
+                            setBrokenPhotoIds(prev => new Set(prev).add(photo.ID));
                           }}
                         />
-                        <div className="hidden absolute inset-0 flex items-center justify-center bg-gray-100">
-                          <Image className="h-8 w-8 text-gray-300" />
-                        </div>
                       </div>
                       <div className="p-2">
                         <div className="text-xs font-mono text-gray-500 truncate">
