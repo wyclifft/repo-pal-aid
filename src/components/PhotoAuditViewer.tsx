@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { X, Search, ChevronLeft, ChevronRight, Image, Calendar, User, FileText, Loader2 } from 'lucide-react';
 import { API_CONFIG } from '@/config/api';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 
 interface TransactionPhoto {
   ID: number;
@@ -31,16 +32,22 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
   const [totalCount, setTotalCount] = useState(0);
   const pageSize = 20;
 
-  // Fetch transaction photos from server
+  // Track photos whose image failed to load (deleted on server)
+  const [brokenPhotoIds, setBrokenPhotoIds] = useState<Set<number>>(new Set());
+
+  // Fetch transaction photos from server — filtered by device ccode
   const fetchPhotos = async () => {
     setLoading(true);
     setError(null);
+    setBrokenPhotoIds(new Set());
     
     try {
       const apiUrl = API_CONFIG.MYSQL_API_URL;
+      const fingerprint = await generateDeviceFingerprint();
       const params = new URLSearchParams({
         page: currentPage.toString(),
         limit: pageSize.toString(),
+        device_fingerprint: fingerprint,
       });
       
       if (searchQuery.trim()) {
