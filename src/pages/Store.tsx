@@ -658,11 +658,11 @@ const Store = () => {
         console.log(`✅ Batch sale complete: ${batchItems.length} items, uploadrefno=${refs.uploadrefno}`);
         
         // Queue photo for background upload - doesn't block transaction
-        queuePhotoUpload(refs.uploadrefno, capturedPhoto.blob);
+        queuePhotoUpload(refs.uploadrefno, photoToUse.blob);
         console.log(`📷 Photo queued for background upload: ${refs.uploadrefno}`);
       } else {
         // Offline: convert photo to base64 for storage (will sync later)
-        const photoBase64 = await blobToBase64(capturedPhoto.blob);
+        const photoBase64 = await blobToBase64(photoToUse.blob);
         
         // Save each item individually for later sync
         for (const item of batchItems) {
@@ -723,10 +723,11 @@ const Store = () => {
       toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.uploadrefno}]`);
       setCart([]);
       // Clean up photo
-      if (capturedPhoto.preview) {
-        URL.revokeObjectURL(capturedPhoto.preview);
+      if (photoToUse.preview) {
+        URL.revokeObjectURL(photoToUse.preview);
       }
       setCapturedPhoto(null);
+      pendingPhotoRef.current = null;
       try { Haptics.impact({ style: ImpactStyle.Heavy }); } catch {}
     } catch (error) {
       console.error('Sale error:', error);
