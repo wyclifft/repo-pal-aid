@@ -518,9 +518,13 @@ const Store = () => {
   // Calculate total
   const cartTotal = cart.reduce((sum, c) => sum + c.lineTotal, 0);
 
-  // Handle photo capture
+  // Handle photo capture — store ref so handleSubmit can use it immediately
+  const pendingPhotoRef = useRef<{ blob: Blob; preview: string } | null>(null);
+  
   const handlePhotoCaptured = (blob: Blob, preview: string) => {
-    setCapturedPhoto({ blob, preview });
+    const photoData = { blob, preview };
+    pendingPhotoRef.current = photoData;
+    setCapturedPhoto(photoData);
     toast.success('Photo captured');
   };
 
@@ -559,7 +563,9 @@ const Store = () => {
       toast.error('Please add items to cart');
       return;
     }
-    if (!capturedPhoto) {
+    // Use pendingPhotoRef to avoid React state timing issue (setState not yet flushed)
+    const photoToUse = pendingPhotoRef.current || capturedPhoto;
+    if (!photoToUse) {
       toast.error('Please capture buyer photo first');
       setShowPhotoCapture(true);
       return;
@@ -652,11 +658,11 @@ const Store = () => {
         console.log(`✅ Batch sale complete: ${batchItems.length} items, uploadrefno=${refs.uploadrefno}`);
         
         // Queue photo for background upload - doesn't block transaction
-        queuePhotoUpload(refs.uploadrefno, capturedPhoto.blob);
+        queuePhotoUpload(refs.uploadrefno, photoToUse.blob);
         console.log(`📷 Photo queued for background upload: ${refs.uploadrefno}`);
       } else {
         // Offline: convert photo to base64 for storage (will sync later)
-        const photoBase64 = await blobToBase64(capturedPhoto.blob);
+        const photoBase64 = await blobToBase64(photoToUse.blob);
         
         // Save each item individually for later sync
         for (const item of batchItems) {
@@ -717,10 +723,11 @@ const Store = () => {
       toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.uploadrefno}]`);
       setCart([]);
       // Clean up photo
-      if (capturedPhoto.preview) {
-        URL.revokeObjectURL(capturedPhoto.preview);
+      if (photoToUse.preview) {
+        URL.revokeObjectURL(photoToUse.preview);
       }
       setCapturedPhoto(null);
+      pendingPhotoRef.current = null;
       try { Haptics.impact({ style: ImpactStyle.Heavy }); } catch {}
     } catch (error) {
       console.error('Sale error:', error);

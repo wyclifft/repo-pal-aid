@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { X, Search, ChevronLeft, ChevronRight, Image, Calendar, User, FileText, Loader2 } from 'lucide-react';
 import { API_CONFIG } from '@/config/api';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 
 interface TransactionPhoto {
   ID: number;
@@ -31,16 +32,22 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
   const [totalCount, setTotalCount] = useState(0);
   const pageSize = 20;
 
-  // Fetch transaction photos from server
+  // Track photos whose image failed to load (deleted on server)
+  const [brokenPhotoIds, setBrokenPhotoIds] = useState<Set<number>>(new Set());
+
+  // Fetch transaction photos from server — filtered by device ccode
   const fetchPhotos = async () => {
     setLoading(true);
     setError(null);
+    setBrokenPhotoIds(new Set());
     
     try {
       const apiUrl = API_CONFIG.MYSQL_API_URL;
+      const fingerprint = await generateDeviceFingerprint();
       const params = new URLSearchParams({
         page: currentPage.toString(),
         limit: pageSize.toString(),
+        device_fingerprint: fingerprint,
       });
       
       if (searchQuery.trim()) {
@@ -184,7 +191,7 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {photos.map((photo) => (
+                  {photos.filter(p => !brokenPhotoIds.has(p.ID)).map((photo) => (
                     <button
                       key={photo.ID}
                       onClick={() => setSelectedPhoto(photo)}
@@ -196,13 +203,10 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
                           alt={`Transaction ${photo.transrefno}`}
                           className="w-full h-full object-cover"
                           onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                            e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                            // Photo deleted on server — hide this card
+                            setBrokenPhotoIds(prev => new Set(prev).add(photo.ID));
                           }}
                         />
-                        <div className="hidden absolute inset-0 flex items-center justify-center bg-gray-100">
-                          <Image className="h-8 w-8 text-gray-300" />
-                        </div>
                       </div>
                       <div className="p-2">
                         <div className="text-xs font-mono text-gray-500 truncate">
