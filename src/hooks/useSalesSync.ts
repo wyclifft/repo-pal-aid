@@ -9,6 +9,7 @@ interface AITransaction extends Sale {
   transrefno?: string;
   uploadrefno?: string;
   transtype?: number;
+  route_tcode?: string;
   cow_name?: string;
   cow_breed?: string;
   number_of_calves?: string;
