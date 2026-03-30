@@ -633,13 +633,18 @@ const Store = () => {
         });
       }
 
+      // Read Dashboard-selected route tcode from localStorage
+      const dashboardSession = JSON.parse(localStorage.getItem('active_session_data') || localStorage.getItem('delicoop_session_data') || '{}');
+      const selectedRouteTcode = dashboardSession?.route?.tcode || '';
+
       // Build batch request - submit transaction immediately, photo uploads in background
       const batchRequest: BatchSaleRequest = {
         uploadrefno: refs.uploadrefno,
         transtype: 2, // Store transaction
         farmer_id: selectedFarmer.farmer_id,
         farmer_name: selectedFarmer.name,
-        route: selectedFarmer.route || '', // Pass farmer's route (fm_tanks.tcode)
+        route: selectedFarmer.route || '', // Farmer's route for backward compat
+        route_tcode: selectedRouteTcode, // Dashboard-selected fm_tanks.tcode
         user_id: userId, // Login user_id for DB userId column
         sold_by: clerkName, // Display name for DB clerk column
         device_fingerprint: deviceFingerprint,
