@@ -1,66 +1,92 @@
 
 
-## Analysis: Batch Store Sync — Race Conditions & fm_tanks.tcode Optimization
+## Fix: Store transactions.route Using Wrong Value
 
-### Current State
+### Problem
 
-Both store endpoints query `fm_tanks` with `SELECT COUNT(*)`:
-- **Single-item** (~line 1682): one query per request
-- **Batch** (~line 1918): one query per batch (not per item) — already inside a transaction
+Store transactions save "L001" (or similar default) in the `route` column. The current server code queries `fm_tanks` with `LIMIT 1`, which may return the wrong tcode when multiple store-enabled routes exist, or may fall back to `body.route` (which is `selectedFarmer.route` from `cm_members`, not the user-selected fm_tanks.tcode).
 
-### Race Condition Assessment
+The Store page sends `selectedFarmer.route` (the farmer's member route) as `body.route` — it never sends the Dashboard-selected fm_tanks.tcode.
 
-**Low risk.** The `fm_tanks.tcode` value is administrative config data — it changes rarely (only when an admin reconfigures a center). Both endpoints already run inside `BEGIN TRANSACTION` / `COMMIT` blocks, so within a single batch all items use the same connection and see the same data.
+### Root Cause (Two-Part)
 
-Multiple concurrent batch requests each get their own connection and each do one `fm_tanks` lookup — this is safe because:
-1. `fm_tanks.tcode` is read-only config (not a counter or balance)
-2. Each batch does exactly **one** lookup, not per-item
-3. MySQL `InnoDB` consistent reads ensure each transaction sees a snapshot
+1. **Frontend (`Store.tsx` line 642)**: sends `selectedFarmer.route` (farmer's cm_members.route) as `body.route`, not the Dashboard-selected fm_tanks.tcode
+2. **Server (`server.js` line 1700)**: picks `LIMIT 1` from fm_tanks — arbitrary if multiple store routes exist; falls back to `body.route` if tcode is empty
 
-### The Real Concern: 100 Transactions = 100 Single-Item Requests?
+### Fix
 
-If the APK syncs 100 transactions as **individual** `/api/sales` calls (not using `/api/sales/batch`), then yes — 100 separate `fm_tanks` queries. This is wasteful but not a race condition. Each is an independent insert with its own connection + transaction.
+**Approach**: Pass the user-selected fm_tanks.tcode from frontend → server, then validate it server-side. This requires a minimal frontend change (reading from localStorage where Dashboard already saves it) and a server-side validation.
 
-### Proposed Fix
+#### 1. Frontend: Send selected route tcode (`src/pages/Store.tsx`)
 
-Apply the approved `tcode` fix to both endpoints, with one optimization for the batch path:
+The Dashboard already saves the selected route to localStorage. Store.tsx will read it and send as `route_tcode` in the batch/single request — separate from `body.route` so the farmer route is preserved for other uses.
 
-**File: `backend-api/server.js`** — 2 locations:
+- Read the Dashboard-selected route tcode from localStorage at component mount
+- Add `route_tcode` field to both the batch request and offline sale objects
+- Keep `body.route` as `selectedFarmer.route` for backward compatibility
 
-#### 1. Single-item store insert (~line 1682)
 ```javascript
-// Change SELECT COUNT(*) to SELECT tcode
-const [allowedRoutes] = await conn.query(
-  'SELECT tcode FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
-  [ccode, requiredClientFetch]
-);
-if (allowedRoutes.length === 0) { /* existing reject logic */ }
-const storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
+// Read Dashboard-selected route tcode
+const dashboardSession = JSON.parse(localStorage.getItem('delicoop_session_data') || '{}');
+const selectedRouteTcode = dashboardSession?.route?.tcode || '';
+
+// In batch request:
+const batchRequest = {
+  ...existing fields,
+  route_tcode: selectedRouteTcode, // User-selected fm_tanks.tcode
+};
 ```
-Then use `storeRoute` in the INSERT at line 1786 instead of `body.route || ''`.
 
-#### 2. Batch store insert (~line 1918)
-Same change — already one lookup per batch, so no per-item overhead. Use `storeRoute` in the per-item INSERT at line 2001 instead of `body.route || ''`.
+#### 2. Server: Validate and use route_tcode (`backend-api/server.js`)
 
-#### 3. No caching layer needed
-- `fm_tanks` is config data, not hot-path — one query per request/batch is acceptable
-- Adding an in-memory cache would introduce staleness risk and complexity for negligible gain
-- The batch endpoint already does only one lookup for all items
+In both store endpoints (single-item ~line 1698 and batch ~line 1936):
 
-### Safety Summary
+```javascript
+// If frontend sends route_tcode, validate it against fm_tanks for this ccode
+let storeRoute = '';
+if (body.route_tcode) {
+  const [matchedRoute] = await conn.query(
+    'SELECT tcode FROM fm_tanks WHERE ccode = ? AND tcode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
+    [ccode, body.route_tcode, requiredClientFetch]
+  );
+  if (matchedRoute.length > 0) {
+    storeRoute = matchedRoute[0].tcode.toString().trim();
+  }
+}
+// Fallback: use first available tcode (existing behavior)
+if (!storeRoute) {
+  storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
+}
+```
 
-| Concern | Status |
-|---------|--------|
-| Race conditions on tcode | **Safe** — read-only config, InnoDB snapshots |
-| Batch overhead (100 items) | **Safe** — one fm_tanks query per batch, not per item |
-| 100 individual requests | **Acceptable** — each is independent; no shared mutable state |
-| APK compatibility | **Safe** — server overrides `body.route`, APK unchanged |
-| Fallback | **Safe** — falls back to `body.route` if tcode is empty |
+This is safe because:
+- Old APKs that don't send `route_tcode` fall back to existing `LIMIT 1` behavior
+- The server validates `route_tcode` against fm_tanks — no spoofing
+- No existing functionality is affected
+
+#### 3. Also fix AIPage.tsx (same issue)
+
+AI page has the same problem at line 440: `route: selectedFarmer.route`. Apply the same localStorage read + `route_tcode` pattern.
+
+#### 4. Version bump
+
+`src/constants/appVersion.ts` → v2.10.11
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `backend-api/server.js` | Replace `SELECT COUNT(*)` with `SELECT tcode LIMIT 1` in both store endpoints; use `storeRoute` in INSERTs |
-| `src/constants/appVersion.ts` | Bump to v2.10.9 |
+| `backend-api/server.js` | Accept `body.route_tcode`, validate against fm_tanks, use if valid (2 locations) |
+| `src/pages/Store.tsx` | Read Dashboard route tcode from localStorage, send as `route_tcode` |
+| `src/pages/AIPage.tsx` | Same localStorage read + `route_tcode` |
+| `src/services/mysqlApi.ts` | Add `route_tcode` to `BatchSaleRequest` and `Sale` interfaces |
+| `src/hooks/useSalesSync.ts` | Pass `route_tcode` through in sync payloads |
+| `src/constants/appVersion.ts` | Bump to v2.10.11 |
+
+### Safety
+
+- Old APKs without `route_tcode` → existing fallback behavior (no break)
+- Server validates `route_tcode` against fm_tanks — can't set arbitrary route
+- `body.route` (farmer route) still sent for any legacy use
+- No database schema changes needed
 
