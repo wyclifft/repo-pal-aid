@@ -220,6 +220,7 @@ export const useSalesSync = () => {
             ...(saleRecord.transrefno && { transrefno: saleRecord.transrefno }), // Preserve original transrefno
             ...(saleRecord.uploadrefno && { uploadrefno: saleRecord.uploadrefno }),
             ...(saleRecord.transtype && { transtype: saleRecord.transtype }),
+            ...(saleRecord.route_tcode && { route_tcode: saleRecord.route_tcode }),
             // AI-specific fields
             ...(saleRecord.cow_name && { cow_name: saleRecord.cow_name }),
             ...(saleRecord.cow_breed && { cow_breed: saleRecord.cow_breed }),
