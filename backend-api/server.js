@@ -1696,8 +1696,20 @@ const server = http.createServer(async (req, res) => {
           }, 403);
         }
         
-        // Use fm_tanks.tcode for route instead of body.route (cm_members.route)
-        const storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
+        // Use fm_tanks.tcode for route — prefer frontend-selected route_tcode if valid
+        let storeRoute = '';
+        if (body.route_tcode) {
+          const [matchedRoute] = await conn.query(
+            'SELECT tcode FROM fm_tanks WHERE ccode = ? AND tcode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
+            [ccode, body.route_tcode, requiredClientFetch]
+          );
+          if (matchedRoute.length > 0) {
+            storeRoute = matchedRoute[0].tcode.toString().trim();
+          }
+        }
+        if (!storeRoute) {
+          storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
+        }
 
         // Idempotency guard: if transrefno already exists, treat as already synced
         const [existingSaleRows] = await conn.query(
@@ -1934,8 +1946,20 @@ const server = http.createServer(async (req, res) => {
           }, 403);
         }
         
-        // Use fm_tanks.tcode for route instead of body.route (cm_members.route)
-        const storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
+        // Use fm_tanks.tcode for route — prefer frontend-selected route_tcode if valid
+        let storeRoute = '';
+        if (body.route_tcode) {
+          const [matchedRoute] = await conn.query(
+            'SELECT tcode FROM fm_tanks WHERE ccode = ? AND tcode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
+            [ccode, body.route_tcode, requiredClientFetch]
+          );
+          if (matchedRoute.length > 0) {
+            storeRoute = matchedRoute[0].tcode.toString().trim();
+          }
+        }
+        if (!storeRoute) {
+          storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
+        }
         
         // Handle photo upload ONCE (shared by all items)
         let photoFilename = null;

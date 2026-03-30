@@ -765,6 +765,7 @@ export interface Sale {
   farmer_id: string;    // → DB: memberno
   farmer_name: string;  // → Not stored, used for display
   route?: string;       // → DB: route (fm_tanks.tcode or farmer route)
+  route_tcode?: string; // → Dashboard-selected fm_tanks.tcode (validated server-side)
   item_code: string;    // → DB: icode
   item_name: string;    // → Not stored, derived from icode
   quantity: number;     // → DB: weight
@@ -792,6 +793,7 @@ export interface BatchSaleRequest {
   farmer_id: string;
   farmer_name: string;
   route?: string;       // → DB: route (fm_tanks.tcode or farmer route)
+  route_tcode?: string; // → Dashboard-selected fm_tanks.tcode (validated server-side)
   user_id?: string;     // → DB: userId (login user_id for tracking)
   sold_by: string;      // → DB: clerk (display name/username)
   device_fingerprint: string;

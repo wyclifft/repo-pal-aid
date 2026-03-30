@@ -9,6 +9,7 @@ interface AITransaction extends Sale {
   transrefno?: string;
   uploadrefno?: string;
   transtype?: number;
+  route_tcode?: string;
   cow_name?: string;
   cow_breed?: string;
   number_of_calves?: string;
@@ -118,6 +119,7 @@ export const useSalesSync = () => {
             farmer_id: String(firstSale.farmer_id || '').replace(/^#/, '').trim(),
             farmer_name: String(firstSale.farmer_name || '').trim(),
             route: String(firstSale.route || '').trim(), // Include route for DB
+            route_tcode: String(firstSale.route_tcode || '').trim(), // Dashboard-selected fm_tanks.tcode
             user_id: String(firstSale.user_id || '').trim(), // Login user_id → DB: userId
             sold_by: String(firstSale.sold_by || '').trim(), // Display name → DB: clerk
             device_fingerprint: deviceFingerprint,
@@ -220,6 +222,7 @@ export const useSalesSync = () => {
             ...(saleRecord.transrefno && { transrefno: saleRecord.transrefno }), // Preserve original transrefno
             ...(saleRecord.uploadrefno && { uploadrefno: saleRecord.uploadrefno }),
             ...(saleRecord.transtype && { transtype: saleRecord.transtype }),
+            ...(saleRecord.route_tcode && { route_tcode: saleRecord.route_tcode }),
             // AI-specific fields
             ...(saleRecord.cow_name && { cow_name: saleRecord.cow_name }),
             ...(saleRecord.cow_breed && { cow_breed: saleRecord.cow_breed }),
