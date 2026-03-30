@@ -431,13 +431,18 @@ const AIPage = () => {
           }
           currentTransRefNo = newRef;
         }
+        // Read Dashboard-selected route tcode from localStorage
+        const dashboardSession = JSON.parse(localStorage.getItem('active_session_data') || localStorage.getItem('delicoop_session_data') || '{}');
+        const selectedRouteTcode = dashboardSession?.route?.tcode || '';
+
         const aiTransaction = {
           transrefno: currentTransRefNo,
           uploadrefno: refs.uploadrefno,
           transtype: 3, // AI transaction type
           farmer_id: selectedFarmer.farmer_id,
           farmer_name: selectedFarmer.name,
-          route: selectedFarmer.route || '', // Pass farmer's route (fm_tanks.tcode)
+          route: selectedFarmer.route || '', // Farmer's route for backward compat
+          route_tcode: selectedRouteTcode, // Dashboard-selected fm_tanks.tcode
           item_code: cartItem.item.icode,
           item_name: cartItem.item.descript,
           quantity: cartItem.quantity,

@@ -793,6 +793,7 @@ export interface BatchSaleRequest {
   farmer_id: string;
   farmer_name: string;
   route?: string;       // → DB: route (fm_tanks.tcode or farmer route)
+  route_tcode?: string; // → Dashboard-selected fm_tanks.tcode (validated server-side)
   user_id?: string;     // → DB: userId (login user_id for tracking)
   sold_by: string;      // → DB: clerk (display name/username)
   device_fingerprint: string;
