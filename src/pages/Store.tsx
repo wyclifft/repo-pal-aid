@@ -504,15 +504,26 @@ const Store = () => {
   };
 
   // Update item quantity
-  const handleQuantityChange = (index: number, newQty: number) => {
-    if (newQty <= 0) {
-      setCart(cart.filter((_, i) => i !== index));
-    } else {
+  // Update item quantity — does NOT remove on empty field (user may be mid-edit)
+  const handleQuantityChange = (index: number, newQty: number, raw?: string) => {
+    if (raw === '') {
+      // User cleared the field — keep item, show empty input
       const updated = [...cart];
-      updated[index].quantity = newQty;
-      updated[index].lineTotal = newQty * updated[index].item.sprice;
+      updated[index].quantity = 0;
+      updated[index].lineTotal = 0;
       setCart(updated);
+      return;
     }
+    if (newQty < 0) return; // Don't allow negative
+    const updated = [...cart];
+    updated[index].quantity = newQty;
+    updated[index].lineTotal = newQty * updated[index].item.sprice;
+    setCart(updated);
+  };
+
+  // Explicitly remove an item from the cart
+  const handleRemoveItem = (index: number) => {
+    setCart(cart.filter((_, i) => i !== index));
   };
 
   // Calculate total
