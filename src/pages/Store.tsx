@@ -1013,40 +1013,40 @@ const Store = () => {
 
       {/* Item Search Modal */}
       <Dialog open={showItemSearch} onOpenChange={setShowItemSearch}>
-        <DialogContent className="sm:max-w-md p-0" hideCloseButton>
-          <DialogHeader className="px-4 py-3 border-b flex flex-row items-center justify-between">
+        <DialogContent className="sm:max-w-md p-0 max-h-[85vh] flex flex-col" hideCloseButton>
+          <DialogHeader className="px-4 py-3 border-b flex flex-row items-center justify-between shrink-0">
             <DialogTitle>SEARCH ITEM</DialogTitle>
             <button onClick={() => setShowItemSearch(false)} className="p-2 bg-[#E53935] text-white rounded">
               <X className="h-4 w-4" />
             </button>
           </DialogHeader>
-          <div className="p-4">
+          <div className="px-4 pt-4 pb-2 shrink-0">
             <input
               type="text"
               placeholder="Search by name or code..."
               value={itemSearchQuery}
               onChange={(e) => setItemSearchQuery(e.target.value)}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3"
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg"
               autoFocus
             />
-            <div className="max-h-[50vh] overflow-y-auto space-y-2 pb-4">
-              {filteredItems.map((item, i) => (
-                <button
-                  key={item.ID}
-                  onClick={() => handleAddItem(item)}
-                  className="w-full flex items-center gap-3 p-2 hover:bg-gray-100 rounded text-left"
-                >
-                  <div className="w-8 h-8 border-2 border-gray-300 rounded flex items-center justify-center text-sm">
-                    {i + 1}
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm font-medium">[{item.icode}] - {item.descript}</div>
-                    <div className="text-xs text-gray-500">[qty:{item.stockbal}]</div>
-                  </div>
-                  <div className="font-medium">{item.sprice.toFixed(1)}</div>
-                </button>
-              ))}
-            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2 min-h-0">
+            {filteredItems.map((item, i) => (
+              <button
+                key={item.ID}
+                onClick={() => handleAddItem(item)}
+                className="w-full flex items-center gap-3 p-2 hover:bg-gray-100 rounded text-left"
+              >
+                <div className="w-8 h-8 border-2 border-gray-300 rounded flex items-center justify-center text-sm">
+                  {i + 1}
+                </div>
+                <div className="flex-1">
+                  <div className="text-sm font-medium">[{item.icode}] - {item.descript}</div>
+                  <div className="text-xs text-gray-500">[qty:{item.stockbal}]</div>
+                </div>
+                <div className="font-medium">{item.sprice.toFixed(1)}</div>
+              </button>
+            ))}
           </div>
         </DialogContent>
       </Dialog>
