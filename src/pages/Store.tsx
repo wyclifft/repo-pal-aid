@@ -1029,7 +1029,7 @@ const Store = () => {
               className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3"
               autoFocus
             />
-            <div className="max-h-64 overflow-y-auto space-y-2">
+            <div className="max-h-[50vh] overflow-y-auto space-y-2 pb-4">
               {filteredItems.map((item, i) => (
                 <button
                   key={item.ID}
