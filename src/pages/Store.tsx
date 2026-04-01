@@ -929,15 +929,26 @@ const Store = () => {
                   </div>
                   <input
                     type="number"
-                    value={cartItem.quantity}
-                    onChange={(e) => handleQuantityChange(index, parseFloat(e.target.value) || 0)}
+                    value={cartItem.quantity === 0 ? '' : cartItem.quantity}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const parsed = parseFloat(raw);
+                      handleQuantityChange(index, isNaN(parsed) ? 0 : parsed, raw);
+                    }}
                     className="w-14 text-center border rounded py-1 text-sm"
-                    min="0"
+                    min="0.1"
                     step="0.1"
                   />
                   <div className="w-12 text-right font-medium text-sm">
                     {cartItem.lineTotal.toFixed(0)}
                   </div>
+                  <button
+                    onClick={() => handleRemoveItem(index)}
+                    className="w-6 h-6 flex items-center justify-center text-red-500 hover:bg-red-50 rounded"
+                    aria-label="Remove item"
+                  >
+                    ✕
+                  </button>
                 </div>
               ))}
             </div>
