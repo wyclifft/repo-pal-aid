@@ -1,92 +1,74 @@
 
 
-## Fix: Store transactions.route Using Wrong Value
+## Fix: Cart Item Disappears on Quantity Edit + Search Results Hidden by Keyboard
 
-### Problem
+### Issue 1: Item disappears when clearing quantity field
 
-Store transactions save "L001" (or similar default) in the `route` column. The current server code queries `fm_tanks` with `LIMIT 1`, which may return the wrong tcode when multiple store-enabled routes exist, or may fall back to `body.route` (which is `selectedFarmer.route` from `cm_members`, not the user-selected fm_tanks.tcode).
+**Root cause**: Line 922 — `parseFloat(e.target.value) || 0` converts empty string to `0`. Line 507-509 — `handleQuantityChange` removes the item when `newQty <= 0`. So when a user deletes "1" to type a new number, the empty field becomes `0`, triggering removal.
 
-The Store page sends `selectedFarmer.route` (the farmer's member route) as `body.route` — it never sends the Dashboard-selected fm_tanks.tcode.
-
-### Root Cause (Two-Part)
-
-1. **Frontend (`Store.tsx` line 642)**: sends `selectedFarmer.route` (farmer's cm_members.route) as `body.route`, not the Dashboard-selected fm_tanks.tcode
-2. **Server (`server.js` line 1700)**: picks `LIMIT 1` from fm_tanks — arbitrary if multiple store routes exist; falls back to `body.route` if tcode is empty
-
-### Fix
-
-**Approach**: Pass the user-selected fm_tanks.tcode from frontend → server, then validate it server-side. This requires a minimal frontend change (reading from localStorage where Dashboard already saves it) and a server-side validation.
-
-#### 1. Frontend: Send selected route tcode (`src/pages/Store.tsx`)
-
-The Dashboard already saves the selected route to localStorage. Store.tsx will read it and send as `route_tcode` in the batch/single request — separate from `body.route` so the farmer route is preserved for other uses.
-
-- Read the Dashboard-selected route tcode from localStorage at component mount
-- Add `route_tcode` field to both the batch request and offline sale objects
-- Keep `body.route` as `selectedFarmer.route` for backward compatibility
+**Fix in `src/pages/Store.tsx`**:
+- Track quantity as a **string** in the input, only apply numeric logic on blur or when valid
+- Change `handleQuantityChange` to accept string input: if the string is empty, keep the item but display empty field; only remove on explicit "remove" action
+- Use a local state wrapper or change the `onChange` to not remove at `0`:
 
 ```javascript
-// Read Dashboard-selected route tcode
-const dashboardSession = JSON.parse(localStorage.getItem('delicoop_session_data') || '{}');
-const selectedRouteTcode = dashboardSession?.route?.tcode || '';
-
-// In batch request:
-const batchRequest = {
-  ...existing fields,
-  route_tcode: selectedRouteTcode, // User-selected fm_tanks.tcode
+// Line 507-509: Change condition
+const handleQuantityChange = (index: number, newQty: number, raw?: string) => {
+  // If user is still typing (empty field), keep item with quantity 0 displayed as empty
+  if (raw === '' || raw === undefined && newQty <= 0) {
+    const updated = [...cart];
+    updated[index].quantity = 0;
+    updated[index].lineTotal = 0;
+    setCart(updated);
+    return;
+  }
+  if (newQty < 0) return; // Don't allow negative
+  const updated = [...cart];
+  updated[index].quantity = newQty;
+  updated[index].lineTotal = newQty * updated[index].item.sprice;
+  setCart(updated);
 };
 ```
 
-#### 2. Server: Validate and use route_tcode (`backend-api/server.js`)
+- Line 919-926: Change the input to use raw string value and pass it through:
 
-In both store endpoints (single-item ~line 1698 and batch ~line 1936):
-
-```javascript
-// If frontend sends route_tcode, validate it against fm_tanks for this ccode
-let storeRoute = '';
-if (body.route_tcode) {
-  const [matchedRoute] = await conn.query(
-    'SELECT tcode FROM fm_tanks WHERE ccode = ? AND tcode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
-    [ccode, body.route_tcode, requiredClientFetch]
-  );
-  if (matchedRoute.length > 0) {
-    storeRoute = matchedRoute[0].tcode.toString().trim();
-  }
-}
-// Fallback: use first available tcode (existing behavior)
-if (!storeRoute) {
-  storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
-}
+```jsx
+<input
+  type="number"
+  value={cartItem.quantity === 0 ? '' : cartItem.quantity}
+  onChange={(e) => {
+    const raw = e.target.value;
+    const parsed = parseFloat(raw);
+    handleQuantityChange(index, isNaN(parsed) ? 0 : parsed, raw);
+  }}
+  className="w-14 text-center border rounded py-1 text-sm"
+  min="0.1"
+  step="0.1"
+/>
 ```
 
-This is safe because:
-- Old APKs that don't send `route_tcode` fall back to existing `LIMIT 1` behavior
-- The server validates `route_tcode` against fm_tanks — no spoofing
-- No existing functionality is affected
+- Add a dedicated remove button (X) per cart item so users can intentionally remove items
 
-#### 3. Also fix AIPage.tsx (same issue)
+### Issue 2: Search results hidden by keyboard
 
-AI page has the same problem at line 440: `route: selectedFarmer.route`. Apply the same localStorage read + `route_tcode` pattern.
+**Root cause**: Line 1010 — `max-h-64` (256px) limits the results list height. On mobile with keyboard open, the dialog content gets squeezed and items at the bottom are not scrollable into view.
 
-#### 4. Version bump
+**Fix in `src/pages/Store.tsx`**:
+- Change `max-h-64` to `max-h-[50vh]` so the list adapts to available viewport
+- Add `pb-4` padding at bottom of the list for safe scrolling
+- Ensure the dialog itself doesn't overflow by adding proper overflow handling
 
-`src/constants/appVersion.ts` → v2.10.11
+```jsx
+<div className="max-h-[50vh] overflow-y-auto space-y-2 pb-4">
+```
+
+### File: `src/constants/appVersion.ts`
+- Bump to v2.10.12
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `backend-api/server.js` | Accept `body.route_tcode`, validate against fm_tanks, use if valid (2 locations) |
-| `src/pages/Store.tsx` | Read Dashboard route tcode from localStorage, send as `route_tcode` |
-| `src/pages/AIPage.tsx` | Same localStorage read + `route_tcode` |
-| `src/services/mysqlApi.ts` | Add `route_tcode` to `BatchSaleRequest` and `Sale` interfaces |
-| `src/hooks/useSalesSync.ts` | Pass `route_tcode` through in sync payloads |
-| `src/constants/appVersion.ts` | Bump to v2.10.11 |
-
-### Safety
-
-- Old APKs without `route_tcode` → existing fallback behavior (no break)
-- Server validates `route_tcode` against fm_tanks — can't set arbitrary route
-- `body.route` (farmer route) still sent for any legacy use
-- No database schema changes needed
+| `src/pages/Store.tsx` | Fix quantity edit to not remove items; add remove button; increase search results height |
+| `src/constants/appVersion.ts` | Bump to v2.10.12 |
 
