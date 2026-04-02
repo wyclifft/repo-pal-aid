@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { X, Search, ChevronLeft, ChevronRight, Image, Calendar, User, FileText, Loader2 } from 'lucide-react';
+import { X, Search, ChevronLeft, ChevronRight, Image, Calendar, User, FileText, Loader2, Package } from 'lucide-react';
 import { API_CONFIG } from '@/config/api';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 
 interface TransactionPhoto {
   ID: number;
-  transrefno: string;
+  transrefnos: string;    // Comma-separated refs from GROUP_CONCAT
   memberno: string;
   transdate: string;
   transtime: string;
@@ -14,6 +14,8 @@ interface TransactionPhoto {
   amount: number;
   photo_filename: string;
   photo_directory: string;
+  item_count: number;      // Number of items in this transaction group
+  items_summary: string;   // e.g. "Sugar (2), Salt (1)"
 }
 
 interface PhotoAuditViewerProps {
@@ -97,11 +99,15 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
   // Build full photo URL
   const getPhotoUrl = (photo: TransactionPhoto): string => {
     const apiUrl = API_CONFIG.MYSQL_API_URL;
-    // Construct URL from directory and filename
     if (photo.photo_directory && photo.photo_filename) {
       return `${apiUrl}/${photo.photo_directory}/${photo.photo_filename}`;
     }
     return '';
+  };
+
+  // Get first reference from comma-separated list
+  const getFirstRef = (transrefnos: string): string => {
+    return (transrefnos || '').split(',')[0].trim();
   };
 
   // Handle search on Enter
@@ -200,17 +206,23 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
                       <div className="aspect-square bg-gray-200 relative">
                         <img
                           src={getPhotoUrl(photo)}
-                          alt={`Transaction ${photo.transrefno}`}
+                          alt={`Transaction ${getFirstRef(photo.transrefnos)}`}
                           className="w-full h-full object-cover"
-                          onError={(e) => {
-                            // Photo deleted on server — hide this card
+                          onError={() => {
                             setBrokenPhotoIds(prev => new Set(prev).add(photo.ID));
                           }}
                         />
+                        {/* Item count badge */}
+                        {photo.item_count > 1 && (
+                          <span className="absolute top-1 right-1 bg-[#5E35B1] text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                            <Package className="h-2.5 w-2.5" />
+                            {photo.item_count}
+                          </span>
+                        )}
                       </div>
                       <div className="p-2">
                         <div className="text-xs font-mono text-gray-500 truncate">
-                          {photo.transrefno}
+                          {getFirstRef(photo.transrefnos)}
                         </div>
                         <div className="text-xs text-gray-600 truncate">
                           {photo.memberno}
@@ -253,12 +265,12 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
         </DialogContent>
       </Dialog>
 
-      {/* Photo Detail Dialog */}
+      {/* Photo Detail Dialog — shows photo once with all items listed */}
       <Dialog open={!!selectedPhoto} onOpenChange={(isOpen) => !isOpen && setSelectedPhoto(null)}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] p-0 overflow-hidden" hideCloseButton>
           <DialogHeader className="px-4 py-3 border-b bg-[#5E35B1] text-white flex flex-row items-center justify-between">
             <DialogTitle className="text-white text-sm truncate flex-1">
-              {selectedPhoto?.transrefno || 'Photo Details'}
+              {selectedPhoto ? `${selectedPhoto.memberno} — ${selectedPhoto.transdate}` : 'Photo Details'}
             </DialogTitle>
             <button onClick={() => setSelectedPhoto(null)} className="p-2 bg-[#E53935] text-white rounded ml-2">
               <X className="h-4 w-4" />
@@ -266,12 +278,12 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
           </DialogHeader>
           
           {selectedPhoto && (
-            <div className="p-4 space-y-4">
+            <div className="p-4 space-y-4 overflow-y-auto max-h-[75vh]">
               {/* Photo Display */}
               <div className="bg-gray-100 rounded-lg overflow-hidden">
                 <img
                   src={getPhotoUrl(selectedPhoto)}
-                  alt={`Transaction ${selectedPhoto.transrefno}`}
+                  alt={`Transaction ${getFirstRef(selectedPhoto.transrefnos)}`}
                   className="w-full h-auto max-h-[40vh] object-contain"
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';
@@ -289,21 +301,11 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <div className="flex items-center gap-1 text-xs text-gray-500">
-                      <FileText className="h-3 w-3" />
-                      Reference
-                    </div>
-                    <div className="font-mono text-sm font-medium">{selectedPhoto.transrefno}</div>
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-1 text-xs text-gray-500">
                       <User className="h-3 w-3" />
                       Member
                     </div>
                     <div className="text-sm font-medium">{selectedPhoto.memberno}</div>
                   </div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <div className="flex items-center gap-1 text-xs text-gray-500">
                       <Calendar className="h-3 w-3" />
@@ -311,22 +313,44 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
                     </div>
                     <div className="text-sm">{selectedPhoto.transdate}</div>
                   </div>
-                  <div>
-                    <div className="text-xs text-gray-500">Time</div>
-                    <div className="text-sm">{selectedPhoto.transtime}</div>
-                  </div>
                 </div>
-
+                
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <div className="text-xs text-gray-500">Clerk</div>
                     <div className="text-sm font-medium">{selectedPhoto.clerk || 'N/A'}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-gray-500">Amount</div>
+                    <div className="text-xs text-gray-500">Total Amount</div>
                     <div className="text-sm font-bold text-green-600">
                       KES {(selectedPhoto.amount || 0).toLocaleString()}
                     </div>
+                  </div>
+                </div>
+
+                {/* Items List */}
+                <div className="pt-2 border-t">
+                  <div className="flex items-center gap-1 text-xs text-gray-500 mb-2">
+                    <Package className="h-3 w-3" />
+                    Items ({selectedPhoto.item_count})
+                  </div>
+                  <div className="space-y-1">
+                    {(selectedPhoto.items_summary || '').split(', ').map((item, idx) => (
+                      <div key={idx} className="text-sm bg-white px-2 py-1 rounded border text-gray-700">
+                        {item}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* References */}
+                <div className="pt-2 border-t">
+                  <div className="flex items-center gap-1 text-xs text-gray-500 mb-1">
+                    <FileText className="h-3 w-3" />
+                    Reference(s)
+                  </div>
+                  <div className="text-xs font-mono text-gray-600 break-all">
+                    {selectedPhoto.transrefnos}
                   </div>
                 </div>
 

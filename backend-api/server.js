@@ -3126,20 +3126,28 @@ const server = http.createServer(async (req, res) => {
         params.push(dateFilter);
       }
 
-      // Get total count
+      // Get total count (grouped by unique photo per member)
       const [countResult] = await pool.query(
-        `SELECT COUNT(*) as total FROM transactions WHERE ${whereClause}`,
+        `SELECT COUNT(*) as total FROM (
+           SELECT photo_filename, memberno, transdate
+           FROM transactions WHERE ${whereClause}
+           GROUP BY photo_filename, memberno, transdate
+         ) as grouped`,
         params
       );
       const total = countResult[0]?.total || 0;
 
-      // Get paginated results
+      // Get paginated results — grouped by photo+member to deduplicate batch items
       const [rows] = await pool.query(
-        `SELECT ID, transrefno, memberno, transdate, transtime, clerk, amount, 
-                photo_filename, photo_directory
+        `SELECT MIN(ID) as ID, GROUP_CONCAT(transrefno ORDER BY ID SEPARATOR ', ') as transrefnos,
+                memberno, transdate, MIN(transtime) as transtime, clerk,
+                SUM(amount) as amount, photo_filename, photo_directory,
+                COUNT(*) as item_count,
+                GROUP_CONCAT(CONCAT(descript, ' (', quantity, ')') ORDER BY ID SEPARATOR ', ') as items_summary
          FROM transactions 
          WHERE ${whereClause}
-         ORDER BY ID DESC
+         GROUP BY photo_filename, memberno, transdate, clerk, photo_directory
+         ORDER BY MIN(ID) DESC
          LIMIT ? OFFSET ?`,
         [...params, limit, offset]
       );

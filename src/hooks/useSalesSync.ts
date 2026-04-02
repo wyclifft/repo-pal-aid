@@ -213,7 +213,7 @@ export const useSalesSync = () => {
             item_name: String(saleRecord.item_name || '').trim(),
             quantity: Number(saleRecord.quantity) || 0,
             price: Number(saleRecord.price) || 0,
-            route: String(saleRecord.route || '').trim(), // Include route for DB
+            route: String(saleRecord.route_tcode || saleRecord.route || '').trim(), // Prefer tcode over farmer route
             user_id: String(saleRecord.user_id || '').trim(), // Login user_id → DB: userId
             sold_by: String(saleRecord.sold_by || '').trim(), // Display name → DB: clerk
             device_fingerprint: deviceFingerprint,
