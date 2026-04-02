@@ -118,7 +118,7 @@ export const useSalesSync = () => {
             transtype: 2,
             farmer_id: String(firstSale.farmer_id || '').replace(/^#/, '').trim(),
             farmer_name: String(firstSale.farmer_name || '').trim(),
-            route: String(firstSale.route || '').trim(), // Include route for DB
+            route: String(firstSale.route_tcode || firstSale.route || '').trim(), // Prefer tcode over farmer route
             route_tcode: String(firstSale.route_tcode || '').trim(), // Dashboard-selected fm_tanks.tcode
             user_id: String(firstSale.user_id || '').trim(), // Login user_id → DB: userId
             sold_by: String(firstSale.sold_by || '').trim(), // Display name → DB: clerk
