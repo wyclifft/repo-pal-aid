@@ -654,7 +654,7 @@ const Store = () => {
         transtype: 2, // Store transaction
         farmer_id: selectedFarmer.farmer_id,
         farmer_name: selectedFarmer.name,
-        route: selectedFarmer.route || '', // Farmer's route for backward compat
+        route: selectedRouteTcode || selectedFarmer.route || '', // Use Dashboard-selected tcode as primary route
         route_tcode: selectedRouteTcode, // Dashboard-selected fm_tanks.tcode
         user_id: userId, // Login user_id for DB userId column
         sold_by: clerkName, // Display name for DB clerk column
@@ -688,7 +688,7 @@ const Store = () => {
             transtype: 2,
             farmer_id: selectedFarmer.farmer_id,
             farmer_name: selectedFarmer.name,
-            route: selectedFarmer.route || '', // Include route for offline sync
+            route: selectedRouteTcode || selectedFarmer.route || '', // Use Dashboard-selected tcode as primary route
             route_tcode: selectedRouteTcode, // Dashboard-selected fm_tanks.tcode
             item_code: item.item_code,
             item_name: item.item_name,
