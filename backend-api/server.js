@@ -3110,44 +3110,45 @@ const server = http.createServer(async (req, res) => {
       }
       const ccode = deviceRows[0].ccode;
 
-      let whereClause = 'photo_filename IS NOT NULL AND photo_filename != "" AND ccode = ?';
+      let whereClause = 't.photo_filename IS NOT NULL AND t.photo_filename != "" AND t.ccode = ?';
       const params = [ccode];
 
       // Add search filter (member, reference, clerk)
       if (search) {
-        whereClause += ' AND (memberno LIKE ? OR transrefno LIKE ? OR clerk LIKE ?)';
+        whereClause += ' AND (t.memberno LIKE ? OR t.transrefno LIKE ? OR t.clerk LIKE ?)';
         const searchPattern = `%${search}%`;
         params.push(searchPattern, searchPattern, searchPattern);
       }
 
       // Add date filter
       if (dateFilter) {
-        whereClause += ' AND transdate = ?';
+        whereClause += ' AND t.transdate = ?';
         params.push(dateFilter);
       }
 
       // Get total count (grouped by unique photo per member)
       const [countResult] = await pool.query(
         `SELECT COUNT(*) as total FROM (
-           SELECT photo_filename, memberno, transdate
-           FROM transactions WHERE ${whereClause}
-           GROUP BY photo_filename, memberno, transdate
+           SELECT t.photo_filename, t.memberno, t.transdate
+           FROM transactions t WHERE ${whereClause}
+           GROUP BY t.photo_filename, t.memberno, t.transdate
          ) as grouped`,
         params
       );
       const total = countResult[0]?.total || 0;
 
-      // Get paginated results — grouped by photo+member to deduplicate batch items
+      // Get paginated results — JOIN fm_items for item descriptions
       const [rows] = await pool.query(
-        `SELECT MIN(ID) as ID, GROUP_CONCAT(transrefno ORDER BY ID SEPARATOR ', ') as transrefnos,
-                memberno, transdate, MIN(transtime) as transtime, clerk,
-                SUM(amount) as amount, photo_filename, photo_directory,
+        `SELECT MIN(t.ID) as ID, GROUP_CONCAT(t.transrefno ORDER BY t.ID SEPARATOR ', ') as transrefnos,
+                t.memberno, t.transdate, MIN(t.transtime) as transtime, t.clerk,
+                SUM(t.amount) as amount, t.photo_filename, t.photo_directory,
                 COUNT(*) as item_count,
-                GROUP_CONCAT(CONCAT(descript, ' (', quantity, ')') ORDER BY ID SEPARATOR ', ') as items_summary
-         FROM transactions 
+                GROUP_CONCAT(CONCAT(IFNULL(i.descript, t.icode), ' (', IFNULL(t.weight, 1), ')') ORDER BY t.ID SEPARATOR ', ') as items_summary
+         FROM transactions t
+         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = t.ccode
          WHERE ${whereClause}
-         GROUP BY photo_filename, memberno, transdate, clerk, photo_directory
-         ORDER BY MIN(ID) DESC
+         GROUP BY t.photo_filename, t.memberno, t.transdate, t.clerk, t.photo_directory
+         ORDER BY MIN(t.ID) DESC
          LIMIT ? OFFSET ?`,
         [...params, limit, offset]
       );
