@@ -3167,13 +3167,14 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
+      const adjustedTotal = validRows.length < rows.length ? total - (rows.length - validRows.length) : total;
       return sendJSON(res, {
         success: true,
         data: validRows,
-        total: validRows.length < rows.length ? total - (rows.length - validRows.length) : total,
+        total: adjustedTotal,
         page,
         limit,
-        totalPages: Math.ceil(total / limit)
+        totalPages: Math.ceil(adjustedTotal / limit)
       });
     }
 

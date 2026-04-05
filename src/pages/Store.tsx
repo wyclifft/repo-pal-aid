@@ -559,6 +559,11 @@ const Store = () => {
       toast.error('Please add items to cart');
       return;
     }
+    // Block submission if any item has zero quantity
+    if (cart.some(c => c.quantity <= 0)) {
+      toast.error('Please set quantity for all items');
+      return;
+    }
     // Open photo capture dialog
     setShowPhotoCapture(true);
   };
@@ -903,7 +908,7 @@ const Store = () => {
           </button>
           <button
             onClick={handleInitiateSale}
-            disabled={submitting || cart.length === 0}
+            disabled={submitting || cart.length === 0 || cart.some(c => c.quantity <= 0)}
             className="flex-1 py-3 bg-[#7E57C2] text-white font-bold rounded-full disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <Camera className="h-4 w-4" />
@@ -970,23 +975,23 @@ const Store = () => {
 
       {/* Farmer Search Modal */}
       <Dialog open={showFarmerSearch} onOpenChange={setShowFarmerSearch}>
-        <DialogContent className="sm:max-w-md p-0" hideCloseButton>
-          <DialogHeader className="px-4 py-3 border-b flex flex-row items-center justify-between">
+        <DialogContent className="sm:max-w-md max-h-[85vh] flex flex-col p-0 gap-0" hideCloseButton>
+          <DialogHeader className="px-4 py-3 border-b flex flex-row items-center justify-between shrink-0">
             <DialogTitle>SEARCH MEMBER</DialogTitle>
             <button onClick={() => setShowFarmerSearch(false)} className="p-2 bg-[#E53935] text-white rounded">
               <X className="h-4 w-4" />
             </button>
           </DialogHeader>
-          <div className="p-4">
+          <div className="p-4 flex flex-col flex-1 min-h-0">
             <input
               type="text"
               placeholder="Search by ID or name..."
               value={farmerSearchQuery}
               onChange={(e) => setFarmerSearchQuery(e.target.value)}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3"
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3 shrink-0"
               autoFocus
             />
-            <div className="max-h-64 overflow-y-auto space-y-2">
+            <div className="flex-1 overflow-y-auto space-y-2 min-h-0 pb-4">
               {filteredFarmers.map((farmer, i) => (
                 <button
                   key={farmer.farmer_id}

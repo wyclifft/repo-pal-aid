@@ -1,4 +1,4 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.10.14: Fix photo audit 500 error — JOIN fm_items for item descriptions
-export const APP_VERSION = '2.10.14';
+// v2.10.15: Block zero-qty submissions, fix farmer search keyboard visibility, fix photo audit pagination
+export const APP_VERSION = '2.10.15';
 export const APP_VERSION_CODE = 40;
