@@ -1,4 +1,4 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.10.15: Block zero-qty submissions, fix farmer search keyboard visibility, fix photo audit pagination
-export const APP_VERSION = '2.10.15';
+// v2.10.16: Fix IndexedDB bugs: device_approvals preservation, orderId collision safety, byProduct retention, dedicated printed_receipts store
+export const APP_VERSION = '2.10.16';
 export const APP_VERSION_CODE = 40;
