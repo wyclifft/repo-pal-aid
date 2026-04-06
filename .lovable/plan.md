@@ -1,68 +1,84 @@
 
 
-## Bug Fixes Found — v2.10.15
+## Fix: 4 IndexedDB Bugs — v2.10.16
 
-### Bug 1: Zero-quantity items can be submitted
+### Bug 1: `device_approvals` wiped on every upgrade
 
-**Problem**: When a user clears the quantity field (quantity becomes 0), the SUBMIT button remains enabled. Submitting creates transactions with `quantity: 0` and `amount: 0` in the database.
+**Problem**: Lines 63-71 unconditionally delete and recreate the `device_approvals` store during `onupgradeneeded`. This runs on every version bump, wiping all cached device authorization data and forcing users to re-authorize online.
 
-**Fix** in `src/pages/Store.tsx`:
-- Add a validation guard in `handleSubmit` (around line 568) and `handleInitiateSale` (line 553): check that all cart items have `quantity > 0`. If any item has zero quantity, show a toast error and block submission.
-- Also disable the SUBMIT button when any cart item has zero quantity (line 906).
+**Fix**: Only recreate when the store doesn't exist OR when the keyPath is wrong. Use the upgrade transaction to check the existing store's keyPath before deciding to delete.
 
 ```typescript
-const hasZeroQty = cart.some(c => c.quantity <= 0);
-
-// In handleInitiateSale:
-if (hasZeroQty) {
-  toast.error('Please set quantity for all items');
-  return;
+if (database.objectStoreNames.contains('device_approvals')) {
+  const existingStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('device_approvals');
+  if (existingStore.keyPath !== 'device_fingerprint') {
+    database.deleteObjectStore('device_approvals');
+    database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
+  }
+  // else: already correct, leave it alone
+} else {
+  database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
 }
 ```
 
-### Bug 2: Farmer search results hidden by keyboard on mobile
+### Bug 2: `Date.now()` orderId collision in `saveSale`
 
-**Problem**: The farmer search modal (line 989) uses `max-h-64` (256px) for the results list. On mobile devices with a virtual keyboard open, this is too small and results get clipped below the keyboard.
+**Problem**: Line 389 uses `Date.now()` for `orderId`. Rapid POS operations (scanning multiple items quickly) can produce the same millisecond timestamp, causing `store.put()` to silently overwrite the previous sale.
 
-**Fix** in `src/pages/Store.tsx`:
-- Change the farmer search Dialog to use the same pattern as the item search dialog (which already has `max-h-[85vh] flex flex-col` and flex-based scrolling).
-- Apply `max-h-[85vh] flex flex-col` to the DialogContent and `flex-1 overflow-y-auto min-h-0` to the results container.
+**Fix**: Append a random suffix to guarantee uniqueness:
 
-### Bug 3: Photo audit pagination mismatch
-
-**Problem**: In `backend-api/server.js` (line 3170-3177), the server filters out deleted photos from `rows` but still returns the original SQL `total` count. When deleted photos span pages, the page count is inflated — users see empty or partially-empty pages.
-
-**Fix** in `backend-api/server.js`:
-- Return the adjusted total consistently. The current code partially adjusts (`total - (rows.length - validRows.length)`) but this only accounts for the current page. A better approach: run the count query with the same `fs.existsSync` check is impractical, so instead just note when rows were filtered and return `filteredTotal` as a hint. The simplest safe fix: set `totalPages` based on the adjusted total.
-
-Actually, the current adjustment `total - (rows.length - validRows.length)` is a reasonable approximation. The real issue is that `totalPages` on line 3176 still uses the unadjusted `total`. Fix: use the adjusted total for `totalPages`.
-
-```javascript
-const adjustedTotal = validRows.length < rows.length ? total - (rows.length - validRows.length) : total;
-return sendJSON(res, {
-  success: true,
-  data: validRows,
-  total: adjustedTotal,
-  page,
-  limit,
-  totalPages: Math.ceil(adjustedTotal / limit)  // was using unadjusted total
-});
+```typescript
+const orderId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
 ```
 
+Apply same fix in `saveReceipt` (line 214) where `Date.now()` is used as fallback.
+
+### Bug 3: `byProduct` dropped on local cumulative update
+
+**Problem**: Lines 794-803 — when `fromBackend === false`, the new record omits `byProduct`, losing the backend-synced product breakdown. The existing `byProduct` array from the cached record is silently dropped.
+
+**Fix**: Preserve existing `byProduct` when doing a local increment:
+
+```typescript
+newRecord = {
+  cacheKey,
+  farmer_id: cleanId,
+  month,
+  baseCount: existing?.baseCount || 0,
+  localCount: (existing?.localCount || 0) + count,
+  byProduct: existing?.byProduct || [],  // preserve existing breakdown
+  lastUpdated: new Date().toISOString()
+};
+```
+
+### Bug 4: `PRINTED_RECEIPTS` mixed-type key
+
+**Problem**: The `receipts` store has `keyPath: 'orderId'` (numeric). But `savePrintedReceipts` stores a record with `orderId: 'PRINTED_RECEIPTS'` (string). This mixes key types in the same store, which can cause IndexedDB comparison issues and complicates queries like `getUnsyncedReceipts` (line 266) and `clearUnsyncedReceipts` (line 625) which must explicitly filter it out.
+
+**Fix**: Move printed receipts to a dedicated store. Increment DB_VERSION to 11, create a `printed_receipts` store with a fixed key, and migrate existing data:
+
+```typescript
+// In onupgradeneeded:
+if (!database.objectStoreNames.contains('printed_receipts')) {
+  database.createObjectStore('printed_receipts', { keyPath: 'id' });
+}
+```
+
+Update `savePrintedReceipts` and `getPrintedReceipts` to use the new store with `id: 'default'`. On first open, migrate existing `PRINTED_RECEIPTS` entry from `receipts` store and delete it.
+
 ### Version bump
-`src/constants/appVersion.ts` → v2.10.15
+`src/constants/appVersion.ts` → v2.10.16
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/pages/Store.tsx` | Block submit with zero-qty items; fix farmer search modal height for keyboard visibility |
-| `backend-api/server.js` | Fix photo audit pagination using adjusted total |
-| `src/constants/appVersion.ts` | Bump to v2.10.15 |
+| `src/hooks/useIndexedDB.ts` | Fix all 4 bugs: conditional device_approvals recreation, collision-safe orderId, preserve byProduct, separate printed_receipts store (DB_VERSION 11) |
+| `src/constants/appVersion.ts` | Bump to v2.10.16 |
 
 ### Safety
-- No schema changes
-- No API contract changes
-- Existing APK behavior unaffected
-- All fixes are additive guards or UI improvements
+- DB version increment triggers `onupgradeneeded` once — all existing stores preserved
+- Printed receipts migrated automatically from old location
+- No API changes — all existing callers (`ReprintContext`, `useDataSync`, etc.) use the same hook functions
+- `getUnsyncedReceipts` filter for `PRINTED_RECEIPTS` kept as a safety net during migration window
 
