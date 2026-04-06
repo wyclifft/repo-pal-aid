@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 10; // Incremented for farmer_cumulative store
+const DB_VERSION = 11; // v2.10.16: Fix device_approvals preservation, orderId collisions, byProduct drop, printed_receipts store
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -60,15 +60,26 @@ export const useIndexedDB = () => {
         database.createObjectStore('app_users', { keyPath: 'user_id' });
       }
 
-      // Always recreate device_approvals to ensure correct keyPath
+      // Only recreate device_approvals if keyPath is wrong — preserve data on normal upgrades
       if (database.objectStoreNames.contains('device_approvals')) {
-        database.deleteObjectStore('device_approvals');
+        try {
+          const existingStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('device_approvals');
+          if (existingStore.keyPath !== 'device_fingerprint') {
+            console.log('[DB] device_approvals keyPath mismatch, recreating store');
+            database.deleteObjectStore('device_approvals');
+            database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
+          } else {
+            console.log('[DB] device_approvals store preserved with correct keyPath');
+          }
+        } catch (e) {
+          console.warn('[DB] Could not verify device_approvals, recreating:', e);
+          database.deleteObjectStore('device_approvals');
+          database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
+        }
+      } else {
+        database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
+        console.log('[DB] Created device_approvals store with keyPath: device_fingerprint');
       }
-      // Create with explicit keyPath - this is critical for offline login
-      const deviceApprovalsStore = database.createObjectStore('device_approvals', { 
-        keyPath: 'device_fingerprint' 
-      });
-      console.log('Created device_approvals store with keyPath: device_fingerprint');
 
       // Add items store for offline caching
       if (!database.objectStoreNames.contains('items')) {
@@ -106,6 +117,30 @@ export const useIndexedDB = () => {
         const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
         cumStore.createIndex('farmer_month', ['farmer_id', 'month'], { unique: true });
         console.log('[DB] Created farmer_cumulative store');
+      }
+
+      // Add dedicated printed_receipts store (Bug 4 fix: remove mixed-type key from receipts store)
+      if (!database.objectStoreNames.contains('printed_receipts')) {
+        database.createObjectStore('printed_receipts', { keyPath: 'id' });
+        console.log('[DB] Created printed_receipts store');
+        
+        // Migrate existing PRINTED_RECEIPTS from receipts store if it exists
+        if (database.objectStoreNames.contains('receipts')) {
+          try {
+            const receiptStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('receipts');
+            const getReq = receiptStore.get('PRINTED_RECEIPTS');
+            getReq.onsuccess = () => {
+              if (getReq.result) {
+                const printedStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('printed_receipts');
+                printedStore.put({ id: 'default', receipts: getReq.result.receipts || [], lastUpdated: new Date() });
+                receiptStore.delete('PRINTED_RECEIPTS');
+                console.log('[DB] Migrated PRINTED_RECEIPTS to dedicated store');
+              }
+            };
+          } catch (migErr) {
+            console.warn('[DB] Could not migrate printed receipts:', migErr);
+          }
+        }
       }
     };
 
@@ -211,7 +246,8 @@ export const useIndexedDB = () => {
       }
       
       // Ensure orderId exists for IndexedDB key
-      const orderId = receipt.orderId || Date.now();
+      // Use collision-safe ID: milliseconds * 1000 + random suffix
+      const orderId = receipt.orderId || (Date.now() * 1000 + Math.floor(Math.random() * 1000));
       const receiptWithId = {
         ...receipt,
         orderId,
@@ -386,7 +422,8 @@ export const useIndexedDB = () => {
         
         const saleRecord = {
           ...sale,
-          orderId: Date.now(),
+          // Use collision-safe ID: milliseconds * 1000 + random suffix
+          orderId: Date.now() * 1000 + Math.floor(Math.random() * 1000),
           type: 'sale',
           synced: false,
         };
@@ -571,17 +608,21 @@ export const useIndexedDB = () => {
   const savePrintedReceipts = useCallback(async (receipts: any[]) => {
     if (!db) return;
     try {
+      // Use dedicated printed_receipts store (no more mixed-type keys in receipts store)
+      const storeName = db.objectStoreNames.contains('printed_receipts') ? 'printed_receipts' : 'receipts';
       return new Promise<void>((resolve, reject) => {
-        const tx = db.transaction('receipts', 'readwrite');
-        const store = tx.objectStore('receipts');
-        // Use special orderId for printed receipts storage
-        const request = store.put({
-          orderId: 'PRINTED_RECEIPTS',
-          receipts: receipts,
-          lastUpdated: new Date()
-        });
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
+        if (storeName === 'printed_receipts') {
+          const request = store.put({ id: 'default', receipts, lastUpdated: new Date() });
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        } else {
+          // Fallback for pre-migration: use old format
+          const request = store.put({ orderId: 'PRINTED_RECEIPTS', receipts, lastUpdated: new Date() });
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        }
       });
     } catch (error) {
       console.error('Failed to save printed receipts:', error);
@@ -594,10 +635,12 @@ export const useIndexedDB = () => {
   const getPrintedReceipts = useCallback(async (): Promise<any[]> => {
     if (!db) return [];
     try {
+      const storeName = db.objectStoreNames.contains('printed_receipts') ? 'printed_receipts' : 'receipts';
       return new Promise((resolve, reject) => {
-        const tx = db.transaction('receipts', 'readonly');
-        const store = tx.objectStore('receipts');
-        const request = store.get('PRINTED_RECEIPTS');
+        const tx = db.transaction(storeName, 'readonly');
+        const store = tx.objectStore(storeName);
+        const key = storeName === 'printed_receipts' ? 'default' : 'PRINTED_RECEIPTS';
+        const request = store.get(key);
         request.onsuccess = () => resolve(request.result?.receipts || []);
         request.onerror = () => reject(request.error);
       });
@@ -792,13 +835,14 @@ export const useIndexedDB = () => {
               lastUpdated: new Date().toISOString()
             };
           } else {
-            // Local collection: increment localCount
+            // Local collection: increment localCount, preserve existing byProduct breakdown
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               month,
               baseCount: existing?.baseCount || 0,
               localCount: (existing?.localCount || 0) + count,
+              byProduct: byProduct || existing?.byProduct || [],
               lastUpdated: new Date().toISOString()
             };
           }
