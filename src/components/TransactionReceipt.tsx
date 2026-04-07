@@ -610,6 +610,19 @@ export const TransactionReceipt = ({
                 <span className="font-medium">{deliveredBy}</span>
               </div>
             )}
+            {/* ID NO and SIGN fields for Store/AI receipts */}
+            {(transtype === 2 || transtype === 3) && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">ID NO</span>
+                  <span className="font-medium border-b border-dashed w-32 inline-block">&nbsp;</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">SIGN</span>
+                  <span className="font-medium border-b border-dashed w-32 inline-block">&nbsp;</span>
+                </div>
+              </>
+            )}
             {session && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{periodLabel}</span>

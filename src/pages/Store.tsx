@@ -15,6 +15,7 @@ import PhotoCapture from '@/components/PhotoCapture';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
