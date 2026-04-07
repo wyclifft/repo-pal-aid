@@ -721,6 +721,9 @@ const Store = () => {
         { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
         companyName
       );
+      // Apply printCopies from psettings.printOption
+      const printCopies = psettings?.printOption !== undefined ? Number(psettings.printOption) : 1;
+      receipt.printCopies = printCopies;
       setReceiptData(receipt);
       setShowReceipt(true);
 
