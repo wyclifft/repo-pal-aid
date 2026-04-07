@@ -722,7 +722,7 @@ const Store = () => {
         companyName
       );
       // Apply printCopies from psettings.printOption
-      const printCopies = psettings?.printOption !== undefined ? Number(psettings.printOption) : 1;
+      const printCopies = psettings?.printoptions !== undefined ? Number(psettings.printoptions) : 1;
       receipt.printCopies = printCopies;
       setReceiptData(receipt);
       setShowReceipt(true);
