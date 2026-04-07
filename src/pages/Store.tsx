@@ -15,6 +15,7 @@ import PhotoCapture from '@/components/PhotoCapture';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
@@ -35,6 +36,7 @@ interface ParsedCredit {
 const Store = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
+  const { settings: psettings } = useAppSettings();
   const [items, setItems] = useState<Item[]>([]);
   const [hasRoutes, setHasRoutes] = useState<boolean | null>(null);
   const [storeEnabled, setStoreEnabled] = useState<boolean | null>(null);
@@ -719,6 +721,9 @@ const Store = () => {
         { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
         companyName
       );
+      // Apply printCopies from psettings.printOption
+      const printCopies = psettings?.printoptions !== undefined ? Number(psettings.printoptions) : 1;
+      receipt.printCopies = printCopies;
       setReceiptData(receipt);
       setShowReceipt(true);
 
