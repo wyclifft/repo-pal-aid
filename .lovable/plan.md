@@ -1,3 +1,4 @@
+
 ## Fix: Store printOption + ZeroOpt Button + Receipt Optimization — v2.10.17
 
 ### Bug 1: Store ignores `psettings.printOption`
@@ -11,33 +12,28 @@
 
 ### Bug 2: Buy/Sell portals — Capture button not visually disabled when zeroOpt blocks
 
-**Problem**: `zeroOptBlocked` is passed as a prop and shows a warning banner, but the Capture button at line 533 (BuyProduceScreen) and line 512 (SellProduceScreen) only checks `captureDisabled || weight <= 0`. Users can still tap Capture and get a toast error instead of seeing a disabled button.
+**Problem**: `zeroOptBlocked` is passed as a prop and shows a warning banner, but the Capture button only checks `captureDisabled || weight <= 0`. Users can still tap Capture and get a toast error instead of seeing a disabled button.
 
 **Fix** in `src/components/BuyProduceScreen.tsx` and `src/components/SellProduceScreen.tsx`:
-- Add `zeroOptBlocked` to the Capture button's `disabled` condition: `disabled={!!captureDisabled || weight <= 0 || zeroOptBlocked}`
+- Add `zeroOptBlocked` to the Capture button's `disabled` condition
 - Update the className opacity condition to match
 
 ### Bug 3: Optimize store receipt for space savings
 
-**Problem**: The printed receipt (from the photo) uses wide label padding (14 chars) and a redundant duplicate timestamp at the bottom.
+**Problem**: The printed receipt uses wide label padding (14 chars) and a redundant duplicate timestamp at the bottom.
 
 **Fix** in `src/services/bluetooth.ts` (`printStoreAIReceipt`):
 - Use compact 10-char labels (matching milk receipt style): `MNO`, `Name`, `Ref`, `Date`, `Total[KES]`, `Region`, `Clerk`
-- Remove the duplicate timestamp line at the bottom (line 2196)
-- Keep the date+time on the header Date line
+- Remove the duplicate timestamp line at the bottom
 
 ### Feature: Add ID NO and SIGN fields to store receipt
 
-**Problem**: The receipt photo shows handwritten "ID NO ___" and "SIGN ___" fields. These should be printed.
+Based on the receipt photo, "ID NO ___" and "SIGN ___" fields are being handwritten. These should be printed automatically.
 
-**Fix** in `src/services/bluetooth.ts` (`printStoreAIReceipt`):
-- After the Clerk line, add two blank signature fields:
-```
-ID NO     ________________
-SIGN      ________________
-```
+**Fix** in `src/services/bluetooth.ts`:
+- After the Clerk line, print two blank signature fields with underlines
 
-Also update the on-screen receipt in `TransactionReceipt.tsx` to show these fields visually.
+Also update the on-screen receipt in `TransactionReceipt.tsx` to show these fields.
 
 ### Version bump
 `src/constants/appVersion.ts` → v2.10.17
@@ -50,11 +46,5 @@ Also update the on-screen receipt in `TransactionReceipt.tsx` to show these fiel
 | `src/components/BuyProduceScreen.tsx` | Disable Capture button when `zeroOptBlocked` |
 | `src/components/SellProduceScreen.tsx` | Disable Capture button when `zeroOptBlocked` |
 | `src/services/bluetooth.ts` | Compact labels, remove duplicate timestamp, add ID NO/SIGN fields |
-| `src/components/TransactionReceipt.tsx` | Add ID NO/SIGN fields to on-screen store receipt; accept printCopies in store receipt data |
+| `src/components/TransactionReceipt.tsx` | Add ID NO/SIGN fields to on-screen store receipt |
 | `src/constants/appVersion.ts` | Bump to v2.10.17 |
-
-### Safety
-- No schema changes, no API changes
-- Store receipt printing respects existing `printCopies === 0` path in TransactionReceipt
-- ZeroOpt enforcement in `handleCapture` (Index.tsx) unchanged — button disable is additive
-- Compact labels match existing milk receipt conventions
