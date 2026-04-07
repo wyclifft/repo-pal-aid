@@ -36,6 +36,7 @@ interface ParsedCredit {
 const Store = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
+  const { settings: psettings } = useAppSettings();
   const [items, setItems] = useState<Item[]>([]);
   const [hasRoutes, setHasRoutes] = useState<boolean | null>(null);
   const [storeEnabled, setStoreEnabled] = useState<boolean | null>(null);
