@@ -1,32 +1,42 @@
 
 
-## Fix: Store/AI Receipt Date + Thermal Printer Reprint Timestamp — v2.10.28
+## Fix: Dual-Write to Native SQLite + IndexedDB — v2.10.29
 
-### Bug 1: Store/AI on-screen receipt shows both timestamps as current time
+### Problem
 
-**Root cause**: In `ReprintModal.tsx` line 792-801, when viewing a store/AI receipt, `createStoreReceiptData` / `createAIReceiptData` are called — and both hardcode `transactionDate: new Date()` (lines 765, 800). So every time a receipt is opened from Recent Receipts, the top "Date" field gets the current time instead of the original transaction time.
+The Android app has a native encrypted SQLite database (`sync_records` table via Room) specifically designed for offline data safety. However, **no transaction save path actually writes to it**. Both `Index.tsx` (milk collection) and `Store.tsx` (store/AI sales) only save to IndexedDB via `saveReceipt()` / `saveSale()`. The `saveToLocalDB()` function in `offlineStorage.ts` exists but is never called.
 
-**Fix**:
-- `createStoreReceiptData` and `createAIReceiptData` accept an optional `transactionDate` parameter
-- In `ReprintModal.tsx` line 793-801, pass `viewingReceipt.transactionDate` to the create function
-- In `ReprintModal.tsx` `handleReprint` for store/AI, also pass the stored `transactionDate` to `printStoreAIReceipt`
+This means the native SQLite backup — which survives WebView cache clears and app force-stops — is empty. Users have no safety net if IndexedDB data is lost.
 
-### Bug 2: Thermal printer output has no reprint timestamp
+### Fix
 
-**Root cause**: `printReceipt` (line 2082) and `printStoreAIReceipt` (line 2199) end without a "Reprinted at" line. The receipt only shows the original transaction date.
+Add dual-write calls to the native database alongside every IndexedDB save, without changing existing IndexedDB logic (which remains the primary sync source).
 
-**Fix**:
-- Add optional `reprintedAt?: Date` parameter to `printReceipt` and `printStoreAIReceipt`
-- When `reprintedAt` is provided, append a `Printed: YYYY-MM-DD HH:MM:SS` line before paper feed
-- In `ReprintModal.handleReprint`, pass `reprintedAt: new Date()` so thermal reprints show when they were printed
-- In `useDirectPrint` (first-time prints), do NOT pass `reprintedAt` — no reprint line on original prints
+**`src/pages/Index.tsx`** — After each `saveReceipt()` call (3 locations: lines ~1066, ~1096, ~1113):
+- Import `saveToLocalDB` from `offlineStorage`
+- After confirmed IndexedDB save, call `saveToLocalDB(referenceNo, 'milk_collection', capture)` in a fire-and-forget try/catch (non-blocking — native save failure must not break the flow)
+
+**`src/pages/Store.tsx`** — After the `saveSale()` loop (line ~614):
+- Import `saveToLocalDB` from `offlineStorage`
+- For each batch item saved, call `saveToLocalDB(transrefno, 'store_sale', sale)` in a fire-and-forget try/catch
+
+**`src/pages/AIPage.tsx`** — Check if AI transactions also save offline; if so, add the same dual-write with `'ai_sale'` record type.
+
+**`src/hooks/useDataSync.ts`** — After successful sync + IndexedDB delete, also call `markNativeRecordSynced(referenceNo)` (already imported but only used in `syncOfflineReceipts` — verify it covers sales too).
+
+**`src/constants/appVersion.ts`** → v2.10.29
+
+### Important safety notes
+- Native save is **fire-and-forget**: if it fails (e.g., on web platform), the flow continues normally with IndexedDB as primary
+- `saveToLocalDB` already returns `null` gracefully on non-native platforms
+- No changes to sync logic — IndexedDB remains the sync source; native DB is a backup layer
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/components/TransactionReceipt.tsx` | `createStoreReceiptData` and `createAIReceiptData` accept optional `transactionDate` param, default to `new Date()` |
-| `src/components/ReprintModal.tsx` | Pass stored `transactionDate` when viewing/reprinting store/AI receipts; pass `reprintedAt: new Date()` to thermal print calls |
-| `src/services/bluetooth.ts` | `printReceipt` and `printStoreAIReceipt` accept optional `reprintedAt` and append printed-on line |
-| `src/constants/appVersion.ts` | Bump to v2.10.28 |
+| `src/pages/Index.tsx` | Add `saveToLocalDB` call after each `saveReceipt` |
+| `src/pages/Store.tsx` | Add `saveToLocalDB` call after each `saveSale` |
+| `src/pages/AIPage.tsx` | Add `saveToLocalDB` call if offline saves exist |
+| `src/constants/appVersion.ts` | Bump to v2.10.29 |
 
