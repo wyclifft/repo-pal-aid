@@ -647,17 +647,28 @@ export const ReprintModal = ({
                     </div>
                   </div>
                   
-                  {/* Timestamp + Reference */}
-                  <div className="flex items-center justify-between text-[10px] sm:text-xs text-muted-foreground">
+                  {/* Transaction Date + Printed On + Reference */}
+                  <div className="flex flex-col gap-0.5 text-[10px] sm:text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between">
+                      <span>
+                        Date: {format(
+                          new Date(
+                            receipt.transactionDate ||
+                            (receipt.collections?.[0]?.date ? receipt.collections[0].date : receipt.printedAt)
+                          ),
+                          'MMM dd, yyyy'
+                        )}
+                      </span>
+                      {receipt.uploadrefno && (
+                        <span className="font-mono text-[10px] truncate max-w-[100px]">
+                          {receipt.uploadrefno}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1">
                       <Clock className="h-3 w-3 flex-shrink-0" />
-                      <span className="truncate">{format(new Date(receipt.printedAt), 'MMM dd, HH:mm')}</span>
+                      <span>Printed: {format(new Date(receipt.printedAt), 'MMM dd, HH:mm')}</span>
                     </div>
-                    {receipt.uploadrefno && (
-                      <span className="font-mono text-[10px] truncate max-w-[100px]">
-                        {receipt.uploadrefno}
-                      </span>
-                    )}
                   </div>
 
                   {/* Cumulative + Delivered By - only for milk/coffee receipts */}
