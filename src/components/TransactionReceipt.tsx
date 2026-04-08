@@ -750,7 +750,8 @@ export const createStoreReceiptData = (
   }>,
   memberInfo: { id: string; name: string; route?: string },
   transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string; deliveredBy?: string },
-  companyName: string
+  companyName: string,
+  transactionDate?: Date
 ): ReceiptData => {
   return {
     transtype: 2,
@@ -762,7 +763,7 @@ export const createStoreReceiptData = (
     memberRoute: memberInfo.route,
     clerkName: transactionInfo.clerkName,
     // Store transactions do NOT have deliveredBy - only Buy/Sell portals do
-    transactionDate: new Date(),
+    transactionDate: transactionDate || new Date(),
     items: cartItems.map(c => ({
       reference_no: transactionInfo.transrefno,
       item_code: c.item.icode,
@@ -785,7 +786,8 @@ export const createAIReceiptData = (
   }>,
   memberInfo: { id: string; name: string; route?: string },
   transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string; deliveredBy?: string },
-  companyName: string
+  companyName: string,
+  transactionDate?: Date
 ): ReceiptData => {
   return {
     transtype: 3,
@@ -797,7 +799,7 @@ export const createAIReceiptData = (
     memberRoute: memberInfo.route,
     clerkName: transactionInfo.clerkName,
     // AI transactions do NOT have deliveredBy - only Buy/Sell portals do
-    transactionDate: new Date(),
+    transactionDate: transactionDate || new Date(),
     items: cartItems.map(c => ({
       reference_no: transactionInfo.transrefno,
       item_code: c.item.icode,

@@ -135,7 +135,8 @@ export const ReprintModal = ({
             items: receipt.items,
             totalAmount: receipt.totalAmount || 0,
             transactionDate,
-            receiptType: receipt.type as 'store' | 'ai'
+            receiptType: receipt.type as 'store' | 'ai',
+            reprintedAt: new Date()
           });
 
           if (!result.success) {
@@ -180,7 +181,8 @@ export const ReprintModal = ({
             cumulativeFrequency: receipt.cumulativeWeight,
             cumulativeByProduct: receipt.cumulativeByProduct,
             locationName: locationName || firstReceipt.route,
-            collectionDate: collectionDateTime
+            collectionDate: collectionDateTime,
+            reprintedAt: new Date()
           });
 
           if (!result.success) {
@@ -790,6 +792,10 @@ export const ReprintModal = ({
     {viewingReceipt && (() => {
       if ((viewingReceipt.type === 'store' || viewingReceipt.type === 'ai') && viewingReceipt.items) {
         const createFn = viewingReceipt.type === 'store' ? createStoreReceiptData : createAIReceiptData;
+        // Pass stored transactionDate so the top "Date" field shows original time
+        const storedDate = viewingReceipt.transactionDate 
+          ? new Date(viewingReceipt.transactionDate) 
+          : new Date(viewingReceipt.printedAt);
         const receiptData = createFn(
           viewingReceipt.items.map(item => ({
             item: { icode: item.item_code, descript: item.item_name, sprice: item.price },
@@ -798,7 +804,8 @@ export const ReprintModal = ({
           })),
           { id: viewingReceipt.farmerId, name: viewingReceipt.farmerName, route: viewingReceipt.memberRoute },
           { transrefno: viewingReceipt.uploadrefno || '', clerkName: viewingReceipt.clerkName || 'Unknown' },
-          companyName
+          companyName,
+          storedDate
         );
         return (
           <TransactionReceipt
