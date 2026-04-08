@@ -4,7 +4,7 @@
  */
 
 const TARGET_SIZE_KB = 100;
-const MAX_DIMENSION = 800; // Max width/height in pixels
+const MAX_DIMENSION = 640; // Max width/height in pixels (reduced from 800 for memory safety on mobile)
 const MIN_QUALITY = 0.3;
 const MAX_QUALITY = 0.85;
 
@@ -39,11 +39,26 @@ export const compressImage = async (
           height = Math.round(height * ratio);
         }
 
-        // Create canvas for resizing
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
+        // Create canvas for resizing — wrapped in try/catch for memory safety
+        let canvas: HTMLCanvasElement;
+        let ctx: CanvasRenderingContext2D | null;
+        try {
+          canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          ctx = canvas.getContext('2d');
+        } catch (canvasError) {
+          console.warn('📷 Canvas creation failed, trying smaller size:', canvasError);
+          // Fallback: try with even smaller dimensions
+          const fallbackMax = 400;
+          const ratio = Math.min(fallbackMax / img.width, fallbackMax / img.height);
+          width = Math.round(img.width * ratio);
+          height = Math.round(img.height * ratio);
+          canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          ctx = canvas.getContext('2d');
+        }
         
         if (!ctx) {
           reject(new Error('Failed to get canvas context'));

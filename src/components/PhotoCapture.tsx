@@ -90,8 +90,20 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
       });
       
       if (photo.base64String) {
-        // Convert base64 to blob
-        const byteCharacters = atob(photo.base64String);
+        // Convert base64 to blob with null guard
+        let byteCharacters: string;
+        try {
+          byteCharacters = atob(photo.base64String);
+        } catch (decodeErr) {
+          console.error('Failed to decode base64 photo:', decodeErr);
+          setCameraError('Failed to process photo. Please try again.');
+          return;
+        }
+        if (!byteCharacters || byteCharacters.length === 0) {
+          console.error('Empty base64 photo data');
+          setCameraError('Empty photo captured. Please try again.');
+          return;
+        }
         const byteNumbers = new Array(byteCharacters.length);
         for (let i = 0; i < byteCharacters.length; i++) {
           byteNumbers[i] = byteCharacters.charCodeAt(i);
@@ -99,7 +111,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
         const byteArray = new Uint8Array(byteNumbers);
         const originalBlob = new Blob([byteArray], { type: 'image/jpeg' });
         
-        // Compress the image to target size
+        // Compress the image to target size with memory-safe fallback
         setIsCompressing(true);
         try {
           const compressedBlob = await compressImage(originalBlob, targetSizeKB);
@@ -108,10 +120,19 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
           setCapturedImage(previewUrl);
           console.log(`📷 Photo compressed: ${(originalBlob.size / 1024).toFixed(1)}KB → ${(compressedBlob.size / 1024).toFixed(1)}KB`);
         } catch (compressError) {
-          console.warn('Compression failed, using original:', compressError);
-          const previewUrl = `data:image/jpeg;base64,${photo.base64String}`;
-          setCapturedBlob(originalBlob);
-          setCapturedImage(previewUrl);
+          console.warn('📷 Compression failed, trying smaller canvas:', compressError);
+          // Memory-safe fallback: try with much smaller max dimension
+          try {
+            const smallBlob = await compressImage(originalBlob, targetSizeKB * 1.5);
+            const previewUrl = URL.createObjectURL(smallBlob);
+            setCapturedBlob(smallBlob);
+            setCapturedImage(previewUrl);
+          } catch (fallbackError) {
+            console.warn('📷 All compression failed, using original:', fallbackError);
+            const previewUrl = `data:image/jpeg;base64,${photo.base64String}`;
+            setCapturedBlob(originalBlob);
+            setCapturedImage(previewUrl);
+          }
         } finally {
           setIsCompressing(false);
         }
