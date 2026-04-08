@@ -9,6 +9,7 @@ import {
   markNativeRecordSynced, 
   markNativeRecordFailed 
 } from '@/services/offlineStorage';
+import { syncSalesFromDB } from '@/utils/salesSyncEngine';
 
 // Batch processing configuration to prevent overwhelming system during bulk sync
 const SYNC_BATCH_SIZE = 10; // Process 10 records at a time
@@ -500,6 +501,16 @@ export const useDataSync = () => {
       const offlineSync = await syncOfflineReceipts();
       if (offlineSync.synced > 0 && !silent) {
         toast.success(`Synced ${offlineSync.synced} collection${offlineSync.synced !== 1 ? 's' : ''}`);
+      }
+
+      // 1b. Sync pending store/AI sales (globally, no need to visit Store page)
+      try {
+        const salesSync = await syncSalesFromDB(getUnsyncedSales, deleteSale);
+        if (salesSync.synced > 0 && !silent) {
+          toast.success(`Synced ${salesSync.synced} offline sale${salesSync.synced !== 1 ? 's' : ''}`);
+        }
+      } catch (err) {
+        console.warn('[SYNC] Sales sync skipped:', err);
       }
 
       // 2. Fetch and cache routes (only if ccode has routes configured)
