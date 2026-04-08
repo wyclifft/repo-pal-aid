@@ -73,7 +73,11 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
       console.log('Camera permission status:', permStatus);
       
       if (permStatus.camera === 'denied') {
-        setCameraError('Camera permission denied. Please enable camera access in your device settings.');
+        // Native permission denied — fall back to web camera instead of blocking
+        console.warn('📷 Native camera permission denied, falling back to web camera');
+        toast.info('Using in-app camera');
+        nativeCaptureInProgress = false;
+        setUseNativeCamera(false);
         setIsLoading(false);
         return;
       }
@@ -173,7 +177,15 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
         audio: false
       };
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (firstErr: any) {
+        // Retry with minimal constraints as fallback
+        console.warn('📷 getUserMedia failed with full constraints, retrying minimal:', firstErr.message);
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+      
       streamRef.current = stream;
       
       if (videoRef.current) {
@@ -183,7 +195,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
     } catch (error: any) {
       console.error('Camera error:', error);
       if (error.name === 'NotAllowedError') {
-        setCameraError('Camera access denied. Please allow camera permission.');
+        setCameraError('Camera access denied. Please allow camera permission in your device settings.');
       } else if (error.name === 'NotFoundError') {
         setCameraError('No camera found on this device.');
       } else {
