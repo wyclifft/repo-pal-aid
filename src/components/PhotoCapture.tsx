@@ -145,7 +145,11 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
         onClose();
         return;
       }
-      setCameraError('Failed to capture photo. Please try again.');
+      // No system camera app or intent failure — fall back to web camera
+      console.warn('📷 Native camera unavailable, falling back to web camera:', error.message);
+      toast.info('Using in-app camera');
+      nativeCaptureInProgress = false;
+      setUseNativeCamera(false);
     } finally {
       setIsLoading(false);
       nativeCaptureInProgress = false;
