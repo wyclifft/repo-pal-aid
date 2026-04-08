@@ -667,7 +667,7 @@ export const ReprintModal = ({
                     </div>
                     <div className="flex items-center gap-1">
                       <Clock className="h-3 w-3 flex-shrink-0" />
-                      <span>Printed: {format(new Date(receipt.printedAt), 'MMM dd, HH:mm')}</span>
+                      <span>Printed: {format(new Date(receipt.printedAt), 'MMM dd, HH:mm:ss')}</span>
                     </div>
                   </div>
 

@@ -450,7 +450,7 @@ export const useDataSync = () => {
     }
   }, [isReady, getUnsyncedReceipts, deleteReceipt]);
 
-  // Update pending count - includes milk receipts + store/AI sales
+  // Update pending count - split into milk + store/AI sales
   const updatePendingCount = useCallback(async () => {
     if (!isReady) return;
     try {
@@ -467,6 +467,8 @@ export const useDataSync = () => {
       
       if (mountedRef.current) {
         setPendingCount(receiptsOnly.length + salesCount);
+        setPendingMilkCount(receiptsOnly.length);
+        setPendingSalesCount(salesCount);
       }
     } catch (err) {
       console.error('Pending count error:', err);
@@ -725,6 +727,8 @@ export const useDataSync = () => {
     isSyncing,
     lastSyncTime,
     pendingCount,
+    pendingMilkCount,
+    pendingSalesCount,
     updatePendingCount,
     // Member sync state for banner
     isSyncingMembers,
