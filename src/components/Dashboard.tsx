@@ -95,7 +95,7 @@ export const Dashboard = ({
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [availableProductCount, setAvailableProductCount] = useState(0);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
-  const { sessionPrintOnly, periodLabel } = useAppSettings();
+  const { sessionPrintOnly, periodLabel, produceLabel } = useAppSettings();
   
   // Session expiration monitoring - only active when session is started
   const { 
@@ -439,7 +439,7 @@ export const Dashboard = ({
         {/* Sync Status */}
         <div className="text-center py-1.5 flex items-center justify-center gap-3">
           <span className="text-gray-800 font-bold tracking-wide" style={{ fontSize: 'clamp(0.7rem, 2.5vw, 0.8rem)' }}>
-            Milk: {pendingMilkCount}
+            {produceLabel}: {pendingMilkCount}
           </span>
           <span className="text-gray-400">|</span>
           <span className="text-gray-800 font-bold tracking-wide" style={{ fontSize: 'clamp(0.7rem, 2.5vw, 0.8rem)' }}>
