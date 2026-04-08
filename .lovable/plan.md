@@ -1,37 +1,49 @@
 
 
-## Bugs Found — v2.10.20
+## Fix: Sync Store/AI Sales from Dashboard — v2.10.21
 
-### Bug 1: Duplicate sync race condition (Store.tsx vs useSalesSync hook)
+### Problem
 
-**Problem**: `Store.tsx` lines 331-432 contain an **inline `syncPendingSales` function** that reads from the same IndexedDB store as the `useSalesSync` hook (which auto-syncs on `online` events). Both run concurrently, causing the backend to receive duplicate submissions and return `⚠️ Duplicate item skipped` warnings.
+The `useSalesSync` hook (which syncs store/AI sales) is only mounted inside `Store.tsx` and `AIPage.tsx`. When the user is on the Dashboard or any other page, pending store sales sit in IndexedDB unsent. The user must navigate to the Store page to trigger sync.
 
-Additionally, the inline version (line 364) uses `route: String(firstSale.route || '')` — it does NOT prefer `route_tcode`, bypassing the fix already in the hook.
+Meanwhile, `useDataSync` (used on the Dashboard) syncs milk receipts, farmers, items, routes, sessions, and reports — but **never calls** `syncPendingSales` for store/AI transactions.
 
-**Fix**: Delete the inline `syncPendingSales` function (lines 331-432). Destructure `syncPendingSales` from the existing `useSalesSync()` hook and call it in the mount effect (line 158). Remove the now-unused `deleteSale` from the `useIndexedDB` destructure.
+### Fix
 
-### Bug 2: `useDataSync` still filters for `PRINTED_RECEIPTS` string key
+**`src/hooks/useDataSync.ts`** — Add store/AI sales sync to `syncAllData`:
 
-**Problem**: `useDataSync.ts` line 458 still checks `r.orderId === 'PRINTED_RECEIPTS'`. Since v2.10.16 migrated printed receipts to a dedicated store, this filter is dead code — but more importantly, it would silently hide a real receipt if its `orderId` somehow matched (edge case). It should be removed for clarity.
+1. Import `mysqlApi` batch sale functions and `generateDeviceFingerprint` (already imported).
+2. After step 1 (milk receipt sync, ~line 503), add a new step that reads unsynced sales from IndexedDB (`getUnsyncedSales`), groups by `uploadrefno`, and syncs them using the same logic as `useSalesSync` — batch for store, individual for AI.
+3. This means store sales sync on app launch, on periodic background sync, and on the `online` event — all from the Dashboard without visiting the Store page.
 
-**Fix**: Remove the `PRINTED_RECEIPTS` filter line from `updatePendingCount` (line 458).
+To avoid duplicating the batch sync logic, extract the core sync function from `useSalesSync` into a shared utility (`src/utils/salesSyncEngine.ts`) and call it from both `useDataSync.syncAllData` and `useSalesSync.syncPendingSales`.
 
-### Bug 3: `useSalesSync` hook missing `route_tcode` field in batch request
+**Alternative (simpler)**: Just import and call `useSalesSync` couldn't work (hooks can't call hooks). Instead, add the sales sync directly into `syncAllData` after milk sync:
 
-**Problem**: In `useSalesSync.ts` line 119, the batch request sets `route_tcode` but the Store inline sync at line 364 doesn't. With the inline sync removed (Bug 1 fix), this is resolved. However, the hook itself should also verify `route_tcode` is passed as a top-level field — currently it does (line 119), so this is confirmed correct.
+```
+// After milk receipt sync in syncAllData:
+const unsyncedSales = await getUnsyncedSales();
+const salesOnly = unsyncedSales.filter(r => r.type === 'sale' || r.type === 'ai');
+// ... batch and sync using same logic as useSalesSync
+```
 
-### Changes
+But this duplicates ~150 lines. Better approach:
+
+**Extract `syncSalesFromDB` as a standalone async function** in `src/utils/salesSyncEngine.ts` that takes `getUnsyncedSales` and `deleteSale` as parameters. Both `useDataSync` and `useSalesSync` call it.
+
+### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/pages/Store.tsx` | Remove inline `syncPendingSales` (lines 331-432); use hook's version; remove unused `deleteSale` |
-| `src/hooks/useDataSync.ts` | Remove stale `PRINTED_RECEIPTS` orderId filter (line 458) |
-| `src/constants/appVersion.ts` | Bump to v2.10.20 (Code 43) |
+| `src/utils/salesSyncEngine.ts` | **New** — extracted sales batch sync logic (store batching + AI individual sync) |
+| `src/hooks/useDataSync.ts` | Call `syncSalesFromDB` inside `syncAllData` after milk receipt sync |
+| `src/hooks/useSalesSync.ts` | Delegate to `syncSalesFromDB` instead of inline logic |
+| `src/constants/appVersion.ts` | Bump to v2.10.21 |
 
 ### Safety
-- No API changes
-- No schema changes
-- The `useSalesSync` hook handles all sync edge cases (duplicates, batching, route_tcode, online handler)
-- Store offline save path unchanged
-- Removing dead `PRINTED_RECEIPTS` filter has no functional impact
+- No API changes — same endpoints, same payload format
+- `useSalesSync` online handler still works as before (for instant sync on Store/AI pages)
+- `useDataSync` adds sales sync to the existing sync flow — no new timers or listeners
+- Global sync lock prevents concurrent runs between the two hooks
+- Existing `route_tcode` preference and duplicate handling preserved
 
