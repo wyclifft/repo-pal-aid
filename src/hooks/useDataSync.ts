@@ -455,7 +455,6 @@ export const useDataSync = () => {
       const unsynced = await getUnsyncedReceipts();
       // Filter out non-receipt entries and sales (sales counted separately)
       const receiptsOnly = unsynced.filter((r: any) => {
-        if (r.orderId === 'PRINTED_RECEIPTS') return false;
         if (r.type === 'sale') return false;
         return true;
       });

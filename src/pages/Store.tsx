@@ -102,7 +102,8 @@ const Store = () => {
   const userId = currentUser?.user_id || 'unknown';
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
 
-  const { getFarmers, saveSale, getUnsyncedSales, deleteSale, getItems, isReady } = useIndexedDB();
+  const { getFarmers, saveSale, getUnsyncedSales, getItems, isReady } = useIndexedDB();
+  const { syncPendingSales: syncPendingSalesHook } = useSalesSync();
   const { addStoreReceipt } = useReprint();
   const { queuePhotoUpload } = useBackgroundPhotoUpload();
 
@@ -155,7 +156,10 @@ const Store = () => {
       loadFarmers();
       loadCreditTypes();
       loadActiveSession();
-      syncPendingSales();
+      syncPendingSalesHook().then(({ synced }) => {
+        if (synced > 0) toast.success(`Synced ${synced} offline sale${synced !== 1 ? 's' : ''}`);
+        updatePendingSalesCount();
+      });
     }, 100);
     return () => clearTimeout(timer);
   }, [isReady]);
@@ -328,108 +332,7 @@ const Store = () => {
     }
   };
 
-  const syncPendingSales = async () => {
-    if (!navigator.onLine || !isReady) return;
-    
-    try {
-      const pendingSales = await getUnsyncedSales();
-      // Filter for store sales only (type === 'sale')
-      const storeSales = pendingSales.filter((r: any) => r.type === 'sale');
-      if (storeSales.length === 0) return;
-      
-      console.log(`[SYNC] Syncing ${storeSales.length} pending store sales...`);
-      const deviceFingerprint = await generateDeviceFingerprint();
-      
-      // Group by uploadrefno for batch sync
-      const batches: Record<string, typeof storeSales> = {};
-      for (const sale of storeSales) {
-        const key = sale.uploadrefno || sale.orderId?.toString() || 'default';
-        if (!batches[key]) batches[key] = [];
-        batches[key].push(sale);
-      }
-      
-      let synced = 0;
-      let failed = 0;
-      
-      for (const [uploadrefno, batchSales] of Object.entries(batches)) {
-        try {
-          const firstSale = batchSales[0];
-          
-          // Build batch request with ALL required fields including user_id and transrefno
-          const batchRequest: BatchSaleRequest = {
-            uploadrefno,
-            transtype: 2, // Store transaction
-            farmer_id: String(firstSale.farmer_id || '').replace(/^#/, '').trim(),
-            farmer_name: String(firstSale.farmer_name || '').trim(),
-            route: String(firstSale.route || '').trim(),
-            user_id: String(firstSale.user_id || '').trim(), // Login user_id → DB: userId
-            sold_by: String(firstSale.sold_by || '').trim(), // Display name → DB: clerk
-            device_fingerprint: deviceFingerprint,
-            photo: firstSale.photo, // ONE photo for batch
-            season: String(firstSale.season || '').trim(), // Session SCODE → DB: CAN
-            items: batchSales.map((sale: any) => ({
-              transrefno: sale.transrefno || '', // Preserve original transrefno
-              item_code: String(sale.item_code || '').trim(),
-              item_name: String(sale.item_name || '').trim(),
-              quantity: Number(sale.quantity) || 0,
-              price: Number(sale.price) || 0,
-            })),
-          };
-          
-          const result = await mysqlApi.sales.createBatch(batchRequest);
-          
-          if (result.success) {
-            for (const sale of batchSales) {
-              if (sale.orderId) {
-                await deleteSale(sale.orderId);
-              }
-            }
-            synced += batchSales.length;
-            console.log(`[SUCCESS] Synced batch: ${uploadrefno} (${batchSales.length} items)`);
-          } else {
-            // Check for duplicate - if so, still delete local
-            const errorMsg = result.error?.toLowerCase() || '';
-            if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
-              for (const sale of batchSales) {
-                if (sale.orderId) {
-                  await deleteSale(sale.orderId);
-                }
-              }
-              synced += batchSales.length;
-              console.log(`[DUPLICATE] Batch already exists: ${uploadrefno}`);
-            } else {
-              failed += batchSales.length;
-              console.error(`[FAILED] Batch sync error: ${result.error}`);
-            }
-          }
-        } catch (error: any) {
-          console.error('[SYNC] Batch sync error:', error);
-          const errorMsg = error?.message?.toLowerCase() || '';
-          if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
-            for (const sale of batchSales) {
-              if (sale.orderId) {
-                await deleteSale(sale.orderId);
-              }
-            }
-            synced += batchSales.length;
-          } else {
-            failed += batchSales.length;
-          }
-        }
-      }
-      
-      if (synced > 0) {
-        toast.success(`Synced ${synced} offline sale${synced !== 1 ? 's' : ''}`);
-      }
-      if (failed > 0) {
-        console.warn(`[SYNC] ${failed} sales failed to sync`);
-      }
-    } catch (error) {
-      console.error('[SYNC] Failed to sync sales:', error);
-    } finally {
-      updatePendingSalesCount();
-    }
-  };
+  // syncPendingSales is now handled by useSalesSync hook (syncPendingSalesHook)
 
   // Resolve member ID to farmer based on mode (M or D prefix)
   const resolveFarmerId = useCallback((input: string): Farmer | null => {
