@@ -654,7 +654,7 @@ export const ReprintModal = ({
                         Date: {format(
                           new Date(
                             receipt.transactionDate ||
-                            (receipt.collections?.[0]?.date ? receipt.collections[0].date : receipt.printedAt)
+                            (receipt.collections?.[0]?.collection_date ? receipt.collections[0].collection_date : receipt.printedAt)
                           ),
                           'MMM dd, yyyy'
                         )}
