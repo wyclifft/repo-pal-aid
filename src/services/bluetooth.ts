@@ -2193,8 +2193,10 @@ export const printStoreAIReceipt = async (data: {
   if (data.deliveredBy && data.deliveredBy !== 'owner') {
     receipt += formatLine('Del.By    ', data.deliveredBy, W) + '\n';
   }
-  receipt += formatLine('ID NO     ', '________________', W) + '\n';
-  receipt += formatLine('SIGN      ', '________________', W) + '\n';
+  receipt += 'ID NO:\n';
+  receipt += '________________________________\n';
+  receipt += 'SIGN:\n';
+  receipt += '________________________________\n';
 
   // Try Classic Bluetooth printer first (for built-in POS printers)
   if (isClassicPrinterConnected()) {
