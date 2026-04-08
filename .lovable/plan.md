@@ -1,38 +1,43 @@
 
 
-## Fix: Separate Sync Counts + Receipt Date/Time Bug — v2.10.22
+## Fix: Search Text Deletion + Store Photo Crash — v2.10.23
 
-### Bug 1: Receipt dates all the same for printOpt=0
+### Bug 1: FarmerSearchModal resets search text while typing
 
-**Root cause**: For milk receipts, `ReprintContext.addMilkReceipt` (line 94) sets `printedAt: new Date()` but never sets a `transactionDate` field. The `ReprintModal` (line 656-657) falls back to `receipt.collections[0].collection_date` for the transaction date — which should be correct. However, the `printedAt` is set at call time, and when `printOpt=0` (no modal shown), the background async block at line 1331 calls `addMilkReceipt` inside a rapid loop — all receipts get essentially the same `printedAt` timestamp.
+**Root cause**: `FarmerSearchModal.tsx` line 24-30 has a `useEffect` that resets `searchQuery` to `''` whenever `isOpen` or `farmers` changes. Since `farmers` is an array prop, any parent re-render that creates a new array reference triggers this effect — wiping the user's input mid-typing.
 
-For store/AI receipts, `transactionDate: new Date()` is set at submit time (Store.tsx line 650), so those should be unique per submission.
+**Fix** in `src/components/FarmerSearchModal.tsx`:
+- Remove `farmers` from the `useEffect` dependency array that resets `searchQuery`. The reset should only happen when the modal **opens** (i.e., `isOpen` transitions from false to true).
+- Use a ref to track previous `isOpen` state, so the reset only fires on open transition, not on every `farmers` update.
 
-**The real issue**: When `printOpt=0`, the receipt modal is skipped and the user sees receipts only in "Recent Receipts". The `printedAt` for each milk receipt is set correctly at `new Date()` per submission. But the `collection_date` on captured collections may share the same timestamp if captures happen in the same minute — they are set at capture time (Index.tsx line 861), not submit time.
+### Bug 2: Store photo capture crashes app on Android
 
-The displayed "Printed: Apr 07, 14:30" uses `HH:mm` format — if two receipts are saved within the same minute, they look identical. Adding seconds will differentiate them.
+**Root cause**: In `src/pages/Store.tsx` lines 1043-1048, the `onCapture` callback calls `handlePhotoCaptured`, then `setShowPhotoCapture(false)`, then `setTimeout(() => handleSubmit(), 100)`. Meanwhile, `PhotoCapture.confirmPhoto()` (line 240-247) **also** calls `onClose()` after `onCapture`. This double-close races with the 100ms `handleSubmit` timeout.
 
-**Fix**:
-- In `ReprintModal.tsx` line 670: change `'MMM dd, HH:mm'` to `'MMM dd, HH:mm:ss'` so printed-on times are distinguishable
-- In `ReprintContext.tsx`: add `transactionDate` to milk receipts using `collections[0].collection_date` so the transaction date is explicitly stored rather than derived
+On Android, the native camera flow causes activity recreation. When the photo returns, the compression runs (creating large canvas + Uint8Array from base64), and then the rapid state changes (close dialog + start submission + blob-to-base64 conversion) can exceed available memory on lower-end devices, causing a crash.
 
-### Feature: Separate sync counts on Dashboard
+**Fix** in `src/components/PhotoCapture.tsx`:
+- Wrap the compression in a try/catch with memory-safe fallback — if compression fails, use a smaller canvas (max 600px instead of 800px).
+- Add a `null` guard after `atob` to prevent crash on empty base64.
 
-**Current state**: Dashboard line 438 shows `SYNC- 0/{pendingCount}` as a single combined number. `useDataSync.updatePendingCount` (line 453-474) sums milk receipts + store/AI sales into one `pendingCount`.
+**Fix** in `src/pages/Store.tsx`:
+- Remove the redundant `setShowPhotoCapture(false)` from the `onCapture` callback (PhotoCapture already calls `onClose` internally via `confirmPhoto`).
+- Increase the `setTimeout` delay from 100ms to 300ms to allow React state to settle after dialog close.
 
-**Fix**: Split `pendingCount` into `pendingMilkCount` and `pendingSalesCount` in `useDataSync`, expose both. Update Dashboard to show them separately:
+**Fix** in `src/utils/imageCompression.ts`:
+- Reduce `MAX_DIMENSION` from 800 to 640 for native platform captures to reduce canvas memory.
+- Add a try/catch around the canvas operations to prevent unhandled crashes.
 
-```
-Milk: 0/3  |  Store/AI: 0/2
-```
+### Version bump
+`src/constants/appVersion.ts` → v2.10.23
 
-### Changes
+### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/hooks/useDataSync.ts` | Split `pendingCount` into `pendingMilkCount` + `pendingSalesCount`; expose both + combined `pendingCount` for backward compat |
-| `src/components/Dashboard.tsx` | Show separate milk and store/AI pending counts |
-| `src/contexts/ReprintContext.tsx` | Set `transactionDate` on milk receipts from `collections[0].collection_date` |
-| `src/components/ReprintModal.tsx` | Show seconds in printed-on time (`HH:mm:ss`) |
-| `src/constants/appVersion.ts` | Bump to v2.10.22 |
+| `src/components/FarmerSearchModal.tsx` | Only reset searchQuery on open transition, not on farmers change |
+| `src/pages/Store.tsx` | Remove double-close, increase submit delay |
+| `src/components/PhotoCapture.tsx` | Add memory safety guards for native camera |
+| `src/utils/imageCompression.ts` | Lower max dimension, add crash guard |
+| `src/constants/appVersion.ts` | Bump to v2.10.23 |
 
