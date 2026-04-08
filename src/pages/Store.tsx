@@ -614,6 +614,7 @@ const Store = () => {
           await saveSale(sale);
         }
         console.log(`💾 Saved ${batchItems.length} items offline for sync`);
+        window.dispatchEvent(new Event('receiptSaved'));
       }
 
       // Create receipt data using unified helper

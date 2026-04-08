@@ -710,9 +710,21 @@ export const useDataSync = () => {
     };
   }, [isReady, offlineFirstMode]); // Only depend on isReady and offlineFirstMode
 
-  // Update pending count on mount
+  // Update pending count on mount and when receipts are saved
   useEffect(() => {
     if (isReady) updatePendingCount();
+
+    // Listen for receipt/sale save events to refresh counts immediately
+    const handleReceiptSaved = () => {
+      console.log('[SYNC] receiptSaved event — refreshing pending counts');
+      updatePendingCount();
+    };
+    window.addEventListener('receiptSaved', handleReceiptSaved);
+    window.addEventListener('syncComplete', handleReceiptSaved);
+    return () => {
+      window.removeEventListener('receiptSaved', handleReceiptSaved);
+      window.removeEventListener('syncComplete', handleReceiptSaved);
+    };
   }, [isReady, updatePendingCount]);
 
   // Cleanup on unmount

@@ -84,67 +84,61 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
       
       // Take photo using native camera
       const photo = await CapacitorCamera.getPhoto({
-        quality: 85,
+        quality: 70,
         allowEditing: false,
-        resultType: CameraResultType.Base64,
+        resultType: CameraResultType.DataUrl,
         source: CameraSource.Camera,
         direction: facingMode === 'user' ? CameraDirection.Front : CameraDirection.Rear,
         correctOrientation: true,
         saveToGallery: false,
       });
       
-      if (photo.base64String) {
-        // Convert base64 to blob with null guard
-        let byteCharacters: string;
+      if (photo.dataUrl) {
+        // Process the photo — separate try/catch so camera errors vs processing errors are distinct
         try {
-          byteCharacters = atob(photo.base64String);
-        } catch (decodeErr) {
-          console.error('Failed to decode base64 photo:', decodeErr);
-          setCameraError('Failed to process photo. Please try again.');
-          return;
-        }
-        if (!byteCharacters || byteCharacters.length === 0) {
-          console.error('Empty base64 photo data');
-          setCameraError('Empty photo captured. Please try again.');
-          return;
-        }
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const originalBlob = new Blob([byteArray], { type: 'image/jpeg' });
-        
-        // Compress the image to target size with memory-safe fallback
-        setIsCompressing(true);
-        try {
-          const compressedBlob = await compressImage(originalBlob, targetSizeKB);
-          const previewUrl = URL.createObjectURL(compressedBlob);
-          setCapturedBlob(compressedBlob);
-          setCapturedImage(previewUrl);
-          console.log(`📷 Photo compressed: ${(originalBlob.size / 1024).toFixed(1)}KB → ${(compressedBlob.size / 1024).toFixed(1)}KB`);
-        } catch (compressError) {
-          console.warn('📷 Compression failed, trying smaller canvas:', compressError);
-          // Memory-safe fallback: try with much smaller max dimension
-          try {
-            const smallBlob = await compressImage(originalBlob, targetSizeKB * 1.5);
-            const previewUrl = URL.createObjectURL(smallBlob);
-            setCapturedBlob(smallBlob);
-            setCapturedImage(previewUrl);
-          } catch (fallbackError) {
-            console.warn('📷 All compression failed, using original:', fallbackError);
-            const previewUrl = `data:image/jpeg;base64,${photo.base64String}`;
-            setCapturedBlob(originalBlob);
-            setCapturedImage(previewUrl);
+          // Memory-efficient: use fetch() to convert dataUrl to blob (single native allocation)
+          const fetchResponse = await fetch(photo.dataUrl);
+          const originalBlob = await fetchResponse.blob();
+          
+          if (originalBlob.size === 0) {
+            console.error('Empty photo captured');
+            setCameraError('Empty photo captured. Please try again.');
+            return;
           }
-        } finally {
-          setIsCompressing(false);
+          
+          // Compress the image to target size with memory-safe fallback
+          setIsCompressing(true);
+          try {
+            const compressedBlob = await compressImage(originalBlob, targetSizeKB);
+            const previewUrl = URL.createObjectURL(compressedBlob);
+            setCapturedBlob(compressedBlob);
+            setCapturedImage(previewUrl);
+            console.log(`📷 Photo compressed: ${(originalBlob.size / 1024).toFixed(1)}KB → ${(compressedBlob.size / 1024).toFixed(1)}KB`);
+          } catch (compressError) {
+            console.warn('📷 Compression failed, trying smaller canvas:', compressError);
+            try {
+              const smallBlob = await compressImage(originalBlob, targetSizeKB * 1.5);
+              const previewUrl = URL.createObjectURL(smallBlob);
+              setCapturedBlob(smallBlob);
+              setCapturedImage(previewUrl);
+            } catch (fallbackError) {
+              console.warn('📷 All compression failed, using original:', fallbackError);
+              const previewUrl = URL.createObjectURL(originalBlob);
+              setCapturedBlob(originalBlob);
+              setCapturedImage(previewUrl);
+            }
+          } finally {
+            setIsCompressing(false);
+          }
+        } catch (processError) {
+          console.error('📷 Photo processing error:', processError);
+          setCameraError('Failed to process photo. Please retake.');
+          return;
         }
       }
     } catch (error: any) {
       console.error('Native camera error:', error);
       if (error.message?.includes('cancelled') || error.message?.includes('canceled')) {
-        // User cancelled - just close
         nativeCaptureInProgress = false;
         onClose();
         return;

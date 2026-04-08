@@ -1067,6 +1067,7 @@ const Index = () => {
               if (saveResult?.success) {
                 console.log(`[DB] Confirmed save for retry: ${referenceNo}`);
                 offlineCount++;
+                window.dispatchEvent(new Event('receiptSaved'));
               } else {
                 console.error(`[ERROR] Failed to save for retry: ${referenceNo}`);
                 toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
@@ -1096,6 +1097,7 @@ const Index = () => {
             if (saveResult?.success) {
               console.log(`[DB] Confirmed offline save: ${capture.reference_no}`);
               offlineCount++;
+              window.dispatchEvent(new Event('receiptSaved'));
             } else {
               console.error(`[ERROR] Failed offline save: ${capture.reference_no}`);
               toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
@@ -1112,6 +1114,7 @@ const Index = () => {
           if (saveResult?.success) {
             console.log(`[DB] Confirmed offline save: ${capture.reference_no}`);
             offlineCount++;
+            window.dispatchEvent(new Event('receiptSaved'));
           } else {
             console.error(`[ERROR] Offline save failed: ${capture.reference_no}`);
             toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
