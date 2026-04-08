@@ -2001,6 +2001,7 @@ export const printReceipt = async (data: {
   locationName?: string;
   collectionDate?: Date;
   deliveredBy?: string;
+  reprintedAt?: Date;
 }): Promise<{ success: boolean; error?: string }> => {
   const companyName = data.companyName || 'DAIRY COLLECTION';
   const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
@@ -2081,6 +2082,14 @@ export const printReceipt = async (data: {
   receipt += formatLine((periodLabel.length <= 10 ? periodLabel.padEnd(10) : periodLabel), data.session || '', W) + '\n';
   receipt += sep + '\n';
 
+  // Add reprint timestamp if this is a reprint
+  if (data.reprintedAt) {
+    const rpDate = data.reprintedAt.toLocaleDateString('en-CA');
+    const rpTime = data.reprintedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    receipt += formatLine('Printed   ', rpDate + ' ' + rpTime, W) + '\n';
+    receipt += sep + '\n';
+  }
+
   // Try Classic Bluetooth printer first (for built-in POS printers)
   if (isClassicPrinterConnected()) {
     console.log('🖨️ Using Classic Bluetooth printer');
@@ -2119,6 +2128,7 @@ export const printStoreAIReceipt = async (data: {
   totalAmount: number;
   transactionDate?: Date;
   receiptType: 'store' | 'ai';
+  reprintedAt?: Date;
 }): Promise<{ success: boolean; error?: string }> => {
   const companyName = data.companyName || 'DAIRY COLLECTION';
   
@@ -2197,6 +2207,13 @@ export const printStoreAIReceipt = async (data: {
   receipt += '________________________________\n';
   receipt += 'SIGN:\n';
   receipt += '________________________________\n';
+
+  // Add reprint timestamp if this is a reprint
+  if (data.reprintedAt) {
+    const rpDate = data.reprintedAt.toLocaleDateString('en-CA');
+    const rpTime = data.reprintedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    receipt += formatLine('Printed   ', rpDate + ' ' + rpTime, W) + '\n';
+  }
 
   // Try Classic Bluetooth printer first (for built-in POS printers)
   if (isClassicPrinterConnected()) {
