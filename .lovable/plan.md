@@ -1,49 +1,38 @@
 
 
-## Fix: Sync Store/AI Sales from Dashboard — v2.10.21
+## Fix: Separate Sync Counts + Receipt Date/Time Bug — v2.10.22
 
-### Problem
+### Bug 1: Receipt dates all the same for printOpt=0
 
-The `useSalesSync` hook (which syncs store/AI sales) is only mounted inside `Store.tsx` and `AIPage.tsx`. When the user is on the Dashboard or any other page, pending store sales sit in IndexedDB unsent. The user must navigate to the Store page to trigger sync.
+**Root cause**: For milk receipts, `ReprintContext.addMilkReceipt` (line 94) sets `printedAt: new Date()` but never sets a `transactionDate` field. The `ReprintModal` (line 656-657) falls back to `receipt.collections[0].collection_date` for the transaction date — which should be correct. However, the `printedAt` is set at call time, and when `printOpt=0` (no modal shown), the background async block at line 1331 calls `addMilkReceipt` inside a rapid loop — all receipts get essentially the same `printedAt` timestamp.
 
-Meanwhile, `useDataSync` (used on the Dashboard) syncs milk receipts, farmers, items, routes, sessions, and reports — but **never calls** `syncPendingSales` for store/AI transactions.
+For store/AI receipts, `transactionDate: new Date()` is set at submit time (Store.tsx line 650), so those should be unique per submission.
 
-### Fix
+**The real issue**: When `printOpt=0`, the receipt modal is skipped and the user sees receipts only in "Recent Receipts". The `printedAt` for each milk receipt is set correctly at `new Date()` per submission. But the `collection_date` on captured collections may share the same timestamp if captures happen in the same minute — they are set at capture time (Index.tsx line 861), not submit time.
 
-**`src/hooks/useDataSync.ts`** — Add store/AI sales sync to `syncAllData`:
+The displayed "Printed: Apr 07, 14:30" uses `HH:mm` format — if two receipts are saved within the same minute, they look identical. Adding seconds will differentiate them.
 
-1. Import `mysqlApi` batch sale functions and `generateDeviceFingerprint` (already imported).
-2. After step 1 (milk receipt sync, ~line 503), add a new step that reads unsynced sales from IndexedDB (`getUnsyncedSales`), groups by `uploadrefno`, and syncs them using the same logic as `useSalesSync` — batch for store, individual for AI.
-3. This means store sales sync on app launch, on periodic background sync, and on the `online` event — all from the Dashboard without visiting the Store page.
+**Fix**:
+- In `ReprintModal.tsx` line 670: change `'MMM dd, HH:mm'` to `'MMM dd, HH:mm:ss'` so printed-on times are distinguishable
+- In `ReprintContext.tsx`: add `transactionDate` to milk receipts using `collections[0].collection_date` so the transaction date is explicitly stored rather than derived
 
-To avoid duplicating the batch sync logic, extract the core sync function from `useSalesSync` into a shared utility (`src/utils/salesSyncEngine.ts`) and call it from both `useDataSync.syncAllData` and `useSalesSync.syncPendingSales`.
+### Feature: Separate sync counts on Dashboard
 
-**Alternative (simpler)**: Just import and call `useSalesSync` couldn't work (hooks can't call hooks). Instead, add the sales sync directly into `syncAllData` after milk sync:
+**Current state**: Dashboard line 438 shows `SYNC- 0/{pendingCount}` as a single combined number. `useDataSync.updatePendingCount` (line 453-474) sums milk receipts + store/AI sales into one `pendingCount`.
+
+**Fix**: Split `pendingCount` into `pendingMilkCount` and `pendingSalesCount` in `useDataSync`, expose both. Update Dashboard to show them separately:
 
 ```
-// After milk receipt sync in syncAllData:
-const unsyncedSales = await getUnsyncedSales();
-const salesOnly = unsyncedSales.filter(r => r.type === 'sale' || r.type === 'ai');
-// ... batch and sync using same logic as useSalesSync
+Milk: 0/3  |  Store/AI: 0/2
 ```
 
-But this duplicates ~150 lines. Better approach:
-
-**Extract `syncSalesFromDB` as a standalone async function** in `src/utils/salesSyncEngine.ts` that takes `getUnsyncedSales` and `deleteSale` as parameters. Both `useDataSync` and `useSalesSync` call it.
-
-### Files Changed
+### Changes
 
 | File | Change |
 |------|--------|
-| `src/utils/salesSyncEngine.ts` | **New** — extracted sales batch sync logic (store batching + AI individual sync) |
-| `src/hooks/useDataSync.ts` | Call `syncSalesFromDB` inside `syncAllData` after milk receipt sync |
-| `src/hooks/useSalesSync.ts` | Delegate to `syncSalesFromDB` instead of inline logic |
-| `src/constants/appVersion.ts` | Bump to v2.10.21 |
-
-### Safety
-- No API changes — same endpoints, same payload format
-- `useSalesSync` online handler still works as before (for instant sync on Store/AI pages)
-- `useDataSync` adds sales sync to the existing sync flow — no new timers or listeners
-- Global sync lock prevents concurrent runs between the two hooks
-- Existing `route_tcode` preference and duplicate handling preserved
+| `src/hooks/useDataSync.ts` | Split `pendingCount` into `pendingMilkCount` + `pendingSalesCount`; expose both + combined `pendingCount` for backward compat |
+| `src/components/Dashboard.tsx` | Show separate milk and store/AI pending counts |
+| `src/contexts/ReprintContext.tsx` | Set `transactionDate` on milk receipts from `collections[0].collection_date` |
+| `src/components/ReprintModal.tsx` | Show seconds in printed-on time (`HH:mm:ss`) |
+| `src/constants/appVersion.ts` | Bump to v2.10.22 |
 
