@@ -17,6 +17,7 @@ import { TransactionReceipt, createAIReceiptData, type ReceiptData } from '@/com
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
+import { saveToLocalDB } from '@/services/offlineStorage';
 
 interface CartItem {
   item: Item;
@@ -464,6 +465,8 @@ const AIPage = () => {
         } else {
           // Save offline for later sync
           await saveOfflineSale(aiTransaction);
+          // Dual-write to native SQLite (fire-and-forget backup)
+          saveToLocalDB(currentTransRefNo, 'ai_sale', aiTransaction).catch(() => {});
           console.log(`💾 AI transaction saved offline: ${refs.transrefno}`);
         }
       }

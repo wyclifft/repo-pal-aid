@@ -20,6 +20,7 @@ import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
+import { saveToLocalDB } from '@/services/offlineStorage';
 
 interface CartItem {
   item: Item;
@@ -612,6 +613,8 @@ const Store = () => {
             // delivered_by not used in Store transactions
           };
           await saveSale(sale);
+          // Dual-write to native SQLite (fire-and-forget backup)
+          saveToLocalDB(item.transrefno, 'store_sale', sale).catch(() => {});
         }
         console.log(`💾 Saved ${batchItems.length} items offline for sync`);
         window.dispatchEvent(new Event('receiptSaved'));

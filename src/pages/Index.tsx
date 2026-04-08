@@ -19,6 +19,7 @@ import { useAppSettings } from '@/hooks/useAppSettings';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
+import { saveToLocalDB } from '@/services/offlineStorage';
 import { toast } from 'sonner';
 
 // Helper: filter cumulative data to only the selected produce type
@@ -1068,6 +1069,8 @@ const Index = () => {
                 console.log(`[DB] Confirmed save for retry: ${referenceNo}`);
                 offlineCount++;
                 window.dispatchEvent(new Event('receiptSaved'));
+                // Dual-write to native SQLite (fire-and-forget backup)
+                saveToLocalDB(referenceNo, 'milk_collection', capture).catch(() => {});
               } else {
                 console.error(`[ERROR] Failed to save for retry: ${referenceNo}`);
                 toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
@@ -1098,6 +1101,8 @@ const Index = () => {
               console.log(`[DB] Confirmed offline save: ${capture.reference_no}`);
               offlineCount++;
               window.dispatchEvent(new Event('receiptSaved'));
+              // Dual-write to native SQLite (fire-and-forget backup)
+              saveToLocalDB(capture.reference_no, 'milk_collection', capture).catch(() => {});
             } else {
               console.error(`[ERROR] Failed offline save: ${capture.reference_no}`);
               toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
@@ -1115,6 +1120,8 @@ const Index = () => {
             console.log(`[DB] Confirmed offline save: ${capture.reference_no}`);
             offlineCount++;
             window.dispatchEvent(new Event('receiptSaved'));
+            // Dual-write to native SQLite (fire-and-forget backup)
+            saveToLocalDB(capture.reference_no, 'milk_collection', capture).catch(() => {});
           } else {
             console.error(`[ERROR] Offline save failed: ${capture.reference_no}`);
             toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
