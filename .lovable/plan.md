@@ -1,32 +1,29 @@
 
 
-## Fix: Wider ID NO and SIGN Fields — v2.10.18
+## Fix: Show Both Transaction Date and Printed Date in Recent Receipts — v2.10.19
 
 ### Problem
 
-The printed receipt uses `________________` (16 underscores) for ID NO and SIGN fields, and the on-screen receipt uses `w-32` (8rem) — both too narrow for handwriting on a thermal receipt.
+The Recent Receipts modal (ReprintModal) only displays `printedAt` (line 654). It does not show the actual transaction date separately. The user wants:
+- **Transaction date** — when the sale/collection happened
+- **Printed on date/time** — when the receipt was originally printed
 
-### Fix
+### Fix in `src/components/ReprintModal.tsx`
 
-**`src/services/bluetooth.ts`** (lines 2196-2197):
-- Print ID NO and SIGN as **full-width lines** instead of label+value format. Each field gets its own label line followed by a full-width underline row, giving the entire 32-character thermal width for writing:
-```
-ID NO:
-________________________________
-SIGN:
-________________________________
-```
+**Lines 650-661** — Update the timestamp row to show both dates:
 
-**`src/components/TransactionReceipt.tsx`** (lines 616-623):
-- Change layout from side-by-side `flex justify-between` to stacked: label on top, full-width dashed underline below (`w-full` instead of `w-32`), with extra vertical spacing (`mt-3`, `min-h-[2rem]`) for finger/pen space.
+1. Show the **transaction date** on the left using `receipt.transactionDate` (for store/AI) or the first collection's date (for milk). Label: date only, e.g. `"Apr 07"`.
+2. Show the **printed on** date/time on the right using `receipt.printedAt`. Label: `"Printed: Apr 07, 14:30"`.
 
-**`src/constants/appVersion.ts`**: Bump to v2.10.18
+For milk receipts that don't have `transactionDate`, derive it from `receipt.collections[0]?.date` or fall back to `printedAt`.
+
+### Version bump
+`src/constants/appVersion.ts` → v2.10.19
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/services/bluetooth.ts` | Full-width underline rows for ID NO / SIGN |
-| `src/components/TransactionReceipt.tsx` | Stacked layout with wider underlines |
-| `src/constants/appVersion.ts` | Bump to v2.10.18 |
+| `src/components/ReprintModal.tsx` | Show transaction date + printed-on date separately in receipt cards |
+| `src/constants/appVersion.ts` | Bump to v2.10.19 |
 
