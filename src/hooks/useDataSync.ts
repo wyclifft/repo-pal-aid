@@ -34,6 +34,8 @@ export const useDataSync = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [pendingMilkCount, setPendingMilkCount] = useState(0);
+  const [pendingSalesCount, setPendingSalesCount] = useState(0);
   // Member sync state for banner display
   const [isSyncingMembers, setIsSyncingMembers] = useState(false);
   const [memberSyncCount, setMemberSyncCount] = useState(0);
