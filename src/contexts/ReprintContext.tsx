@@ -96,6 +96,7 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
       uploadrefno: collections[0].uploadrefno || collections[0].reference_no,
       cumulativeWeight,
       cumulativeByProduct,
+      transactionDate: collections[0].collection_date ? new Date(collections[0].collection_date) : new Date(),
     };
 
     const updatedReceipts = [newReceipt, ...printedReceipts];
