@@ -110,7 +110,7 @@ const Index = () => {
   } = useIndexedDB();
   
   // Data sync hook for background syncing
-  const { isSyncing, pendingCount, syncAllData } = useDataSync();
+  const { isSyncing, pendingCount, pendingMilkCount, pendingSalesCount, syncAllData } = useDataSync();
   
   // App-wide settings from psettings
   const { 
@@ -1533,6 +1533,8 @@ const Index = () => {
         companyName={companyName}
         isOnline={navigator.onLine}
         pendingCount={pendingCount}
+        pendingMilkCount={pendingMilkCount}
+        pendingSalesCount={pendingSalesCount}
         onStartCollection={handleStartCollection}
         onStartSelling={handleStartSelling}
         onLogout={handleLogout}
