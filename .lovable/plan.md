@@ -1,29 +1,37 @@
 
 
-## Fix: Show Both Transaction Date and Printed Date in Recent Receipts — v2.10.19
+## Bugs Found — v2.10.20
 
-### Problem
+### Bug 1: Duplicate sync race condition (Store.tsx vs useSalesSync hook)
 
-The Recent Receipts modal (ReprintModal) only displays `printedAt` (line 654). It does not show the actual transaction date separately. The user wants:
-- **Transaction date** — when the sale/collection happened
-- **Printed on date/time** — when the receipt was originally printed
+**Problem**: `Store.tsx` lines 331-432 contain an **inline `syncPendingSales` function** that reads from the same IndexedDB store as the `useSalesSync` hook (which auto-syncs on `online` events). Both run concurrently, causing the backend to receive duplicate submissions and return `⚠️ Duplicate item skipped` warnings.
 
-### Fix in `src/components/ReprintModal.tsx`
+Additionally, the inline version (line 364) uses `route: String(firstSale.route || '')` — it does NOT prefer `route_tcode`, bypassing the fix already in the hook.
 
-**Lines 650-661** — Update the timestamp row to show both dates:
+**Fix**: Delete the inline `syncPendingSales` function (lines 331-432). Destructure `syncPendingSales` from the existing `useSalesSync()` hook and call it in the mount effect (line 158). Remove the now-unused `deleteSale` from the `useIndexedDB` destructure.
 
-1. Show the **transaction date** on the left using `receipt.transactionDate` (for store/AI) or the first collection's date (for milk). Label: date only, e.g. `"Apr 07"`.
-2. Show the **printed on** date/time on the right using `receipt.printedAt`. Label: `"Printed: Apr 07, 14:30"`.
+### Bug 2: `useDataSync` still filters for `PRINTED_RECEIPTS` string key
 
-For milk receipts that don't have `transactionDate`, derive it from `receipt.collections[0]?.date` or fall back to `printedAt`.
+**Problem**: `useDataSync.ts` line 458 still checks `r.orderId === 'PRINTED_RECEIPTS'`. Since v2.10.16 migrated printed receipts to a dedicated store, this filter is dead code — but more importantly, it would silently hide a real receipt if its `orderId` somehow matched (edge case). It should be removed for clarity.
 
-### Version bump
-`src/constants/appVersion.ts` → v2.10.19
+**Fix**: Remove the `PRINTED_RECEIPTS` filter line from `updatePendingCount` (line 458).
 
-### Files Changed
+### Bug 3: `useSalesSync` hook missing `route_tcode` field in batch request
+
+**Problem**: In `useSalesSync.ts` line 119, the batch request sets `route_tcode` but the Store inline sync at line 364 doesn't. With the inline sync removed (Bug 1 fix), this is resolved. However, the hook itself should also verify `route_tcode` is passed as a top-level field — currently it does (line 119), so this is confirmed correct.
+
+### Changes
 
 | File | Change |
 |------|--------|
-| `src/components/ReprintModal.tsx` | Show transaction date + printed-on date separately in receipt cards |
-| `src/constants/appVersion.ts` | Bump to v2.10.19 |
+| `src/pages/Store.tsx` | Remove inline `syncPendingSales` (lines 331-432); use hook's version; remove unused `deleteSale` |
+| `src/hooks/useDataSync.ts` | Remove stale `PRINTED_RECEIPTS` orderId filter (line 458) |
+| `src/constants/appVersion.ts` | Bump to v2.10.20 (Code 43) |
+
+### Safety
+- No API changes
+- No schema changes
+- The `useSalesSync` hook handles all sync edge cases (duplicates, batching, route_tcode, online handler)
+- Store offline save path unchanged
+- Removing dead `PRINTED_RECEIPTS` filter has no functional impact
 
