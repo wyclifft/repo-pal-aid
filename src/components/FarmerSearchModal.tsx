@@ -19,15 +19,17 @@ export const FarmerSearchModal = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredFarmers, setFilteredFarmers] = useState<Farmer[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const wasOpenRef = useRef(false);
 
-  // Reset search and focus input when modal opens
+  // Reset search and focus input only when modal transitions from closed to open
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !wasOpenRef.current) {
       setSearchQuery('');
       setFilteredFarmers(farmers.slice(0, 50));
       setTimeout(() => inputRef.current?.focus(), 100);
     }
-  }, [isOpen, farmers]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen]);
 
   // Real-time search filter
   useEffect(() => {

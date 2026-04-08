@@ -1042,10 +1042,9 @@ const Store = () => {
         onClose={() => setShowPhotoCapture(false)}
         onCapture={(blob, preview) => {
           handlePhotoCaptured(blob, preview);
-          // Auto-submit after photo is captured
-          setShowPhotoCapture(false);
-          // Small delay to let state update
-          setTimeout(() => handleSubmit(), 100);
+          // PhotoCapture.confirmPhoto() already calls onClose, no need to double-close
+          // Longer delay to let React state settle after dialog close
+          setTimeout(() => handleSubmit(), 300);
         }}
         title="Capture Buyer Photo"
       />
