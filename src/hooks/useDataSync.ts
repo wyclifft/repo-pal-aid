@@ -9,6 +9,7 @@ import {
   markNativeRecordSynced, 
   markNativeRecordFailed 
 } from '@/services/offlineStorage';
+import { syncSalesFromDB } from '@/utils/salesSyncEngine';
 
 // Batch processing configuration to prevent overwhelming system during bulk sync
 const SYNC_BATCH_SIZE = 10; // Process 10 records at a time
@@ -52,6 +53,7 @@ export const useDataSync = () => {
     getUnsyncedReceipts,
     getUnsyncedSales,
     deleteReceipt,
+    deleteSale,
     isReady 
   } = useIndexedDB();
 
@@ -502,6 +504,16 @@ export const useDataSync = () => {
         toast.success(`Synced ${offlineSync.synced} collection${offlineSync.synced !== 1 ? 's' : ''}`);
       }
 
+      // 1b. Sync pending store/AI sales (globally, no need to visit Store page)
+      try {
+        const salesSync = await syncSalesFromDB(getUnsyncedSales, deleteSale);
+        if (salesSync.synced > 0 && !silent) {
+          toast.success(`Synced ${salesSync.synced} offline sale${salesSync.synced !== 1 ? 's' : ''}`);
+        }
+      } catch (err) {
+        console.warn('[SYNC] Sales sync skipped:', err);
+      }
+
       // 2. Fetch and cache routes (only if ccode has routes configured)
       try {
         const routesResponse = await mysqlApi.routes.getByDevice(deviceFingerprint);
@@ -634,7 +646,7 @@ export const useDataSync = () => {
       releaseLock();
       if (mountedRef.current) setIsSyncing(false);
     }
-  }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, saveRoutes, saveSessions, syncOfflineReceipts, updatePendingCount]);
+  }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, saveRoutes, saveSessions, syncOfflineReceipts, updatePendingCount, getUnsyncedSales, deleteSale]);
 
   // Initial sync on mount - show banner only on first launch
   useEffect(() => {
