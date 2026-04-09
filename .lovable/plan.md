@@ -1,29 +1,32 @@
 
 
-## Fix: Pending Counter Not Updating After Legacy Cleanup — v2.10.32
+## Fix: Periodic Report Table Name + Photo Audit Route Filtering — v2.10.33
 
-### Problem
+### Bug 1: `cm_companys` table doesn't exist
 
-After sync + legacy cleanup completes and removes orphaned records, the Dashboard pending counter doesn't update to reflect the new (lower) count. The `syncComplete` event is dispatched at line 440 (inside `syncOfflineReceipts`) **before** the legacy cleanup runs, so the event-driven `updatePendingCount` reads stale data. The final `updatePendingCount` at line 770 runs much later after all the route/session/farmer fetches — but there's a gap where the counter shows stale numbers.
+**Location**: `backend-api/server.js` line 1201-1203
 
-Additionally, a second `syncComplete` event should be dispatched after cleanup so that `OfflineIndicator` and other event listeners also refresh.
+The periodic report farmer-detail endpoint JOINs `cm_companys` to get the company name, but this table doesn't exist. Since the company name is only used for display and the `ccode` is already available from `devsettings`, the fix is to remove the JOIN entirely and fall back to using `ccode` as the company identifier. This avoids needing to guess the correct table name.
 
-### Fix
+**Fix**: Replace the query at line 1200-1206 with a simpler query that only selects from `devsettings` without the `cm_companys` JOIN. Set `company_name` to `ccode` (or a default string).
 
-**`src/hooks/useDataSync.ts`**:
-- After the cleanup block (line ~652, after `cleaned > 0`), call `await updatePendingCount()` immediately so the counter drops right after orphans are removed — don't wait until line 770
-- Dispatch a second `window.dispatchEvent(new CustomEvent('syncComplete'))` after cleanup if any records were cleaned, so `OfflineIndicator` and other event-based consumers also refresh
+### Bug 2: Photo audit viewer shows photos from all routes/centers
 
-**`src/constants/appVersion.ts`** → v2.10.32 (Code 54)
+**Problem**: The `/api/transaction-photos` endpoint filters by `ccode` only, not by the device's route. Users at one center see photos from all centers in the same company.
 
-### Reassurance on data safety
+**Fix — server-side**: Add `deviceserial` filtering to the photo query. The `transactions` table already stores `deviceserial` (the device fingerprint). Add `AND t.deviceserial = ?` to the WHERE clause, using the same `deviceFingerprint` parameter already passed from the frontend. This ensures strict device isolation consistent with how all other reports work.
 
-The legacy cleanup is safe — it only deletes local records after confirming the backend has the data (duplicate response) or after a successful create call. The dual-write to native SQLite provides an additional safety net. This cleanup only runs during manual sync, not automatically. Going forward, new transactions always have the `type` field set, so they won't become orphans.
+**Fix — frontend**: No changes needed — `PhotoAuditViewer` already sends `device_fingerprint` in the query params.
+
+### Version bump
+
+`src/constants/appVersion.ts` → v2.10.33 (Code 55)
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/hooks/useDataSync.ts` | Add `updatePendingCount()` + `syncComplete` event dispatch immediately after cleanup |
-| `src/constants/appVersion.ts` | Bump to v2.10.32 |
+| `backend-api/server.js` (line ~1200) | Remove `LEFT JOIN cm_companys` from periodic-report farmer-detail query |
+| `backend-api/server.js` (line ~3113) | Add `AND t.deviceserial = ?` to transaction-photos WHERE clause |
+| `src/constants/appVersion.ts` | Bump to v2.10.33 |
 
