@@ -1210,7 +1210,7 @@ const server = http.createServer(async (req, res) => {
       }
       
       const ccode = deviceRows[0].ccode;
-      const companyName = deviceRows[0].company_name || 'Company';
+      const companyName = ccode || 'Company';
 
       // Get farmer info
       const [farmerRows] = await pool.query(
