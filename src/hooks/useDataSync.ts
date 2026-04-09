@@ -543,7 +543,7 @@ export const useDataSync = () => {
               if (orphan.weight && orphan.farmer_id) {
                 // Looks like a milk collection — check backend
                 const backendCheck = await mysqlApi.milkCollection.getByReference(ref);
-                if (backendCheck.success && backendCheck.data) {
+                if (backendCheck) {
                   // Already on backend — safe to delete local copy
                   await deleteReceipt(orphan.orderId);
                   markNativeRecordSynced(ref).catch(() => {});
@@ -556,8 +556,8 @@ export const useDataSync = () => {
                 // Check if it already exists via duplicate detection
                 try {
                   const salePayload = { ...orphan, type: 'sale' };
-                  const result = await mysqlApi.sales.create(salePayload);
-                  if (result.success || (result.message && result.message.includes('uplicate'))) {
+                  const result = await mysqlApi.sales.create(salePayload) as any;
+                  if (result === true || result?.success || (result?.message && result.message.includes('uplicate'))) {
                     await deleteReceipt(orphan.orderId);
                     markNativeRecordSynced(ref).catch(() => {});
                     console.log(`[CLEANUP] Synced/removed orphaned sale: ${ref}`);
@@ -580,7 +580,7 @@ export const useDataSync = () => {
               // If we can't determine type, try milk collection lookup as fallback
               try {
                 const fallbackCheck = await mysqlApi.milkCollection.getByReference(orphan.reference_no || orphan.transrefno);
-                if (fallbackCheck.success && fallbackCheck.data) {
+                if (fallbackCheck) {
                   await deleteReceipt(orphan.orderId);
                   markNativeRecordSynced(orphan.reference_no || orphan.transrefno).catch(() => {});
                   console.log(`[CLEANUP] Removed orphan via fallback check: ${orphan.reference_no || orphan.transrefno}`);
