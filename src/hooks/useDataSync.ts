@@ -56,6 +56,7 @@ export const useDataSync = () => {
     getUnsyncedSales,
     deleteReceipt,
     deleteSale,
+    getAllUnsyncedRecords,
     isReady 
   } = useIndexedDB();
 
