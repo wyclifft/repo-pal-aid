@@ -649,6 +649,9 @@ export const useDataSync = () => {
             if (!silent) {
               toast.info(`Cleaned ${cleaned} legacy record${cleaned !== 1 ? 's' : ''}`);
             }
+            // Immediately refresh pending counter after cleanup
+            await updatePendingCount();
+            window.dispatchEvent(new CustomEvent('syncComplete'));
           }
         }
       } catch (cleanupErr) {
