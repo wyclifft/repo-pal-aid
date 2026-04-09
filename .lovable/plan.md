@@ -1,42 +1,43 @@
 
 
-## Fix: Dual-Write to Native SQLite + IndexedDB — v2.10.29
+## Fix: Clean Up Legacy Orphaned Records from IndexedDB — v2.10.30
 
 ### Problem
 
-The Android app has a native encrypted SQLite database (`sync_records` table via Room) specifically designed for offline data safety. However, **no transaction save path actually writes to it**. Both `Index.tsx` (milk collection) and `Store.tsx` (store/AI sales) only save to IndexedDB via `saveReceipt()` / `saveSale()`. The `saveToLocalDB()` function in `offlineStorage.ts` exists but is never called.
+Transactions created in v2.10.4 are still showing as "pending" in v2.10.29 despite already being synced to the backend (confirmed by "Duplicate item skipped" messages). These records are stuck in IndexedDB because:
 
-This means the native SQLite backup — which survives WebView cache clears and app force-stops — is empty. Users have no safety net if IndexedDB data is lost.
+1. **Old sale records** saved before the `type: 'sale'` field was added have no `type` field — so `getUnsyncedSales()` skips them (it filters for `type === 'sale'`), and `syncSalesFromDB` never processes them
+2. **Old records already synced** via the backend still exist locally because the delete-after-sync step failed (connection lost mid-sync) or never ran
+3. **`updatePendingCount`** counts these orphans as pending, inflating the counter permanently
+
+These records are stuck in a limbo: counted as pending, but no sync path picks them up for processing or cleanup.
 
 ### Fix
 
-Add dual-write calls to the native database alongside every IndexedDB save, without changing existing IndexedDB logic (which remains the primary sync source).
+**`src/hooks/useDataSync.ts`** — Add a legacy record cleanup step in `syncAllData`:
+- After normal receipt sync and sales sync complete, scan all unsynced records in the `receipts` store
+- For records that have NO `type` field (or type is neither `'sale'` nor `'ai'`), AND have a `reference_no` or `transrefno`:
+  - Check the backend to see if the record already exists (using the existing `milkCollection.getByReference` or `sales` lookup)
+  - If the backend confirms it exists (duplicate), delete the local IndexedDB record
+  - If the backend says it doesn't exist, attempt to sync it (determine type from fields: has `item_code` → sale, has `weight`+`farmer_id` → milk collection)
+- Log all cleanup actions: `[CLEANUP] Removed orphaned record: {ref} (already on backend)`
 
-**`src/pages/Index.tsx`** — After each `saveReceipt()` call (3 locations: lines ~1066, ~1096, ~1113):
-- Import `saveToLocalDB` from `offlineStorage`
-- After confirmed IndexedDB save, call `saveToLocalDB(referenceNo, 'milk_collection', capture)` in a fire-and-forget try/catch (non-blocking — native save failure must not break the flow)
+**`src/hooks/useIndexedDB.ts`** — Add a `getAllUnsyncedRecords` helper:
+- Returns ALL unsynced records from the `receipts` store (no type filtering), so the cleanup logic can find orphans
 
-**`src/pages/Store.tsx`** — After the `saveSale()` loop (line ~614):
-- Import `saveToLocalDB` from `offlineStorage`
-- For each batch item saved, call `saveToLocalDB(transrefno, 'store_sale', sale)` in a fire-and-forget try/catch
+**`src/constants/appVersion.ts`** → v2.10.30 (Code 52)
 
-**`src/pages/AIPage.tsx`** — Check if AI transactions also save offline; if so, add the same dual-write with `'ai_sale'` record type.
-
-**`src/hooks/useDataSync.ts`** — After successful sync + IndexedDB delete, also call `markNativeRecordSynced(referenceNo)` (already imported but only used in `syncOfflineReceipts` — verify it covers sales too).
-
-**`src/constants/appVersion.ts`** → v2.10.29
-
-### Important safety notes
-- Native save is **fire-and-forget**: if it fails (e.g., on web platform), the flow continues normally with IndexedDB as primary
-- `saveToLocalDB` already returns `null` gracefully on non-native platforms
-- No changes to sync logic — IndexedDB remains the sync source; native DB is a backup layer
+### Safety notes
+- Cleanup only runs during `syncAllData` (manual sync or scheduled), not on every render
+- Backend verification happens before any deletion — no data loss risk
+- Records that can't be verified (offline, API error) are left untouched
+- Fire-and-forget: cleanup failures don't block normal sync
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/pages/Index.tsx` | Add `saveToLocalDB` call after each `saveReceipt` |
-| `src/pages/Store.tsx` | Add `saveToLocalDB` call after each `saveSale` |
-| `src/pages/AIPage.tsx` | Add `saveToLocalDB` call if offline saves exist |
-| `src/constants/appVersion.ts` | Bump to v2.10.29 |
+| `src/hooks/useDataSync.ts` | Add legacy orphan cleanup after normal sync completes |
+| `src/hooks/useIndexedDB.ts` | Add `getAllUnsyncedRecords` helper (unfiltered) |
+| `src/constants/appVersion.ts` | Bump to v2.10.30 |
 
