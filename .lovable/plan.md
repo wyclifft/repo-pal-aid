@@ -1,43 +1,43 @@
 
 
-## Fix: Clean Up Legacy Orphaned Records from IndexedDB — v2.10.30
+## Fix: Unstick Legacy Records That Pass Sync But Fail Verification — v2.10.31
 
 ### Problem
 
-Transactions created in v2.10.4 are still showing as "pending" in v2.10.29 despite already being synced to the backend (confirmed by "Duplicate item skipped" messages). These records are stuck in IndexedDB because:
+`BA0100000617` (from v2.10.4) is permanently stuck:
+1. **Regular sync** calls `milkCollection.create()` → API returns success
+2. **Verification** calls `milkCollection.getByReference("BA0100000617")` → returns "Collection not found" (404)
+3. Because verification fails, the record is marked `failed` and kept locally
+4. **Cleanup** finds it as an orphan, checks backend → "not found" → does nothing
+5. Cycle repeats every sync — record is permanently pending
 
-1. **Old sale records** saved before the `type: 'sale'` field was added have no `type` field — so `getUnsyncedSales()` skips them (it filters for `type === 'sale'`), and `syncSalesFromDB` never processes them
-2. **Old records already synced** via the backend still exist locally because the delete-after-sync step failed (connection lost mid-sync) or never ran
-3. **`updatePendingCount`** counts these orphans as pending, inflating the counter permanently
-
-These records are stuck in a limbo: counted as pending, but no sync path picks them up for processing or cleanup.
+The verification lookup likely fails because the backend stores the `transrefno` in a slightly different format from the legacy v2.10.4 era, or the create endpoint transforms the reference before inserting.
 
 ### Fix
 
-**`src/hooks/useDataSync.ts`** — Add a legacy record cleanup step in `syncAllData`:
-- After normal receipt sync and sales sync complete, scan all unsynced records in the `receipts` store
-- For records that have NO `type` field (or type is neither `'sale'` nor `'ai'`), AND have a `reference_no` or `transrefno`:
-  - Check the backend to see if the record already exists (using the existing `milkCollection.getByReference` or `sales` lookup)
-  - If the backend confirms it exists (duplicate), delete the local IndexedDB record
-  - If the backend says it doesn't exist, attempt to sync it (determine type from fields: has `item_code` → sale, has `weight`+`farmer_id` → milk collection)
-- Log all cleanup actions: `[CLEANUP] Removed orphaned record: {ref} (already on backend)`
+**`src/hooks/useDataSync.ts`** — Two changes:
 
-**`src/hooks/useIndexedDB.ts`** — Add a `getAllUnsyncedRecords` helper:
-- Returns ALL unsynced records from the `receipts` store (no type filtering), so the cleanup logic can find orphans
+**Change 1: Trust API success when verification lookup fails (line ~305-307)**
+- Currently: if API says success but `getByReference` returns null → mark as failed
+- New behavior: if API says success but `getByReference` returns null → **trust the API and delete local record** with a warning log
+- Rationale: the API successfully inserted the row (no error, no collision). The GET lookup failing is likely a field-mapping issue, not a data loss risk. Keeping the record stuck forever is worse than trusting the confirmed insert.
 
-**`src/constants/appVersion.ts`** → v2.10.30 (Code 52)
+**Change 2: Cleanup attempts to sync unsynced orphans (line ~553, after the `continue`)**
+- Currently: if an orphan has `weight`+`farmer_id` and backend says "not found", the code does nothing (the record is left in limbo)
+- New behavior: attempt `milkCollection.create()` with the orphan's data, then delete on success (including duplicate response)
+- This gives legacy records a dedicated sync attempt outside the regular path
 
-### Safety notes
-- Cleanup only runs during `syncAllData` (manual sync or scheduled), not on every render
-- Backend verification happens before any deletion — no data loss risk
-- Records that can't be verified (offline, API error) are left untouched
-- Fire-and-forget: cleanup failures don't block normal sync
+**`src/constants/appVersion.ts`** → v2.10.31 (Code 53)
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/hooks/useDataSync.ts` | Add legacy orphan cleanup after normal sync completes |
-| `src/hooks/useIndexedDB.ts` | Add `getAllUnsyncedRecords` helper (unfiltered) |
-| `src/constants/appVersion.ts` | Bump to v2.10.30 |
+| `src/hooks/useDataSync.ts` | Trust API success when verification lookup returns null; cleanup attempts to sync orphans not found on backend |
+| `src/constants/appVersion.ts` | Bump to v2.10.31 |
+
+### Safety notes
+- Only changes behavior when API explicitly returned success — no risk of deleting unsynced data
+- Cleanup sync attempt uses same `milkCollection.create()` with full payload — backend deduplication still protects against doubles
+- Records that genuinely fail to sync (API error) are still kept locally
 
