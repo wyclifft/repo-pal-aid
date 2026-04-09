@@ -737,7 +737,7 @@ export const useDataSync = () => {
       releaseLock();
       if (mountedRef.current) setIsSyncing(false);
     }
-  }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, saveRoutes, saveSessions, syncOfflineReceipts, updatePendingCount, getUnsyncedSales, deleteSale]);
+  }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, saveRoutes, saveSessions, syncOfflineReceipts, updatePendingCount, getUnsyncedSales, deleteSale, getAllUnsyncedRecords, deleteReceipt]);
 
   // Initial sync on mount - show banner only on first launch
   useEffect(() => {
