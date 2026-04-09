@@ -1,32 +1,35 @@
 
 
-## Fix: Periodic Report Table Name + Photo Audit Route Filtering — v2.10.33
+## Fix: Company Name from psettings + Photo Filter by Route — v2.10.34
 
-### Bug 1: `cm_companys` table doesn't exist
+### Change 1: Use `psettings.cname` for company name in periodic report
 
-**Location**: `backend-api/server.js` line 1201-1203
+**Location**: `backend-api/server.js` line ~1200-1213
 
-The periodic report farmer-detail endpoint JOINs `cm_companys` to get the company name, but this table doesn't exist. Since the company name is only used for display and the `ccode` is already available from `devsettings`, the fix is to remove the JOIN entirely and fall back to using `ccode` as the company identifier. This avoids needing to guess the correct table name.
+Currently the query only selects from `devsettings` and falls back to `ccode` as the company name. Other endpoints (e.g. Z-report at line 1396) already JOIN `psettings` to get `cname`.
 
-**Fix**: Replace the query at line 1200-1206 with a simpler query that only selects from `devsettings` without the `cm_companys` JOIN. Set `company_name` to `ccode` (or a default string).
+**Fix**: Change the device lookup query to JOIN `psettings` on `ccode` and select `p.cname as company_name`, matching the pattern used by the Z-report endpoint. Fall back to `ccode` only if `cname` is null.
 
-### Bug 2: Photo audit viewer shows photos from all routes/centers
+### Change 2: Filter audit photos by `devcode` (route/center) instead of `deviceserial`
 
-**Problem**: The `/api/transaction-photos` endpoint filters by `ccode` only, not by the device's route. Users at one center see photos from all centers in the same company.
+**Location**: `backend-api/server.js` line ~3100-3111
 
-**Fix — server-side**: Add `deviceserial` filtering to the photo query. The `transactions` table already stores `deviceserial` (the device fingerprint). Add `AND t.deviceserial = ?` to the WHERE clause, using the same `deviceFingerprint` parameter already passed from the frontend. This ensures strict device isolation consistent with how all other reports work.
+Currently photos are filtered by `t.deviceserial = ?` (the device fingerprint), which is too strict — it excludes photos from other devices at the same center. The correct filter is by `devcode`, which represents the center/route and is the prefix of every `transrefno`.
 
-**Fix — frontend**: No changes needed — `PhotoAuditViewer` already sends `device_fingerprint` in the query params.
+**Fix**:
+- After looking up the device, also fetch `devcode` from `devsettings`
+- Replace `AND t.deviceserial = ?` with `AND t.transrefno LIKE ?` using `${devcode}%` pattern
+- This shows all photos from the same center/route regardless of which device captured them
 
 ### Version bump
 
-`src/constants/appVersion.ts` → v2.10.33 (Code 55)
+`src/constants/appVersion.ts` → v2.10.34 (Code 56)
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `backend-api/server.js` (line ~1200) | Remove `LEFT JOIN cm_companys` from periodic-report farmer-detail query |
-| `backend-api/server.js` (line ~3113) | Add `AND t.deviceserial = ?` to transaction-photos WHERE clause |
-| `src/constants/appVersion.ts` | Bump to v2.10.33 |
+| `backend-api/server.js` (~line 1200) | JOIN `psettings` to get `cname` for periodic report company name |
+| `backend-api/server.js` (~line 3100) | Replace `deviceserial` filter with `devcode`-based `transrefno LIKE` filter |
+| `src/constants/appVersion.ts` | Bump to v2.10.34 |
 
