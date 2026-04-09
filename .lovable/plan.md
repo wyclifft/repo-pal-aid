@@ -1,43 +1,29 @@
 
 
-## Fix: Unstick Legacy Records That Pass Sync But Fail Verification — v2.10.31
+## Fix: Pending Counter Not Updating After Legacy Cleanup — v2.10.32
 
 ### Problem
 
-`BA0100000617` (from v2.10.4) is permanently stuck:
-1. **Regular sync** calls `milkCollection.create()` → API returns success
-2. **Verification** calls `milkCollection.getByReference("BA0100000617")` → returns "Collection not found" (404)
-3. Because verification fails, the record is marked `failed` and kept locally
-4. **Cleanup** finds it as an orphan, checks backend → "not found" → does nothing
-5. Cycle repeats every sync — record is permanently pending
+After sync + legacy cleanup completes and removes orphaned records, the Dashboard pending counter doesn't update to reflect the new (lower) count. The `syncComplete` event is dispatched at line 440 (inside `syncOfflineReceipts`) **before** the legacy cleanup runs, so the event-driven `updatePendingCount` reads stale data. The final `updatePendingCount` at line 770 runs much later after all the route/session/farmer fetches — but there's a gap where the counter shows stale numbers.
 
-The verification lookup likely fails because the backend stores the `transrefno` in a slightly different format from the legacy v2.10.4 era, or the create endpoint transforms the reference before inserting.
+Additionally, a second `syncComplete` event should be dispatched after cleanup so that `OfflineIndicator` and other event listeners also refresh.
 
 ### Fix
 
-**`src/hooks/useDataSync.ts`** — Two changes:
+**`src/hooks/useDataSync.ts`**:
+- After the cleanup block (line ~652, after `cleaned > 0`), call `await updatePendingCount()` immediately so the counter drops right after orphans are removed — don't wait until line 770
+- Dispatch a second `window.dispatchEvent(new CustomEvent('syncComplete'))` after cleanup if any records were cleaned, so `OfflineIndicator` and other event-based consumers also refresh
 
-**Change 1: Trust API success when verification lookup fails (line ~305-307)**
-- Currently: if API says success but `getByReference` returns null → mark as failed
-- New behavior: if API says success but `getByReference` returns null → **trust the API and delete local record** with a warning log
-- Rationale: the API successfully inserted the row (no error, no collision). The GET lookup failing is likely a field-mapping issue, not a data loss risk. Keeping the record stuck forever is worse than trusting the confirmed insert.
+**`src/constants/appVersion.ts`** → v2.10.32 (Code 54)
 
-**Change 2: Cleanup attempts to sync unsynced orphans (line ~553, after the `continue`)**
-- Currently: if an orphan has `weight`+`farmer_id` and backend says "not found", the code does nothing (the record is left in limbo)
-- New behavior: attempt `milkCollection.create()` with the orphan's data, then delete on success (including duplicate response)
-- This gives legacy records a dedicated sync attempt outside the regular path
+### Reassurance on data safety
 
-**`src/constants/appVersion.ts`** → v2.10.31 (Code 53)
+The legacy cleanup is safe — it only deletes local records after confirming the backend has the data (duplicate response) or after a successful create call. The dual-write to native SQLite provides an additional safety net. This cleanup only runs during manual sync, not automatically. Going forward, new transactions always have the `type` field set, so they won't become orphans.
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `src/hooks/useDataSync.ts` | Trust API success when verification lookup returns null; cleanup attempts to sync orphans not found on backend |
-| `src/constants/appVersion.ts` | Bump to v2.10.31 |
-
-### Safety notes
-- Only changes behavior when API explicitly returned success — no risk of deleting unsynced data
-- Cleanup sync attempt uses same `milkCollection.create()` with full payload — backend deduplication still protects against doubles
-- Records that genuinely fail to sync (API error) are still kept locally
+| `src/hooks/useDataSync.ts` | Add `updatePendingCount()` + `syncComplete` event dispatch immediately after cleanup |
+| `src/constants/appVersion.ts` | Bump to v2.10.32 |
 
