@@ -1198,7 +1198,10 @@ const server = http.createServer(async (req, res) => {
 
       // Get device's company code, devcode, and company name
       const [deviceRows] = await pool.query(
-        `SELECT ccode, devcode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1`,
+        `SELECT d.ccode, d.devcode, p.cname as company_name
+         FROM devsettings d
+         LEFT JOIN psettings p ON d.ccode = p.ccode
+         WHERE d.uniquedevcode = ? AND d.authorized = 1`,
         [uniquedevcode]
       );
       
@@ -1210,7 +1213,7 @@ const server = http.createServer(async (req, res) => {
       }
       
       const ccode = deviceRows[0].ccode;
-      const companyName = ccode || 'Company';
+      const companyName = deviceRows[0].company_name || ccode || 'Company';
 
       // Get farmer info
       const [farmerRows] = await pool.query(
@@ -3097,18 +3100,20 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { success: false, error: 'Device fingerprint required' }, 400);
       }
 
-      // Look up ccode from devsettings
+      // Look up ccode and devcode from devsettings
       const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, devcode, authorized FROM devsettings WHERE uniquedevcode = ?',
         [deviceFingerprint]
       );
       if (deviceRows.length === 0 || !deviceRows[0].authorized) {
         return sendJSON(res, { success: false, error: 'Device not authorized' }, 401);
       }
       const ccode = deviceRows[0].ccode;
+      const devcode = deviceRows[0].devcode;
 
-      let whereClause = 't.photo_filename IS NOT NULL AND t.photo_filename != "" AND t.ccode = ? AND t.deviceserial = ?';
-      const params = [ccode, deviceFingerprint];
+      // Filter by ccode and devcode (route/center prefix in transrefno)
+      let whereClause = 't.photo_filename IS NOT NULL AND t.photo_filename != "" AND t.ccode = ? AND t.transrefno LIKE ?';
+      const params = [ccode, `${devcode}%`];
 
       // Add search filter (member, reference, clerk)
       if (search) {
