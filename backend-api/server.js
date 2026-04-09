@@ -3111,9 +3111,14 @@ const server = http.createServer(async (req, res) => {
       const ccode = deviceRows[0].ccode;
       const devcode = deviceRows[0].devcode;
 
-      // Filter by ccode and devcode (route/center prefix in transrefno)
-      let whereClause = 't.photo_filename IS NOT NULL AND t.photo_filename != "" AND t.ccode = ? AND t.transrefno LIKE ?';
-      const params = [ccode, `${devcode}%`];
+      // Filter by ccode; optionally by route tcode from dashboard selection
+      const routeFilter = parsedUrl.query.route || '';
+      let whereClause = 't.photo_filename IS NOT NULL AND t.photo_filename != "" AND t.ccode = ?';
+      const params = [ccode];
+      if (routeFilter) {
+        whereClause += ' AND t.route = ?';
+        params.push(routeFilter);
+      }
 
       // Add search filter (member, reference, clerk)
       if (search) {
