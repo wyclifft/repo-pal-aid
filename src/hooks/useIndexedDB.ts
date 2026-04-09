@@ -995,5 +995,6 @@ export const useIndexedDB = () => {
     updateFarmerCumulative,
     getFarmerTotalCumulative,
     getUnsyncedWeightForFarmer,
+    getAllUnsyncedRecords,
   };
 };
