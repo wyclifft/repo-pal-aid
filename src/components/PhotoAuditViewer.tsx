@@ -51,6 +51,13 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
         limit: pageSize.toString(),
         device_fingerprint: fingerprint,
       });
+      // Send selected route tcode so server filters by t.route
+      try {
+        const sessionData = JSON.parse(localStorage.getItem('active_session_data') || '{}');
+        if (sessionData?.route?.tcode) {
+          params.append('route', sessionData.route.tcode);
+        }
+      } catch {}
       
       if (searchQuery.trim()) {
         params.append('search', searchQuery.trim());
