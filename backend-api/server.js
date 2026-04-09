@@ -1198,10 +1198,7 @@ const server = http.createServer(async (req, res) => {
 
       // Get device's company code, devcode, and company name
       const [deviceRows] = await pool.query(
-        `SELECT d.ccode, d.devcode, c.descript as company_name 
-         FROM devsettings d
-         LEFT JOIN cm_companys c ON d.ccode = c.ccode
-         WHERE d.uniquedevcode = ? AND d.authorized = 1`,
+        `SELECT ccode, devcode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1`,
         [uniquedevcode]
       );
       
@@ -3110,8 +3107,8 @@ const server = http.createServer(async (req, res) => {
       }
       const ccode = deviceRows[0].ccode;
 
-      let whereClause = 't.photo_filename IS NOT NULL AND t.photo_filename != "" AND t.ccode = ?';
-      const params = [ccode];
+      let whereClause = 't.photo_filename IS NOT NULL AND t.photo_filename != "" AND t.ccode = ? AND t.deviceserial = ?';
+      const params = [ccode, deviceFingerprint];
 
       // Add search filter (member, reference, clerk)
       if (search) {
