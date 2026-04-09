@@ -56,6 +56,7 @@ export const useDataSync = () => {
     getUnsyncedSales,
     deleteReceipt,
     deleteSale,
+    getAllUnsyncedRecords,
     isReady 
   } = useIndexedDB();
 
@@ -518,6 +519,92 @@ export const useDataSync = () => {
         console.warn('[SYNC] Sales sync skipped:', err);
       }
 
+      // 1c. Clean up legacy orphaned records (no type field, from old app versions)
+      try {
+        const allRecords = await getAllUnsyncedRecords();
+        const orphans = allRecords.filter((r: any) => {
+          // Records that have no type field OR type is not recognized by current sync paths
+          if (r.type === 'sale' || r.type === 'ai') return false;
+          // Must have a reference to verify against backend
+          const ref = r.reference_no || r.transrefno;
+          if (!ref) return false;
+          return true;
+        });
+
+        if (orphans.length > 0) {
+          console.log(`[CLEANUP] Found ${orphans.length} legacy orphaned records, verifying against backend...`);
+          let cleaned = 0;
+          
+          for (const orphan of orphans) {
+            try {
+              const ref = orphan.reference_no || orphan.transrefno;
+              
+              // Determine type from fields and check backend
+              if (orphan.weight && orphan.farmer_id) {
+                // Looks like a milk collection — check backend
+                const backendCheck = await mysqlApi.milkCollection.getByReference(ref);
+                if (backendCheck) {
+                  // Already on backend — safe to delete local copy
+                  await deleteReceipt(orphan.orderId);
+                  markNativeRecordSynced(ref).catch(() => {});
+                  console.log(`[CLEANUP] Removed orphaned milk record: ${ref} (already on backend)`);
+                  cleaned++;
+                  continue;
+                }
+              } else if (orphan.item_code || orphan.icode) {
+                // Looks like a sale — try to sync it with type assigned
+                // Check if it already exists via duplicate detection
+                try {
+                  const salePayload = { ...orphan, type: 'sale' };
+                  const result = await mysqlApi.sales.create(salePayload) as any;
+                  if (result === true || result?.success || (result?.message && result.message.includes('uplicate'))) {
+                    await deleteReceipt(orphan.orderId);
+                    markNativeRecordSynced(ref).catch(() => {});
+                    console.log(`[CLEANUP] Synced/removed orphaned sale: ${ref}`);
+                    cleaned++;
+                    continue;
+                  }
+                } catch (saleErr) {
+                  // If duplicate error, it's already on backend
+                  const errMsg = String(saleErr);
+                  if (errMsg.includes('uplicate') || errMsg.includes('already exists')) {
+                    await deleteReceipt(orphan.orderId);
+                    markNativeRecordSynced(ref).catch(() => {});
+                    console.log(`[CLEANUP] Removed duplicate orphaned sale: ${ref}`);
+                    cleaned++;
+                    continue;
+                  }
+                }
+              }
+              
+              // If we can't determine type, try milk collection lookup as fallback
+              try {
+                const fallbackCheck = await mysqlApi.milkCollection.getByReference(orphan.reference_no || orphan.transrefno);
+                if (fallbackCheck) {
+                  await deleteReceipt(orphan.orderId);
+                  markNativeRecordSynced(orphan.reference_no || orphan.transrefno).catch(() => {});
+                  console.log(`[CLEANUP] Removed orphan via fallback check: ${orphan.reference_no || orphan.transrefno}`);
+                  cleaned++;
+                }
+              } catch {
+                // Leave record untouched if verification fails
+              }
+            } catch (orphanErr) {
+              console.warn(`[CLEANUP] Failed to process orphan ${orphan.orderId}:`, orphanErr);
+            }
+          }
+          
+          if (cleaned > 0) {
+            console.log(`[CLEANUP] Cleaned ${cleaned} legacy orphaned records`);
+            if (!silent) {
+              toast.info(`Cleaned ${cleaned} legacy record${cleaned !== 1 ? 's' : ''}`);
+            }
+          }
+        }
+      } catch (cleanupErr) {
+        console.warn('[CLEANUP] Legacy cleanup skipped:', cleanupErr);
+      }
+
       // 2. Fetch and cache routes (only if ccode has routes configured)
       try {
         const routesResponse = await mysqlApi.routes.getByDevice(deviceFingerprint);
@@ -650,7 +737,7 @@ export const useDataSync = () => {
       releaseLock();
       if (mountedRef.current) setIsSyncing(false);
     }
-  }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, saveRoutes, saveSessions, syncOfflineReceipts, updatePendingCount, getUnsyncedSales, deleteSale]);
+  }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, saveRoutes, saveSessions, syncOfflineReceipts, updatePendingCount, getUnsyncedSales, deleteSale, getAllUnsyncedRecords, deleteReceipt]);
 
   // Initial sync on mount - show banner only on first launch
   useEffect(() => {

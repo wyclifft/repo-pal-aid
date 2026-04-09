@@ -939,6 +939,30 @@ export const useIndexedDB = () => {
     return { total, byProduct: Object.values(merged) };
   }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
 
+  // Get ALL unsynced records from receipts store (no type filtering) — used for legacy orphan cleanup
+  const getAllUnsyncedRecords = useCallback((): Promise<any[]> => {
+    return new Promise((resolve) => {
+      if (!db) return resolve([]);
+      try {
+        const tx = db.transaction('receipts', 'readonly');
+        const store = tx.objectStore('receipts');
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const all = (request.result || []).filter((r: any) => {
+            if (r.orderId === 'PRINTED_RECEIPTS') return false;
+            if (r.synced) return false;
+            return true;
+          });
+          resolve(all);
+        };
+        request.onerror = () => resolve([]);
+        tx.onerror = () => resolve([]);
+      } catch {
+        resolve([]);
+      }
+    });
+  }, [db]);
+
   return {
     db,
     isReady,
@@ -971,5 +995,6 @@ export const useIndexedDB = () => {
     updateFarmerCumulative,
     getFarmerTotalCumulative,
     getUnsyncedWeightForFarmer,
+    getAllUnsyncedRecords,
   };
 };
