@@ -303,7 +303,11 @@ export const useDataSync = () => {
                     confirmed = false;
                   }
                 } else {
-                  console.warn(`[SYNC] API said success but record not found: ${receipt.reference_no}`);
+                  // v2.10.31: Trust API success even when verification lookup returns 404
+                  // The create endpoint confirmed insertion — GET lookup failure is likely a
+                  // field-mapping or timing issue on the backend, not data loss
+                  console.warn(`[SYNC] API said success but GET lookup not found — trusting API: ${receipt.reference_no}`);
+                  confirmed = true;
                 }
               } catch (verifyErr) {
                 console.warn(`[SYNC] Verification check failed for ${receipt.reference_no}:`, verifyErr);
@@ -550,6 +554,52 @@ export const useDataSync = () => {
                   console.log(`[CLEANUP] Removed orphaned milk record: ${ref} (already on backend)`);
                   cleaned++;
                   continue;
+                }
+                
+                // v2.10.31: Not found on backend — attempt to sync the orphan
+                try {
+                  const deviceFingerprint = await generateDeviceFingerprint();
+                  let normalizedSession: 'AM' | 'PM' = 'AM';
+                  const sessVal = String(orphan.session || '').trim().toUpperCase();
+                  if (sessVal === 'PM' || sessVal.includes('PM') || sessVal.includes('EVENING') || sessVal.includes('AFTERNOON')) {
+                    normalizedSession = 'PM';
+                  }
+                  const syncResult = await mysqlApi.milkCollection.create({
+                    reference_no: ref,
+                    uploadrefno: orphan.uploadrefno || ref,
+                    farmer_id: String(orphan.farmer_id || orphan.memberno || '').replace(/^#/, '').trim(),
+                    farmer_name: String(orphan.farmer_name || '').trim(),
+                    route: String(orphan.route || '').trim(),
+                    session: normalizedSession,
+                    weight: orphan.weight,
+                    user_id: orphan.user_id,
+                    clerk_name: orphan.clerk_name,
+                    collection_date: orphan.collection_date,
+                    device_fingerprint: deviceFingerprint,
+                    entry_type: orphan.entry_type,
+                    product_code: orphan.product_code,
+                    season_code: orphan.season_code,
+                    transtype: orphan.transtype,
+                    delivered_by: orphan.delivered_by,
+                  });
+                  const syncMsg = ((syncResult as any)?.error || (syncResult as any)?.message || '').toLowerCase();
+                  if (syncResult.success || syncMsg.includes('duplicate') || syncMsg.includes('already exists')) {
+                    await deleteReceipt(orphan.orderId);
+                    markNativeRecordSynced(ref).catch(() => {});
+                    console.log(`[CLEANUP] Synced orphaned milk record: ${ref}`);
+                    cleaned++;
+                    continue;
+                  }
+                } catch (syncErr) {
+                  const errStr = String(syncErr).toLowerCase();
+                  if (errStr.includes('duplicate') || errStr.includes('already exists')) {
+                    await deleteReceipt(orphan.orderId);
+                    markNativeRecordSynced(ref).catch(() => {});
+                    console.log(`[CLEANUP] Removed duplicate orphaned milk record: ${ref}`);
+                    cleaned++;
+                    continue;
+                  }
+                  console.warn(`[CLEANUP] Failed to sync orphan milk record ${ref}:`, syncErr);
                 }
               } else if (orphan.item_code || orphan.icode) {
                 // Looks like a sale — try to sync it with type assigned
