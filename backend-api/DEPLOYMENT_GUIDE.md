@@ -217,11 +217,11 @@ curl "https://backend.maddasystems.co.ke/api/farmers?search=John"
 **Symptoms**: API returns 500 errors or "connection refused"
 
 **Solution**:
-1. Verify database credentials in `.htaccess`:
+1. Verify database credentials are set as environment variables (via cPanel Node.js App settings or `.htaccess`):
    ```apache
    SetEnv MYSQL_DATABASE maddasys_milk_collection_pwa
    SetEnv MYSQL_USER maddasys_tesh
-   SetEnv MYSQL_PASSWORD 0741899183Mutee
+   SetEnv MYSQL_PASSWORD <your_password_here>
    ```
 2. Test database connection via phpMyAdmin
 3. Ensure database user has permissions on the database
