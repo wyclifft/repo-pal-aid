@@ -836,6 +836,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       // Skip multOpt check for Sell Portal (transtype=2) - unlimited sells per session allowed
+      let multOpt = 1; // Default: allow multiple
       if (transtype === 2) {
         console.log('📦 Sell Portal transaction (transtype=2) - skipping multOpt validation');
       } else {
@@ -846,7 +847,7 @@ const server = http.createServer(async (req, res) => {
         );
 
         // Default to allowing multiple if member not found or multOpt not set
-        const multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null 
+        multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null 
           ? parseInt(memberRows[0].multOpt) 
           : 1;
 
@@ -978,6 +979,33 @@ const server = http.createServer(async (req, res) => {
           }
 
           console.log('✅ BACKEND: NEW record INSERTED with reference:', attemptTransrefno, ', uploadrefno:', attemptUploadrefno);
+          
+          // Post-insert dedup for multOpt=0: check if a double-fire duplicate exists
+          // Match on 7 fields: memberno + session + weight + transdate + uploadrefno + Transtype + icode
+          if (multOpt === 0) {
+            try {
+              const [dupRows] = await pool.query(
+                `SELECT transrefno FROM transactions 
+                 WHERE memberno = ? AND session = ? AND ABS(weight - ?) < 0.01 
+                 AND transdate = ? AND Uploadrefno = ? AND Transtype = ? AND icode = ?
+                 AND transrefno != ? AND ccode = ?
+                 LIMIT 1`,
+                [cleanFarmerId, normalizedSession, body.weight, transdate, 
+                 attemptUploadrefno ? String(attemptUploadrefno) : '', transtype, 
+                 body.product_code || '', attemptTransrefno, ccode]
+              );
+              if (dupRows.length > 0) {
+                const originalRef = dupRows[0].transrefno;
+                console.warn(`⚠️ multOpt=0 double-fire detected: deleting duplicate ${attemptTransrefno}, keeping original ${originalRef}`);
+                await pool.query('DELETE FROM transactions WHERE transrefno = ?', [attemptTransrefno]);
+                return { success: true, reference_no: originalRef, uploadrefno: attemptUploadrefno, isNew: false, message: 'Duplicate double-fire removed, original kept' };
+              }
+            } catch (dedupErr) {
+              console.error('❌ Post-insert dedup check failed:', dedupErr.message);
+              // Non-fatal: the record was inserted successfully, just couldn't dedup
+            }
+          }
+          
           return { success: true, reference_no: attemptTransrefno, uploadrefno: attemptUploadrefno, isNew: true };
         } catch (error) {
           // Check if it's a duplicate entry error
