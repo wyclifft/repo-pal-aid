@@ -836,6 +836,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       // Skip multOpt check for Sell Portal (transtype=2) - unlimited sells per session allowed
+      let multOpt = 1; // Default: allow multiple
       if (transtype === 2) {
         console.log('📦 Sell Portal transaction (transtype=2) - skipping multOpt validation');
       } else {
@@ -846,7 +847,7 @@ const server = http.createServer(async (req, res) => {
         );
 
         // Default to allowing multiple if member not found or multOpt not set
-        const multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null 
+        multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null 
           ? parseInt(memberRows[0].multOpt) 
           : 1;
 
