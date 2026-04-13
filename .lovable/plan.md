@@ -1,107 +1,91 @@
 
 
-## Bug Report — 10 Bugs Found in Codebase
+## cPanel MYSQL_PASSWORD Setup + 20 New Bugs — v2.10.38
 
-### Bug 1: DB_VERSION mismatch in referenceGenerator.ts
-**File:** `src/utils/referenceGenerator.ts` line 27
-**Issue:** `DB_VERSION` is hardcoded to `10`, but `useIndexedDB.ts` uses version `11`. When `referenceGenerator.ts` opens the DB with version 10, it will fail if the DB was already opened at version 11 (or silently open the old version without the latest stores). This can cause `device_config` reads/writes to fail intermittently.
-**Fix:** Change `DB_VERSION = 10` → `DB_VERSION = 11` (or ideally import from a shared constant).
+### How to Set MYSQL_PASSWORD on cPanel
 
----
+Since the password was removed from `.htaccess` for security, you need to set it as a server-level environment variable:
 
-### Bug 2: FarmerSearch 5-min poll bypasses route/mprefix filtering
-**File:** `src/components/FarmerSearch.tsx` lines 168-188
-**Issue:** The 5-minute polling interval calls `mysqlApi.farmers.getByDevice(deviceFingerprint)` without any route or mprefix parameters, then calls `saveFarmers(response.data)` which clears the farmer store and writes ALL farmers. This overwrites route-filtered data, so the next time the user opens search, they may see farmers from other routes until the cache-load effect re-filters.
-**Fix:** Pass `routeParam` and `mprefixParam` to the poll call, or skip the `saveFarmers` call in the poll and only update in the main sync effect.
+**Option A: Via cPanel Node.js App Interface (Recommended)**
+1. Log in to cPanel
+2. Go to **Setup Node.js App**
+3. Find your milk-collection-api application
+4. Click **Edit** (pencil icon)
+5. Scroll to **Environment variables** section
+6. Click **Add Variable**
+7. Set Name: `MYSQL_PASSWORD` and Value: `your_password_here`
+8. Click **Save** then **Restart** the application
 
----
+**Option B: Via .htaccess (without hardcoding)**
+If your cPanel does not have the Environment variables UI, add this line to `.htaccess`:
+```
+SetEnv MYSQL_PASSWORD your_password_here
+```
+But keep `.htaccess` out of version control by adding `backend-api/.htaccess` to `.gitignore`.
 
-### Bug 3: Credentials stored in plain text in localStorage
-**File:** `src/contexts/AuthContext.tsx` line 75
-**Issue:** Raw password is stored in `localStorage` under `cachedCredentials`. localStorage is not encrypted on web and is accessible to any JS on the page. On Capacitor/Android this is slightly better but still not ideal. This is a security risk.
-**Fix:** Hash the password before storing, or use a compare-hash approach for offline login validation.
+**Option C: Via SSH**
+```bash
+export MYSQL_PASSWORD="your_password_here"
+```
+Add to `~/.bashrc` or the Node.js app startup script.
 
----
-
-### Bug 4: `onFarmersLoaded` in useEffect dependency causes infinite re-render loop
-**File:** `src/components/FarmerSearch.tsx` line 66
-**Issue:** `onFarmersLoaded` is a callback prop that is likely not memoized by every parent. Including it in the dependency array of `useEffect` (line 38-66) causes the effect to re-run every render if the parent doesn't wrap `onFarmersLoaded` in `useCallback`. This triggers repeated IndexedDB reads and potentially infinite state loops.
-**Fix:** Remove `onFarmersLoaded` from the dependency array, or use a ref to store the latest callback.
-
----
-
-### Bug 5: `saveFarmers` clears store then writes — no atomicity guarantee
-**File:** `src/hooks/useIndexedDB.ts` lines 208-216
-**Issue:** `store.clear()` followed by `forEach(put)` in the same transaction is technically atomic (IDB transactions are all-or-nothing), BUT if the app crashes or the tab closes between clear and the last put, the transaction may be partially committed in some browser implementations. More critically, if `saveFarmers` is called with a subset of farmers (route-filtered), it wipes ALL farmers and saves only the filtered subset — destroying farmers from other routes.
-**Fix:** Only clear+write when saving the full unfiltered dataset. The 5-min poll (Bug 2) and the main sync both call `saveFarmers` which clears all data even when saving partial data.
+**Note:** The `server.js` still has a fallback `password: process.env.MYSQL_PASSWORD || '0741899183Mutee'` on line 14. For full security, remove that fallback once the env var is confirmed working.
 
 ---
 
-### Bug 6: `Ban` import unused
-**File:** `src/components/FarmerSearch.tsx` line 7
-**Issue:** `Ban` is imported from `lucide-react` but never used in the component. Minor but adds to bundle size.
-**Fix:** Remove the unused import.
-
----
-
-### Bug 7: Password visible in `.htaccess` committed to repo
-**File:** `backend-api/.htaccess` line 9
-**Issue:** The MySQL password `0741899183Mutee` is hardcoded in the `.htaccess` file committed to version control. This is a critical security vulnerability — anyone with repo access has full database credentials.
-**Fix:** Use environment variables set at the server level, not in committed files. Add `backend-api/.htaccess` to `.gitignore` or use a template.
-
----
-
-### Bug 8: `saveRoutes` and `saveSessions` accumulate stale data
-**File:** `src/hooks/useIndexedDB.ts` lines 698-708, 733-743
-**Issue:** Unlike `saveFarmers` which clears before writing, `saveRoutes` and `saveSessions` only do `store.put()` without clearing old entries. If a route or session is deleted/renamed on the backend, the old entry persists forever in IndexedDB, leading to phantom routes/sessions appearing in offline mode.
-**Fix:** Add `store.clear()` before writing fresh data (with the same empty-array guard as `saveFarmers`).
-
----
-
-### Bug 9: `saveItems` accumulates stale items
-**File:** `src/hooks/useIndexedDB.ts` lines 503-509
-**Issue:** Same as Bug 8 — `saveItems` only does `store.put()` without clearing. Deleted or deactivated items persist in the offline cache indefinitely, allowing users to select items that no longer exist.
-**Fix:** Clear before writing, with an empty-array guard.
-
----
-
-### Bug 10: PhotoAuditViewer `fetchPhotos` not triggered on search button when page is 1
-**File:** `src/components/PhotoAuditViewer.tsx` lines 95-104
-**Issue:** The `useEffect` on line 95 triggers `fetchPhotos` when `currentPage` changes. The search button resets `currentPage` to 1 (line 103). If the page is already 1, setting it to 1 again is a no-op — the effect doesn't re-fire, and the search with the new query is never executed. The "Search" button (line 170) calls `fetchPhotos` directly so that path works, but typing + Enter on the search input only calls `fetchPhotos` directly too. The real issue is that the `searchQuery` dependency is in the page-reset effect but NOT in the fetch effect — so changing the search query resets the page but doesn't trigger a re-fetch if already on page 1.
-**Fix:** Add `searchQuery` to the fetch effect's dependency array, or trigger `fetchPhotos` explicitly when `searchQuery` changes.
-
----
-
-### Summary
+### 20 New Bugs Found
 
 | # | Severity | File | Issue |
 |---|----------|------|-------|
-| 1 | **High** | referenceGenerator.ts | DB_VERSION mismatch (10 vs 11) |
-| 2 | **High** | FarmerSearch.tsx | 5-min poll overwrites route-filtered farmers |
-| 3 | **Critical** | AuthContext.tsx | Plain-text password in localStorage |
-| 4 | **Medium** | FarmerSearch.tsx | `onFarmersLoaded` causes potential infinite loop |
-| 5 | **High** | useIndexedDB.ts | `saveFarmers` clears ALL farmers even for partial saves |
-| 6 | **Low** | FarmerSearch.tsx | Unused `Ban` import |
-| 7 | **Critical** | .htaccess | Database password committed to repo |
-| 8 | **Medium** | useIndexedDB.ts | Stale routes/sessions never cleared |
-| 9 | **Medium** | useIndexedDB.ts | Stale items never cleared |
-| 10 | **Medium** | PhotoAuditViewer.tsx | Search doesn't re-fetch when already on page 1 |
+| 11 | **Critical** | server.js:14 | Hardcoded password fallback still in `server.js` pool config |
+| 12 | **Critical** | server.js:3020 | Plain-text password comparison in login — passwords stored and compared as plain text in MySQL |
+| 13 | **High** | server.js:1112-1115 | DELETE `/api/milk-collection/:ref` has no ccode filter — any device can delete any company's records |
+| 14 | **High** | server.js:1829 | Stock balance update `WHERE icode = ?` has no `ccode` filter — deducts stock across ALL companies sharing same item code |
+| 15 | **High** | server.js:1907 | Batch sales use `now.toISOString().split('T')[0]` for transdate which shifts dates in timezones ahead of UTC (unlike milk collection which uses local date) |
+| 16 | **Medium** | server.js:2636-2654 | SMS endpoint variable shadowing: inner `req` (https.request) shadows outer `req` (HTTP request) — could cause unexpected behavior |
+| 17 | **Medium** | server.js:1097 | PUT `/api/milk-collection/:ref` uses `toISOString()` for date conversion — can shift date by one day in UTC+ timezones (inconsistent with POST which uses local date) |
+| 18 | **Medium** | useDataSync.ts:808 | `syncAllData` not in dependency array of initial mount effect — stale closure risk if `syncAllData` changes before effect runs |
+| 19 | **Medium** | useScaleConnection.ts:275 | `isWaitingForStable` in `connectBLE` dependency array causes re-creation of `connectBLE` callback every time stable state changes, causing potential re-render cascades |
+| 20 | **High** | server.js:405-408 | DELETE `/api/farmers/:id` has no ccode filter — any request can delete farmers from any company |
+| 21 | **High** | server.js:383-389 | POST `/api/farmers` has no ccode field — creates farmer without company association |
+| 22 | **Medium** | Login.tsx:234 | Legacy plain-text password comparison `cachedCreds.password === password` bypasses hashing — attacker who knows the hash could still login with the raw password |
+| 23 | **High** | server.js:2059 | Batch sale stock update `WHERE icode = ?` missing `AND ccode = ?` — same cross-company stock deduction bug as single sale |
+| 24 | **Medium** | Index.tsx:864 | `orderId: Date.now()` for capture records can collide when rapid captures happen within same millisecond (no random suffix like `saveReceipt` uses) |
+| 25 | **Medium** | useIndexedDB.ts:466 | `getUnsyncedSales` only filters for `type === 'sale'` but not `type === 'ai'` — AI sales are never counted as pending in the sales sync path |
+| 26 | **Low** | server.js:3177 | Photo audit `adjustedTotal` calculation is wrong — subtracts missing files from current page's count, not from total, causing incorrect pagination |
+| 27 | **Medium** | server.js:1647-1648 | Sales endpoint uses `toISOString()` for transdate — timezone shift issue (same as bugs 15/17), coffee/dairy transactions can appear on wrong date |
+| 28 | **High** | useDataSync.ts:456-458 | `syncOfflineReceipts` callback dependencies don't include `mountedRef` or `inFlightSyncsRef`, and missing `saveReceipt` — if the component re-renders with new `deleteReceipt`, stale closure uses old DB handle |
+| 29 | **Medium** | DEPLOYMENT_GUIDE.md | Database password `0741899183Mutee` hardcoded in the troubleshooting section of the deployment guide — second credential leak vector |
+| 30 | **Low** | server.js:1793 | Sales INSERT has 29 `?` placeholders but the VALUES clause template shows 29 `?` — fragile, any column addition/removal breaks silently |
+
+---
 
 ### Recommended Fix Priority
-1. Bug 7 (security — password in repo)
-2. Bug 3 (security — plain-text password)
-3. Bug 1 (DB version mismatch — causes reference generation failures)
-4. Bug 2 + 5 (farmer cache corruption)
-5. Bug 4 (infinite loop risk)
-6. Bugs 8, 9, 10 (stale data + UX)
-7. Bug 6 (cleanup)
+
+**Security (fix immediately):**
+1. Bug 12 — Server stores/compares passwords as plain text in MySQL
+2. Bug 11 — Remove hardcoded password fallback from `server.js`
+3. Bug 29 — Remove password from DEPLOYMENT_GUIDE.md
+4. Bug 13 — DELETE milk-collection missing ccode filter
+5. Bug 20 — DELETE farmers missing ccode filter
+6. Bug 21 — POST farmers missing ccode
+
+**Data Integrity (fix next):**
+7. Bugs 14+23 — Stock deduction missing ccode filter (cross-company)
+8. Bugs 15+17+27 — Timezone date shift issues in sales/updates
+9. Bug 25 — AI sales not counted in pending sales
+10. Bug 24 — orderId collision on rapid captures
+
+**Code Quality (fix when convenient):**
+11. Bugs 16, 18, 19, 22, 26, 28, 30
 
 ### Files to Modify
-- `src/utils/referenceGenerator.ts` — fix DB_VERSION
-- `src/components/FarmerSearch.tsx` — fix poll, dependency array, unused import
-- `src/contexts/AuthContext.tsx` — hash password before caching
-- `src/hooks/useIndexedDB.ts` — add clear() to saveRoutes/saveSessions/saveItems
-- `src/components/PhotoAuditViewer.tsx` — fix search re-fetch
-- `backend-api/.htaccess` — remove hardcoded credentials
-- `src/constants/appVersion.ts` — bump to v2.10.37 (Code 59)
+- `backend-api/server.js` — Bugs 11-17, 20-21, 23, 26-27, 30
+- `backend-api/DEPLOYMENT_GUIDE.md` — Bug 29
+- `src/components/Login.tsx` — Bug 22
+- `src/pages/Index.tsx` — Bug 24
+- `src/hooks/useIndexedDB.ts` — Bug 25
+- `src/hooks/useDataSync.ts` — Bugs 18, 28
+- `src/hooks/useScaleConnection.ts` — Bug 19
+- `src/constants/appVersion.ts` — Bump to v2.10.38 (Code 60)
 
