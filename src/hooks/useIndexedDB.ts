@@ -502,10 +502,15 @@ export const useIndexedDB = () => {
 
   const saveItems = useCallback((items: any[]) => {
     if (!db) return;
+    if (!items || items.length === 0) {
+      console.log('⚠️ Skipping saveItems — empty array');
+      return;
+    }
     const tx = db.transaction('items', 'readwrite');
     const store = tx.objectStore('items');
+    store.clear(); // Clear stale items before writing fresh data
     items.forEach((item) => store.put(item));
-    console.log('Items cached in IndexedDB');
+    console.log(`Items cached in IndexedDB (${items.length})`);
   }, [db]);
 
   const getItems = useCallback((): Promise<any[]> => {
@@ -697,11 +702,16 @@ export const useIndexedDB = () => {
    */
   const saveRoutes = useCallback((routes: any[]) => {
     if (!db) return;
+    if (!routes || routes.length === 0) {
+      console.log('⚠️ Skipping saveRoutes — empty array');
+      return;
+    }
     try {
       const tx = db.transaction('routes', 'readwrite');
       const store = tx.objectStore('routes');
+      store.clear(); // Clear stale routes before writing fresh data
       routes.forEach((route) => store.put(route));
-      console.log('Routes cached in IndexedDB');
+      console.log(`Routes cached in IndexedDB (${routes.length})`);
     } catch (error) {
       console.error('Failed to save routes:', error);
     }
@@ -732,11 +742,16 @@ export const useIndexedDB = () => {
    */
   const saveSessions = useCallback((sessions: any[]) => {
     if (!db) return;
+    if (!sessions || sessions.length === 0) {
+      console.log('⚠️ Skipping saveSessions — empty array');
+      return;
+    }
     try {
       const tx = db.transaction('sessions', 'readwrite');
       const store = tx.objectStore('sessions');
+      store.clear(); // Clear stale sessions before writing fresh data
       sessions.forEach((session) => store.put(session));
-      console.log('Sessions cached in IndexedDB');
+      console.log(`Sessions cached in IndexedDB (${sessions.length})`);
     } catch (error) {
       console.error('Failed to save sessions:', error);
     }

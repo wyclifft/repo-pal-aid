@@ -4,7 +4,7 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { Progress } from '@/components/ui/progress';
-import { Loader2, Ban } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 interface FarmerSearchProps {
   onSelectFarmer: (farmer: Farmer) => void;
@@ -63,7 +63,8 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, selectedMpr
       }
     };
     loadCached();
-  }, [getFarmers, selectedRoute, selectedMprefix, onFarmersLoaded, useRouteFilter]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getFarmers, selectedRoute, selectedMprefix, useRouteFilter]);
 
   const searchFarmers = useCallback((query: string, farmers: Farmer[]) => {
     // Filter out blacklisted farmers (multOpt=0 who already delivered this session)
@@ -165,7 +166,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, selectedMpr
     return () => window.removeEventListener('online', syncFarmers);
   }, [saveFarmers, selectedRoute, selectedMprefix, useRouteFilter, onFarmersLoaded]);
 
-  // Poll for farmers updates every 5 minutes when online (device-filtered)
+  // Poll for farmers updates every 5 minutes when online (device-filtered, route-aware)
   useEffect(() => {
     if (!navigator.onLine) return;
 
@@ -174,9 +175,14 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, selectedMpr
         const { generateDeviceFingerprint } = await import('@/utils/deviceFingerprint');
         const deviceFingerprint = await generateDeviceFingerprint();
         
-        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
-        if (response.success && response.data) {
+        // Pass route/mprefix params to avoid overwriting filtered data
+        const routeParam = useRouteFilter ? (selectedRoute || undefined) : undefined;
+        const mprefixParam = !useRouteFilter ? (selectedMprefix || undefined) : undefined;
+        
+        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint, routeParam, mprefixParam);
+        if (response.success && response.data && response.data.length > 0) {
           saveFarmers(response.data);
+          setCachedFarmers(response.data);
           console.log(`✅ Refreshed ${response.data.length} farmers for this device from MySQL`);
         }
       } catch (err) {
@@ -185,7 +191,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, selectedMpr
     }, 5 * 60 * 1000); // 5 minutes
 
     return () => clearInterval(interval);
-  }, [saveFarmers]);
+  }, [saveFarmers, selectedRoute, selectedMprefix, useRouteFilter]);
 
   const handleSelect = (farmer: Farmer) => {
     setSearchQuery(`${farmer.farmer_id} - ${farmer.name}`);

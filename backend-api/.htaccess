@@ -11,7 +11,7 @@ SetEnv NODE_ENV production
 SetEnv MYSQL_HOST localhost
 SetEnv MYSQL_DATABASE maddasys_milk_collection_pwa
 SetEnv MYSQL_USER maddasys_tesh
-SetEnv MYSQL_PASSWORD 0741899183Mutee
+SetEnv MYSQL_PASSWORD ${MYSQL_PASSWORD}
 SetEnv MYSQL_PORT 3306
 SetEnv PORT 3000
 
