@@ -199,9 +199,16 @@ export const useIndexedDB = () => {
 
   const saveFarmers = useCallback((farmers: Farmer[]) => {
     if (!db) return;
+    // Guard: never save empty array — prevents accidental cache wipe
+    if (!farmers || farmers.length === 0) {
+      console.warn('⚠️ saveFarmers called with empty array — skipping to protect cache');
+      return;
+    }
     try {
       const tx = db.transaction('farmers', 'readwrite');
       const store = tx.objectStore('farmers');
+      // Clear old entries then write fresh data to remove stale farmers
+      store.clear();
       farmers.forEach((farmer) => store.put(farmer));
       tx.onerror = () => console.error('Error saving farmers:', tx.error);
     } catch (error) {

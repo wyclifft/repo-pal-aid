@@ -119,9 +119,8 @@ export default function PeriodicReport() {
 
         console.log("Report response received:", response);
         
-        // Check for authorization errors
+        // Check for authorization errors — do NOT clear farmer cache
         if (!response.success) {
-          await saveFarmers([]);
           if (!reportData || reportData.length === 0) {
             setReportData([]);
             toast.error(response.error || 'Device not authorized. Please contact administrator.');

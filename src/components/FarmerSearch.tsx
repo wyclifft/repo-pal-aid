@@ -140,17 +140,16 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, selectedMpr
               setSyncProgress(0);
             }, 1500);
           } else if (!response.success) {
-            // Handle authorization errors - clear cached farmers
-            console.error('❌ Device authorization error:', response.message || response.error);
-            await saveFarmers([]); // Clear cached farmers
-            setCachedFarmers([]); // Clear state
+            // Only log the error — do NOT clear cached farmers
+            // Clearing on API failure causes members to disappear when going offline
+            console.error('❌ API error (keeping cached farmers):', response.message || response.error);
             const { toast } = await import('sonner');
-            toast.error(response.message || 'Device not authorized');
+            toast.error(response.message || 'Failed to sync farmers — using cached data');
             setIsSyncing(false);
             setSyncProgress(0);
           } else {
-            // No farmers found for this route/prefix
-            setCachedFarmers([]);
+            // API returned success but empty data — keep existing cache
+            console.log('ℹ️ API returned empty farmers list — keeping cached data');
             setIsSyncing(false);
           }
         } catch (err) {
