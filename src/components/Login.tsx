@@ -231,7 +231,8 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         // Verify credentials match (case-insensitive user ID, hashed password)
         const userIdMatch = cachedCreds.user_id?.toLowerCase().trim() === userId.toLowerCase().trim();
         // Support both hashed (new) and plain-text (legacy) cached passwords
-        const passwordMatch = cachedCreds.password === hashedInput || cachedCreds.password === password;
+        // Only match against hashed password — never compare plain-text input directly
+        const passwordMatch = cachedCreds.password === hashedInput;
         console.log('[OFFLINE] Password match:', passwordMatch);
         
         if (!userIdMatch || !passwordMatch) {

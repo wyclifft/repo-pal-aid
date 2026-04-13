@@ -861,7 +861,7 @@ const Index = () => {
       clerk_name: currentUser ? (currentUser.username || currentUser.user_id) : 'unknown', // Display name for clerk column
       collection_date: new Date(),
       multOpt: farmerMultOpt,
-      orderId: Date.now(),
+      orderId: Date.now() + Math.floor(Math.random() * 1000),
       synced: false, // Not synced - only locally captured
       // Product info from selected produce item (invtype=01)
       product_code: selectedProduct?.icode, // → DB: icode column

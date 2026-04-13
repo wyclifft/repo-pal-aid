@@ -462,8 +462,8 @@ export const useIndexedDB = () => {
         const request = store.getAll();
         
         request.onsuccess = () => {
-          // Filter for unsynced sales
-          const sales = request.result.filter((record: any) => record.type === 'sale' && !record.synced);
+          // Filter for unsynced sales (both store and AI)
+          const sales = request.result.filter((record: any) => (record.type === 'sale' || record.type === 'ai') && !record.synced);
           resolve(sales);
         };
         

@@ -805,7 +805,8 @@ export const useDataSync = () => {
         localStorage.setItem('lastSyncTime', Date.now().toString());
       });
     }
-  }, [isReady]); // Only depend on isReady
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReady, syncAllData]); // Include syncAllData to avoid stale closure
 
   // Register centralized online handler
   // In offline-first mode (online=1), auto-sync is disabled - user must manually trigger

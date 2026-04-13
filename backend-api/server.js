@@ -11,7 +11,7 @@ const url = require('url');
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'localhost',
   user: process.env.MYSQL_USER || 'maddasys_wycliff',
-  password: process.env.MYSQL_PASSWORD || '0741899183Mutee',
+  password: process.env.MYSQL_PASSWORD || '',
   database: process.env.MYSQL_DATABASE || 'maddasys_milk_collection_pwa',
   port: Number(process.env.MYSQL_PORT || 3306),
   connectionLimit: 2,
@@ -382,9 +382,12 @@ const server = http.createServer(async (req, res) => {
 
     if (path === '/api/farmers' && method === 'POST') {
       const body = await parseBody(req);
+      if (!body.ccode) {
+        return sendJSON(res, { success: false, error: 'ccode is required' }, 400);
+      }
       await pool.query(
-        'INSERT INTO cm_members (mcode, descript, route) VALUES (?, ?, ?)',
-        [body.farmer_id, body.name, body.route]
+        'INSERT INTO cm_members (mcode, descript, route, ccode) VALUES (?, ?, ?, ?)',
+        [body.farmer_id, body.name, body.route, body.ccode]
       );
       return sendJSON(res, { success: true, message: 'Farmer created' }, 201);
     }
@@ -404,7 +407,11 @@ const server = http.createServer(async (req, res) => {
 
     if (path.startsWith('/api/farmers/') && method === 'DELETE') {
       const id = path.split('/')[3];
-      await pool.query('DELETE FROM cm_members WHERE mcode = ?', [id]);
+      const { ccode: deleteCcode } = parsedUrl.query;
+      if (!deleteCcode) {
+        return sendJSON(res, { success: false, error: 'ccode query parameter is required' }, 400);
+      }
+      await pool.query('DELETE FROM cm_members WHERE mcode = ? AND ccode = ?', [id, deleteCcode]);
       return sendJSON(res, { success: true, message: 'Farmer deleted' });
     }
 
@@ -1094,7 +1101,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (body.collection_date) {
         const collectionDate = new Date(body.collection_date);
-        const transdate = collectionDate.toISOString().split('T')[0];
+        const yyyy = collectionDate.getFullYear();
+        const mm = String(collectionDate.getMonth() + 1).padStart(2, '0');
+        const dd = String(collectionDate.getDate()).padStart(2, '0');
+        const transdate = `${yyyy}-${mm}-${dd}`;
         const transtime = collectionDate.toTimeString().split(' ')[0];
         updates.push('transdate = ?', 'transtime = ?');
         values.push(transdate, transtime);
@@ -1111,7 +1121,11 @@ const server = http.createServer(async (req, res) => {
 
     if (path.startsWith('/api/milk-collection/') && method === 'DELETE') {
       const ref = path.split('/')[3];
-      await pool.query('DELETE FROM transactions WHERE transrefno = ?', [ref]);
+      const { ccode: delCcode } = parsedUrl.query;
+      if (!delCcode) {
+        return sendJSON(res, { success: false, error: 'ccode query parameter is required' }, 400);
+      }
+      await pool.query('DELETE FROM transactions WHERE transrefno = ? AND ccode = ?', [ref, delCcode]);
       return sendJSON(res, { success: true, message: 'Collection deleted' });
     }
 
@@ -1644,7 +1658,10 @@ const server = http.createServer(async (req, res) => {
         
         // Get current date and time
         const now = new Date();
-        const transdate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+        const yyyy = now.getFullYear();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const dd = String(now.getDate()).padStart(2, '0');
+        const transdate = `${yyyy}-${mm}-${dd}`; // YYYY-MM-DD (local timezone)
         const transtime = now.toTimeString().split(' ')[0]; // HH:MM:SS
         const timestamp = Math.floor(now.getTime() / 1000); // Unix timestamp
         
@@ -1824,10 +1841,10 @@ const server = http.createServer(async (req, res) => {
           ]
         );
         
-        // Update stock balance
+        // Update stock balance (scoped to company)
         await conn.query(
-          'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
-          [body.quantity, body.item_code]
+          'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ? AND ccode = ?',
+          [body.quantity, body.item_code, ccode]
         );
         
         await conn.commit();
@@ -1904,7 +1921,10 @@ const server = http.createServer(async (req, res) => {
         
         // Get current date and time
         const now = new Date();
-        const transdate = now.toISOString().split('T')[0];
+        const batchYyyy = now.getFullYear();
+        const batchMm = String(now.getMonth() + 1).padStart(2, '0');
+        const batchDd = String(now.getDate()).padStart(2, '0');
+        const transdate = `${batchYyyy}-${batchMm}-${batchDd}`;
         const transtime = now.toTimeString().split(' ')[0];
         const timestamp = Math.floor(now.getTime() / 1000);
         
@@ -2054,10 +2074,10 @@ const server = http.createServer(async (req, res) => {
               ]
             );
 
-            // Update stock balance only for newly inserted rows
+            // Update stock balance only for newly inserted rows (scoped to company)
             await conn.query(
-              'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
-              [item.quantity || 0, item.item_code]
+              'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ? AND ccode = ?',
+              [item.quantity || 0, item.item_code, ccode]
             );
 
             insertedRefs.push(transrefno);
@@ -2634,10 +2654,10 @@ const server = http.createServer(async (req, res) => {
         };
         
         const smsResponse = await new Promise((resolve, reject) => {
-          const req = https.request(options, (res) => {
+          const smsReq = https.request(options, (smsRes) => {
             let data = '';
-            res.on('data', (chunk) => { data += chunk; });
-            res.on('end', () => {
+            smsRes.on('data', (chunk) => { data += chunk; });
+            smsRes.on('end', () => {
               try {
                 resolve(JSON.parse(data));
               } catch (e) {
@@ -2646,12 +2666,12 @@ const server = http.createServer(async (req, res) => {
             });
           });
           
-          req.on('error', (e) => {
+          smsReq.on('error', (e) => {
             reject(e);
           });
           
-          req.write(postData);
-          req.end();
+          smsReq.write(postData);
+          smsReq.end();
         });
         
         return sendJSON(res, { 
@@ -3174,7 +3194,9 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
-      const adjustedTotal = validRows.length < rows.length ? total - (rows.length - validRows.length) : total;
+      // Subtract missing files from total count (not just current page)
+      const missingOnPage = rows.length - validRows.length;
+      const adjustedTotal = total - missingOnPage;
       return sendJSON(res, {
         success: true,
         data: validRows,
