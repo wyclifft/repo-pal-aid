@@ -16,7 +16,6 @@ PassengerEnabled on
 PassengerAppRoot /home/maddasys/public_html/api/milk-collection-api
 PassengerAppType node
 PassengerStartupFile server.js
-PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node
 
 SetEnv NODE_ENV production
 SetEnv MYSQL_HOST localhost
