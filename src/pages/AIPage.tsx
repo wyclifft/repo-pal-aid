@@ -305,10 +305,12 @@ const AIPage = () => {
     }
   };
 
-  // Use shared farmer resolution hook
+  // Use shared farmer resolution hook with strict prefix enforcement so a
+  // debtor ID (D…) can't be selected while Members is active (and vice versa).
   const { resolveFarmerId, resolveAndSelect } = useFarmerResolution({
     farmers,
     isMemberMode,
+    enforcePrefix: true,
   });
 
   // Handle Enter key on member input
