@@ -1861,7 +1861,7 @@ const server = http.createServer(async (req, res) => {
             body.farmer_id || '',               // memberno
             storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
             body.quantity || 0,                 // weight (using quantity)
-            body.session_label || body.session || '', // session (label e.g. MORNING/AM/PM)
+            salesSessionVal,                    // v2.10.50: session (SCODE for coffee, label for dairy)
             transdate,                          // transdate
             transtime,                          // transtime
             transtype,                          // Transtype: 2 for Store, 3 for AI
