@@ -1,13 +1,14 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Camera, X, RotateCcw, Check, Loader2 } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
 // Lazy-load @capacitor/camera to avoid eager Proxy resolution on Android startup
 // (which caused "Camera.then() is not implemented on android" unhandled rejections).
+// v2.10.48: Removed static enum imports (CameraResultType/Source/Direction) — they
+// triggered the same Proxy `then` trap. Use string literals instead.
 import type { Camera as CapacitorCameraType } from '@capacitor/camera';
-import { CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';
 import { compressImage } from '@/utils/imageCompression';
 
 const loadCapacitorCamera = async (): Promise<typeof CapacitorCameraType | null> => {
