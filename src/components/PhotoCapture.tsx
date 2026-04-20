@@ -321,6 +321,9 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
               <X className="h-5 w-5" />
             </button>
           </div>
+          <DialogDescription className="sr-only">
+            Capture a photo using the device camera. Confirm or retake before submitting.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="relative bg-black aspect-[4/3] min-h-[300px]">
