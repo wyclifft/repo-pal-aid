@@ -1004,9 +1004,10 @@ export const membersApi = {
     multOpt: number;
     currqty: number;
   }>> => {
+    // v2.10.42: Removed X-Device-Fingerprint header to avoid CORS preflight failure on web.
+    // Server reads device_fingerprint from JSON body as fallback (server.js line 3112).
     return apiRequest('/members', {
       method: 'POST',
-      headers: { 'X-Device-Fingerprint': deviceFingerprint },
       body: JSON.stringify({
         ...input,
         user_id: userId,
