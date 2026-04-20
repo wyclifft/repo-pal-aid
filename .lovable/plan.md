@@ -1,91 +1,113 @@
 
 
-## Fix: New Debtor (D-prefix) Doesn't Appear Under "Debtors" Toggle in Store/AI — v2.10.52
+## Fix: Duplicate Member ID + Periodic Report Cross-Device Visibility — v2.10.53
 
-### Root Cause
+Two independent fixes, both production-safe.
 
-Two independent bugs in `src/pages/Store.tsx` and `src/pages/AIPage.tsx`:
+---
 
-**Bug 1 — Debtors filter wrongly requires a non-empty `crbal`**
+### Issue 1 — Add Member silently auto-renames duplicate IDs
 
-Both pages filter the Debtors list with:
-```ts
-// Store.tsx line 686-694, AIPage.tsx line 527-534
-const matchesPrefix = f.farmer_id.toUpperCase().startsWith(prefix);
-if (!isMemberMode) {
-  const hasCrbal = f.crbal && typeof f.crbal === 'string' && f.crbal.trim() !== '' && f.crbal !== '0';
-  return matchesPrefix && hasCrbal;   // ❌ hides new debtors with no credit yet
-}
-```
+**Current behavior** (`backend-api/server.js` lines 3252–3358):
+- Backend relies on `ER_DUP_ENTRY` from a UNIQUE index on `cm_members.mcode`.
+- On duplicate, it **auto-increments the numeric tail** ( `M00010` → `M00011` ) and silently saves under a different ID — without telling the operator.
+- Worse: if there is no UNIQUE constraint on `(mcode, ccode)` in production, **two rows with the same mcode within the same ccode can coexist** with no error raised at all.
 
-A newly created debtor like `D03558` has no credit balance until a sale is made, so `crbal` is empty/null and the row is excluded from the Debtors search modal — even though it has the correct `D` prefix.
+**Fix (backend-only, additive-safe):**
 
-**Bug 2 — Resolver doesn't validate prefix, so the typed ID "leaks" into Members mode**
+1. **Pre-check explicitly before insert** inside `/api/members POST`:
+   ```js
+   const [existing] = await pool.query(
+     'SELECT mcode FROM cm_members WHERE TRIM(mcode) = TRIM(?) AND ccode = ? LIMIT 1',
+     [mmcode, ccode]
+   );
+   if (existing.length > 0) {
+     return sendJSON(res, {
+       success: false,
+       error: `Member ID "${mmcode}" already exists for this company. Please use a different ID.`
+     }, 409);
+   }
+   ```
+2. **Disable the silent auto-increment retry loop.** If the typed ID collides, return `409` immediately. The "next available ID" suggestion (`/api/members/next-id`) already prefills a unique value; if the operator overrides it with a duplicate, the action must fail loudly, not silently rename.
+3. **Keep** the existing `ER_DUP_ENTRY` catch as a final safety net (race condition between two devices) — but it now also returns `409` immediately instead of incrementing.
 
-`resolveFarmerId` in both pages only does an exact-match (case-insensitive) over the **entire** farmer list without enforcing the active mode's prefix. So when the user is on the **Members** toggle and types `D03558`, the exact match succeeds and selects the debtor — making it look like "the debtor shows up in Members". This is the inverse of what the toggle is meant to enforce.
+**Frontend** (`src/components/AddMemberModal.tsx`): no change needed — it already toasts `result.error` on `success === false`. The new clearer 409 message will surface automatically.
 
-```ts
-// Store.tsx line 345
-const exactMatch = farmers.find(f => f.farmer_id.toLowerCase() === input.toLowerCase());
-if (exactMatch) return exactMatch;   // ❌ no prefix check
-```
+**Note on DB constraint:** A separate migration to add `UNIQUE KEY uniq_member_per_company (mcode, ccode)` to `cm_members` is recommended but is out of scope for this code change (would require a DB migration the user must run). The pre-check above closes the gap at the application layer without requiring schema change.
 
-**Bug 3 (minor) — Store/AI don't react to `membersUpdated` event**
+---
 
-`AddMemberModal` dispatches `window.dispatchEvent(new CustomEvent('membersUpdated'))` after a successful save, but `Store.tsx` and `AIPage.tsx` don't listen for it. New members only appear after the next periodic farmer sync, contributing to the "doesn't appear" perception.
+### Issue 2 — Periodic Report only shows current device's transactions
 
-### Fix
+**Current behavior** (`backend-api/server.js` lines 1185–1209 and 1276–1292):
+- Both `/api/periodic-report` and `/api/periodic-report/farmer-detail` filter by `t.deviceserial = ?` (the requesting device's fingerprint).
+- Result: a tablet cannot see transactions captured by another tablet on the same `ccode`, even though they share the same company and routes.
 
-#### 1. `src/pages/Store.tsx`
+**Fix (backend, behavior change — see compatibility note):**
 
-- **Debtors filter (line ~686)**: drop the `hasCrbal` requirement. A debtor is anyone whose ID starts with `D`. Credit balance is shown later in the member info card / View More dialog when present, but it must NOT gate visibility in the picker.
-  ```ts
-  const prefixFilteredFarmers = farmers.filter(f =>
-    f.farmer_id.toUpperCase().startsWith(prefix)
-  );
-  ```
-- **Resolver (line ~340)**: enforce the active prefix on every match path (exact, padded, numeric). If the typed ID belongs to the opposite mode, return `null` and toast `Switch to Debtors/Members to use ID <X>`.
-- **Listener**: add a `useEffect` subscribing to `window` event `membersUpdated` that re-runs `loadFarmers()` (and triggers a fresh `mysqlApi.farmers.getByDevice` if online) so a member added from the Dashboard appears in Store immediately.
+1. **Drop the `t.deviceserial = ?` filter** in both endpoints. Keep the strict `t.ccode = ?` filter (multi-tenant boundary stays intact).
+2. **Add an optional `route` query parameter** to scope by the route currently selected on the requesting device:
+   - Frontend passes `route` from `localStorage.active_session_data.route.tcode` (already persisted by `Dashboard.tsx`).
+   - Backend appends `AND TRIM(t.route) = TRIM(?)` when `route` is present; omitted = all routes for the ccode.
+3. **Apply the same change to the farmer-detail endpoint** (line ~1278) — drop `deviceserial`, add optional `route`.
 
-#### 2. `src/pages/AIPage.tsx`
+**Backward compatibility:** the `uniquedevcode` parameter is **kept** and still required for **device authorization** (resolving `ccode` from `devsettings`). Only the *data filter* changes from `deviceserial=` to `ccode=` (+ optional route). Old Capacitor clients that don't send `route` get the full ccode results — strictly more data, never less, no breakage.
 
-Apply the exact same three changes (filter, resolver, listener). The AI page mirrors Store.
+**Frontend** (`src/pages/PeriodicReport.tsx`):
 
-#### 3. `src/components/SellProduceScreen.tsx`
+1. Read the active route from `localStorage.active_session_data` on mount → store in `selectedRoute` state.
+2. Add a small read-only display under the header: `Route: <selectedRoute.descript>` (or "All routes" if none active), so the operator knows what scope they're viewing.
+3. Pass `route: selectedRoute?.tcode` to `mysqlApi.periodicReport.get(...)` and `getFarmerDetail(...)`.
+4. Include `route` in the `cacheKey` so per-route caches don't collide.
 
-Audit — already filters strictly by prefix and does not require `crbal`, so no change needed beyond confirming behavior. The shared `useFarmerResolution` hook also already does exact-match without prefix enforcement; we'll add an optional `enforcePrefix` flag (default `false` for backward compat) and pass `true` from Sell screen later if regression observed. Out of scope for this ticket if Sell already works correctly.
+**Frontend service** (`src/services/mysqlApi.ts`):
+- Extend `periodicReportApi.get(...)` and `getFarmerDetail(...)` signatures with an optional `route?: string` query param.
 
-#### 4. `src/constants/appVersion.ts`
+---
 
-Bump to **v2.10.52 (Code 74)** with comment: "Fix Debtors filter (drop crbal requirement) + enforce prefix in farmer resolver + listen for membersUpdated in Store/AI."
+### Files Changed
+
+| File | Change |
+|---|---|
+| `backend-api/server.js` | (1) `/api/members POST`: add explicit pre-check for `(mcode, ccode)` collision → 409; remove silent auto-increment retry, keep `ER_DUP_ENTRY` as race-safety returning 409. (2) `/api/periodic-report` + `/api/periodic-report/farmer-detail`: drop `t.deviceserial =` filter, add optional `route` query param. |
+| `src/services/mysqlApi.ts` | Add optional `route?: string` param to `periodicReportApi.get` and `getFarmerDetail`. |
+| `src/pages/PeriodicReport.tsx` | Read active route from `localStorage.active_session_data`; pass to API; show "Route: <descript>" badge; include in cache key. |
+| `src/constants/appVersion.ts` | Bump to **v2.10.53 (Code 75)** with a changelog comment. |
+
+---
 
 ### What Does NOT Change
 
-- Backend (`server.js`) — untouched. `crbal` is still computed/returned the same way.
-- IndexedDB schema, sync engine, reference generator — untouched.
-- `SellProduceScreen` member/debtor toggle — already correct.
-- Credit-balance display in the selected-member card and "View More" dialog — unchanged. Debtors with credit still see their balance; debtors without credit just show `0` / no credit lines (same behavior as before for that section).
-- Dairy AM/PM and coffee SCODE logic from v2.10.51 — untouched.
+- Z-Reports — remain strictly device-isolated per [Report Isolation Rules](mem://constraints/report-isolation-rules) memory.
+- Multi-tenant `ccode` JWT/device authorization boundary — unchanged.
+- IndexedDB schema, sync engines, reference generators, photo system — unchanged.
+- v2.10.51 coffee SCODE logic — unchanged.
+- v2.10.52 Debtors prefix logic — unchanged.
+- `AddMemberModal.tsx` UI — unchanged (existing error toast surfaces the new 409 message).
+- `/api/members/next-id` — unchanged (still suggests next sequential available ID).
 
-### Backward Compatibility
-
-- Existing debtors with credit: still appear in the list (no regression).
-- New debtors without credit: now appear correctly (the bug fix).
-- Production Capacitor clients < v2.10.52: no contract change; only frontend filter logic changes.
+---
 
 ### Verification After Deploy
 
-1. Dashboard → Add Member → create `D99999` with route, no transactions yet.
-2. Open **Store** → toggle to **Debtors** → search modal shows `D99999`.
-3. Stay on **Members** toggle → type `D99999` → resolver returns null and toasts "Switch to Debtors to use ID D99999". Selection does NOT happen.
-4. Toggle to **Debtors** → type `D99999` → selected.
-5. Repeat 2–4 in **AI Services** page.
-6. Confirm existing member with credit (e.g. `D00001` with `CR02#5000`) still appears under Debtors and shows credit balance in the info card.
-7. Confirm Members toggle still lists only `M*` farmers.
+**Issue 1:**
+1. Dashboard → Add Member → create `M00500` → succeeds.
+2. Add Member again → manually type `M00500` → toast: `Member ID "M00500" already exists for this company. Please use a different ID.` Form stays open, no row inserted.
+3. Add Member with cleared field → suggested next ID is `M00501` → succeeds.
+
+**Issue 2:**
+1. Device A captures milk collection on Route `R01` for member `M00100`.
+2. Device B (same ccode) opens Periodic Report → date range covering today → sees Device A's `M00100` row.
+3. Device B selects a different route on Dashboard → reopens Periodic Report → sees badge "Route: <other route>" and `M00100` is filtered out.
+4. Device B switches back to `R01` on Dashboard → reopens Periodic Report → `M00100` reappears.
+5. Open `View & Print` on that farmer → individual transaction list now shows entries from both Device A and Device B for that route.
+6. Confirm Z-Report on Device B still shows ONLY Device B's transactions (isolation preserved).
+
+---
 
 ### Out of Scope
 
-- Refactoring `useFarmerResolution` to enforce prefixes globally (separate cleanup task).
-- Backfill of `crbal` data.
-- Coffee/dairy session work (already shipped in v2.10.51).
+- Adding `UNIQUE KEY (mcode, ccode)` to `cm_members` (separate DB migration; the application-level pre-check is sufficient for this fix).
+- Multi-route selector in Periodic Report (uses dashboard active route only — matches existing UX).
+- Backfill of any historical duplicate `cm_members` rows.
 
