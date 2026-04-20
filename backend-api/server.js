@@ -3098,9 +3098,99 @@ const server = http.createServer(async (req, res) => {
           supervisor: toSupervisorMode(user.supervisor),
           dcode: user.dcode,
           groupid: user.groupid,
-          depart: user.depart
+          depart: user.depart,
+          // v2.10.40: expose add_members permission for member-creation gating
+          add_members: toBool(user.add_members)
         }
       });
+    }
+
+    // ===== ADD MEMBER ENDPOINT (v2.10.40, additive — does not modify legacy /api/farmers POST) =====
+    if (path === '/api/members' && method === 'POST') {
+      try {
+        const body = await parseBody(req);
+        const deviceFingerprint = req.headers['x-device-fingerprint'] || body.device_fingerprint || '';
+        const userId = (body.user_id || '').toString().trim();
+
+        if (!deviceFingerprint) {
+          return sendJSON(res, { success: false, error: 'Device fingerprint required' }, 400);
+        }
+        if (!userId) {
+          return sendJSON(res, { success: false, error: 'user_id required' }, 400);
+        }
+
+        // Resolve ccode from device (never trust client)
+        const [deviceRows] = await pool.query(
+          'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+          [deviceFingerprint]
+        );
+        if (deviceRows.length === 0 || !deviceRows[0].authorized) {
+          return sendJSON(res, { success: false, error: 'Device not authorized' }, 401);
+        }
+        const ccode = deviceRows[0].ccode;
+
+        // Verify user has add_members permission
+        const [userRows] = await pool.query(
+          'SELECT IFNULL(add_members, 0) AS add_members FROM user WHERE TRIM(userid) = ? LIMIT 1',
+          [userId]
+        );
+        if (userRows.length === 0) {
+          return sendJSON(res, { success: false, error: 'User not found' }, 403);
+        }
+        const addPermRaw = userRows[0].add_members;
+        const hasPerm = (addPermRaw === 1 || addPermRaw === '1' || addPermRaw === true ||
+                         (Buffer.isBuffer(addPermRaw) && addPermRaw[0] === 1));
+        if (!hasPerm) {
+          return sendJSON(res, { success: false, error: 'Permission denied: add_members not enabled for this user' }, 403);
+        }
+
+        // Validate required fields
+        const gender = (body.gender || '').toString().trim().toUpperCase();
+        const descript = (body.descript || '').toString().trim();
+        const mmcode = (body.mmcode || '').toString().trim();
+        const idno = (body.idno || '').toString().trim();
+        const route = (body.route || '').toString().trim();
+        const multOpt = (body.multOpt === 1 || body.multOpt === '1' || body.multOpt === true) ? 1 : 0;
+
+        if (!gender || !descript || !mmcode || !idno || !route) {
+          return sendJSON(res, { success: false, error: 'Missing required fields: gender, descript, mmcode, idno, route' }, 400);
+        }
+        if (descript.length > 100 || mmcode.length > 50 || idno.length > 50 || route.length > 50) {
+          return sendJSON(res, { success: false, error: 'Field length exceeded' }, 400);
+        }
+
+        // Insert with hardcoded server-side defaults (status=1, currqty=0)
+        // mcode is set to mmcode for compatibility
+        try {
+          await pool.query(
+            `INSERT INTO cm_members (mcode, descript, gender, mmcode, idno, route, ccode, status, multOpt, currqty)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 0)`,
+            [mmcode, descript, gender, mmcode, idno, route, ccode, multOpt]
+          );
+
+          console.log(`[SUCCESS] Member added: ${mmcode} (${descript}) by user=${userId}, ccode=${ccode}`);
+
+          return sendJSON(res, {
+            success: true,
+            data: {
+              farmer_id: mmcode,
+              name: descript,
+              route,
+              ccode,
+              multOpt,
+              currqty: 0
+            }
+          });
+        } catch (dupErr) {
+          if (dupErr && (dupErr.code === 'ER_DUP_ENTRY' || dupErr.errno === 1062)) {
+            return sendJSON(res, { success: false, error: 'A member with this ID already exists' }, 409);
+          }
+          throw dupErr;
+        }
+      } catch (err) {
+        console.error('[ERROR] /api/members POST failed:', err?.message);
+        return sendJSON(res, { success: false, error: 'Failed to add member: ' + (err?.message || 'unknown') }, 500);
+      }
     }
 
     // ===== TRANSACTION PHOTOS ENDPOINT (Read-only for auditing, filtered by ccode) =====
