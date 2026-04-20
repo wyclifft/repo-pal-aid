@@ -568,10 +568,19 @@ export const useDataSync = () => {
                 // v2.10.31: Not found on backend — attempt to sync the orphan
                 try {
                   const deviceFingerprint = await generateDeviceFingerprint();
-                  let normalizedSession: 'AM' | 'PM' = 'AM';
-                  const sessVal = String(orphan.session || '').trim().toUpperCase();
-                  if (sessVal === 'PM' || sessVal.includes('PM') || sessVal.includes('EVENING') || sessVal.includes('AFTERNOON')) {
-                    normalizedSession = 'PM';
+                  // v2.10.51: orgtype-aware session value (coffee → SCODE, dairy → AM/PM)
+                  const orgIsCoffeeOrphan = (() => {
+                    try {
+                      const s = JSON.parse(localStorage.getItem('app_settings') || '{}');
+                      return s?.orgtype === 'C';
+                    } catch { return false; }
+                  })();
+                  let normalizedSession: string = 'AM';
+                  if (orgIsCoffeeOrphan) {
+                    normalizedSession = String(orphan.season_code || orphan.session || '').trim();
+                  } else {
+                    const sessVal = String(orphan.session || '').trim().toUpperCase();
+                    normalizedSession = (sessVal === 'PM' || sessVal.includes('PM') || sessVal.includes('EVENING') || sessVal.includes('AFTERNOON')) ? 'PM' : 'AM';
                   }
                   const syncResult = await mysqlApi.milkCollection.create({
                     reference_no: ref,
