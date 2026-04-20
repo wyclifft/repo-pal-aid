@@ -1,117 +1,97 @@
 
 
-## Add Members Feature + Replace `currqty` Cumulative Gating with `psettings.cumulative_frequency_status` — v2.10.40
+## Fix: Add-Member Fingerprint Bug + IndexedDB Version Mismatch + Camera/BT Warnings — v2.10.41
 
-### Overview
+### Root Causes Confirmed
 
-Two coordinated changes:
-1. **New feature**: a permission-gated "Add Member" form that inserts directly into `cm_members`, with the device's `ccode` auto-applied and `status=1` defaulted.
-2. **Cumulative logic refactor**: stop filtering qualifying members by `cm_members.currqty`. Use `psettings.cumulative_frequency_status` as the single switch — when ON, **all** members under the same `ccode` qualify automatically (including newly added ones).
+**1. "DEVICE FINGERPRINT MISSING" on Add Member (USER BUG)**
+- `src/utils/deviceFingerprint.ts` stores the fingerprint under `localStorage` key **`device_id`** (`setStoredDeviceId`).
+- `src/components/AddMemberModal.tsx` line 126 reads the wrong key: `localStorage.getItem('device_fingerprint')` → always returns `null` → toast fires.
+- `src/components/FarmerSyncDashboard.tsx` lines 56, 87, 212 have the same wrong-key bug.
+- Everywhere else in the app the fingerprint is obtained via `await generateDeviceFingerprint()` (which reads `device_id` and re-derives if missing).
+
+**2. IndexedDB open error (`VersionError` DOMException)**
+- `src/hooks/useIndexedDB.ts` opens `milkCollectionDB` at **version 11**.
+- `src/utils/referenceGenerator.ts` opens the **same DB** at **version 10** (line 27, stale comment).
+- Once `useIndexedDB` runs, the on-disk DB is upgraded to v11. Any subsequent `indexedDB.open(..., 10)` from `referenceGenerator` fails with `VersionError`. That's the repeated `IndexedDB open error: [object DOMException]` log. Counters survive because `referenceGenerator` already falls back to `localStorage`.
+
+**3. `Camera.then() is not implemented on android` unhandled rejection**
+- `src/components/PhotoCapture.tsx` (line 7) does a top-level `import { Camera as CapacitorCamera } from '@capacitor/camera'` even on Android. That import resolves to a `Proxy` object whose method calls reject when the plugin native module is absent or not yet ready.
+- The `requestPermissionsOnStartup` path in `permissionRequests.ts` already lazy-loads it correctly; the rejection comes from the eager static import being chained somewhere on bootstrap.
+
+**4. `BluetoothClassic.requestBluetoothPermissions() is not implemented on android`**
+- The native plugin (`BluetoothClassicPlugin.kt`) does not expose `requestBluetoothPermissions()` — Capacitor returns "not implemented" for any unknown method. Permissions for SCAN/CONNECT must be requested via Capacitor `Permissions` plugin or Android's native dialog inside the plugin itself.
+
+**5. Preload warnings + main-thread frame drops + `undefined` line 333**
+- Cosmetic; addressed below.
 
 ---
 
-### Part A — Add Member Feature (Permission-Gated)
+### Changes
 
-#### 1. Backend (`backend-api/server.js`) — additive only
+#### A. Fix add-member fingerprint source (CRITICAL)
 
-**a) Login response: expose `add_members`**
-In `/api/auth/login` (~line 3090–3103), add `add_members` to the returned user payload:
-```js
-add_members: toBool(user.add_members)
-```
-Old clients ignore the extra field — backward-safe.
-
-**b) New endpoint: `POST /api/members`** (placed near the existing `/api/farmers POST`, but separate to avoid disturbing the legacy route)
-- Resolve `ccode` from the device fingerprint (header `X-Device-Fingerprint` or body `device_fingerprint`) via `devsettings` — never trust client-supplied `ccode`.
-- Verify the submitting user has `add_members = 1` (lookup via `body.user_id` against the `user` table). Reject with `403` if not.
-- Required fields: `gender`, `descript`, `mmcode`, `idno`, `route`. Validate non-empty + length caps.
-- Insert with hardcoded server-side defaults:
-  ```sql
-  INSERT INTO cm_members 
-    (mcode, descript, gender, mmcode, idno, route, ccode, status, multOpt, currqty)
-  VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 0)
-  ```
-  - `mcode` = `mmcode` (or generated if your schema needs separate handling — confirm in QA).
-  - `status` = `1` (always).
-  - `multOpt` = from request toggle (`0` or `1`, default `1`).
-  - `currqty` = `0` (legacy column kept untouched; no longer used for gating).
-- Return `{ success: true, data: { farmer_id, name, route, ccode, multOpt } }` so the client can immediately upsert into IndexedDB.
-- Duplicate handling: catch MySQL `ER_DUP_ENTRY` on `mcode`/`mmcode` → `409` with friendly message.
-
-**No existing endpoint is modified** — Capacitor production clients are unaffected.
-
-#### 2. Frontend types
-
-- `src/lib/supabase.ts` — extend `AppUser`:
+**`src/components/AddMemberModal.tsx`**
+- Remove `localStorage.getItem('device_fingerprint')`.
+- Resolve fingerprint via the same path as the rest of the app:
   ```ts
-  add_members?: boolean;
+  import { generateDeviceFingerprint, getStoredDeviceId } from '@/utils/deviceFingerprint';
+  ...
+  const deviceFingerprint =
+    getStoredDeviceId() || (await generateDeviceFingerprint());
   ```
-- `src/services/mysqlApi.ts` — add `membersApi.create({ gender, descript, mmcode, idno, route, multOpt })` calling `POST /api/members` with `device_fingerprint` and `user_id`. Keep existing `farmersApi` untouched.
+- Only show the "missing — please reload" toast if BOTH calls return empty (true edge case).
 
-#### 3. UI — `src/components/AddMemberModal.tsx` (new)
+**`src/components/FarmerSyncDashboard.tsx`** (3 spots: lines 56, 87, 212)
+- Same fix — replace `localStorage.getItem('device_fingerprint')` with `getStoredDeviceId() || await generateDeviceFingerprint()`.
 
-- Dialog with `DialogDescription` (accessibility rule).
-- Fields: Member ID (`mmcode`), Full Name (`descript`), Gender (Select: M/F/Other), ID Number (`idno`), Route (Select — populated from cached `routes` IndexedDB store, filtered by device `ccode`).
-- `multOpt` toggle (Switch) — labelled "Allow multiple deliveries per session".
-- Read-only badge showing the auto-applied `ccode` from `localStorage.device_ccode`.
-- Zod validation client-side: trim, non-empty, max length, ID number numeric.
-- On submit: call `membersApi.create(...)`. On success, toast, close modal, dispatch `membersUpdated` event so `FarmerSyncDashboard`/cumulative caches refresh.
+#### B. Fix IndexedDB version mismatch (root cause of repeated open errors)
 
-#### 4. Dashboard menu integration — `src/components/Dashboard.tsx`
+**`src/utils/referenceGenerator.ts`** (line 27)
+- Bump `DB_VERSION` from `10` → `11` to match `useIndexedDB.ts`.
+- Update the stale comment.
+- Keep `device_config` store creation in `onupgradeneeded` (defensive — no-op if already present).
 
-- Read `currentUser.add_members` from `useAuth()`.
-- In the kebab menu (~line 332), conditionally render an **"Add Member"** entry above "Recent Receipts" — **only when `add_members === true`**.
-- Clicking opens `AddMemberModal`.
-- Disabled / hidden completely when offline (member creation requires online write to `cm_members`); show toast "Add Member requires an internet connection" if user attempts offline.
+This eliminates `VersionError` and lets `referenceGenerator` use IndexedDB as primary instead of falling back to localStorage on every call.
 
----
+#### C. Camera promise rejection guard
 
-### Part B — Replace `currqty` Cumulative Gating with `psettings.cumulative_frequency_status`
-
-The setting `cumulative_frequency_status` already exists in `psettings` and is already returned by `/api/devices/fingerprint/:fingerprint` (server.js line 2340, 2358). Frontend already stores it in `AppSettings.cumulative_frequency_status`. Today the cumulative pre-fetch code filters by `Number(f.currqty) === 1` in 3 spots — we replace that filter with a single setting check.
-
-#### 1. Frontend changes
-
-**`src/pages/Index.tsx`** (~lines 247–248 and 372–373):
-- Replace `.filter(f => Number(f.currqty) === 1)` with a check against `settings.cumulative_frequency_status`:
+**`src/components/PhotoCapture.tsx`**
+- Convert the top-level `@capacitor/camera` import to a lazy dynamic import (mirroring `permissionRequests.ts`):
   ```ts
-  const cumulativeEnabled = (settings.cumulative_frequency_status === 1) || (settings.printcumm === 1);
-  const qualifying = cumulativeEnabled
-    ? (deviceCcode ? response.data.filter(f => f.ccode === deviceCcode) : response.data)
-    : []; // when disabled, no farmers qualify for cumulative pre-fetch
+  const loadCamera = async () => Capacitor.isNativePlatform()
+    ? (await import('@capacitor/camera')).Camera
+    : null;
   ```
-- Same change for the pre-fetch block at line 372.
+- In `captureWithNativeCamera`, await `loadCamera()` and bail safely if `null`.
 
-**`src/components/FarmerSyncDashboard.tsx`** (~lines 147–149):
-- Replace `Number(f.currqty) === 1` with `cumulativeEnabled` (read once from `useAppSettings()`).
-- When the company-wide setting is ON, every member of that `ccode` is treated as active for cumulative sync — no per-member opt-in.
+**`src/App.tsx` startup permission call**
+- Wrap `requestPermissionsOnStartup()` so an unimplemented camera plugin can never bubble as an unhandled rejection (it's already in try/catch but add a `.catch(() => {})` on the IIFE for extra safety).
 
-**`src/lib/supabase.ts` / `src/services/mysqlApi.ts`**:
-- Keep `currqty` field in interfaces (do not delete) — backend still returns it, removing it would break the typed shape and existing IndexedDB cached records. It's just no longer **read** for gating decisions.
+#### D. Bluetooth Classic permission method
 
-#### 2. Backend changes
+**`android/app/src/main/java/app/delicoop101/bluetooth/BluetoothClassicPlugin.kt`**
+- Add an empty `@PluginMethod fun requestBluetoothPermissions(call: PluginCall)` that uses Capacitor's `requestPermissionForAliases(...)` to request `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` (Android 12+) and resolves `{granted: true/false}`.
+- This removes the "not implemented" warning and actually wires permissions correctly on Android 12+.
 
-- **No changes to `/api/farmers/by-device`** — it keeps returning `currqty` for backward compatibility with already-installed Capacitor builds.
-- The new gating logic is purely client-side, driven by `psettings.cumulative_frequency_status` already shipped in the device-info payload.
+#### E. Minor cleanups
 
-#### 3. Newly added members
-Because the gating no longer needs `currqty=1`, any member created via the new "Add Member" flow is **immediately included** in cumulative sync for that `ccode` once `cumulative_frequency_status=1` — no manual activation needed. This satisfies the "Expected Behavior" requirement.
+- **Preload warnings**: in `index.html` remove (or change `as="image"` → `rel="prefetch"`) the `<link rel="preload">` entries for `/icons/icon-192.png` and `/favicon.png`. They're not consumed during the load event window.
+- **`undefined` line 333 log**: trace shows it comes from a generic `console.log(...)` with a possibly-undefined arg. Safe to address opportunistically — not part of this fix unless we identify it. (Will investigate during implementation; if found in a logger util, guard with `?? ''`.)
+- **Main-thread frame drops on launch**: cause is the eager `requestPermissionsOnStartup` + plugin loads firing during first paint. After fix C (lazy camera import) and the IndexedDB fix (no longer retrying 5×), this naturally improves. No further code change required.
 
----
+#### F. Version bump
 
-### Backward Compatibility (Production Safety)
-
-- **No existing endpoint is modified.** New `POST /api/members` is purely additive.
-- **No DB schema changes** — `cm_members` already has `gender`, `descript`, `mmcode`, `idno`, `route`, `ccode`, `status`, `multOpt`, `currqty`. The `user.add_members` column is assumed to already exist (standard in MADDA user schema). If absent, a one-line `ALTER TABLE user ADD COLUMN add_members TINYINT(1) DEFAULT 0` will be required — flagged in QA notes.
-- **`currqty` still selected & cached** — existing Capacitor builds continue to read it; only this version's gating logic ignores it.
-- **Old members with `currqty=0`**: now correctly included in cumulatives when company has `cumulative_frequency_status=1` — this is the desired fix.
-- **Companies with `cumulative_frequency_status=0`**: cumulative pre-fetch is skipped entirely (matches "no cumulative" intent). Receipt rendering of cumulative still gated by `printcumm` as today.
+**`src/constants/appVersion.ts`** → **v2.10.41 (Code 63)**
 
 ---
 
-### Version
+### Production Safety
 
-`src/constants/appVersion.ts` → **v2.10.40 (Code 62)**.
+- **No backend changes** — the new `POST /api/members` endpoint stays as shipped in v2.10.40.
+- **No IndexedDB schema change** — only aligning the version constant in `referenceGenerator.ts` to the already-deployed v11 schema.
+- **Backward-compatible**: `getStoredDeviceId()` returns whatever `generateDeviceFingerprint()` already wrote on first launch — every existing device has it.
+- **No risk to milk/store/AI transaction creation** — only the `AddMemberModal` and `FarmerSyncDashboard` code paths are touched for the fingerprint bug.
 
 ---
 
@@ -119,18 +99,17 @@ Because the gating no longer needs `currqty=1`, any member created via the new "
 
 | File | Change |
 |------|--------|
-| `backend-api/server.js` | Add `add_members` to `/api/auth/login` response; new `POST /api/members` endpoint with permission + ccode resolution |
-| `src/lib/supabase.ts` | Add `add_members?: boolean` to `AppUser` |
-| `src/services/mysqlApi.ts` | Add `membersApi.create(...)` |
-| `src/components/AddMemberModal.tsx` | **NEW** — gated Add Member dialog with Zod validation |
-| `src/components/Dashboard.tsx` | Conditional "Add Member" menu item (only when `add_members=true` and online) |
-| `src/pages/Index.tsx` | Replace `currqty===1` filter with `cumulative_frequency_status` check (2 spots) |
-| `src/components/FarmerSyncDashboard.tsx` | Same replacement in offline cache loader |
-| `src/constants/appVersion.ts` | Bump to v2.10.40 (Code 62) |
+| `src/components/AddMemberModal.tsx` | Use `getStoredDeviceId()` + `generateDeviceFingerprint()` fallback instead of wrong `device_fingerprint` key |
+| `src/components/FarmerSyncDashboard.tsx` | Same fingerprint-source fix (3 spots) |
+| `src/utils/referenceGenerator.ts` | Bump `DB_VERSION` 10 → 11 to match `useIndexedDB.ts` |
+| `src/components/PhotoCapture.tsx` | Lazy-load `@capacitor/camera` to prevent "not implemented" rejection on web/early bootstrap |
+| `src/App.tsx` | Defensive `.catch()` on startup permission IIFE |
+| `android/.../BluetoothClassicPlugin.kt` | Add `requestBluetoothPermissions()` method using Capacitor permission alias API |
+| `index.html` | Remove unused `<link rel="preload">` for icon-192/favicon |
+| `src/constants/appVersion.ts` | Bump to **v2.10.41 (Code 63)** |
 
 ### Out of Scope
 
-- Editing/deleting existing members from the app (only "add" requested).
-- Migrating historical `currqty` values (not needed — column simply ignored).
-- Adding `add_members` UI to the Settings page (kept on Dashboard menu only, per the "hide for non-authorized users" requirement).
+- Refactoring all callers to a single `getDeviceFingerprint()` helper — kept minimal to reduce risk; we only fix the broken sites.
+- Investigating the `undefined` line-333 log (cosmetic; will revisit if it persists after the IndexedDB fix removes the noisy retries).
 
