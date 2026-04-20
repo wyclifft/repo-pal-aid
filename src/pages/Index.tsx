@@ -240,12 +240,16 @@ const Index = () => {
           }
 
           // Fetch qualifying farmers
+          // v2.10.40: gating now driven by psettings.cumulative_frequency_status (or legacy printcumm)
+          // instead of per-member cm_members.currqty. When ON, ALL members under the device's ccode qualify.
           const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
           if (response.success && response.data) {
             saveFarmers(response.data);
             const deviceCcode = localStorage.getItem('device_ccode') || '';
-            const qualifying = (deviceCcode ? response.data.filter(f => f.ccode === deviceCcode) : response.data)
-              .filter(f => Number(f.currqty) === 1);
+            const cumulativeEnabled = (settings.cumulative_frequency_status === 1) || (settings.printcumm === 1);
+            const qualifying = cumulativeEnabled
+              ? (deviceCcode ? response.data.filter(f => f.ccode === deviceCcode) : response.data)
+              : [];
 
             // Write ALL updated cumulatives atomically in batches — do not abort early
             const WRITE_BATCH = 50;
@@ -369,14 +373,16 @@ const Index = () => {
         
         const allFarmers = response.data;
         const deviceCcode = localStorage.getItem('device_ccode') || '';
+        // v2.10.40: gating now driven by psettings.cumulative_frequency_status (or legacy printcumm)
+        const cumulativeEnabled = (settings.cumulative_frequency_status === 1) || (settings.printcumm === 1);
         const ccodeFarmers = deviceCcode ? allFarmers.filter(f => f.ccode === deviceCcode) : allFarmers;
-        const farmersToCache = ccodeFarmers.filter(f => Number(f.currqty) === 1);
+        const farmersToCache = cumulativeEnabled ? ccodeFarmers : [];
         
         // Save ALL farmers to IndexedDB for FarmerSyncDashboard
         saveFarmers(allFarmers);
         
         if (farmersToCache.length === 0) {
-          console.log('📦 Pre-fetch: No qualifying farmers (currqty=1) to cache');
+          console.log(`📦 Pre-fetch: No qualifying farmers to cache (cumulative_frequency_status=${settings.cumulative_frequency_status}, printcumm=${settings.printcumm})`);
           (window as any).__cumulativeSyncRunning = false;
           return;
         }

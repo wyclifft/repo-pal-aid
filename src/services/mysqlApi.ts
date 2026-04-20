@@ -980,6 +980,42 @@ export const farmerFrequencyApi = {
   },
 };
 
+// ==================== MEMBERS API (v2.10.40 — additive, permission-gated) ====================
+
+export interface AddMemberInput {
+  gender: string;
+  descript: string;
+  mmcode: string;
+  idno: string;
+  route: string;
+  multOpt: 0 | 1;
+}
+
+export const membersApi = {
+  /**
+   * Create a new member in cm_members. Server enforces add_members permission
+   * and resolves ccode from device fingerprint (never trusts client-supplied ccode).
+   */
+  create: async (input: AddMemberInput, userId: string, deviceFingerprint: string): Promise<ApiResponse<{
+    farmer_id: string;
+    name: string;
+    route: string;
+    ccode: string;
+    multOpt: number;
+    currqty: number;
+  }>> => {
+    return apiRequest('/members', {
+      method: 'POST',
+      headers: { 'X-Device-Fingerprint': deviceFingerprint },
+      body: JSON.stringify({
+        ...input,
+        user_id: userId,
+        device_fingerprint: deviceFingerprint,
+      }),
+    });
+  },
+};
+
 // Export all APIs
 export const mysqlApi = {
   auth: authApi,
@@ -993,4 +1029,5 @@ export const mysqlApi = {
   routes: routesApi,
   sessions: sessionsApi,
   farmerFrequency: farmerFrequencyApi,
+  members: membersApi,
 };
