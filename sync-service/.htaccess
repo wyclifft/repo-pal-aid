@@ -1,3 +1,11 @@
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
+PassengerAppRoot "/home/maddasys/public_html/sync-service"
+PassengerBaseURI "/"
+PassengerNodejs "/home/maddasys/nodevenv/public_html/sync-service/19/bin/node"
+PassengerAppType node
+PassengerStartupFile server.js
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
+
 # ============================================================================
 # Milk Collection Sync Service - cPanel Configuration
 # Domain: 2backend.maddasystems.co.ke
@@ -13,7 +21,7 @@ PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node
 SetEnv NODE_ENV production
 SetEnv MYSQL_HOST localhost
 SetEnv MYSQL_DATABASE maddasys_milk_collection_pwa
-SetEnv MYSQL_USER maddasys_tesh
+SetEnv MYSQL_USER maddasys_wycliff
 SetEnv MYSQL_PASSWORD 0741899183Mutee
 SetEnv MYSQL_PORT 3306
 SetEnv PORT 3001
@@ -52,3 +60,15 @@ Options -Indexes
 
 # Disable server signature
 ServerSignature Off
+
+# DO NOT REMOVE OR MODIFY. CLOUDLINUX ENV VARS CONFIGURATION BEGIN
+<IfModule Litespeed>
+SetEnv MYSQL_DATABASE maddasys_milk_collection_pwa
+SetEnv MYSQL_HOST localhost
+SetEnv MYSQL_PASSWORD 0741899183Mutee
+SetEnv MYSQL_PORT 3306
+SetEnv NODE_ENV production
+SetEnv PORT 3001
+SetEnv MYSQL_USER maddasys_wycliff
+</IfModule>
+# DO NOT REMOVE OR MODIFY. CLOUDLINUX ENV VARS CONFIGURATION END
