@@ -1016,11 +1016,18 @@ const Index = () => {
         try {
           console.log(`📤 Submitting online: ${capture.reference_no} (${capture.weight} Kg)`);
 
-          // Normalize session to AM/PM - handle legacy data that might have description
-          let normalizedSession: 'AM' | 'PM' = 'AM';
-          const sessionVal = (capture.session || '').trim().toUpperCase();
-          if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
-            normalizedSession = 'PM';
+          // v2.10.51: For dairy, normalize to AM/PM. For coffee, send SCODE
+          // (capture.session already holds SCODE for coffee — see capture path).
+          let sessionToSend: string;
+          if (isCoffee) {
+            sessionToSend = (capture.season_code || capture.session || '').toString().trim();
+          } else {
+            let normalizedSession: 'AM' | 'PM' = 'AM';
+            const sessionVal = (capture.session || '').trim().toUpperCase();
+            if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
+              normalizedSession = 'PM';
+            }
+            sessionToSend = normalizedSession;
           }
 
           // NOTE: We intentionally do NOT check the database here for duplicates.
