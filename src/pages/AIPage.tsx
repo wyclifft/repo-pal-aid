@@ -245,16 +245,37 @@ const AIPage = () => {
     }
   };
 
-  const loadFarmers = async () => {
+  const loadFarmers = async (forceRemote = false) => {
     try {
       const localFarmers = await getFarmers();
       if (localFarmers.length > 0) {
         setFarmers(localFarmers);
       }
+      if (forceRemote && navigator.onLine) {
+        try {
+          const deviceFingerprint = await generateDeviceFingerprint();
+          const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+          if (response.success && response.data && response.data.length > 0) {
+            setFarmers(response.data);
+          }
+        } catch (remoteErr) {
+          console.warn('[AIPage] Remote farmer refresh failed:', remoteErr);
+        }
+      }
     } catch (error) {
       console.error('Failed to load farmers:', error);
     }
   };
+
+  // Refresh farmers when a new member is added from the Dashboard
+  useEffect(() => {
+    const handler = () => {
+      console.log('[AIPage] membersUpdated event received — refreshing farmers');
+      loadFarmers(true);
+    };
+    window.addEventListener('membersUpdated', handler);
+    return () => window.removeEventListener('membersUpdated', handler);
+  }, []);
 
   const loadItems = async () => {
     try {
@@ -521,17 +542,13 @@ const AIPage = () => {
     }
   };
 
-  // Farmer search modal filtering
+  // Farmer search modal filtering — strict prefix only.
+  // v2.10.52: removed the crbal requirement so new debtors are visible.
   const [farmerSearchQuery, setFarmerSearchQuery] = useState('');
   const prefix = isMemberMode ? 'M' : 'D';
-  const prefixFilteredFarmers = farmers.filter(f => {
-    const matchesPrefix = f.farmer_id.toUpperCase().startsWith(prefix);
-    if (!isMemberMode) {
-      const hasCrbal = f.crbal && typeof f.crbal === 'string' && f.crbal.trim() !== '' && f.crbal !== '0';
-      return matchesPrefix && hasCrbal;
-    }
-    return matchesPrefix;
-  });
+  const prefixFilteredFarmers = farmers.filter(f =>
+    f.farmer_id.toUpperCase().startsWith(prefix)
+  );
   const filteredFarmers = farmerSearchQuery.trim()
     ? prefixFilteredFarmers.filter(f =>
         f.farmer_id.toLowerCase().includes(farmerSearchQuery.toLowerCase()) ||
