@@ -1,60 +1,28 @@
 
 
-## Use `session.SCODE` for `transactions.session` Column on Coffee (orgtype='C') — v2.10.46
+## Fix Add Member Modal: Toast Visibility + Numeric-Only ID Field — v2.10.47
 
-### Goal
-For coffee organisations (`psettings.orgtype = 'C'`), populate the `transactions.session` column with the season's `SCODE` (short code, e.g. `MH25`, `EV`, `MO`) instead of the full season descript (e.g. `MAIN HARVEST 2025`). The `transactions.CAN` column already stores the SCODE — this change makes `session` consistent with `CAN` for coffee. Dairy (`orgtype='D'`) behaviour is unchanged (still `AM` / `PM`).
+### Problems
+1. **Toast blocked by modal**: The Sonner toast appears behind the `Dialog` overlay, so users never see success/error feedback while the modal is open.
+2. **ID Number accepts letters**: The `idno` field regex allows `A-Za-z`, but national ID numbers should be digits only.
 
-### Why
-- Reports, Z-Report grouping and Periodic Report filters today must look at two columns (`session` for dairy, `CAN` for coffee) because `session` contains a long descript on coffee.
-- The frontend already passes `season_code` (SCODE) on every milk submission. The backend just isn't using it for the `session` column on coffee.
-- Aligning both columns to the SCODE on coffee makes downstream queries simpler and consistent across orgtypes.
-
-### What Changes (Backend Only — No Frontend, No Schema)
-
-**`backend-api/server.js`** — single targeted change to the `POST /api/milk-collection` insert path (around lines 817–840):
-
-After resolving `orgtype` for the device's `ccode`, change the session-normalization branch for coffee:
-
-- **Today (orgtype='C'):** `normalizedSession = rawSession.toUpperCase()` (the descript)
-- **New (orgtype='C'):** `normalizedSession = (body.season_code || rawSession).toString().trim().toUpperCase()`
-
-Fallback chain:
-1. Use `body.season_code` (SCODE sent by client — primary source).
-2. If missing (legacy offline payload), fall back to current `rawSession` so we never write an empty string.
-3. Trim + uppercase for consistency with `CAN`.
-
-The `transactions.CAN` column continues to be set from `body.season_code` (unchanged at line 937). Both columns will now hold the same SCODE on coffee.
-
-Dairy branch (`orgtype='D'`) is **untouched** — still collapses to `AM`/`PM` as today.
-
-### Files Changed
+### Changes
 
 | File | Change |
 |------|--------|
-| `backend-api/server.js` | In `POST /api/milk-collection` only: when `orgtype === 'C'`, set `normalizedSession` from `body.season_code` (fallback to raw session). ~5-line change inside the existing if/else block at lines 831–840. No other endpoints modified. |
-| `src/constants/appVersion.ts` | Bump to **v2.10.46 (Code 68)**. |
+| `src/components/AddMemberModal.tsx` | **Toast z-index**: Add `style={{ zIndex: 99999 }}` or a custom Sonner `toastOptions` className isn't needed — instead, move the Sonner `<Toaster />` to render with a higher z-index. However since `<Toaster>` is global, the simpler fix is to ensure the inline success `<Alert>` banner (already in the modal) is the primary feedback, and additionally set `toast.success(msg, { position: 'top-center' })` so the toast renders above the dialog. **Alternatively and more reliably**: set the Dialog's `modal` prop behavior so toasts render above it by adding a custom CSS class. The cleanest fix: add a `className` with `z-[9999]` to the Sonner Toaster in the app root. |
+| `src/components/AddMemberModal.tsx` | **ID Number validation**: Change the Zod regex from `/^[0-9A-Za-z\-]+$/` to `/^[0-9]+$/` (digits only). Update the `<Input>` for `idno` to use `type="tel"` and `inputMode="numeric"` so mobile keyboards show the number pad. Update placeholder to `"e.g. 12345678"`. |
+| `src/components/ui/sonner.tsx` | Add `style={{ zIndex: 99999 }}` to the `<Toaster>` component so toasts always render above dialogs (Radix Dialog uses z-index ~50). |
+| `src/constants/appVersion.ts` | Bump to **v2.10.47 (Code 69)** |
 
-### What Does NOT Change
-- **Frontend**: no changes. `season_code` is already sent on every capture and on every offline-sync replay (verified in `src/pages/Index.tsx` line 1047 and `src/hooks/useDataSync.ts` line 234).
-- **Sales / Store / AI endpoints**: unchanged. They already use `season` field (SCODE) for the CAN column and were never affected by this descript-vs-SCODE issue.
-- **Dairy flow**: unchanged. Still `AM` / `PM`.
-- **`.htaccess` files**: unchanged. The `.htaccess` you pasted is the working `sync-service/.htaccess` which already matches the repo. `backend-api/.htaccess` was verified to already use CloudLinux Passenger + Node 19 + `maddasys_wycliff` + port 3000 + correct CORS headers.
-- **Reports / Z-Report / Periodic Report read paths**: unchanged. They already prefer the `CAN` column for coffee filtering, so they will continue to work. As an added bonus they'll now also work if they fall back to the `session` column.
+### Detail
 
-### Backward Compatibility
-- **Production Capacitor clients (v2.10.40–v2.10.45)**: continue working unchanged. They already send `season_code`. New coffee rows will simply have a shorter/cleaner `session` value — every read path either uses `CAN` (preferred) or accepts any string in `session`.
-- **Existing historical coffee rows** with descript in `session` column: untouched. Reports already handle the descript via the `CAN` fallback.
-- **No DB schema change. No API contract change. No new endpoints.**
+**Toast fix** — Radix `Dialog` portal renders at z-index ~50. Sonner's default `<Toaster>` doesn't set a z-index high enough to appear above it. Adding `style={{ zIndex: 99999 }}` to the Sonner `<Toaster>` in `sonner.tsx` fixes this globally for all modals, not just AddMember.
 
-### Required Server-Side Action After Deploy
-1. Upload corrected `backend-api/server.js` to `/home/maddasys/public_html/api/milk-collection-api/`.
-2. cPanel → Setup Node.js App → restart the app.
-3. Verify: `curl https://backend.maddasystems.co.ke/api/health` returns JSON.
-4. Smoke-test on a coffee account: capture + submit one collection, then in DB check `SELECT transrefno, session, CAN FROM transactions ORDER BY id DESC LIMIT 1;` — both `session` and `CAN` should equal the season SCODE.
+**ID field fix** — Change the regex to `/^[0-9]+$/`, set `type="tel"` and `inputMode="numeric"` on the input, and update the error message to `"ID number must contain only digits"`.
 
-### Out of Scope
-- Backfilling historical coffee rows where `session` holds the descript (separate one-shot SQL migration if ever needed).
-- Changes to `POST /api/sales` or `POST /api/sales/batch` (already use SCODE).
-- Any frontend display changes — the receipt and dashboard already render the season descript from `session_descript` / `activeSession.descript`, not from this column.
+### No Other Changes
+- No backend changes.
+- No schema changes.
+- Inline success banner already works — this just ensures the toast fallback is also visible.
 
