@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Login } from '@/components/Login';
 import { Dashboard } from '@/components/Dashboard';
@@ -91,10 +91,6 @@ const Index = () => {
   
   // Captured collections for batch printing
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
-  
-  // Re-entrancy guard for handleCapture — useRef for immediate effect (not state)
-  const isCapturingRef = useRef(false);
-  const [isCapturing, setIsCapturing] = useState(false);
   
   // Delivered by state for Buy/Sell portals
   const [deliveredBy, setDeliveredBy] = useState('owner');
@@ -723,15 +719,6 @@ const Index = () => {
 
   // CAPTURE: Only stores locally, does NOT submit to database
   const handleCapture = async () => {
-    // Re-entrancy guard: prevent double-fire from touch+click on Android WebView
-    if (isCapturingRef.current) {
-      console.warn('⚠️ handleCapture re-entrancy blocked');
-      return;
-    }
-    isCapturingRef.current = true;
-    setIsCapturing(true);
-    
-    try {
     // Validate route selection first
     if (!selectedRouteCode) {
       toast.error('Please select a route first');
@@ -874,7 +861,7 @@ const Index = () => {
       clerk_name: currentUser ? (currentUser.username || currentUser.user_id) : 'unknown', // Display name for clerk column
       collection_date: new Date(),
       multOpt: farmerMultOpt,
-      orderId: Date.now() + Math.floor(Math.random() * 1000),
+      orderId: Date.now(),
       synced: false, // Not synced - only locally captured
       // Product info from selected produce item (invtype=01)
       product_code: selectedProduct?.icode, // → DB: icode column
@@ -925,11 +912,6 @@ const Index = () => {
     setGrossWeight(0);
     
     toast.success(`Captured ${captureData.weight} Kg${isCoffee ? ' (net)' : ''}`);
-    } finally {
-      // Release re-entrancy lock
-      isCapturingRef.current = false;
-      setIsCapturing(false);
-    }
   };
 
   // SUBMIT: Saves all captured collections to database (online) or IndexedDB (offline)
@@ -1601,8 +1583,8 @@ const Index = () => {
     !!farmerId &&
     (isBlacklisted(farmerId) || sessionSubmittedFarmers.has(cleanFarmerIdForCheck));
   
-  // Disable capture during active capture (re-entrancy guard)
-  const captureDisabledForSelectedFarmer = isCapturing;
+  // NEVER disable capture - farmers can always capture weight (multiple buckets)
+  const captureDisabledForSelectedFarmer = false;
   
   // For multOpt=0: disable Submit only after first successful submission in this session
   // Check both: hook blacklist (persistent) AND local session tracking (edge case coverage)

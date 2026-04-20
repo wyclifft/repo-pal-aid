@@ -48,28 +48,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
-  // Simple hash for offline credential storage — NOT crypto-grade but avoids plain-text
-  const hashPassword = async (pwd: string): Promise<string> => {
-    try {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(pwd + 'delicoop_salt_v1');
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    } catch {
-      // Fallback: simple obfuscation if crypto.subtle unavailable
-      let hash = 0;
-      const salted = pwd + 'delicoop_salt_v1';
-      for (let i = 0; i < salted.length; i++) {
-        const char = salted.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash |= 0;
-      }
-      return 'h_' + Math.abs(hash).toString(36);
-    }
-  };
-
-  const login = async (user: AppUser, offline: boolean, password?: string) => {
+  const login = (user: AppUser, offline: boolean, password?: string) => {
     try {
       setCurrentUser(user);
       setIsOffline(offline);
@@ -79,10 +58,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // Cache credentials for offline login (only when password is provided during ONLINE login)
       // CRITICAL: Always store credentials on online login for offline use
       if (password && !offline) {
-        const hashedPwd = await hashPassword(password);
         const cachedCreds = {
           user_id: user.user_id,
-          password: hashedPwd,
+          password: password,
           role: user.role || (user.admin ? 'admin' : 'user'),
           username: user.username || user.user_id, // Fallback to user_id if username is empty
           email: user.email || '',

@@ -208,32 +208,11 @@ export const Login = memo(({ onLogin }: LoginProps) => {
       try {
         const cachedCreds = JSON.parse(cachedCredsStr);
         console.log('[OFFLINE] Cached user_id:', cachedCreds.user_id, 'Input user_id:', userId);
+        console.log('[OFFLINE] Password match:', cachedCreds.password === password);
         
-        // Hash the entered password the same way AuthContext does for comparison
-        let hashedInput: string;
-        try {
-          const encoder = new TextEncoder();
-          const data = encoder.encode(password + 'delicoop_salt_v1');
-          const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-          const hashArray = Array.from(new Uint8Array(hashBuffer));
-          hashedInput = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-        } catch {
-          let hash = 0;
-          const salted = password + 'delicoop_salt_v1';
-          for (let i = 0; i < salted.length; i++) {
-            const char = salted.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash |= 0;
-          }
-          hashedInput = 'h_' + Math.abs(hash).toString(36);
-        }
-        
-        // Verify credentials match (case-insensitive user ID, hashed password)
+        // Verify credentials match (case-insensitive user ID, exact password)
         const userIdMatch = cachedCreds.user_id?.toLowerCase().trim() === userId.toLowerCase().trim();
-        // Support both hashed (new) and plain-text (legacy) cached passwords
-        // Only match against hashed password — never compare plain-text input directly
-        const passwordMatch = cachedCreds.password === hashedInput;
-        console.log('[OFFLINE] Password match:', passwordMatch);
+        const passwordMatch = cachedCreds.password === password;
         
         if (!userIdMatch || !passwordMatch) {
           console.log('[OFFLINE] Credential mismatch - userIdMatch:', userIdMatch, 'passwordMatch:', passwordMatch);

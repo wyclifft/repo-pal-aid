@@ -462,8 +462,8 @@ export const useIndexedDB = () => {
         const request = store.getAll();
         
         request.onsuccess = () => {
-          // Filter for unsynced sales (both store and AI)
-          const sales = request.result.filter((record: any) => (record.type === 'sale' || record.type === 'ai') && !record.synced);
+          // Filter for unsynced sales
+          const sales = request.result.filter((record: any) => record.type === 'sale' && !record.synced);
           resolve(sales);
         };
         
@@ -502,15 +502,10 @@ export const useIndexedDB = () => {
 
   const saveItems = useCallback((items: any[]) => {
     if (!db) return;
-    if (!items || items.length === 0) {
-      console.log('⚠️ Skipping saveItems — empty array');
-      return;
-    }
     const tx = db.transaction('items', 'readwrite');
     const store = tx.objectStore('items');
-    store.clear(); // Clear stale items before writing fresh data
     items.forEach((item) => store.put(item));
-    console.log(`Items cached in IndexedDB (${items.length})`);
+    console.log('Items cached in IndexedDB');
   }, [db]);
 
   const getItems = useCallback((): Promise<any[]> => {
@@ -702,16 +697,11 @@ export const useIndexedDB = () => {
    */
   const saveRoutes = useCallback((routes: any[]) => {
     if (!db) return;
-    if (!routes || routes.length === 0) {
-      console.log('⚠️ Skipping saveRoutes — empty array');
-      return;
-    }
     try {
       const tx = db.transaction('routes', 'readwrite');
       const store = tx.objectStore('routes');
-      store.clear(); // Clear stale routes before writing fresh data
       routes.forEach((route) => store.put(route));
-      console.log(`Routes cached in IndexedDB (${routes.length})`);
+      console.log('Routes cached in IndexedDB');
     } catch (error) {
       console.error('Failed to save routes:', error);
     }
@@ -742,16 +732,11 @@ export const useIndexedDB = () => {
    */
   const saveSessions = useCallback((sessions: any[]) => {
     if (!db) return;
-    if (!sessions || sessions.length === 0) {
-      console.log('⚠️ Skipping saveSessions — empty array');
-      return;
-    }
     try {
       const tx = db.transaction('sessions', 'readwrite');
       const store = tx.objectStore('sessions');
-      store.clear(); // Clear stale sessions before writing fresh data
       sessions.forEach((session) => store.put(session));
-      console.log(`Sessions cached in IndexedDB (${sessions.length})`);
+      console.log('Sessions cached in IndexedDB');
     } catch (error) {
       console.error('Failed to save sessions:', error);
     }

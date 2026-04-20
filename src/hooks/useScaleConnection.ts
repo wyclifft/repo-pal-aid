@@ -272,7 +272,7 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
       }
     }
     setIsConnecting(false);
-  }, [handleScaleReading, requireStableReading, requestPermissions]);
+  }, [handleScaleReading, requireStableReading, isWaitingForStable, requestPermissions]);
 
   // Show paired devices dialog for Classic BT
   const showPairedDevicesDialog = useCallback(async () => {

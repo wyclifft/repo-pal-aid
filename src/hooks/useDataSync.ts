@@ -241,41 +241,6 @@ export const useDataSync = () => {
             // Handle REFERENCE_COLLISION: regenerate reference and retry once
             if (!result.success && (result as any).collision) {
               console.warn(`[SYNC] Reference collision for ${receipt.reference_no}, regenerating and retrying...`);
-              
-              // For multOpt=0: check if the existing record matches on 7 fields
-              // If it does, this is a double-fire duplicate — treat as idempotent success
-              if (receipt.multOpt === 0) {
-                try {
-                  const collisionRef = (result as any).reference_no;
-                  const existingRecord = await mysqlApi.milkCollection.getByReference(collisionRef);
-                  if (existingRecord) {
-                    const ex = existingRecord as any;
-                    const receiptDate = new Date(receipt.collection_date).toISOString().split('T')[0];
-                    const exDate = String(ex.transdate || ex.collection_date || '').substring(0, 10);
-                    const match7 = (
-                      String(ex.memberno || ex.farmer_id || '').trim() === String(receipt.farmer_id || '').replace(/^#/, '').trim() &&
-                      String(ex.session || '').trim().toUpperCase() === normalizedSession &&
-                      Math.abs(Number(ex.weight || 0) - Number(receipt.weight || 0)) < 0.01 &&
-                      exDate === receiptDate &&
-                      String(ex.Uploadrefno || ex.uploadrefno || '') === String(receipt.uploadrefno || '') &&
-                      String(ex.Transtype || ex.transtype || '') === String(receipt.transtype || '') &&
-                      String(ex.icode || ex.product_code || '').trim().toUpperCase() === String(receipt.product_code || '').trim().toUpperCase()
-                    );
-                    if (match7) {
-                      console.log(`[SYNC] multOpt=0 collision is a double-fire duplicate (7-field match). Treating as success: ${receipt.reference_no}`);
-                      if (useNativeStorage) await markNativeRecordSynced(receipt.reference_no);
-                      if (receipt.orderId && typeof receipt.orderId === 'number') {
-                        try { await deleteReceipt(receipt.orderId); } catch {}
-                      }
-                      synced++;
-                      continue;
-                    }
-                  }
-                } catch (matchErr) {
-                  console.warn('[SYNC] multOpt=0 collision match check failed:', matchErr);
-                }
-              }
-              
               try {
                 const { generateOfflineReference } = await import('@/utils/referenceGenerator');
                 const newRef = await generateOfflineReference();
@@ -840,8 +805,7 @@ export const useDataSync = () => {
         localStorage.setItem('lastSyncTime', Date.now().toString());
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReady, syncAllData]); // Include syncAllData to avoid stale closure
+  }, [isReady]); // Only depend on isReady
 
   // Register centralized online handler
   // In offline-first mode (online=1), auto-sync is disabled - user must manually trigger

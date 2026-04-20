@@ -96,8 +96,7 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
     if (open) {
       fetchPhotos();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, currentPage, dateFilter, searchQuery]);
+  }, [open, currentPage, dateFilter]);
 
   // Reset to page 1 when search/filter changes
   useEffect(() => {
