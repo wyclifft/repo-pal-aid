@@ -1046,7 +1046,7 @@ const Index = () => {
             farmer_id: capture.farmer_id.replace(/^#/, '').trim(),
             farmer_name: capture.farmer_name.trim(),
             route: capture.route.trim(),
-            session: normalizedSession,
+            session: sessionToSend,
             weight: capture.weight,
             user_id: capture.user_id, // Login user_id for DB userId column
             clerk_name: capture.clerk_name, // Display name for clerk column
