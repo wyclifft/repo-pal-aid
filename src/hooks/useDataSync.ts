@@ -170,11 +170,20 @@ export const useDataSync = () => {
           console.log(`[SYNC] Processing ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
 
           try {
-            // Normalize session to AM/PM - handle legacy data that might have description
-            let normalizedSession: 'AM' | 'PM' = 'AM';
-            const sessionVal = String(receipt.session || '').trim().toUpperCase();
-            if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
-              normalizedSession = 'PM';
+            // v2.10.51: Coffee orgs → send SCODE as session value (NEVER AM/PM).
+            // Dairy orgs → normalize to AM/PM as before.
+            const orgIsCoffee = (() => {
+              try {
+                const s = JSON.parse(localStorage.getItem('app_settings') || '{}');
+                return s?.orgtype === 'C';
+              } catch { return false; }
+            })();
+            let normalizedSession: string = 'AM';
+            if (orgIsCoffee) {
+              normalizedSession = String(receipt.season_code || receipt.session || '').trim();
+            } else {
+              const sessionVal = String(receipt.session || '').trim().toUpperCase();
+              normalizedSession = (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) ? 'PM' : 'AM';
             }
 
             // Client-side FINAL GUARD for multOpt=0 during background sync
