@@ -1,75 +1,93 @@
 
+## Fix: Offline Store/AI Sync Still Leaving `session` and `CAN` Empty — v2.10.38
 
-## Fix: Store/AI Transactions Missing `season` and `CAN` Columns — v2.10.37
+### Root Cause
+The backend is already ready to save these fields, and the sync engine already forwards them. The remaining gap is on the client when a transaction is created offline:
 
-### Root Causes
+1. **`Store.tsx` and `AIPage.tsx` rely on `loadActiveSession()`**
+   - That function calls `/api/sessions/active/...`.
+   - When the device is offline, the request fails and `activeSession` stays `null`.
 
-**1. Backend `/api/sessions/active` does not return `SCODE`** (`server.js` line 238-244)
-The `SELECT` only returns `descript, time_from, time_to, ccode`. Frontend `Store.tsx` reads `response.data.SCODE` (which is `undefined`) and sends `season: ''` to the batch endpoint. Result: `CAN` column is always empty for Store/AI.
+2. **Offline transaction payloads are built from `activeSession`**
+   - Offline Store saves:
+     - `season: activeSession?.SCODE || ''`
+     - `session_label: activeSession?.descript || ''`
+   - Offline AI does the same.
+   - If `activeSession` is `null`, both values are saved as empty strings into IndexedDB.
 
-**2. Backend hardcodes `session` column to `''` for Store and AI inserts**
-- `/api/sales` line 1803: `session` = `''` (empty string literal)
-- `/api/sales/batch` line 2033: `session` = `''` (empty string literal)
+3. **`salesSyncEngine.ts` only forwards what was saved**
+   - During reconnect, sync sends `firstSale.season` and `firstSale.session_label`.
+   - If the offline record was saved blank, the backend correctly inserts blanks.
 
-Milk collection (line 939) correctly writes `normalizedSession` (e.g., `AM`/`PM`). Store/AI never write the session label, so the `session` column is always blank for `Transtype=2` and `Transtype=3`.
-
-**3. Offline sync inherits the same bug**
-`salesSyncEngine.ts` (lines 88, 172) correctly forwards `saleRecord.season` to the backend. The data was saved offline with `season: activeSession?.SCODE || ''`, which was already empty due to bug #1. So even after sync, `CAN` stays empty. Once bug #1 is fixed, offline sync will populate `CAN` correctly going forward.
+### Safe Fix Strategy
+Keep the backend unchanged and fix the offline metadata source on the client.
 
 ### Changes
 
-**`backend-api/server.js`** — additive, backward-safe (production rule: no breaking changes)
+#### 1) Add a shared client-side session metadata resolver
+Create a small utility that resolves session metadata in this order:
 
-1. **`/api/sessions/active/:uniquedevcode` (~line 238-244)** — add `SCODE` to the SELECT:
-   ```js
-   `SELECT SCODE, descript, time_from, time_to, ccode 
-    FROM sessions 
-    WHERE ccode = ? AND time_from <= ? AND time_to >= ?
-    ORDER BY time_from
-    LIMIT 1`
-   ```
-   Pure additive column — no existing client breaks.
+1. Current in-memory `activeSession`
+2. Dashboard persisted session from `localStorage.active_session_data`
+3. Fallback persisted session from `localStorage.delicoop_session_data`
+4. Cached sessions from IndexedDB if needed
 
-2. **`/api/sales` (~line 1803)** — replace hardcoded `''` for `session` with `body.session_label || body.session || ''`:
-   ```js
-   body.session_label || body.session || '',  // session column
-   ```
-   Falls back to empty string for any client not yet sending it (full backward compatibility).
+It should return:
+- `season` from `SCODE`
+- `session_label` from `descript`
 
-3. **`/api/sales/batch` (~line 2033)** — same change:
-   ```js
-   body.session_label || body.session || '',  // session column
-   ```
+This gives Store/AI a reliable source even when fully offline.
 
-**`src/services/mysqlApi.ts`**
-- Add optional `session_label?: string` to `Sale` and `BatchSaleRequest` interfaces (the `descript`, e.g., `MORNING`).
+#### 2) Update `src/pages/Store.tsx`
+Use the resolver before building both:
+- the online `BatchSaleRequest`
+- the offline `Sale` objects stored for sync
 
-**`src/pages/Store.tsx`** (~lines 563-577 and 596-614)
-- Send both `season: activeSession?.SCODE || ''` (CAN column — already done) **and** `session_label: activeSession?.descript || ''` (session column) in both online and offline paths.
+Result:
+- New offline Store transactions will carry `season` and `session_label` even without network access.
 
-**`src/pages/AIPage.tsx`** (~line 452-455)
-- Same: add `session_label: activeSession?.descript || ''` alongside the existing `season` field.
+#### 3) Update `src/pages/AIPage.tsx`
+Use the same resolver before building AI transaction payloads for:
+- online submit
+- offline save
 
-**`src/utils/salesSyncEngine.ts`** (~lines 86-89 and 170-173)
-- Forward `session_label: String(firstSale.session_label || '').trim()` in the batch request and `session_label: saleRecord.session_label` in the AI individual sync, so offline-saved transactions sync the session label correctly.
+Result:
+- New offline AI transactions will also retain `CAN` and `session` metadata.
 
-**`src/constants/appVersion.ts`** → v2.10.37 (Code 59)
+#### 4) Update `src/utils/salesSyncEngine.ts`
+Add a best-effort enrichment step before syncing a pending offline Store/AI record:
+- If `season` or `session_label` is missing on the saved record,
+- resolve session metadata from persisted dashboard session / cached session data,
+- then send the enriched values to the backend.
 
-### Backward Compatibility (Production Safety)
+This is important for:
+- records already queued offline before the fix,
+- cases where the page failed to populate metadata during capture.
 
-- `SCODE` added to SELECT: existing clients ignore extra fields — safe.
-- `body.session_label || body.session || ''` defaults to `''` for old clients — matches current behavior exactly. No old client breaks.
-- Old offline records already in IndexedDB without `session_label` will sync with `session = ''` (same as today). Only new transactions populate it.
-- No schema migration required — `session` and `CAN` columns already exist in the `transactions` table.
+#### 5) Version bump
+Update:
+- `src/constants/appVersion.ts` → **v2.10.38** (Code 60)
 
-### Files Changed
+### Production-Safe Scope
+No backend API changes are needed for this fix.
+That keeps `server.js` untouched and avoids risk to production clients while solving the offline capture gap.
 
+### Files to Change
 | File | Change |
 |------|--------|
-| `backend-api/server.js` | Add `SCODE` to `/sessions/active`; write `body.session_label` to `session` column in `/api/sales` and `/api/sales/batch` |
-| `src/services/mysqlApi.ts` | Add optional `session_label` to `Sale` and `BatchSaleRequest` interfaces |
-| `src/pages/Store.tsx` | Send `session_label: activeSession?.descript` in both online + offline paths |
-| `src/pages/AIPage.tsx` | Send `session_label: activeSession?.descript` |
-| `src/utils/salesSyncEngine.ts` | Forward `session_label` during offline sync (batch + individual) |
-| `src/constants/appVersion.ts` | Bump to v2.10.37 (Code 59) |
+| `src/pages/Store.tsx` | Resolve session metadata from persisted/cached session when offline; use it in online + offline payloads |
+| `src/pages/AIPage.tsx` | Same fix for AI transactions |
+| `src/utils/salesSyncEngine.ts` | Enrich missing `season` / `session_label` before syncing old pending records |
+| `src/constants/appVersion.ts` | Bump to v2.10.38 (Code 60) |
+| `src/utils/...` or shared helper file | Add reusable session metadata resolver |
 
+### Technical Notes
+- The dashboard already persists the selected session in `localStorage.active_session_data`.
+- That persisted session is the safest offline source for `SCODE` and `descript`.
+- The current bug is not in backend insertion anymore; it is in offline transaction creation.
+- The sync engine should remain the single place that performs final payload cleanup for pending Store/AI records.
+
+### Expected Outcome
+After this fix:
+- Newly captured offline Store and AI transactions will sync with both `session` and `CAN` populated.
+- Already pending offline transactions with missing values will be best-effort repaired during sync if the session snapshot is still available on the device.
