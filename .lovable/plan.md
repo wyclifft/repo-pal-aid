@@ -1,68 +1,109 @@
 
 
-## Fix `Camera.then() is not implemented on android` (Real Root Cause) — v2.10.49
+## Fix Coffee `transactions.session` Still Showing AM/PM — v2.10.50
 
-### Root Cause (corrected from v2.10.48)
+### Real Root Cause
 
-v2.10.48 removed the static enum import, but the error returned because the **actual** trigger is different and lives in two places:
+The v2.10.46 backend logic is correct:
+```js
+normalizedSession = (body.season_code || rawSession).toString().trim().toUpperCase();
+```
+But it falls back to `rawSession` (which the frontend always sends as **"AM"/"PM"** — see `src/pages/Index.tsx` line 1017–1021 where it explicitly normalizes before sending) **whenever `body.season_code` is empty or missing**.
+
+Three places where `season_code` ends up empty for a coffee org and the backend falls back to "AM"/"PM":
+
+1. **Stale IndexedDB session cache** — `SessionSelector` caches the sessions list. If the cache was populated before the backend started returning `SCODE`, `activeSession.SCODE` is `undefined`, so `season_code: activeSession?.SCODE || ''` becomes `''`.
+2. **Stale localStorage `active_session_data`** — `Dashboard.tsx` restores `selectedSession` from localStorage on mount. Old persisted JSON has no `SCODE` → same outcome.
+3. **Backend fallback masks the problem** — instead of falling back to "AM"/"PM" for a coffee org (which is wrong by definition), the backend should fall back to the raw descript or refuse the AM/PM collapse.
+
+### Fix (3 layers — defense in depth)
+
+#### Layer 1 — Backend: never collapse coffee to AM/PM (`backend-api/server.js`)
+
+Replace the coffee branch around line 832 so coffee **never** stores AM/PM in `transactions.session`, regardless of payload completeness:
+
+```js
+if (orgtype === 'C') {
+  // Coffee: prefer SCODE, then descript; NEVER collapse to AM/PM.
+  const scode = (body.season_code || '').toString().trim();
+  const descript = (body.session_descript || rawSession || '').toString().trim();
+  normalizedSession = (scode || descript).toUpperCase();
+  // Hard guard: if somehow we ended up with bare AM/PM, look up the active SCODE for ccode.
+  if (!normalizedSession || normalizedSession === 'AM' || normalizedSession === 'PM') {
+    try {
+      const [s] = await pool.query(
+        `SELECT SCODE FROM sessions
+         WHERE ccode = ? AND ? BETWEEN datefrom AND dateto
+         ORDER BY id DESC LIMIT 1`,
+        [ccode, transdate]
+      );
+      if (s.length && s[0].SCODE) normalizedSession = String(s[0].SCODE).toUpperCase();
+    } catch (e) { console.warn('Coffee SCODE rescue lookup failed:', e?.message); }
+  }
+  console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, session_descript: body.session_descript, normalizedSession });
+} else { /* existing AM/PM logic unchanged */ }
+```
+
+Also apply the **same coffee branch** inside `/api/sales` (line ~1806) and `/api/sales/batch` (line ~2031) for the `session` column write, since Store/AI on coffee orgs hit the same bug. Currently both use `body.session_label || body.session || ''` raw — wrap with the same orgtype check (lookup orgtype once at the top of those handlers).
+
+#### Layer 2 — Frontend: send `session_descript` and force cache refresh (`src/pages/Index.tsx`, `src/components/SessionSelector.tsx`)
+
+- In `Index.tsx` submit (line ~1033 `mysqlApi.milkCollection.create`), additionally pass `session_descript: capture.session_descript` so the backend has a non-AM/PM fallback even when SCODE is missing. (Field already exists on captureData line 865 — just forward it.)
+- Add `session_descript?: string` to `MilkCollection` interface in `src/services/mysqlApi.ts` and `src/lib/supabase.ts`.
+- In `SessionSelector.tsx`: when fresh network response arrives and any session's `SCODE` differs from cached, **invalidate** the old `sessions` IndexedDB cache before write (already overwrites — verify `saveSessions` uses `clear+put`, not merge). Also: if a cached session lacks `SCODE` and we are online, force a refresh on mount even if cache exists.
+
+#### Layer 3 — Clear stale localStorage on version bump (`src/components/Dashboard.tsx`)
+
+Add a one-time migration at module load: if the persisted `active_session_data.session` lacks `SCODE` and `orgtype === 'C'` (read from `localStorage.app_settings`), drop the persisted entry so the user re-selects from the freshly-fetched list.
 
 ```ts
-// In src/utils/permissionRequests.ts (line 11–17)
-const loadCapacitorCamera = async () => {
-  if (Capacitor.isNativePlatform()) {
-    const { Camera } = await import('@capacitor/camera');
-    return Camera;   // ← THE BUG
-  }
-  return null;
-};
-
-// In src/components/PhotoCapture.tsx (line 14–23)
-const loadCapacitorCamera = async (): Promise<typeof CapacitorCameraType | null> => {
-  ...
-  const mod = await import('@capacitor/camera');
-  return mod.Camera;   // ← SAME BUG
+const getInitialSessionData = () => {
+  try {
+    const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!saved) return null;
+    const parsed = JSON.parse(saved);
+    // v2.10.50: drop coffee sessions cached without SCODE (legacy)
+    const settings = JSON.parse(localStorage.getItem('app_settings') || '{}');
+    if (settings?.orgtype === 'C' && parsed?.session && !parsed.session.SCODE) {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch { return null; }
 };
 ```
 
-`Camera` is a **Capacitor plugin Proxy**. When you `return Camera` from an `async` function, JavaScript wraps the return value in a Promise — and to do that wrapping, the runtime checks whether the returned value is already a thenable by accessing its `.then` property. Accessing `.then` on the Capacitor Proxy fires the proxy's `get` trap, which on Android throws:
-
-> `"Camera.then()" is not implemented on android`
-
-The throw happens inside Promise-resolution machinery, **outside any `try/catch`**, so it surfaces as an unhandled rejection on app startup (`requestAllPermissions` runs in `App.tsx` line 208) — exactly matching the user's stack trace from `index-CisiQ8KA.js`.
-
-This explains why v2.10.48 (which only addressed static enum imports) did not fix the issue, and why the error fires on `/` (app startup) before the user ever opens the camera.
-
-### Fix
-
-Never return a Capacitor plugin proxy directly from an `async` function. Wrap it in a plain object so the Promise-resolution code only probes the wrapper's `.then` (which is `undefined`, the safe path), never the proxy's.
+### Files Changed
 
 | File | Change |
 |---|---|
-| `src/utils/permissionRequests.ts` | Change `loadCapacitorCamera()` to return `{ Camera }` instead of `Camera`. Update the two call sites (`requestAllPermissions` and `requestCameraPermission`) to destructure: `const cam = await loadCapacitorCamera(); if (cam) { const { Camera } = cam; … }`. |
-| `src/components/PhotoCapture.tsx` | Same wrapping pattern in the local `loadCapacitorCamera()` and its single caller `captureWithNativeCamera()`. |
-| `src/constants/appVersion.ts` | Bump to **v2.10.49 (Code 71)** with comment: "Fix Camera.then() unhandled rejection on Android — wrap plugin proxy in object before returning from async fn." |
-
-No other behavior changes. Web flow unchanged. iOS unchanged. Permission requests still fire on startup; they just no longer trigger the proxy `.then` trap.
+| `backend-api/server.js` | Harden coffee branch in `/api/milk-collection` (line ~832); add same coffee orgtype guard inside `/api/sales` (~1806) and `/api/sales/batch` (~2031) for the `session` column. |
+| `src/pages/Index.tsx` | Forward `session_descript` in the online `mysqlApi.milkCollection.create` payload (~line 1049). |
+| `src/services/mysqlApi.ts` | Add optional `session_descript?: string` to `MilkCollection` interface. |
+| `src/lib/supabase.ts` | Same field added for type parity. |
+| `src/components/SessionSelector.tsx` | Force network refresh when cache lacks `SCODE`; ensure cache write fully replaces old entries. |
+| `src/components/Dashboard.tsx` | Drop legacy `active_session_data` if coffee + missing `SCODE`. |
+| `src/constants/appVersion.ts` | Bump to **v2.10.50 (Code 72)**. |
 
 ### What does NOT change
-- Backend (`server.js`) — untouched.
-- IndexedDB schema, sync engine, reference generator — untouched.
-- Capacitor plugin versions, native code, `.htaccess`, gradle — untouched.
-- The `import type { Camera as CapacitorCameraType }` line in `PhotoCapture.tsx` — kept (type-only, erased by esbuild).
-- Web/PWA camera flow — completely unaffected (the `if (!Capacitor.isNativePlatform()) return null` branch is unchanged).
+- Dairy AM/PM logic — unchanged.
+- IndexedDB schema — unchanged (only data invalidation).
+- Reference generator, sync engine, photo upload, receipts — unchanged.
+- Web vs native parity — unchanged.
 
 ### Backward Compatibility
-- All production Capacitor clients (v2.10.40–v2.10.48): no contract change. Just stops the unhandled rejection on startup.
-- Previously, the rejection was non-fatal *most of the time* (camera still worked because the actual `Camera.requestPermissions()` call later succeeded), but it polluted console and on some Android builds it bubbled into the WebView error pipeline and aborted subsequent camera operations. After this fix, the proxy is never accessed by Promise-resolution machinery.
+- Old Capacitor clients (v2.10.39–v2.10.49): if `season_code` arrives empty, the backend now falls back to descript or active-season lookup instead of "AM"/"PM". No client crash.
+- Existing coffee rows already polluted with `AM`/`PM` in `transactions.session`: untouched by this change. Backfill is **out of scope** (separate one-shot SQL).
 
-### Verification After Deploy
-1. Reload the Android app. Console should no longer show `Camera.then() is not implemented on android`.
-2. Startup log should still show: `📱 Permissions requested on startup: { bluetooth: true, camera: true }`.
-3. Open Store → add item → Complete Sale → camera dialog opens cleanly and captures a photo.
-4. Re-open camera multiple times in one session — no degradation.
+### Required Server-Side Actions After Deploy
+1. Upload `backend-api/server.js` to `/home/maddasys/public_html/api/milk-collection-api/`.
+2. cPanel → Setup Node.js App → **Restart**.
+3. Smoke test: capture a coffee collection; verify `SELECT transrefno, session, CAN FROM transactions ORDER BY id DESC LIMIT 1;` shows the same SCODE in both `session` and `CAN`.
+4. Smoke test Store on coffee org: complete a sale, verify `session` column also holds SCODE.
+5. Watch backend log for `☕ Coffee session normalization:` line — confirm `season_code` is now populated.
 
 ### Out of Scope
-- Migrating off the deprecated `getPhoto` API to Capacitor Camera 8.1+ `takePhoto` (separate task).
-- Removing the still-pending coffee-session backfill SQL (separate one-shot).
-- Refactoring `PhotoCapture.tsx` into smaller components.
+- One-shot SQL backfill for historical coffee rows where `session` = `AM`/`PM`.
+- Camera plugin migration.
+- Removing hardcoded DB password from `.htaccess`.
 
