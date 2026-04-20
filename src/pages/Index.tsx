@@ -788,14 +788,17 @@ const Index = () => {
       return;
     }
 
-    // Derive AM/PM from the active session's time_from (hour-based)
-    // For coffee mode (season), use the season name (descript) instead of AM/PM
+    // Derive AM/PM from the active session's time_from (hour-based) for dairy.
+    // For coffee mode, the BACKEND `session` column must carry SCODE (NOT descript,
+    // NEVER AM/PM). The descript is only kept for receipts/UI via session_descript.
     const timeFrom = typeof activeSession.time_from === 'number' 
       ? activeSession.time_from 
       : parseInt(String(activeSession.time_from), 10);
     const amPmSession: 'AM' | 'PM' = (timeFrom >= 12) ? 'PM' : 'AM';
-    // For coffee (season mode), use season name; for dairy (session mode), use AM/PM
-    const currentSessionType = isCoffee ? (activeSession.descript || amPmSession) : amPmSession;
+    // v2.10.51: coffee → SCODE (DB session col); dairy → AM/PM
+    const currentSessionType = isCoffee
+      ? (activeSession.SCODE || activeSession.descript || amPmSession)
+      : amPmSession;
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
     // ========== multOpt=0 CAPTURE BEHAVIOR ==========
