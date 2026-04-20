@@ -1180,8 +1180,10 @@ const server = http.createServer(async (req, res) => {
       const ccode = deviceRows[0].ccode;
       const devcode = deviceRows[0].devcode;
 
-      // CRITICAL: Filter by deviceserial (uniquedevcode) to ensure strict device isolation
-      // Each device must ONLY see its own collections
+      // v2.10.53: Cross-device visibility within same ccode. Drop deviceserial filter.
+      // Multi-tenant isolation preserved via t.ccode. Optional `route` query param
+      // scopes results to the route currently selected on the requesting device.
+      const routeFilter = (parsedUrl.query.route || '').toString().trim();
       let query = `
         SELECT 
           t.memberno as farmer_id,
@@ -1194,9 +1196,13 @@ const server = http.createServer(async (req, res) => {
         WHERE t.Transtype = 1 
           AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
           AND t.ccode = ?
-          AND t.deviceserial = ?
       `;
-      let params = [startDate, endDate, ccode, uniquedevcode];
+      let params = [startDate, endDate, ccode];
+
+      if (routeFilter) {
+        query += ` AND TRIM(t.route) = TRIM(?)`;
+        params.push(routeFilter);
+      }
 
       if (farmerSearch) {
         query += ` AND (t.memberno LIKE ? OR cm.descript LIKE ?)`;
@@ -1257,26 +1263,29 @@ const server = http.createServer(async (req, res) => {
       const farmerName = farmerRows.length > 0 ? farmerRows[0].descript : 'Unknown';
       const farmerRoute = farmerRows.length > 0 ? farmerRows[0].route : '';
 
-      // Get produce type name from fm_items - ALSO filtered by deviceserial
-      const [produceRows] = await pool.query(
-        `SELECT DISTINCT i.descript as produce_name 
+      // v2.10.53: Cross-device visibility — filter by ccode (+ optional route),
+      // not deviceserial. Old clients omit `route` and get full ccode results.
+      const routeFilter = (parsedUrl.query.route || '').toString().trim();
+
+      const produceParams = [ccode, farmerId, startDate, endDate, ccode];
+      let produceSql = `SELECT DISTINCT i.descript as produce_name 
          FROM transactions t
          LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
          WHERE t.memberno = ? 
            AND CAST(t.transdate AS DATE) BETWEEN ? AND ? 
            AND t.Transtype = 1 
-           AND t.ccode = ?
-           AND t.deviceserial = ?
-         LIMIT 1`,
-        [ccode, farmerId, startDate, endDate, ccode, uniquedevcode]
-      );
+           AND t.ccode = ?`;
+      if (routeFilter) {
+        produceSql += ` AND TRIM(t.route) = TRIM(?)`;
+        produceParams.push(routeFilter);
+      }
+      produceSql += ` LIMIT 1`;
+      const [produceRows] = await pool.query(produceSql, produceParams);
       
       const produceName = produceRows.length > 0 && produceRows[0].produce_name ? produceRows[0].produce_name : 'PRODUCE';
 
-      // CRITICAL: Get only transactions captured by THIS device (deviceserial = uniquedevcode)
-      // This ensures complete device isolation - no data from other devices
-      const [transactions] = await pool.query(
-        `SELECT 
+      const txParams = [farmerId, startDate, endDate, ccode];
+      let txSql = `SELECT 
           t.transdate as date,
           t.transrefno as rec_no,
           t.weight as quantity,
@@ -1285,11 +1294,13 @@ const server = http.createServer(async (req, res) => {
         WHERE t.memberno = ? 
           AND t.Transtype = 1 
           AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
-          AND t.ccode = ?
-          AND t.deviceserial = ?
-        ORDER BY t.transdate ASC, t.transtime ASC`,
-        [farmerId, startDate, endDate, ccode, uniquedevcode]
-      );
+          AND t.ccode = ?`;
+      if (routeFilter) {
+        txSql += ` AND TRIM(t.route) = TRIM(?)`;
+        txParams.push(routeFilter);
+      }
+      txSql += ` ORDER BY t.transdate ASC, t.transtime ASC`;
+      const [transactions] = await pool.query(txSql, txParams);
 
       // Calculate total weight
       const totalWeight = transactions.reduce((sum, t) => sum + (parseFloat(t.quantity) || 0), 0);
@@ -3303,59 +3314,54 @@ const server = http.createServer(async (req, res) => {
           return sendJSON(res, { success: false, error: 'Field length exceeded' }, 400);
         }
 
-        // Insert with hardcoded server-side defaults (status=1, currqty=0)
-        // v2.10.45: cm_members column is `mcode` only (no `mmcode` column).
-        // Client still sends `body.mmcode`; map it to the SQL `mcode` column here.
-        // v2.10.43: auto-retry on ER_DUP_ENTRY by incrementing the numeric tail
-        // (preserves prefix and padding) up to 5 attempts.
-        let currentMmcode = mmcode;
-        let attempt = 0;
-        const MAX_ATTEMPTS = 5;
-        let lastDupErr = null;
-
-        while (attempt < MAX_ATTEMPTS) {
-          try {
-            await pool.query(
-              `INSERT INTO cm_members (mcode, descript, gender, idno, route, ccode, status, multOpt, currqty)
-               VALUES (?, ?, ?, ?, ?, ?, 1, ?, 0)`,
-              [currentMmcode, descript, gender, idno, route, ccode, multOpt]
-            );
-
-            console.log(`[SUCCESS] Member added: ${currentMmcode} (${descript}) by user=${userId}, ccode=${ccode}${attempt > 0 ? ` [auto-retry x${attempt}]` : ''}`);
-
-            return sendJSON(res, {
-              success: true,
-              data: {
-                farmer_id: currentMmcode,
-                name: descript,
-                route,
-                ccode,
-                multOpt,
-                currqty: 0
-              }
-            });
-          } catch (dupErr) {
-            if (dupErr && (dupErr.code === 'ER_DUP_ENTRY' || dupErr.errno === 1062)) {
-              lastDupErr = dupErr;
-              attempt += 1;
-              // Parse current mmcode → bump numeric tail, keep prefix + padding
-              const m = currentMmcode.match(/^(\D*)(\d+)$/);
-              if (!m) {
-                // Non-numeric tail — cannot auto-increment, surface 409
-                return sendJSON(res, { success: false, error: 'A member with this ID already exists' }, 409);
-              }
-              const pfx = m[1] || '';
-              const padLen = m[2].length;
-              const nextNum = parseInt(m[2], 10) + 1;
-              currentMmcode = `${pfx}${String(nextNum).padStart(padLen, '0')}`;
-              continue;
-            }
-            throw dupErr;
-          }
+        // v2.10.53: Hard-fail on duplicate (mcode, ccode). NO silent auto-rename.
+        // Operators must see exactly which ID they tried to create. The next-id
+        // suggestion endpoint already prefills a unique ID; manual override that
+        // collides should error loudly so the user picks a different ID.
+        const [existing] = await pool.query(
+          'SELECT mcode FROM cm_members WHERE TRIM(mcode) = TRIM(?) AND ccode = ? LIMIT 1',
+          [mmcode, ccode]
+        );
+        if (existing.length > 0) {
+          console.warn(`[WARN] /api/members duplicate rejected: mcode=${mmcode}, ccode=${ccode}`);
+          return sendJSON(res, {
+            success: false,
+            error: `Member ID "${mmcode}" already exists for this company. Please use a different ID.`
+          }, 409);
         }
 
-        console.warn(`[WARN] /api/members exhausted ${MAX_ATTEMPTS} retries for ccode=${ccode}, last tried=${currentMmcode}`);
-        return sendJSON(res, { success: false, error: 'A member with this ID already exists' }, 409);
+        try {
+          await pool.query(
+            `INSERT INTO cm_members (mcode, descript, gender, idno, route, ccode, status, multOpt, currqty)
+             VALUES (?, ?, ?, ?, ?, ?, 1, ?, 0)`,
+            [mmcode, descript, gender, idno, route, ccode, multOpt]
+          );
+
+          console.log(`[SUCCESS] Member added: ${mmcode} (${descript}) by user=${userId}, ccode=${ccode}`);
+
+          return sendJSON(res, {
+            success: true,
+            data: {
+              farmer_id: mmcode,
+              name: descript,
+              route,
+              ccode,
+              multOpt,
+              currqty: 0
+            }
+          });
+        } catch (dupErr) {
+          // Race-safety net: if a UNIQUE index exists and another device inserted
+          // the same mcode between our pre-check and INSERT, surface 409 cleanly.
+          if (dupErr && (dupErr.code === 'ER_DUP_ENTRY' || dupErr.errno === 1062)) {
+            console.warn(`[WARN] /api/members race-condition duplicate: mcode=${mmcode}, ccode=${ccode}`);
+            return sendJSON(res, {
+              success: false,
+              error: `Member ID "${mmcode}" already exists for this company. Please use a different ID.`
+            }, 409);
+          }
+          throw dupErr;
+        }
       } catch (err) {
         console.error('[ERROR] /api/members POST failed:', err?.message);
         return sendJSON(res, { success: false, error: 'Failed to add member: ' + (err?.message || 'unknown') }, 500);
