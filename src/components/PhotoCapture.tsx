@@ -11,11 +11,15 @@ import { Capacitor } from '@capacitor/core';
 import type { Camera as CapacitorCameraType } from '@capacitor/camera';
 import { compressImage } from '@/utils/imageCompression';
 
-const loadCapacitorCamera = async (): Promise<typeof CapacitorCameraType | null> => {
+// v2.10.49: Wrap the Camera plugin proxy in a plain object before returning.
+// Returning the proxy directly from an async function causes the JS Promise-resolution
+// machinery to probe `.then` on it, which fires the proxy's `get` trap and throws
+// "Camera.then() is not implemented on android" as an unhandled rejection.
+const loadCapacitorCamera = async (): Promise<{ Camera: typeof CapacitorCameraType } | null> => {
   if (!Capacitor.isNativePlatform()) return null;
   try {
     const mod = await import('@capacitor/camera');
-    return mod.Camera;
+    return { Camera: mod.Camera };
   } catch (e) {
     console.warn('📷 Failed to lazy-load @capacitor/camera:', e);
     return null;
@@ -84,8 +88,8 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
     
     try {
       // Lazy-load native camera plugin (returns null on web / when unavailable)
-      const CapacitorCamera = await loadCapacitorCamera();
-      if (!CapacitorCamera) {
+      const cam = await loadCapacitorCamera();
+      if (!cam) {
         console.warn('📷 Native camera plugin unavailable, falling back to web camera');
         toast.info('Using in-app camera');
         nativeCaptureInProgress = false;
@@ -93,6 +97,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
         setIsLoading(false);
         return;
       }
+      const { Camera: CapacitorCamera } = cam;
 
       // First, request camera permissions explicitly
       const permStatus = await CapacitorCamera.requestPermissions({ permissions: ['camera'] });

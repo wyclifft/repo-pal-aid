@@ -8,10 +8,13 @@ import { toast } from 'sonner';
 import { requestClassicBluetoothPermissions } from '@/services/bluetoothClassic';
 
 // Lazy load Capacitor Camera to avoid issues on web
+// v2.10.49: Wrap Camera plugin proxy in an object before returning to avoid the
+// JS Promise-resolution machinery probing `.then` on the Capacitor proxy, which
+// throws "Camera.then() is not implemented on android" as an unhandled rejection.
 const loadCapacitorCamera = async () => {
   if (Capacitor.isNativePlatform()) {
     const { Camera } = await import('@capacitor/camera');
-    return Camera;
+    return { Camera };
   }
   return null;
 };
@@ -48,8 +51,9 @@ export const requestAllPermissions = async (): Promise<{
   if (Capacitor.isNativePlatform()) {
     // Use Capacitor Camera plugin for native
     try {
-      const Camera = await loadCapacitorCamera();
-      if (Camera) {
+      const cam = await loadCapacitorCamera();
+      if (cam) {
+        const { Camera } = cam;
         const permStatus = await Camera.requestPermissions({ permissions: ['camera'] });
         console.log('📷 Camera permission status:', permStatus);
         results.camera = permStatus.camera === 'granted' || permStatus.camera === 'limited';
@@ -110,8 +114,9 @@ export const requestCameraPermission = async (): Promise<boolean> => {
   if (Capacitor.isNativePlatform()) {
     // Use Capacitor Camera plugin for native
     try {
-      const Camera = await loadCapacitorCamera();
-      if (Camera) {
+      const cam = await loadCapacitorCamera();
+      if (cam) {
+        const { Camera } = cam;
         const permStatus = await Camera.requestPermissions({ permissions: ['camera'] });
         const granted = permStatus.camera === 'granted' || permStatus.camera === 'limited';
         if (!granted) {
