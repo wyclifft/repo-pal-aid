@@ -779,7 +779,7 @@ export interface Sale {
   device_fingerprint?: string; // → DB: deviceserial
   photo?: string;       // Base64 encoded buyer photo for theft prevention
   season?: string;      // → DB: CAN (session.SCODE for all orgtypes)
-  session_label?: string; // → DB: session (descript e.g. MORNING/AM/PM)
+  session_label?: string; // → DB: session column. Coffee=SCODE (v2.10.51), Dairy=descript (e.g. AM/PM/MORNING)
   delivered_by?: string; // → DB: deliveredby (who delivered the goods, default: "owner")
   // AI-specific fields (mapped to DB columns):
   // Frontend field → DB column
@@ -801,7 +801,7 @@ export interface BatchSaleRequest {
   device_fingerprint: string;
   photo?: string;  // ONE photo for entire batch
   season?: string; // → DB: CAN (session.SCODE for all orgtypes)
-  session_label?: string; // → DB: session (descript e.g. MORNING/AM/PM)
+  session_label?: string; // → DB: session column. Coffee=SCODE (v2.10.51), Dairy=descript (e.g. AM/PM/MORNING)
   delivered_by?: string; // → DB: deliveredby (who delivered the goods, default: "owner")
   items: Array<{
     transrefno: string;  // Unique per item

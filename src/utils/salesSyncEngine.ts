@@ -181,12 +181,20 @@ export const syncSalesFromDB = async (
 
       try {
         // Best-effort enrichment for legacy offline AI records.
+        // v2.10.51: Coffee orgs must send SCODE in the backend session column.
         const rawSeason = String(saleRecord.season || '').trim();
         const rawSessionLabel = String(saleRecord.session_label || '').trim();
         const needsEnrichment = !rawSeason || !rawSessionLabel;
         const enriched = needsEnrichment ? resolveSessionMetadata(null) : null;
         const finalSeason = rawSeason || enriched?.season || '';
-        const finalSessionLabel = rawSessionLabel || enriched?.session_label || '';
+        let aiOrgIsCoffee = false;
+        try {
+          const s = JSON.parse(localStorage.getItem('app_settings') || '{}');
+          aiOrgIsCoffee = s?.orgtype === 'C';
+        } catch { /* ignore */ }
+        const finalSessionLabel = aiOrgIsCoffee
+          ? (finalSeason || rawSessionLabel || enriched?.session_label || '')
+          : (rawSessionLabel || enriched?.session_label || '');
 
         const cleanSale: Sale = {
           farmer_id: String(saleRecord.farmer_id || '').replace(/^#/, '').trim(),
