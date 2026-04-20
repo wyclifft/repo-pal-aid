@@ -1,80 +1,68 @@
 
 
-## Fix Camera Crash on Android + Coffee Session Still Showing AM — v2.10.48
+## Fix `Camera.then() is not implemented on android` (Real Root Cause) — v2.10.49
 
-### Issue 1: `Camera.then() is not implemented on android` (UNHANDLED rejection — blocks photo capture)
+### Root Cause (corrected from v2.10.48)
 
-**Root cause:** `src/components/PhotoCapture.tsx` line 10 does a **static** import of enums from `@capacitor/camera`:
+v2.10.48 removed the static enum import, but the error returned because the **actual** trigger is different and lives in two places:
+
 ```ts
-import { CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';
+// In src/utils/permissionRequests.ts (line 11–17)
+const loadCapacitorCamera = async () => {
+  if (Capacitor.isNativePlatform()) {
+    const { Camera } = await import('@capacitor/camera');
+    return Camera;   // ← THE BUG
+  }
+  return null;
+};
+
+// In src/components/PhotoCapture.tsx (line 14–23)
+const loadCapacitorCamera = async (): Promise<typeof CapacitorCameraType | null> => {
+  ...
+  const mod = await import('@capacitor/camera');
+  return mod.Camera;   // ← SAME BUG
+};
 ```
-This eagerly loads the `@capacitor/camera` module at app bundle init time. Capacitor's plugin proxy installs a `then` trap on the `Camera` export. When the bundler/runtime touches the resolved module namespace (which it does on Android for code-split chunk resolution), it triggers the proxy's `then` handler, which throws `"Camera.then() is not implemented on android"` as an unhandled rejection. This corrupts the camera state and the photo capture flow never starts.
 
-The lazy `loadCapacitorCamera()` helper on lines 13–22 was intended to prevent this, but the static enum import on line 10 defeats it.
+`Camera` is a **Capacitor plugin Proxy**. When you `return Camera` from an `async` function, JavaScript wraps the return value in a Promise — and to do that wrapping, the runtime checks whether the returned value is already a thenable by accessing its `.then` property. Accessing `.then` on the Capacitor Proxy fires the proxy's `get` trap, which on Android throws:
 
-**Fix:** Remove the static enum import. Capacitor enums are plain string unions under the hood. Replace usages with their literal string values, keeping the type-only `import type` for `Camera as CapacitorCameraType` (type-only imports are erased at compile time and never touch the runtime module).
+> `"Camera.then()" is not implemented on android`
 
-| Old (line 10) | New |
-|---|---|
-| `import { CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';` | **deleted** |
-| `resultType: CameraResultType.DataUrl` | `resultType: 'dataUrl' as any` |
-| `source: CameraSource.Camera` | `source: 'CAMERA' as any` |
-| `direction: facingMode === 'user' ? CameraDirection.Front : CameraDirection.Rear` | `direction: (facingMode === 'user' ? 'FRONT' : 'REAR') as any` |
+The throw happens inside Promise-resolution machinery, **outside any `try/catch`**, so it surfaces as an unhandled rejection on app startup (`requestAllPermissions` runs in `App.tsx` line 208) — exactly matching the user's stack trace from `index-CisiQ8KA.js`.
 
-Apply the same pattern in `src/utils/permissionRequests.ts` — verify it does not statically import any `@capacitor/camera` symbols (it currently dynamic-imports `Camera` only, so it is already safe).
+This explains why v2.10.48 (which only addressed static enum imports) did not fix the issue, and why the error fires on `/` (app startup) before the user ever opens the camera.
 
-### Issue 2: Dialog accessibility warning (`Missing Description or aria-describedby`)
+### Fix
 
-In `src/components/PhotoCapture.tsx`, the `<DialogContent>` has no description. Add an `aria-describedby` reference to a visually-hidden description element (or use Radix `<DialogDescription>` with `sr-only` class) so the dialog is properly announced to screen readers. Removes the runtime warning that was firing alongside the camera error.
-
-### Issue 3: Coffee `transactions.session` still showing `AM` instead of SCODE
-
-The v2.10.46 backend fix is correct for the **online** path. Two remaining gaps:
-
-**A. Production server has not been redeployed.** The backend in production at `backend.maddasystems.co.ke` must be restarted with the v2.10.46 `server.js`. Without restart, the live API still runs the pre-46 code that uppercases the descript / collapses to AM/PM. **No code change for this — only a redeploy step.**
-
-**B. Belt-and-braces hardening in `backend-api/server.js`** — make the SCODE the source of truth for coffee even if the request body's `session` happens to literally contain "AM"/"PM" (which can occur on legacy offline payloads from Capacitor clients <v2.10.39 that didn't carry a separate `season_code`). Currently:
-```js
-normalizedSession = (body.season_code || rawSession).toString().trim().toUpperCase();
-```
-Add one extra log line so we can quickly confirm during smoke-test:
-```js
-console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, normalizedSession });
-```
-No semantic change — just diagnostics. Existing v2.10.46 logic is correct.
-
-### Issue 4: Version bump
-
-`src/constants/appVersion.ts` → **v2.10.48 (Code 70)**.
-
-### Files Changed
+Never return a Capacitor plugin proxy directly from an `async` function. Wrap it in a plain object so the Promise-resolution code only probes the wrapper's `.then` (which is `undefined`, the safe path), never the proxy's.
 
 | File | Change |
-|------|--------|
-| `src/components/PhotoCapture.tsx` | Remove static `import { CameraResultType, CameraSource, CameraDirection }` from `@capacitor/camera`. Replace enum usages with string literals. Add `<DialogDescription className="sr-only">` inside `<DialogHeader>` for accessibility. |
-| `backend-api/server.js` | Add a single diagnostic `console.log` in the coffee branch of session normalization (~line 832). No semantic change. |
-| `src/constants/appVersion.ts` | Bump to **v2.10.48 (Code 70)**. |
+|---|---|
+| `src/utils/permissionRequests.ts` | Change `loadCapacitorCamera()` to return `{ Camera }` instead of `Camera`. Update the two call sites (`requestAllPermissions` and `requestCameraPermission`) to destructure: `const cam = await loadCapacitorCamera(); if (cam) { const { Camera } = cam; … }`. |
+| `src/components/PhotoCapture.tsx` | Same wrapping pattern in the local `loadCapacitorCamera()` and its single caller `captureWithNativeCamera()`. |
+| `src/constants/appVersion.ts` | Bump to **v2.10.49 (Code 71)** with comment: "Fix Camera.then() unhandled rejection on Android — wrap plugin proxy in object before returning from async fn." |
+
+No other behavior changes. Web flow unchanged. iOS unchanged. Permission requests still fire on startup; they just no longer trigger the proxy `.then` trap.
 
 ### What does NOT change
-- **Frontend payload contract** — unchanged. `season_code` is still sent.
-- **Database schema** — unchanged.
-- **Web camera flow** — unchanged (already works).
-- **Capacitor plugin versions** — unchanged.
-- **`.htaccess` files** — unchanged.
+- Backend (`server.js`) — untouched.
+- IndexedDB schema, sync engine, reference generator — untouched.
+- Capacitor plugin versions, native code, `.htaccess`, gradle — untouched.
+- The `import type { Camera as CapacitorCameraType }` line in `PhotoCapture.tsx` — kept (type-only, erased by esbuild).
+- Web/PWA camera flow — completely unaffected (the `if (!Capacitor.isNativePlatform()) return null` branch is unchanged).
 
 ### Backward Compatibility
-- Production Capacitor clients (v2.10.40–v2.10.47): unchanged. They will keep sending `season_code` and the new build will simply not crash on camera open.
-- Pre-v2.10.39 offline payloads (no `season_code`): backend falls back to `rawSession`, same as today. Reports already prefer the `CAN` column for these.
+- All production Capacitor clients (v2.10.40–v2.10.48): no contract change. Just stops the unhandled rejection on startup.
+- Previously, the rejection was non-fatal *most of the time* (camera still worked because the actual `Camera.requestPermissions()` call later succeeded), but it polluted console and on some Android builds it bubbled into the WebView error pipeline and aborted subsequent camera operations. After this fix, the proxy is never accessed by Promise-resolution machinery.
 
-### Required Server-Side Actions After Deploy
-1. Upload `backend-api/server.js` to `/home/maddasys/public_html/api/milk-collection-api/`.
-2. cPanel → Setup Node.js App → **Restart**.
-3. Verify: `curl https://backend.maddasystems.co.ke/api/health` returns JSON.
-4. **Smoke-test camera**: On Android, open Store → add item → click Complete Sale → camera dialog must open and capture a photo without unhandled rejection.
-5. **Smoke-test coffee SCODE**: Capture a coffee collection; check DB `SELECT transrefno, session, CAN FROM transactions ORDER BY id DESC LIMIT 1;` — both `session` and `CAN` should hold the SCODE (e.g. `MH25`, not `AM`).
+### Verification After Deploy
+1. Reload the Android app. Console should no longer show `Camera.then() is not implemented on android`.
+2. Startup log should still show: `📱 Permissions requested on startup: { bluetooth: true, camera: true }`.
+3. Open Store → add item → Complete Sale → camera dialog opens cleanly and captures a photo.
+4. Re-open camera multiple times in one session — no degradation.
 
 ### Out of Scope
-- Backfilling historical coffee rows where `session` = `AM`/`PM` — separate one-shot SQL.
-- Migrating off the deprecated `Camera` plugin to a newer alternative.
-- Removing the hardcoded DB password from `.htaccess`.
+- Migrating off the deprecated `getPhoto` API to Capacitor Camera 8.1+ `takePhoto` (separate task).
+- Removing the still-pending coffee-session backfill SQL (separate one-shot).
+- Refactoring `PhotoCapture.tsx` into smaller components.
 
