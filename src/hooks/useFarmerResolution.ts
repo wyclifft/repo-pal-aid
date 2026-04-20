@@ -7,6 +7,13 @@ interface UseFarmerResolutionProps {
   farmers: Farmer[];
   isMemberMode?: boolean; // true = Members (M prefix), false = Debtors (D prefix)
   blacklistedFarmerIds?: Set<string>;
+  /**
+   * v2.10.52: when true, exact/padded/numeric matches MUST share the active
+   * mode's prefix. If a typed full ID belongs to the opposite mode, the
+   * resolver returns null and toasts a "Switch to …" hint. Default false to
+   * preserve existing Sell/Buy behavior.
+   */
+  enforcePrefix?: boolean;
 }
 
 interface UseFarmerResolutionReturn {
@@ -26,6 +33,7 @@ export const useFarmerResolution = ({
   farmers,
   isMemberMode = true,
   blacklistedFarmerIds,
+  enforcePrefix = false,
 }: UseFarmerResolutionProps): UseFarmerResolutionReturn => {
   // Filter farmers based on prefix and blacklist
   const availableFarmers = blacklistedFarmerIds && blacklistedFarmerIds.size > 0
@@ -37,10 +45,30 @@ export const useFarmerResolution = ({
 
     const numericInput = input.replace(/\D/g, '');
     const prefix = isMemberMode ? 'M' : 'D';
+    const oppositePrefix = isMemberMode ? 'D' : 'M';
+    const oppositeLabel = isMemberMode ? 'Debtors' : 'Members';
+
+    const matchesActivePrefix = (f: Farmer) =>
+      f.farmer_id.toUpperCase().startsWith(prefix);
+
+    // Prefix-enforced mode: warn if the typed ID belongs to the opposite mode.
+    if (enforcePrefix) {
+      const trimmedUpper = input.trim().toUpperCase();
+      if (trimmedUpper.startsWith(oppositePrefix)) {
+        const oppositeMatch = availableFarmers.find(
+          f => f.farmer_id.toUpperCase() === trimmedUpper
+        );
+        if (oppositeMatch) {
+          toast.error(`Switch to ${oppositeLabel} to use ID ${oppositeMatch.farmer_id}`);
+          return null;
+        }
+      }
+    }
 
     // 1. Exact match by farmer_id
     const exactMatch = availableFarmers.find(
-      f => f.farmer_id.toLowerCase() === input.toLowerCase()
+      f => f.farmer_id.toLowerCase() === input.toLowerCase() &&
+           (!enforcePrefix || matchesActivePrefix(f))
     );
     if (exactMatch) return exactMatch;
 
@@ -48,12 +76,14 @@ export const useFarmerResolution = ({
     if (numericInput && numericInput === input.trim()) {
       const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
       const paddedMatch = availableFarmers.find(
-        f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
+        f => f.farmer_id.toUpperCase() === paddedId.toUpperCase() &&
+             (!enforcePrefix || matchesActivePrefix(f))
       );
       if (paddedMatch) return paddedMatch;
 
       // 3. Try matching by numeric portion only
       const numericMatch = availableFarmers.find(f => {
+        if (enforcePrefix && !matchesActivePrefix(f)) return false;
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
         return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
       });
@@ -73,7 +103,7 @@ export const useFarmerResolution = ({
     }
 
     return null;
-  }, [availableFarmers, farmers, isMemberMode, blacklistedFarmerIds]);
+  }, [availableFarmers, farmers, isMemberMode, blacklistedFarmerIds, enforcePrefix]);
 
   const resolveAndSelect = useCallback((
     input: string,

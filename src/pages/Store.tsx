@@ -295,16 +295,38 @@ const Store = () => {
     }
   };
 
-  const loadFarmers = async () => {
+  const loadFarmers = async (forceRemote = false) => {
     try {
       const localFarmers = await getFarmers();
       if (localFarmers.length > 0) {
         setFarmers(localFarmers);
       }
+      // Optionally refresh from backend (e.g. after a new member is added)
+      if (forceRemote && navigator.onLine) {
+        try {
+          const deviceFingerprint = await generateDeviceFingerprint();
+          const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
+          if (response.success && response.data && response.data.length > 0) {
+            setFarmers(response.data);
+          }
+        } catch (remoteErr) {
+          console.warn('[Store] Remote farmer refresh failed:', remoteErr);
+        }
+      }
     } catch (error) {
       console.error('Failed to load farmers:', error);
     }
   };
+
+  // Refresh farmers when a new member is added from the Dashboard
+  useEffect(() => {
+    const handler = () => {
+      console.log('[Store] membersUpdated event received — refreshing farmers');
+      loadFarmers(true);
+    };
+    window.addEventListener('membersUpdated', handler);
+    return () => window.removeEventListener('membersUpdated', handler);
+  }, []);
 
   const loadItems = async () => {
     try {
@@ -336,21 +358,43 @@ const Store = () => {
 
   // syncPendingSales is now handled by useSalesSync hook (syncPendingSalesHook)
 
-  // Resolve member ID to farmer based on mode (M or D prefix)
+  // Resolve member ID to farmer based on mode (M or D prefix).
+  // v2.10.52: enforce active-mode prefix on every match path so a debtor ID
+  // (D…) cannot be selected while the Members toggle is active, and vice versa.
   const resolveFarmerId = useCallback((input: string): Farmer | null => {
     if (!input.trim()) return null;
     const numericInput = input.replace(/\D/g, '');
     const prefix = isMemberMode ? 'M' : 'D';
-    
-    const exactMatch = farmers.find(f => f.farmer_id.toLowerCase() === input.toLowerCase());
+    const oppositeLabel = isMemberMode ? 'Debtors' : 'Members';
+
+    const matchesActivePrefix = (f: Farmer) =>
+      f.farmer_id.toUpperCase().startsWith(prefix);
+
+    // Detect when a typed full ID belongs to the opposite mode and warn the user.
+    const trimmedUpper = input.trim().toUpperCase();
+    const oppositePrefix = isMemberMode ? 'D' : 'M';
+    if (trimmedUpper.startsWith(oppositePrefix)) {
+      const oppositeMatch = farmers.find(f => f.farmer_id.toUpperCase() === trimmedUpper);
+      if (oppositeMatch) {
+        toast.error(`Switch to ${oppositeLabel} to use ID ${oppositeMatch.farmer_id}`);
+        return null;
+      }
+    }
+
+    const exactMatch = farmers.find(
+      f => f.farmer_id.toLowerCase() === input.toLowerCase() && matchesActivePrefix(f)
+    );
     if (exactMatch) return exactMatch;
-    
+
     if (numericInput && numericInput === input.trim()) {
       const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
-      const paddedMatch = farmers.find(f => f.farmer_id.toUpperCase() === paddedId.toUpperCase());
+      const paddedMatch = farmers.find(
+        f => f.farmer_id.toUpperCase() === paddedId.toUpperCase() && matchesActivePrefix(f)
+      );
       if (paddedMatch) return paddedMatch;
-      
+
       const numericMatch = farmers.find(f => {
+        if (!matchesActivePrefix(f)) return false;
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
         return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
       });
@@ -679,19 +723,15 @@ const Store = () => {
     }
   };
 
-  // Farmer search modal filtering - filter by prefix based on mode
-  // Debtors view: mcode starting with D AND crbal ≠ 0
+  // Farmer search modal filtering - filter strictly by prefix based on mode.
+  // v2.10.52: dropped the `crbal != 0` requirement so newly added debtors
+  // (no transactions yet) appear in the Debtors picker. Credit balance is
+  // still shown in the selected-member card / "View More" dialog when present.
   const [farmerSearchQuery, setFarmerSearchQuery] = useState('');
   const prefix = isMemberMode ? 'M' : 'D';
-  const prefixFilteredFarmers = farmers.filter(f => {
-    const matchesPrefix = f.farmer_id.toUpperCase().startsWith(prefix);
-    if (!isMemberMode) {
-      // Debtors: must have non-empty crbal
-      const hasCrbal = f.crbal && typeof f.crbal === 'string' && f.crbal.trim() !== '' && f.crbal !== '0';
-      return matchesPrefix && hasCrbal;
-    }
-    return matchesPrefix;
-  });
+  const prefixFilteredFarmers = farmers.filter(f =>
+    f.farmer_id.toUpperCase().startsWith(prefix)
+  );
   const filteredFarmers = farmerSearchQuery.trim()
     ? prefixFilteredFarmers.filter(f =>
         f.farmer_id.toLowerCase().includes(farmerSearchQuery.toLowerCase()) ||
