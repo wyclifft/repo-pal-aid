@@ -830,11 +830,23 @@ const server = http.createServer(async (req, res) => {
 
       let normalizedSession = rawSession.toUpperCase();
       if (orgtype === 'C') {
-        // v2.10.46: Coffee — use season SCODE (matches CAN column) instead of full descript.
-        // Falls back to rawSession for legacy offline payloads missing season_code.
-        normalizedSession = (body.season_code || rawSession).toString().trim().toUpperCase();
-        // v2.10.48: Diagnostic log to confirm SCODE propagation in production.
-        console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, normalizedSession });
+        // v2.10.50: Coffee — NEVER store AM/PM in session. Prefer SCODE, then descript.
+        // If both are missing/AM/PM, look up the active SCODE for this ccode+date.
+        const scode = (body.season_code || '').toString().trim();
+        const descript = (body.session_descript || rawSession || '').toString().trim();
+        normalizedSession = (scode || descript).toUpperCase();
+        if (!normalizedSession || normalizedSession === 'AM' || normalizedSession === 'PM') {
+          try {
+            const [s] = await pool.query(
+              `SELECT SCODE FROM sessions
+               WHERE ccode = ? AND ? BETWEEN datefrom AND dateto
+               ORDER BY id DESC LIMIT 1`,
+              [ccode, transdate]
+            );
+            if (s.length && s[0].SCODE) normalizedSession = String(s[0].SCODE).toUpperCase();
+          } catch (e) { console.warn('Coffee SCODE rescue lookup failed:', e?.message); }
+        }
+        console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, session_descript: body.session_descript, normalizedSession });
       } else {
         if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
           normalizedSession = 'PM';
@@ -1804,6 +1816,34 @@ const server = http.createServer(async (req, res) => {
         // cowname, cowbreed, noofcalfs, aibreed, CAN (season)
         // Get season (CAN) from request body for consistency across all transaction types
         const seasonCAN = body.season || '';
+
+        // v2.10.50: Coffee orgs must NEVER store AM/PM in session column.
+        // Look up orgtype and normalize session accordingly.
+        let salesOrgtype = 'D';
+        try {
+          const [orgRows] = await conn.query(
+            'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE ccode = ? LIMIT 1',
+            [ccode]
+          );
+          if (orgRows.length > 0) salesOrgtype = (orgRows[0].orgtype || 'D').toString().toUpperCase();
+        } catch (e) { console.warn('[/api/sales] orgtype lookup failed:', e?.message); }
+
+        let salesSessionVal = (body.session_label || body.session || '').toString().trim();
+        if (salesOrgtype === 'C') {
+          const scode = (seasonCAN || '').toString().trim();
+          const descript = (body.session_descript || salesSessionVal || '').toString().trim();
+          salesSessionVal = (scode || descript).toUpperCase();
+          if (!salesSessionVal || salesSessionVal === 'AM' || salesSessionVal === 'PM') {
+            try {
+              const [s] = await conn.query(
+                `SELECT SCODE FROM sessions WHERE ccode = ? AND ? BETWEEN datefrom AND dateto ORDER BY id DESC LIMIT 1`,
+                [ccode, transdate]
+              );
+              if (s.length && s[0].SCODE) salesSessionVal = String(s[0].SCODE).toUpperCase();
+            } catch (e) { console.warn('[/api/sales] coffee SCODE rescue failed:', e?.message); }
+          }
+          console.log('☕ /api/sales coffee session normalization:', { raw: body.session_label || body.session, season: seasonCAN, normalized: salesSessionVal });
+        }
         
         await conn.query(
           `INSERT INTO transactions 
@@ -1821,7 +1861,7 @@ const server = http.createServer(async (req, res) => {
             body.farmer_id || '',               // memberno
             storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
             body.quantity || 0,                 // weight (using quantity)
-            body.session_label || body.session || '', // session (label e.g. MORNING/AM/PM)
+            salesSessionVal,                    // v2.10.50: session (SCODE for coffee, label for dairy)
             transdate,                          // transdate
             transtime,                          // transtime
             transtype,                          // Transtype: 2 for Store, 3 for AI
@@ -2029,6 +2069,33 @@ const server = http.createServer(async (req, res) => {
         // Insert each item with its unique transrefno
         // Get season (CAN) from request body for consistency across all transaction types
         const seasonCAN = body.season || '';
+
+        // v2.10.50: Coffee orgs must NEVER store AM/PM in session column.
+        let batchOrgtype = 'D';
+        try {
+          const [orgRows] = await conn.query(
+            'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE ccode = ? LIMIT 1',
+            [ccode]
+          );
+          if (orgRows.length > 0) batchOrgtype = (orgRows[0].orgtype || 'D').toString().toUpperCase();
+        } catch (e) { console.warn('[/api/sales/batch] orgtype lookup failed:', e?.message); }
+
+        let batchSessionVal = (body.session_label || body.session || '').toString().trim();
+        if (batchOrgtype === 'C') {
+          const scode = (seasonCAN || '').toString().trim();
+          const descript = (body.session_descript || batchSessionVal || '').toString().trim();
+          batchSessionVal = (scode || descript).toUpperCase();
+          if (!batchSessionVal || batchSessionVal === 'AM' || batchSessionVal === 'PM') {
+            try {
+              const [s] = await conn.query(
+                `SELECT SCODE FROM sessions WHERE ccode = ? AND ? BETWEEN datefrom AND dateto ORDER BY id DESC LIMIT 1`,
+                [ccode, transdate]
+              );
+              if (s.length && s[0].SCODE) batchSessionVal = String(s[0].SCODE).toUpperCase();
+            } catch (e) { console.warn('[/api/sales/batch] coffee SCODE rescue failed:', e?.message); }
+          }
+          console.log('☕ /api/sales/batch coffee session normalization:', { raw: body.session_label || body.session, season: seasonCAN, normalized: batchSessionVal });
+        }
         
         for (const item of body.items) {
           const transrefno = item.transrefno;
@@ -2051,7 +2118,7 @@ const server = http.createServer(async (req, res) => {
                 body.farmer_id || '',
                 storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
                 item.quantity || 0,
-                body.session_label || body.session || '', // session (label e.g. MORNING/AM/PM)
+                batchSessionVal,                  // session (SCODE for coffee, label for dairy)
                 transdate,
                 transtime,
                 transtype,

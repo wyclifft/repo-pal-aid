@@ -34,9 +34,19 @@ const SESSION_STORAGE_KEY = 'active_session_data';
 const getInitialSessionData = () => {
   try {
     const saved = localStorage.getItem(SESSION_STORAGE_KEY);
-    if (saved) {
-      return JSON.parse(saved);
-    }
+    if (!saved) return null;
+    const parsed = JSON.parse(saved);
+    // v2.10.50: drop legacy coffee sessions cached without SCODE so the user
+    // re-selects from the freshly-fetched list (prevents AM/PM fallback on backend).
+    try {
+      const settings = JSON.parse(localStorage.getItem('app_settings') || '{}');
+      if (settings?.orgtype === 'C' && parsed?.session && !parsed.session.SCODE) {
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        console.log('[v2.10.50] Cleared legacy coffee session cache (missing SCODE)');
+        return null;
+      }
+    } catch {/* ignore */}
+    return parsed;
   } catch (e) { 
     console.error('Failed to restore session:', e); 
   }

@@ -323,6 +323,7 @@ export interface MilkCollection {
   farmer_name: string;        // → Not stored, derived from cm_members
   route: string;              // → DB: route
   session: string;            // → DB: session - AM/PM for dairy, season name for coffee
+  session_descript?: string;  // v2.10.50: full session descript - backend fallback when SCODE missing
   weight: number;             // → DB: weight (net weight for coffee, total weight for dairy)
   user_id?: string;           // → DB: userId (login user_id for tracking)
   clerk_name: string;         // → DB: clerk (display name/username)
