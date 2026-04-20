@@ -3233,7 +3233,8 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Insert with hardcoded server-side defaults (status=1, currqty=0)
-        // mcode is set to mmcode for compatibility
+        // v2.10.45: cm_members column is `mcode` only (no `mmcode` column).
+        // Client still sends `body.mmcode`; map it to the SQL `mcode` column here.
         // v2.10.43: auto-retry on ER_DUP_ENTRY by incrementing the numeric tail
         // (preserves prefix and padding) up to 5 attempts.
         let currentMmcode = mmcode;
@@ -3244,9 +3245,9 @@ const server = http.createServer(async (req, res) => {
         while (attempt < MAX_ATTEMPTS) {
           try {
             await pool.query(
-              `INSERT INTO cm_members (mcode, descript, gender, mmcode, idno, route, ccode, status, multOpt, currqty)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 0)`,
-              [currentMmcode, descript, gender, currentMmcode, idno, route, ccode, multOpt]
+              `INSERT INTO cm_members (mcode, descript, gender, idno, route, ccode, status, multOpt, currqty)
+               VALUES (?, ?, ?, ?, ?, ?, 1, ?, 0)`,
+              [currentMmcode, descript, gender, idno, route, ccode, multOpt]
             );
 
             console.log(`[SUCCESS] Member added: ${currentMmcode} (${descript}) by user=${userId}, ccode=${ccode}${attempt > 0 ? ` [auto-retry x${attempt}]` : ''}`);
