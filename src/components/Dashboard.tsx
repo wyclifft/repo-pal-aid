@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2 } from 'lucide-react';
+import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2, UserPlus } from 'lucide-react';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
 import { ProductSelector } from '@/components/ProductSelector';
 import { MemberSyncBanner } from '@/components/MemberSyncBanner';
 import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { SessionExpiredDialog } from '@/components/SessionExpiredDialog';
+import { AddMemberModal } from '@/components/AddMemberModal';
 
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { APP_VERSION } from '@/constants/appVersion';
@@ -14,6 +15,7 @@ import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionClose } from '@/hooks/useSessionClose';
 import { useSessionExpiration } from '@/hooks/useSessionExpiration';
 import { useAppSettings } from '@/hooks/useAppSettings';
+import { useAuth } from '@/contexts/AuthContext';
 import { 
   quickReconnect, 
   quickReconnectPrinter, 
@@ -69,7 +71,9 @@ export const Dashboard = ({
   allowZReport = true,
 }: DashboardProps) => {
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
   const initialDataRef = useRef(getInitialSessionData());
   
   // Restore session state from localStorage on mount (read once)
@@ -333,6 +337,25 @@ export const Dashboard = ({
                   <button onClick={() => { navigate('/periodic-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Periodic Report</button>
                   <button onClick={() => { navigate('/periodic-report?sync=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Sync Periodic Report</button>
                   <hr className="my-0.5 border-gray-200" />
+                  {currentUser?.add_members === true && (
+                    <>
+                      <button
+                        onClick={() => {
+                          setMenuOpen(false);
+                          if (!navigator.onLine) {
+                            toast.error('Add Member requires an internet connection');
+                            return;
+                          }
+                          setAddMemberOpen(true);
+                        }}
+                        className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <UserPlus className="h-4 w-4" />
+                        Add Member
+                      </button>
+                      <hr className="my-0.5 border-gray-200" />
+                    </>
+                  )}
                   <button onClick={() => { setMenuOpen(false); onOpenRecentReceipts?.(); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Recent Receipts</button>
                   <hr className="my-0.5 border-gray-200" />
                   <button onClick={() => { onLogout(); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-red-600 hover:bg-red-50">Logout</button>
@@ -582,6 +605,14 @@ export const Dashboard = ({
         pendingCount={pendingCount}
         onSelectSession={handleSessionExpiredSelect}
       />
+
+      {/* Add Member Modal — only mounted for authorized users */}
+      {currentUser?.add_members === true && (
+        <AddMemberModal
+          open={addMemberOpen}
+          onClose={() => setAddMemberOpen(false)}
+        />
+      )}
     </div>
   );
 };

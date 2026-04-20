@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { mysqlApi } from '@/services/mysqlApi';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +36,7 @@ const getActiveRoute = (): string => {
 
 export const FarmerSyncDashboard = () => {
   const { getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
+  const { settings } = useAppSettings();
   const [entries, setEntries] = useState<FarmerSyncEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -144,9 +146,13 @@ export const FarmerSyncDashboard = () => {
     const farmers = await getFarmers();
     const deviceCcode = localStorage.getItem('device_ccode') || '';
 
-    let filtered = deviceCcode
-      ? farmers.filter((f: Farmer) => f.ccode === deviceCcode && Number(f.currqty) === 1)
-      : farmers.filter((f: Farmer) => Number(f.currqty) === 1);
+    // v2.10.40: gating now driven by psettings.cumulative_frequency_status (or legacy printcumm)
+    // instead of per-member cm_members.currqty.
+    const cumulativeEnabled = (settings.cumulative_frequency_status === 1) || (settings.printcumm === 1);
+
+    let filtered: Farmer[] = cumulativeEnabled
+      ? (deviceCcode ? farmers.filter((f: Farmer) => f.ccode === deviceCcode) : farmers)
+      : [];
 
     if (activeRoute) {
       filtered = filtered.filter((f: Farmer) => f.route.trim() === activeRoute);

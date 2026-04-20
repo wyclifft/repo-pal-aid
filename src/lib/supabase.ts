@@ -31,6 +31,8 @@ export interface AppUser {
   depart?: string;
   password?: string; // For offline caching only
   role?: string; // Kept for backward compatibility
+  // v2.10.40: permission flag controlling Add Member feature visibility
+  add_members?: boolean;
 }
 
 /**
