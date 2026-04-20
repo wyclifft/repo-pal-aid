@@ -18,6 +18,7 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { saveToLocalDB } from '@/services/offlineStorage';
+import { resolveSessionMetadata } from '@/utils/sessionMetadata';
 
 interface CartItem {
   item: Item;
@@ -436,6 +437,9 @@ const AIPage = () => {
         const dashboardSession = JSON.parse(localStorage.getItem('active_session_data') || localStorage.getItem('delicoop_session_data') || '{}');
         const selectedRouteTcode = dashboardSession?.route?.tcode || '';
 
+        // Resolve session metadata (works offline by reading persisted dashboard session)
+        const sessionMeta = resolveSessionMetadata(activeSession);
+
         const aiTransaction = {
           transrefno: currentTransRefNo,
           uploadrefno: refs.uploadrefno,
@@ -451,8 +455,8 @@ const AIPage = () => {
           user_id: userId, // Login user_id for DB userId column
           sold_by: clerkName, // Display name for DB clerk column
           device_fingerprint: deviceFingerprint,
-          season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
-          session_label: activeSession?.descript || '', // Session descript → DB: session column
+          season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
+          session_label: sessionMeta.session_label, // Session descript → DB: session column (offline-safe)
           // Cow details for AI
           cow_name: cartItem.cowDetails?.cowName || '',
           cow_breed: cartItem.cowDetails?.cowBreed || '',

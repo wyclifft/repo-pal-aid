@@ -1,5 +1,6 @@
 import { mysqlApi, type Sale, type BatchSaleRequest } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { resolveSessionMetadata } from '@/utils/sessionMetadata';
 
 interface SaleRecord extends Sale {
   orderId?: number;
@@ -75,6 +76,15 @@ export const syncSalesFromDB = async (
       try {
         const firstSale = batchSales[0];
 
+        // Best-effort enrichment for legacy offline records that were saved
+        // before v2.10.38 with empty session metadata.
+        const rawSeason = String(firstSale.season || '').trim();
+        const rawSessionLabel = String(firstSale.session_label || '').trim();
+        const needsEnrichment = !rawSeason || !rawSessionLabel;
+        const enriched = needsEnrichment ? resolveSessionMetadata(null) : null;
+        const finalSeason = rawSeason || enriched?.season || '';
+        const finalSessionLabel = rawSessionLabel || enriched?.session_label || '';
+
         const batchRequest: BatchSaleRequest = {
           uploadrefno,
           transtype: 2,
@@ -86,8 +96,8 @@ export const syncSalesFromDB = async (
           sold_by: String(firstSale.sold_by || '').trim(),
           device_fingerprint: deviceFingerprint,
           photo: firstSale.photo,
-          season: String(firstSale.season || '').trim(),
-          session_label: String(firstSale.session_label || '').trim(),
+          season: finalSeason,
+          session_label: finalSessionLabel,
           items: batchSales.map(sale => ({
             transrefno: sale.transrefno || '',
             item_code: String(sale.item_code || '').trim(),
@@ -160,6 +170,14 @@ export const syncSalesFromDB = async (
       console.log(`[SYNC-ENGINE] AI sale ${i + 1}/${aiSales.length}: ${saleRecord.transrefno || saleRecord.orderId}`);
 
       try {
+        // Best-effort enrichment for legacy offline AI records.
+        const rawSeason = String(saleRecord.season || '').trim();
+        const rawSessionLabel = String(saleRecord.session_label || '').trim();
+        const needsEnrichment = !rawSeason || !rawSessionLabel;
+        const enriched = needsEnrichment ? resolveSessionMetadata(null) : null;
+        const finalSeason = rawSeason || enriched?.season || '';
+        const finalSessionLabel = rawSessionLabel || enriched?.session_label || '';
+
         const cleanSale: Sale = {
           farmer_id: String(saleRecord.farmer_id || '').replace(/^#/, '').trim(),
           farmer_name: String(saleRecord.farmer_name || '').trim(),
@@ -171,8 +189,8 @@ export const syncSalesFromDB = async (
           user_id: String(saleRecord.user_id || '').trim(),
           sold_by: String(saleRecord.sold_by || '').trim(),
           device_fingerprint: deviceFingerprint,
-          season: String(saleRecord.season || '').trim(),
-          ...(saleRecord.session_label && { session_label: saleRecord.session_label }),
+          season: finalSeason,
+          ...(finalSessionLabel && { session_label: finalSessionLabel }),
           ...(saleRecord.photo && { photo: saleRecord.photo }),
           ...(saleRecord.transrefno && { transrefno: saleRecord.transrefno }),
           ...(saleRecord.uploadrefno && { uploadrefno: saleRecord.uploadrefno }),
