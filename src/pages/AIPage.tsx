@@ -452,6 +452,7 @@ const AIPage = () => {
           sold_by: clerkName, // Display name for DB clerk column
           device_fingerprint: deviceFingerprint,
           season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
+          session_label: activeSession?.descript || '', // Session descript → DB: session column
           // Cow details for AI
           cow_name: cartItem.cowDetails?.cowName || '',
           cow_breed: cartItem.cowDetails?.cowBreed || '',

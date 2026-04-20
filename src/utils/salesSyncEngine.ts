@@ -8,6 +8,7 @@ interface SaleRecord extends Sale {
   uploadrefno?: string;
   transtype?: number;
   route_tcode?: string;
+  session_label?: string;
   cow_name?: string;
   cow_breed?: string;
   number_of_calves?: string;
@@ -86,6 +87,7 @@ export const syncSalesFromDB = async (
           device_fingerprint: deviceFingerprint,
           photo: firstSale.photo,
           season: String(firstSale.season || '').trim(),
+          session_label: String(firstSale.session_label || '').trim(),
           items: batchSales.map(sale => ({
             transrefno: sale.transrefno || '',
             item_code: String(sale.item_code || '').trim(),
@@ -170,6 +172,7 @@ export const syncSalesFromDB = async (
           sold_by: String(saleRecord.sold_by || '').trim(),
           device_fingerprint: deviceFingerprint,
           season: String(saleRecord.season || '').trim(),
+          ...(saleRecord.session_label && { session_label: saleRecord.session_label }),
           ...(saleRecord.photo && { photo: saleRecord.photo }),
           ...(saleRecord.transrefno && { transrefno: saleRecord.transrefno }),
           ...(saleRecord.uploadrefno && { uploadrefno: saleRecord.uploadrefno }),
