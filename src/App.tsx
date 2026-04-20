@@ -211,7 +211,8 @@ const App = () => {
         console.warn('Failed to request permissions:', error);
       }
     };
-    requestPermissionsOnStartup();
+    // Defensive .catch on the IIFE so an unimplemented native plugin can never bubble as an unhandled rejection.
+    requestPermissionsOnStartup().catch(() => {});
   }, []);
 
   // Check if splash has been shown in this session with timeout safety

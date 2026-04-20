@@ -27,6 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useAuth } from '@/contexts/AuthContext';
+import { generateDeviceFingerprint, getStoredDeviceId } from '@/utils/deviceFingerprint';
 
 interface RouteOption {
   tcode: string;
@@ -123,7 +124,16 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
       return;
     }
 
-    const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
+    // Resolve fingerprint via the same path used everywhere else in the app.
+    // The canonical localStorage key is 'device_id' (not 'device_fingerprint').
+    let deviceFingerprint = getStoredDeviceId() || '';
+    if (!deviceFingerprint) {
+      try {
+        deviceFingerprint = await generateDeviceFingerprint();
+      } catch (e) {
+        console.warn('[AddMember] generateDeviceFingerprint failed:', e);
+      }
+    }
     if (!deviceFingerprint) {
       toast.error('Device fingerprint missing — please reload the app');
       return;
