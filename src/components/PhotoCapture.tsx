@@ -88,8 +88,8 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
     
     try {
       // Lazy-load native camera plugin (returns null on web / when unavailable)
-      const CapacitorCamera = await loadCapacitorCamera();
-      if (!CapacitorCamera) {
+      const cam = await loadCapacitorCamera();
+      if (!cam) {
         console.warn('📷 Native camera plugin unavailable, falling back to web camera');
         toast.info('Using in-app camera');
         nativeCaptureInProgress = false;
@@ -97,6 +97,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
         setIsLoading(false);
         return;
       }
+      const { Camera: CapacitorCamera } = cam;
 
       // First, request camera permissions explicitly
       const permStatus = await CapacitorCamera.requestPermissions({ permissions: ['camera'] });
