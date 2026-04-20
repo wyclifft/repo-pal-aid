@@ -833,6 +833,8 @@ const server = http.createServer(async (req, res) => {
         // v2.10.46: Coffee — use season SCODE (matches CAN column) instead of full descript.
         // Falls back to rawSession for legacy offline payloads missing season_code.
         normalizedSession = (body.season_code || rawSession).toString().trim().toUpperCase();
+        // v2.10.48: Diagnostic log to confirm SCODE propagation in production.
+        console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, normalizedSession });
       } else {
         if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
           normalizedSession = 'PM';
