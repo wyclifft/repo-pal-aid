@@ -1,4 +1,13 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.53: (1) Add Member: backend now hard-fails on duplicate (mcode, ccode)
+//           with a clear 409 toast — removed silent auto-increment retry.
+//           (2) Periodic Report: cross-device visibility within same ccode.
+//           Backend dropped t.deviceserial filter (kept ccode multi-tenant
+//           boundary) and added optional `route` query param. Frontend reads
+//           active route from localStorage.active_session_data and passes it
+//           to /periodic-report and /periodic-report/farmer-detail; route is
+//           shown as a badge and included in the local cacheKey.
+//           Z-Reports remain device-isolated (unchanged).
 // v2.10.52: Fix Debtors picker hiding new D-prefix members (dropped the
 //           crbal != 0 requirement in Store/AI). Enforce active-mode prefix
 //           in farmer resolver (typing D03558 while Members is active now
@@ -20,5 +29,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.52';
-export const APP_VERSION_CODE = 74;
+export const APP_VERSION = '2.10.53';
+export const APP_VERSION_CODE = 75;

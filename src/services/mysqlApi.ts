@@ -896,16 +896,23 @@ export interface FarmerDetailReportData {
 }
 
 const periodicReportApi = {
-  async get(startDate: string, endDate: string, uniquedevcode: string, farmerSearch?: string): Promise<ApiResponse<PeriodicReportData[]>> {
+  // v2.10.53: optional `route` scopes results to a specific route/center within the same ccode.
+  async get(startDate: string, endDate: string, uniquedevcode: string, farmerSearch?: string, route?: string): Promise<ApiResponse<PeriodicReportData[]>> {
     let endpoint = `/periodic-report?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
     if (farmerSearch) {
       endpoint += `&farmer_search=${encodeURIComponent(farmerSearch)}`;
     }
+    if (route && route.trim()) {
+      endpoint += `&route=${encodeURIComponent(route.trim())}`;
+    }
     return apiRequest<PeriodicReportData[]>(endpoint);
   },
   
-  async getFarmerDetail(startDate: string, endDate: string, farmerId: string, uniquedevcode: string): Promise<ApiResponse<FarmerDetailReportData>> {
-    const endpoint = `/periodic-report/farmer-detail?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+  async getFarmerDetail(startDate: string, endDate: string, farmerId: string, uniquedevcode: string, route?: string): Promise<ApiResponse<FarmerDetailReportData>> {
+    let endpoint = `/periodic-report/farmer-detail?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
+    if (route && route.trim()) {
+      endpoint += `&route=${encodeURIComponent(route.trim())}`;
+    }
     return apiRequest<FarmerDetailReportData>(endpoint);
   },
 };

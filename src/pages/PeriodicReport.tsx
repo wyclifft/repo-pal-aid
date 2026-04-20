@@ -47,6 +47,9 @@ export default function PeriodicReport() {
   const [loading, setLoading] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  // v2.10.53: read active route from Dashboard's persisted session so report
+  // is scoped to the same route/center the operator is currently working on.
+  const [activeRoute, setActiveRoute] = useState<{ tcode: string; descript: string } | null>(null);
   
   // Receipt modal state
   const [selectedFarmer, setSelectedFarmer] = useState<{ id: string; name: string } | null>(null);
@@ -59,6 +62,22 @@ export default function PeriodicReport() {
       setDeviceFingerprint(fingerprint);
     };
     initDevice();
+
+    // v2.10.53: load active route from persisted Dashboard session
+    try {
+      const raw = localStorage.getItem('active_session_data');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.route?.tcode) {
+          setActiveRoute({
+            tcode: String(parsed.route.tcode).trim(),
+            descript: String(parsed.route.descript || parsed.route.tcode).trim(),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Could not read active route from localStorage:', e);
+    }
 
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
@@ -91,9 +110,11 @@ export default function PeriodicReport() {
     setLoading(true);
     const formattedStartDate = format(startDate, "yyyy-MM-dd");
     const formattedEndDate = format(endDate, "yyyy-MM-dd");
-    const cacheKey = `${formattedStartDate}_${formattedEndDate}_${farmerSearch.trim()}`;
+    // v2.10.53: include route in cache key so per-route caches don't collide
+    const routeKey = activeRoute?.tcode || 'ALL';
+    const cacheKey = `${formattedStartDate}_${formattedEndDate}_${routeKey}_${farmerSearch.trim()}`;
     
-    console.log("Requesting report with dates:", formattedStartDate, formattedEndDate);
+    console.log("Requesting report with dates:", formattedStartDate, formattedEndDate, "route:", routeKey);
     
     // 1. ALWAYS load from cache first for instant display
     try {
@@ -114,7 +135,8 @@ export default function PeriodicReport() {
           formattedStartDate,
           formattedEndDate,
           deviceFingerprint,
-          farmerSearch.trim() || undefined
+          farmerSearch.trim() || undefined,
+          activeRoute?.tcode || undefined
         );
 
         console.log("Report response received:", response);
@@ -168,12 +190,16 @@ export default function PeriodicReport() {
     <div className="min-h-screen bg-gradient-to-br from-[#1e3a8a] via-[#3b82f6] to-[#60a5fa] p-4" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
       <div className="max-w-7xl mx-auto">
           <div className="bg-white/95 backdrop-blur-sm rounded-lg shadow-xl p-6 mb-6">
-          <div className="flex items-center justify-between gap-3 mb-6">
+          <div className="flex items-center justify-between gap-3 mb-2">
             <div className="flex items-center gap-3">
               <FileText className="h-8 w-8 text-primary" />
               <h1 className="text-3xl font-bold text-gray-900">{produceLabel} Periodic Report</h1>
             </div>
             <DeviceAuthStatus />
+          </div>
+          {/* v2.10.53: scope badge — operator sees which route is being reported */}
+          <div className="mb-6 text-sm text-muted-foreground">
+            {routeLabel}: <span className="font-semibold text-gray-800">{activeRoute?.descript || 'All routes'}</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -317,6 +343,7 @@ export default function PeriodicReport() {
             endDate={endDate}
             deviceFingerprint={deviceFingerprint}
             weightUnit={weightUnit}
+            route={activeRoute?.tcode}
           />
         )}
       </div>

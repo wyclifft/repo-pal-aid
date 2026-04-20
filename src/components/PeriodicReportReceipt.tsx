@@ -21,6 +21,8 @@ interface PeriodicReportReceiptProps {
   endDate: Date;
   deviceFingerprint: string;
   weightUnit: string;
+  // v2.10.53: optional route scope (tcode) to filter cross-device transactions
+  route?: string;
 }
 
 export function PeriodicReportReceipt({
@@ -32,6 +34,7 @@ export function PeriodicReportReceipt({
   endDate,
   deviceFingerprint,
   weightUnit,
+  route,
 }: PeriodicReportReceiptProps) {
   const [loading, setLoading] = useState(true);
   const [printing, setPrinting] = useState(false);
@@ -44,7 +47,7 @@ export function PeriodicReportReceipt({
       loadData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, farmerId, deviceFingerprint]);
+  }, [open, farmerId, deviceFingerprint, route]);
 
   const loadData = async () => {
     setLoading(true);
@@ -55,13 +58,14 @@ export function PeriodicReportReceipt({
       const formattedStartDate = format(startDate, "yyyy-MM-dd");
       const formattedEndDate = format(endDate, "yyyy-MM-dd");
       
-      console.log('📄 Fetching farmer detail:', { farmerId, formattedStartDate, formattedEndDate });
+      console.log('📄 Fetching farmer detail:', { farmerId, formattedStartDate, formattedEndDate, route });
       
       const response = await mysqlApi.periodicReport.getFarmerDetail(
         formattedStartDate,
         formattedEndDate,
         farmerId,
-        deviceFingerprint
+        deviceFingerprint,
+        route
       );
 
       console.log('📄 Farmer detail response:', response);
