@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { mysqlApi } from '@/services/mysqlApi';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +36,7 @@ const getActiveRoute = (): string => {
 
 export const FarmerSyncDashboard = () => {
   const { getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
+  const { settings } = useAppSettings();
   const [entries, setEntries] = useState<FarmerSyncEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
