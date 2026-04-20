@@ -438,6 +438,7 @@ const AIPage = () => {
         const selectedRouteTcode = dashboardSession?.route?.tcode || '';
 
         // Resolve session metadata (works offline by reading persisted dashboard session)
+        // v2.10.51: backend_session is org-aware — coffee gets SCODE, dairy gets descript
         const sessionMeta = resolveSessionMetadata(activeSession);
 
         const aiTransaction = {
@@ -456,7 +457,7 @@ const AIPage = () => {
           sold_by: clerkName, // Display name for DB clerk column
           device_fingerprint: deviceFingerprint,
           season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
-          session_label: sessionMeta.session_label, // Session descript → DB: session column (offline-safe)
+          session_label: sessionMeta.backend_session, // → DB: session. Coffee=SCODE, Dairy=descript (v2.10.51)
           // Cow details for AI
           cow_name: cartItem.cowDetails?.cowName || '',
           cow_breed: cartItem.cowDetails?.cowBreed || '',

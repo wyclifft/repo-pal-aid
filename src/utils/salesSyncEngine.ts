@@ -78,12 +78,22 @@ export const syncSalesFromDB = async (
 
         // Best-effort enrichment for legacy offline records that were saved
         // before v2.10.38 with empty session metadata.
+        // v2.10.51: For coffee orgs, the backend `session` column must hold SCODE.
         const rawSeason = String(firstSale.season || '').trim();
         const rawSessionLabel = String(firstSale.session_label || '').trim();
         const needsEnrichment = !rawSeason || !rawSessionLabel;
         const enriched = needsEnrichment ? resolveSessionMetadata(null) : null;
         const finalSeason = rawSeason || enriched?.season || '';
-        const finalSessionLabel = rawSessionLabel || enriched?.session_label || '';
+        // Detect orgtype to choose the correct backend session value
+        let orgIsCoffee = false;
+        try {
+          const s = JSON.parse(localStorage.getItem('app_settings') || '{}');
+          orgIsCoffee = s?.orgtype === 'C';
+        } catch { /* ignore */ }
+        // Coffee → SCODE always; Dairy → descript label
+        const finalSessionLabel = orgIsCoffee
+          ? (finalSeason || rawSessionLabel || enriched?.session_label || '')
+          : (rawSessionLabel || enriched?.session_label || '');
 
         const batchRequest: BatchSaleRequest = {
           uploadrefno,
@@ -171,12 +181,20 @@ export const syncSalesFromDB = async (
 
       try {
         // Best-effort enrichment for legacy offline AI records.
+        // v2.10.51: Coffee orgs must send SCODE in the backend session column.
         const rawSeason = String(saleRecord.season || '').trim();
         const rawSessionLabel = String(saleRecord.session_label || '').trim();
         const needsEnrichment = !rawSeason || !rawSessionLabel;
         const enriched = needsEnrichment ? resolveSessionMetadata(null) : null;
         const finalSeason = rawSeason || enriched?.season || '';
-        const finalSessionLabel = rawSessionLabel || enriched?.session_label || '';
+        let aiOrgIsCoffee = false;
+        try {
+          const s = JSON.parse(localStorage.getItem('app_settings') || '{}');
+          aiOrgIsCoffee = s?.orgtype === 'C';
+        } catch { /* ignore */ }
+        const finalSessionLabel = aiOrgIsCoffee
+          ? (finalSeason || rawSessionLabel || enriched?.session_label || '')
+          : (rawSessionLabel || enriched?.session_label || '');
 
         const cleanSale: Sale = {
           farmer_id: String(saleRecord.farmer_id || '').replace(/^#/, '').trim(),

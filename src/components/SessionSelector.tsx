@@ -182,11 +182,24 @@ export const SessionSelector = ({
     let isMounted = true;
     
     const loadSessions = async () => {
+      // Detect coffee org so we can force a refresh if cache lacks SCODE
+      let coffeeOrg = false;
+      try {
+        const s = JSON.parse(localStorage.getItem('app_settings') || '{}');
+        coffeeOrg = s?.orgtype === 'C';
+      } catch { /* ignore */ }
+
       // Try to load from cache FIRST for instant display
+      let cacheLacksScode = false;
       if (isReady && !hasLoadedRef.current) {
         try {
           const cached = await getSessions();
           if (cached && cached.length > 0 && isMounted) {
+            // v2.10.51: detect stale coffee cache without SCODE
+            cacheLacksScode = coffeeOrg && cached.some((s: any) => !s?.SCODE);
+            if (cacheLacksScode) {
+              console.warn('[SESSION] Coffee cache missing SCODE — will force network refresh');
+            }
             console.log('[SESSION] Loaded from cache:', cached.length, 'sessions');
             processSessionData(cached);
             hasLoadedRef.current = true;
@@ -205,6 +218,7 @@ export const SessionSelector = ({
       setError(null);
       
       // Try to fetch fresh data from network (non-blocking)
+      // v2.10.51: also force refresh when cached coffee sessions lack SCODE
       if (navigator.onLine) {
         try {
           const deviceFingerprint = await generateDeviceFingerprint();

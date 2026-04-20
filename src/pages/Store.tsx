@@ -561,6 +561,7 @@ const Store = () => {
       const selectedRouteTcode = dashboardSession?.route?.tcode || '';
 
       // Resolve session metadata (works offline by reading persisted dashboard session)
+      // v2.10.51: backend_session is org-aware — coffee gets SCODE, dairy gets descript
       const sessionMeta = resolveSessionMetadata(activeSession);
 
       // Build batch request - submit transaction immediately, photo uploads in background
@@ -576,7 +577,7 @@ const Store = () => {
         device_fingerprint: deviceFingerprint,
         items: batchItems,
         season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
-        session_label: sessionMeta.session_label, // Session descript → DB: session column (offline-safe)
+        session_label: sessionMeta.backend_session, // → DB: session column. Coffee=SCODE, Dairy=descript
         // delivered_by not used in Store transactions
         // Photo excluded - will upload in background after transaction
       };
@@ -615,7 +616,7 @@ const Store = () => {
             device_fingerprint: deviceFingerprint,
             photo: photoBase64, // Include photo for offline sync
             season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
-            session_label: sessionMeta.session_label, // Session descript → DB: session column (offline-safe)
+            session_label: sessionMeta.backend_session, // → DB: session. Coffee=SCODE, Dairy=descript (v2.10.51)
             // delivered_by not used in Store transactions
           };
           await saveSale(sale);

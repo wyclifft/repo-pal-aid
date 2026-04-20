@@ -732,11 +732,19 @@ export const useIndexedDB = () => {
    */
   const saveSessions = useCallback((sessions: any[]) => {
     if (!db) return;
+    if (!sessions || sessions.length === 0) {
+      // Guard: never wipe the cache with an empty list
+      console.warn('[DB] saveSessions called with empty array — skipping');
+      return;
+    }
     try {
       const tx = db.transaction('sessions', 'readwrite');
       const store = tx.objectStore('sessions');
+      // v2.10.51: clear before writing so legacy entries (e.g. coffee sessions
+      // cached without SCODE) cannot linger and feed AM/PM into transactions.session
+      store.clear();
       sessions.forEach((session) => store.put(session));
-      console.log('Sessions cached in IndexedDB');
+      console.log('[DB] Sessions cache replaced with', sessions.length, 'entries');
     } catch (error) {
       console.error('Failed to save sessions:', error);
     }

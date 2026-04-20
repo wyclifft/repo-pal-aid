@@ -788,14 +788,17 @@ const Index = () => {
       return;
     }
 
-    // Derive AM/PM from the active session's time_from (hour-based)
-    // For coffee mode (season), use the season name (descript) instead of AM/PM
+    // Derive AM/PM from the active session's time_from (hour-based) for dairy.
+    // For coffee mode, the BACKEND `session` column must carry SCODE (NOT descript,
+    // NEVER AM/PM). The descript is only kept for receipts/UI via session_descript.
     const timeFrom = typeof activeSession.time_from === 'number' 
       ? activeSession.time_from 
       : parseInt(String(activeSession.time_from), 10);
     const amPmSession: 'AM' | 'PM' = (timeFrom >= 12) ? 'PM' : 'AM';
-    // For coffee (season mode), use season name; for dairy (session mode), use AM/PM
-    const currentSessionType = isCoffee ? (activeSession.descript || amPmSession) : amPmSession;
+    // v2.10.51: coffee → SCODE (DB session col); dairy → AM/PM
+    const currentSessionType = isCoffee
+      ? (activeSession.SCODE || activeSession.descript || amPmSession)
+      : amPmSession;
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
     // ========== multOpt=0 CAPTURE BEHAVIOR ==========
@@ -1013,11 +1016,18 @@ const Index = () => {
         try {
           console.log(`📤 Submitting online: ${capture.reference_no} (${capture.weight} Kg)`);
 
-          // Normalize session to AM/PM - handle legacy data that might have description
-          let normalizedSession: 'AM' | 'PM' = 'AM';
-          const sessionVal = (capture.session || '').trim().toUpperCase();
-          if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
-            normalizedSession = 'PM';
+          // v2.10.51: For dairy, normalize to AM/PM. For coffee, send SCODE
+          // (capture.session already holds SCODE for coffee — see capture path).
+          let sessionToSend: string;
+          if (isCoffee) {
+            sessionToSend = (capture.season_code || capture.session || '').toString().trim();
+          } else {
+            let normalizedSession: 'AM' | 'PM' = 'AM';
+            const sessionVal = (capture.session || '').trim().toUpperCase();
+            if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
+              normalizedSession = 'PM';
+            }
+            sessionToSend = normalizedSession;
           }
 
           // NOTE: We intentionally do NOT check the database here for duplicates.
@@ -1036,7 +1046,7 @@ const Index = () => {
             farmer_id: capture.farmer_id.replace(/^#/, '').trim(),
             farmer_name: capture.farmer_name.trim(),
             route: capture.route.trim(),
-            session: normalizedSession,
+            session: sessionToSend,
             weight: capture.weight,
             user_id: capture.user_id, // Login user_id for DB userId column
             clerk_name: capture.clerk_name, // Display name for clerk column
