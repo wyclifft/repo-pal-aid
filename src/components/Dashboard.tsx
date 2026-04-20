@@ -605,6 +605,14 @@ export const Dashboard = ({
         pendingCount={pendingCount}
         onSelectSession={handleSessionExpiredSelect}
       />
+
+      {/* Add Member Modal — only mounted for authorized users */}
+      {currentUser?.add_members === true && (
+        <AddMemberModal
+          open={addMemberOpen}
+          onClose={() => setAddMemberOpen(false)}
+        />
+      )}
     </div>
   );
 };
