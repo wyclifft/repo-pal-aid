@@ -830,7 +830,9 @@ const server = http.createServer(async (req, res) => {
 
       let normalizedSession = rawSession.toUpperCase();
       if (orgtype === 'C') {
-        // Coffee: keep raw season descript (already trimmed + uppercased above)
+        // v2.10.46: Coffee — use season SCODE (matches CAN column) instead of full descript.
+        // Falls back to rawSession for legacy offline payloads missing season_code.
+        normalizedSession = (body.season_code || rawSession).toString().trim().toUpperCase();
       } else {
         if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
           normalizedSession = 'PM';
