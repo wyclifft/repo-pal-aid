@@ -3105,9 +3105,9 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // ===== NEXT MEMBER ID SUGGESTION (v2.10.43, additive) =====
+    // ===== NEXT MEMBER ID SUGGESTION (v2.10.43, additive; v2.10.45 fix: column is mcode) =====
     // GET /api/members/next-id?device_fingerprint=...
-    // Returns the next available mmcode for the device's ccode, preserving any
+    // Returns the next available member code for the device's ccode, preserving any
     // letter prefix and zero-padding from the most recent existing member.
     if (path === '/api/members/next-id' && method === 'GET') {
       try {
@@ -3126,10 +3126,10 @@ const server = http.createServer(async (req, res) => {
         }
         const ccode = deviceRows[0].ccode;
 
-        // Pull the most recent batch of mmcodes for this ccode
+        // Pull the most recent batch of mcodes for this ccode
         const [rows] = await pool.query(
-          `SELECT mmcode FROM cm_members
-           WHERE ccode = ? AND mmcode IS NOT NULL AND mmcode <> ''
+          `SELECT mcode FROM cm_members
+           WHERE ccode = ? AND mcode IS NOT NULL AND mcode <> ''
            ORDER BY id DESC LIMIT 50`,
           [ccode]
         );
@@ -3140,8 +3140,8 @@ const server = http.createServer(async (req, res) => {
         let nextNumber = 1;
 
         if (rows.length > 0) {
-          // Use the most recent mmcode to detect prefix + padding
-          const latest = String(rows[0].mmcode).trim();
+          // Use the most recent mcode to detect prefix + padding
+          const latest = String(rows[0].mcode).trim();
           const match = latest.match(/^(\D*)(\d+)$/);
           if (match) {
             prefix = match[1] || '';
@@ -3155,7 +3155,7 @@ const server = http.createServer(async (req, res) => {
           // Compute MAX(numericTail) across the recent batch (only matching prefix)
           let maxNum = 0;
           for (const r of rows) {
-            const code = String(r.mmcode).trim();
+            const code = String(r.mcode).trim();
             const m = code.match(/^(\D*)(\d+)$/);
             if (m && m[1] === prefix) {
               const n = parseInt(m[2], 10);
