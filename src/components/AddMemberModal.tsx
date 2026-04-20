@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { z } from 'zod';
-import { Loader2, UserPlus } from 'lucide-react';
+import { Loader2, UserPlus, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { mysqlApi } from '@/services/mysqlApi';
@@ -61,6 +62,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
 
   const [routes, setRoutes] = useState<RouteOption[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [suggestingId, setSuggestingId] = useState(false);
 
   const [mmcode, setMmcode] = useState('');
   const [descript, setDescript] = useState('');
@@ -69,9 +71,53 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
   const [route, setRoute] = useState('');
   const [multOpt, setMultOpt] = useState(true);
 
+  // v2.10.43: inline success banner state
+  const [lastSuccessMessage, setLastSuccessMessage] = useState<string | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const ccode = (typeof window !== 'undefined' && localStorage.getItem('device_ccode')) || '';
 
-  // Reset fields when opened
+  // Helper: clear the inline success banner (and any pending auto-clear timer)
+  const clearSuccessBanner = () => {
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current);
+      successTimerRef.current = null;
+    }
+    setLastSuccessMessage(null);
+  };
+
+  // Helper: resolve fingerprint same way as the rest of the app
+  const resolveFingerprint = async (): Promise<string> => {
+    let fp = getStoredDeviceId() || '';
+    if (!fp) {
+      try {
+        fp = await generateDeviceFingerprint();
+      } catch (e) {
+        console.warn('[AddMember] generateDeviceFingerprint failed:', e);
+      }
+    }
+    return fp;
+  };
+
+  // Helper: fetch next-id suggestion and pre-fill mmcode
+  const fetchAndApplyNextId = async () => {
+    if (!navigator.onLine) return;
+    setSuggestingId(true);
+    try {
+      const fp = await resolveFingerprint();
+      if (!fp) return;
+      const result = await mysqlApi.members.getNextId(fp);
+      if (result.success && result.data?.suggested) {
+        setMmcode(result.data.suggested);
+      }
+    } catch (err) {
+      console.warn('[AddMember] getNextId failed:', err);
+    } finally {
+      setSuggestingId(false);
+    }
+  };
+
+  // Reset fields + fetch suggestion when opened
   useEffect(() => {
     if (open) {
       setMmcode('');
@@ -80,8 +126,21 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
       setIdno('');
       setRoute('');
       setMultOpt(true);
+      clearSuccessBanner();
+      // Fire-and-forget: pre-fill mmcode with next available ID
+      void fetchAndApplyNextId();
+    } else {
+      clearSuccessBanner();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (successTimerRef.current) clearTimeout(successTimerRef.current);
+    };
+  }, []);
 
   // Load routes from IndexedDB cache when modal opens
   useEffect(() => {
@@ -98,6 +157,11 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
       }
     })();
   }, [open, isReady, getRoutes]);
+
+  // Wrap setters to auto-clear the success banner when the user starts editing
+  const editingClear = () => {
+    if (lastSuccessMessage) clearSuccessBanner();
+  };
 
   const handleSubmit = async () => {
     if (!navigator.onLine) {
@@ -124,16 +188,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
       return;
     }
 
-    // Resolve fingerprint via the same path used everywhere else in the app.
-    // The canonical localStorage key is 'device_id' (not 'device_fingerprint').
-    let deviceFingerprint = getStoredDeviceId() || '';
-    if (!deviceFingerprint) {
-      try {
-        deviceFingerprint = await generateDeviceFingerprint();
-      } catch (e) {
-        console.warn('[AddMember] generateDeviceFingerprint failed:', e);
-      }
-    }
+    const deviceFingerprint = await resolveFingerprint();
     if (!deviceFingerprint) {
       toast.error('Device fingerprint missing — please reload the app');
       return;
@@ -155,12 +210,31 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
       );
 
       if (result.success) {
-        console.log('[SUCCESS] Member created:', result.data?.farmer_id);
-        toast.success(`Member ${result.data?.farmer_id} added successfully`);
+        const savedId = result.data?.farmer_id || parsed.data.mmcode;
+        console.log('[SUCCESS] Member created:', savedId);
+
+        // Inline success banner (auto-clear after 5s)
+        const msg = `Member ${savedId} added successfully`;
+        setLastSuccessMessage(msg);
+        if (successTimerRef.current) clearTimeout(successTimerRef.current);
+        successTimerRef.current = setTimeout(() => setLastSuccessMessage(null), 5000);
+
+        // Toast fallback for users who close the modal quickly
+        toast.success(msg);
+
         // Notify other components to refresh caches
         window.dispatchEvent(new CustomEvent('membersUpdated'));
         onMemberAdded?.();
-        onClose();
+
+        // Reset form fields for rapid sequential entry, keep modal open
+        setDescript('');
+        setGender('');
+        setIdno('');
+        // Keep `route` and `multOpt` defaults the operator most likely wants again
+        setMmcode('');
+
+        // Pre-fill the next suggested ID
+        void fetchAndApplyNextId();
       } else {
         const errMsg = (result as any).error || 'Failed to add member';
         toast.error(errMsg);
@@ -186,6 +260,16 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
           </DialogDescription>
         </DialogHeader>
 
+        {/* v2.10.43: Inline success banner pinned to top of form */}
+        {lastSuccessMessage && (
+          <Alert className="border-green-200 bg-green-50 text-green-900 dark:bg-green-950/40 dark:border-green-900 dark:text-green-100">
+            <CheckCircle2 className="h-4 w-4 !text-green-600 dark:!text-green-400" />
+            <AlertDescription className="font-medium">
+              {lastSuccessMessage}
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div className="space-y-3 py-2">
           {/* Auto-applied ccode badge */}
           <div className="flex items-center justify-between text-sm">
@@ -195,14 +279,22 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
 
           <div className="space-y-1.5">
             <Label htmlFor="mm-mmcode">Member ID *</Label>
-            <Input
-              id="mm-mmcode"
-              value={mmcode}
-              onChange={(e) => setMmcode(e.target.value)}
-              placeholder="e.g. 12345"
-              maxLength={50}
-              disabled={submitting}
-            />
+            <div className="relative">
+              <Input
+                id="mm-mmcode"
+                value={mmcode}
+                onChange={(e) => { setMmcode(e.target.value); editingClear(); }}
+                placeholder={suggestingId ? 'Fetching next ID…' : 'e.g. M00001'}
+                maxLength={50}
+                disabled={submitting}
+              />
+              {suggestingId && (
+                <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Auto-suggested next ID — you can edit if needed.
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -210,7 +302,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
             <Input
               id="mm-name"
               value={descript}
-              onChange={(e) => setDescript(e.target.value)}
+              onChange={(e) => { setDescript(e.target.value); editingClear(); }}
               placeholder="e.g. John Doe"
               maxLength={100}
               disabled={submitting}
@@ -219,7 +311,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
 
           <div className="space-y-1.5">
             <Label htmlFor="mm-gender">Gender *</Label>
-            <Select value={gender} onValueChange={(v) => setGender(v as 'M' | 'F' | 'O')} disabled={submitting}>
+            <Select value={gender} onValueChange={(v) => { setGender(v as 'M' | 'F' | 'O'); editingClear(); }} disabled={submitting}>
               <SelectTrigger id="mm-gender">
                 <SelectValue placeholder="Select gender" />
               </SelectTrigger>
@@ -236,7 +328,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
             <Input
               id="mm-idno"
               value={idno}
-              onChange={(e) => setIdno(e.target.value)}
+              onChange={(e) => { setIdno(e.target.value); editingClear(); }}
               placeholder="National ID / Passport"
               maxLength={50}
               disabled={submitting}
@@ -245,7 +337,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
 
           <div className="space-y-1.5">
             <Label htmlFor="mm-route">Route *</Label>
-            <Select value={route} onValueChange={setRoute} disabled={submitting || routes.length === 0}>
+            <Select value={route} onValueChange={(v) => { setRoute(v); editingClear(); }} disabled={submitting || routes.length === 0}>
               <SelectTrigger id="mm-route">
                 <SelectValue placeholder={routes.length === 0 ? 'No routes available' : 'Select route'} />
               </SelectTrigger>
@@ -269,7 +361,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
             <Switch
               id="mm-multopt"
               checked={multOpt}
-              onCheckedChange={setMultOpt}
+              onCheckedChange={(v) => { setMultOpt(v); editingClear(); }}
               disabled={submitting}
             />
           </div>
@@ -277,7 +369,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={submitting}>
-            Cancel
+            Close
           </Button>
           <Button onClick={handleSubmit} disabled={submitting}>
             {submitting ? (
