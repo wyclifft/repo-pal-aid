@@ -1015,6 +1015,19 @@ export const membersApi = {
       }),
     });
   },
+
+  /**
+   * v2.10.43: Suggest the next available mmcode for the device's ccode.
+   * Uses query-string fingerprint (no custom headers → no CORS preflight).
+   */
+  getNextId: async (deviceFingerprint: string): Promise<ApiResponse<{
+    suggested: string;
+    prefix: string;
+    padLength: number;
+  }>> => {
+    const qs = encodeURIComponent(deviceFingerprint);
+    return apiRequest(`/members/next-id?device_fingerprint=${qs}`, { method: 'GET' });
+  },
 };
 
 // Export all APIs
