@@ -130,7 +130,8 @@ const Index = () => {
     periodLabel,
     isCoffee,
     sackTareWeight,
-    allowSackEdit
+    allowSackEdit,
+    settings
   } = useAppSettings();
 
   // Sync tare weight from psettings when loaded
