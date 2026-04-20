@@ -1,93 +1,87 @@
 
-## Fix: Offline Store/AI Sync Still Leaving `session` and `CAN` Empty — v2.10.38
+
+## Fix: Coffee Transactions Store `AM`/`PM` Instead of Season Descript — v2.10.39
 
 ### Root Cause
-The backend is already ready to save these fields, and the sync engine already forwards them. The remaining gap is on the client when a transaction is created offline:
 
-1. **`Store.tsx` and `AIPage.tsx` rely on `loadActiveSession()`**
-   - That function calls `/api/sessions/active/...`.
-   - When the device is offline, the request fails and `activeSession` stays `null`.
+**`backend-api/server.js` lines 817-823** unconditionally normalizes any incoming `session` value to `AM` or `PM` for milk/coffee transactions (`/api/milk-collection`):
 
-2. **Offline transaction payloads are built from `activeSession`**
-   - Offline Store saves:
-     - `season: activeSession?.SCODE || ''`
-     - `session_label: activeSession?.descript || ''`
-   - Offline AI does the same.
-   - If `activeSession` is `null`, both values are saved as empty strings into IndexedDB.
+```js
+let normalizedSession = rawSession.toUpperCase();
+if (normalizedSession.includes('PM') || ... 'EVENING' ...) normalizedSession = 'PM';
+else if (normalizedSession.includes('AM') || ... 'MORNING' ...) normalizedSession = 'AM';
+```
 
-3. **`salesSyncEngine.ts` only forwards what was saved**
-   - During reconnect, sync sends `firstSale.season` and `firstSale.session_label`.
-   - If the offline record was saved blank, the backend correctly inserts blanks.
+The frontend (`Index.tsx` line 791) already does the right thing — for coffee it sends the season descript (e.g., `"MAIN HARVEST 2025"`), for dairy it sends `AM`/`PM`. But because the season descript contains `"MORNING"`, `"AM"`, `"PM"`, etc., or — worse — when it doesn't, the backend silently overwrites it with `AM`/`PM` and stores that in the `session` column.
 
-### Safe Fix Strategy
-Keep the backend unchanged and fix the offline metadata source on the client.
+Result: coffee transactions have `session = 'AM'` or `'PM'` instead of the actual season name. The `CAN` column is correctly populated with `SCODE` (already fixed in v2.10.37), but the `session` column is wrong.
+
+### Fix Strategy (Production-Safe)
+
+The backend already knows `ccode` and can look up `orgtype` from `psettings`. Use `orgtype` to gate normalization:
+
+- **Dairy (`orgtype='D'` or default)**: keep the existing `AM`/`PM` normalization — no change in behavior.
+- **Coffee (`orgtype='C'`)**: store the raw `descript` (trimmed, uppercased) as the session value.
+
+The duplicate-check query at line 855-865 (multOpt=0 enforcement) compares `UPPER(TRIM(session)) = ?` against `normalizedSession`. Since both sides will use the same coffee-aware value, the multOpt check continues to work correctly per season.
 
 ### Changes
 
-#### 1) Add a shared client-side session metadata resolver
-Create a small utility that resolves session metadata in this order:
+#### 1) `backend-api/server.js` — `/api/milk-collection` handler (~lines 811-823)
 
-1. Current in-memory `activeSession`
-2. Dashboard persisted session from `localStorage.active_session_data`
-3. Fallback persisted session from `localStorage.delicoop_session_data`
-4. Cached sessions from IndexedDB if needed
+Add an `orgtype` lookup once per request, then branch normalization:
 
-It should return:
-- `season` from `SCODE`
-- `session_label` from `descript`
+```js
+const rawSession = (body.session || '').trim();
 
-This gives Store/AI a reliable source even when fully offline.
+// Look up orgtype to decide session normalization rule
+let orgtype = 'D';
+try {
+  const [orgRows] = await pool.query(
+    'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE ccode = ? LIMIT 1',
+    [ccode]
+  );
+  if (orgRows.length > 0) orgtype = orgRows[0].orgtype || 'D';
+} catch (e) {
+  console.warn('orgtype lookup failed, defaulting to D:', e?.message);
+}
 
-#### 2) Update `src/pages/Store.tsx`
-Use the resolver before building both:
-- the online `BatchSaleRequest`
-- the offline `Sale` objects stored for sync
+// Coffee (orgtype=C): preserve season descript as-is (uppercased+trimmed)
+// Dairy (orgtype=D): normalize to AM/PM as before
+let normalizedSession = rawSession.toUpperCase();
+if (orgtype === 'C') {
+  // Keep the season descript (e.g. "MAIN HARVEST 2025") — do not collapse to AM/PM
+} else {
+  if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
+    normalizedSession = 'PM';
+  } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
+    normalizedSession = 'AM';
+  }
+}
+```
 
-Result:
-- New offline Store transactions will carry `season` and `session_label` even without network access.
+All downstream code (`normalizedSession` used at lines 864, 879, 883, 897, 901, 939, 990) continues to work — for dairy it stays `AM`/`PM`; for coffee it's the season descript on both insert and duplicate-check paths.
 
-#### 3) Update `src/pages/AIPage.tsx`
-Use the same resolver before building AI transaction payloads for:
-- online submit
-- offline save
+#### 2) `src/constants/appVersion.ts` → **v2.10.39 (Code 61)**
 
-Result:
-- New offline AI transactions will also retain `CAN` and `session` metadata.
+### Backward Compatibility (Production Safety)
 
-#### 4) Update `src/utils/salesSyncEngine.ts`
-Add a best-effort enrichment step before syncing a pending offline Store/AI record:
-- If `season` or `session_label` is missing on the saved record,
-- resolve session metadata from persisted dashboard session / cached session data,
-- then send the enriched values to the backend.
+- **Dairy (`orgtype='D'`)**: zero behavior change — same `AM`/`PM` normalization, same multOpt logic, same Z-report bucketing.
+- **Coffee (`orgtype='C'`)**: previously stored `AM`/`PM` (wrong); now stores the season descript. Existing historical coffee rows are unchanged. New coffee rows from this version onward will store the correct descript.
+- **multOpt=0 duplicate enforcement**: still works — both the comparison key and the inserted value use the same coffee-aware `normalizedSession`, so per-season duplicate detection is preserved.
+- **Z-Report / period filters** (`ZReportPeriodSelector.tsx` line 135): already filters coffee on `season_code` (CAN column) as the primary key; `session` is a fallback. Coffee Z-reports continue to work.
+- **Frontend**: no changes — `Index.tsx` already sends the correct value per orgtype.
+- **No schema migration**: `transactions.session` is already a free-form string column for coffee.
 
-This is important for:
-- records already queued offline before the fix,
-- cases where the page failed to populate metadata during capture.
+### Files Changed
 
-#### 5) Version bump
-Update:
-- `src/constants/appVersion.ts` → **v2.10.38** (Code 60)
-
-### Production-Safe Scope
-No backend API changes are needed for this fix.
-That keeps `server.js` untouched and avoids risk to production clients while solving the offline capture gap.
-
-### Files to Change
 | File | Change |
 |------|--------|
-| `src/pages/Store.tsx` | Resolve session metadata from persisted/cached session when offline; use it in online + offline payloads |
-| `src/pages/AIPage.tsx` | Same fix for AI transactions |
-| `src/utils/salesSyncEngine.ts` | Enrich missing `season` / `session_label` before syncing old pending records |
-| `src/constants/appVersion.ts` | Bump to v2.10.38 (Code 60) |
-| `src/utils/...` or shared helper file | Add reusable session metadata resolver |
+| `backend-api/server.js` | Look up `orgtype` per request; skip AM/PM normalization for coffee (`orgtype='C'`) and store the raw season descript |
+| `src/constants/appVersion.ts` | Bump to **v2.10.39 (Code 61)** |
 
-### Technical Notes
-- The dashboard already persists the selected session in `localStorage.active_session_data`.
-- That persisted session is the safest offline source for `SCODE` and `descript`.
-- The current bug is not in backend insertion anymore; it is in offline transaction creation.
-- The sync engine should remain the single place that performs final payload cleanup for pending Store/AI records.
+### Out of Scope
 
-### Expected Outcome
-After this fix:
-- Newly captured offline Store and AI transactions will sync with both `session` and `CAN` populated.
-- Already pending offline transactions with missing values will be best-effort repaired during sync if the session snapshot is still available on the device.
+- Store/AI session normalization is unaffected — those handlers already use `body.session_label` directly without AM/PM collapsing (fixed in v2.10.37).
+- No backfill of historical coffee rows is included. If desired, a one-off SQL script can be run separately to repair past coffee `session` values from `CAN` → `sessions.descript`.
+
