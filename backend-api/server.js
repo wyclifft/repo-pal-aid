@@ -236,7 +236,7 @@ const server = http.createServer(async (req, res) => {
       
       // Find active session where current time is between time_from and time_to
       const [rows] = await pool.query(
-        `SELECT descript, time_from, time_to, ccode 
+        `SELECT SCODE, descript, time_from, time_to, ccode 
          FROM sessions 
          WHERE ccode = ? AND time_from <= ? AND time_to >= ?
          ORDER BY time_from
@@ -1800,7 +1800,7 @@ const server = http.createServer(async (req, res) => {
             body.farmer_id || '',               // memberno
             storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
             body.quantity || 0,                 // weight (using quantity)
-            '',                                 // session (empty for store/AI sales)
+            body.session_label || body.session || '', // session (label e.g. MORNING/AM/PM)
             transdate,                          // transdate
             transtime,                          // transtime
             transtype,                          // Transtype: 2 for Store, 3 for AI
@@ -2030,7 +2030,7 @@ const server = http.createServer(async (req, res) => {
                 body.farmer_id || '',
                 storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
                 item.quantity || 0,
-                '',
+                body.session_label || body.session || '', // session (label e.g. MORNING/AM/PM)
                 transdate,
                 transtime,
                 transtype,
