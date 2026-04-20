@@ -51,7 +51,7 @@ const memberSchema = z.object({
     .trim()
     .min(1, 'ID number is required')
     .max(50, 'ID number too long')
-    .regex(/^[0-9A-Za-z\-]+$/, 'ID number contains invalid characters'),
+    .regex(/^[0-9]+$/, 'ID number must contain only digits'),
   route: z.string().trim().min(1, 'Route is required'),
   multOpt: z.boolean(),
 });
@@ -330,9 +330,11 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
             <Label htmlFor="mm-idno">ID Number *</Label>
             <Input
               id="mm-idno"
+              type="tel"
+              inputMode="numeric"
               value={idno}
               onChange={(e) => { setIdno(e.target.value); editingClear(); }}
-              placeholder="National ID / Passport"
+              placeholder="e.g. 12345678"
               maxLength={50}
               disabled={submitting}
             />
