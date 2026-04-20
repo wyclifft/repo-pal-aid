@@ -559,6 +559,9 @@ const Store = () => {
       const dashboardSession = JSON.parse(localStorage.getItem('active_session_data') || localStorage.getItem('delicoop_session_data') || '{}');
       const selectedRouteTcode = dashboardSession?.route?.tcode || '';
 
+      // Resolve session metadata (works offline by reading persisted dashboard session)
+      const sessionMeta = resolveSessionMetadata(activeSession);
+
       // Build batch request - submit transaction immediately, photo uploads in background
       const batchRequest: BatchSaleRequest = {
         uploadrefno: refs.uploadrefno,
@@ -571,8 +574,8 @@ const Store = () => {
         sold_by: clerkName, // Display name for DB clerk column
         device_fingerprint: deviceFingerprint,
         items: batchItems,
-        season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
-        session_label: activeSession?.descript || '', // Session descript → DB: session column
+        season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
+        session_label: sessionMeta.session_label, // Session descript → DB: session column (offline-safe)
         // delivered_by not used in Store transactions
         // Photo excluded - will upload in background after transaction
       };
@@ -610,8 +613,8 @@ const Store = () => {
             sold_by: clerkName, // Display name for DB clerk column
             device_fingerprint: deviceFingerprint,
             photo: photoBase64, // Include photo for offline sync
-            season: activeSession?.SCODE || '', // Session SCODE → DB: CAN column
-            session_label: activeSession?.descript || '', // Session descript → DB: session column
+            season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
+            session_label: sessionMeta.session_label, // Session descript → DB: session column (offline-safe)
             // delivered_by not used in Store transactions
           };
           await saveSale(sale);
