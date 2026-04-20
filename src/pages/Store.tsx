@@ -18,6 +18,7 @@ import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/
 import { useAppSettings } from '@/hooks/useAppSettings';
 import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 import { useReprint } from '@/contexts/ReprintContext';
+import { resolveSessionMetadata } from '@/utils/sessionMetadata';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
 import { saveToLocalDB } from '@/services/offlineStorage';

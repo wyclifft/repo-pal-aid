@@ -18,6 +18,7 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { saveToLocalDB } from '@/services/offlineStorage';
+import { resolveSessionMetadata } from '@/utils/sessionMetadata';
 
 interface CartItem {
   item: Item;
