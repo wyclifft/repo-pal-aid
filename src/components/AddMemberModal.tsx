@@ -262,8 +262,11 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
 
         {/* v2.10.43: Inline success banner pinned to top of form */}
         {lastSuccessMessage && (
-          <Alert className="border-green-200 bg-green-50 text-green-900 dark:bg-green-950/40 dark:border-green-900 dark:text-green-100">
-            <CheckCircle2 className="h-4 w-4 !text-green-600 dark:!text-green-400" />
+          <Alert
+            className="border-[hsl(142_76%_36%/0.4)] bg-[hsl(142_76%_36%/0.08)] text-[hsl(142_76%_28%)] dark:text-[hsl(142_76%_70%)]"
+            role="status"
+          >
+            <CheckCircle2 className="h-4 w-4 !text-[hsl(142_76%_36%)]" />
             <AlertDescription className="font-medium">
               {lastSuccessMessage}
             </AlertDescription>
