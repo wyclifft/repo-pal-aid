@@ -1,41 +1,76 @@
 
 
-## Restore `.htaccess` Files to Match Live Production — v2.10.44
+## Fix: Use Correct Column Name `mcode` + Restore Working `.htaccess` — v2.10.45
 
-### Goal
-Sync the repo's `.htaccess` files to match the actual working production configuration on the cPanel/CloudLinux server, so future redeploys do not break the backend.
+### Root Causes
 
-### Root Cause Recap
-The repo's `.htaccess` files were authored against legacy `alt-nodejs14` and the wrong MySQL user (`maddasys_tesh`). The live server actually runs on CloudLinux Passenger with Node.js 19 and DB user `maddasys_wycliff`. Each redeploy overwrites the working server config → MySQL auth fails → Passenger 503 → login blocked.
+**1. Wrong DB column name (`mmcode` → `mcode`)**
+The v2.10.43 backend code used `mmcode` in SQL for both new endpoints, but the actual `cm_members` table column is `mcode`. This causes:
+- `GET /api/members/next-id` → 500 `Unknown column 'mmcode' in 'SELECT'`
+- `POST /api/members` → 500 `Unknown column 'mmcode' in 'INSERT INTO'`
+
+The frontend field/state name `mmcode` is fine — it's only a client-side variable. We map it to `mcode` at the SQL boundary.
+
+**2. `.htaccess` regression broke login**
+The v2.10.44 commit to `backend-api/.htaccess` does not match the user's confirmed-working `.htaccess` (which uses CloudLinux Passenger + nodevenv Node 19 + DB user `maddasys_wycliff`). When deployed, Apache returns 503 for everything (login, sessions, farmers, items, z-report, periodic-report — all visible in current console logs).
+
+---
+
+### Part A — Fix Column Name in `backend-api/server.js`
+
+In the new `GET /api/members/next-id` endpoint and the `POST /api/members` endpoint:
+- Replace every SQL reference to `mmcode` with `mcode` (SELECT list, ORDER BY, WHERE, INSERT column list).
+- Keep the JSON response key as `suggested` and continue accepting the request body field `mmcode` from the client (no client change needed).
+- Map `body.mmcode` → SQL column `mcode` inside the INSERT and the duplicate-retry parsing logic.
+- Keep the `ER_DUP_ENTRY` auto-retry loop (max 5) using the corrected column.
+
+No other endpoints touched. No schema changes. No frontend changes required.
+
+---
+
+### Part B — Restore `backend-api/.htaccess` to Match Production
+
+Replace `backend-api/.htaccess` content with the exact CloudLinux/Passenger structure the user confirmed works on `2backend.maddasystems.co.ke`, adapted for the main backend app:
+
+- CloudLinux Passenger header block: `PassengerAppRoot "/home/maddasys/public_html/api/milk-collection-api"`, `PassengerNodejs "/home/maddasys/nodevenv/public_html/api/milk-collection-api/19/bin/node"`, `PassengerStartupFile server.js`.
+- `SetEnv MYSQL_USER maddasys_wycliff` (not `maddasys_tesh`).
+- `SetEnv PORT 3000` (main backend port; sync-service uses 3001).
+- Keep CORS allow-headers list including `X-Device-Fingerprint, X-App-Origin` (needed by current frontend; harmless if unused).
+- Keep `<IfModule Litespeed>` env block with `maddasys_wycliff`.
+- Keep `<FilesMatch>` deny block, `Options -Indexes`, `ServerSignature Off`.
+
+`sync-service/.htaccess` is already correct from v2.10.44 — no change needed there.
+
+---
+
+### Part C — Version Bump
+
+`src/constants/appVersion.ts` → **v2.10.45 (Code 67)**.
+
+---
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `sync-service/.htaccess` | Replace entirely with the user-confirmed working content (CloudLinux Passenger block + `maddasys_wycliff` + Node 19 nodevenv + LiteSpeed env block) |
-| `backend-api/.htaccess` | Apply equivalent CloudLinux Passenger structure for the main backend app: AppRoot `/home/maddasys/public_html/api/milk-collection-api`, port 3000, DB user `maddasys_wycliff`, Node.js managed by nodevenv. Keep the existing CORS allow-headers list (which already includes `X-Device-Fingerprint, X-App-Origin` from v2.10.42) |
-| `src/constants/appVersion.ts` | Bump to **v2.10.44 (Code 66)** to mark the deployment-config fix |
-
-### Backend Code Safety
-- **`backend-api/server.js`** is **not modified**. v2.10.43 already added the `GET /api/members/next-id` endpoint and the auto-retry loop in `POST /api/members`. Once the corrected `.htaccess` is redeployed and Passenger restarts cleanly, those features go live with no further code changes.
+| `backend-api/server.js` | Replace `mmcode` with `mcode` in `/api/members/next-id` (SELECT/ORDER BY) and `/api/members` (INSERT column + duplicate-retry parser). No other changes. |
+| `backend-api/.htaccess` | Replace with CloudLinux Passenger + nodevenv Node 19 + `maddasys_wycliff` + port 3000 + correct CORS allow-headers (incl. `X-Device-Fingerprint, X-App-Origin`) + LiteSpeed env block. |
+| `src/constants/appVersion.ts` | Bump to **v2.10.45 (Code 67)**. |
 
 ### Backward Compatibility
-- Production Capacitor clients (v2.10.40–v2.10.43) continue working — only server-side ops config changes.
-- No frontend logic, no DB schema, no API contract changes.
-- CORS surface is unchanged from v2.10.42 (still allows `X-Device-Fingerprint, X-App-Origin` on the main backend).
+- No DB schema change.
+- No frontend API contract change — client still sends `mmcode` in the JSON body; server maps it to the `mcode` column internally.
+- All existing endpoints unaffected.
+- Production Capacitor clients (v2.10.40–v2.10.44) continue working unchanged.
 
-### Critical Note for User (Manual cPanel Action Still Required)
-Even after this commit, the live server's `.htaccess` files are already the correct working version (you just verified). **You do NOT need to re-upload these `.htaccess` files** unless a future Lovable change touches them. The repo fix is purely defensive — so the next time someone redeploys from this repo, it does not clobber the live config.
-
-After this commit, the only remaining server-side action is:
-1. **Restart the main backend Node.js app** in cPanel (`/api/milk-collection-api`) so the v2.10.43 `server.js` (already uploaded) starts fresh and serves the new endpoints.
-2. Verify: `curl https://backend.maddasystems.co.ke/api/health` returns JSON.
-
-### Detail: Sensitive Credentials
-The working `.htaccess` you pasted contains the live MySQL password in plain text (`SetEnv MYSQL_PASSWORD 0741899183Mutee`). This matches the existing repo files (project history already has this convention). **No new exposure** is created by this change. Long-term recommendation: move secrets out of `.htaccess` into a server-only `.env` file outside the document root — but that is **out of scope** for this fix to keep the change minimal and production-safe.
+### Required Server-Side Action After Deploy
+1. Upload corrected `backend-api/server.js` and `backend-api/.htaccess` to `/home/maddasys/public_html/api/milk-collection-api/`.
+2. In cPanel → Setup Node.js App → restart the app.
+3. Verify: `curl https://backend.maddasystems.co.ke/api/health` returns JSON.
+4. Smoke-test: `curl "https://backend.maddasystems.co.ke/api/members/next-id?device_fingerprint=<FP>"` returns `{success:true,data:{suggested:"M00xxx",...}}`.
 
 ### Out of Scope
-- Removing hardcoded DB password from `.htaccess` (separate hardening task).
-- Changing the CloudLinux/Passenger node version.
-- Any application code changes — `server.js` is untouched.
+- Renaming the frontend variable `mmcode` to `mcode` (cosmetic; keeping client unchanged minimizes risk).
+- Schema changes to `cm_members`.
+- Removing the hardcoded DB password from `.htaccess` (separate hardening task).
 
