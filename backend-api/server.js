@@ -814,12 +814,29 @@ const server = http.createServer(async (req, res) => {
       // Transtype: 1 = Buy Produce, 2 = Sell Produce (default: 1 for backwards compatibility)
       const transtype = parseInt(body.transtype) || 1;
 
-      // Normalize session to AM/PM for both validation and storage
+      // v2.10.39: Look up orgtype to gate session normalization.
+      // Dairy (orgtype='D'): collapse to AM/PM (existing behavior).
+      // Coffee (orgtype='C'): preserve season descript (e.g. "MAIN HARVEST 2025").
+      let orgtype = 'D';
+      try {
+        const [orgRows] = await pool.query(
+          'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE ccode = ? LIMIT 1',
+          [ccode]
+        );
+        if (orgRows.length > 0) orgtype = (orgRows[0].orgtype || 'D').toString().toUpperCase();
+      } catch (e) {
+        console.warn('[WARN] orgtype lookup failed, defaulting to D:', e?.message);
+      }
+
       let normalizedSession = rawSession.toUpperCase();
-      if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
-        normalizedSession = 'PM';
-      } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
-        normalizedSession = 'AM';
+      if (orgtype === 'C') {
+        // Coffee: keep raw season descript (already trimmed + uppercased above)
+      } else {
+        if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
+          normalizedSession = 'PM';
+        } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
+          normalizedSession = 'AM';
+        }
       }
 
       console.log('🧼 Normalized values:', {
