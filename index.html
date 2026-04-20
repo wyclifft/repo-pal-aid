@@ -24,7 +24,7 @@
     <!-- PWA Manifest -->
     <link rel="manifest" href="/manifest.json" />
     
-    <!-- Icons -->
+    <!-- Icons (no <link rel="preload"> here — they were causing "preloaded but not used" warnings on / and /settings) -->
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />

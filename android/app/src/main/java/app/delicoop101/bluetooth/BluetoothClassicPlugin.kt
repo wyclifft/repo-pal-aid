@@ -88,6 +88,38 @@ class BluetoothClassicPlugin : Plugin() {
         call.resolve(result)
     }
 
+    /**
+     * Request Bluetooth permissions explicitly. On Android 12+ (API 31+) this
+     * requests BLUETOOTH_SCAN + BLUETOOTH_CONNECT; on older versions it falls
+     * back to BLUETOOTH + BLUETOOTH_ADMIN + ACCESS_FINE_LOCATION (already auto-granted at install).
+     * Resolves { granted: Boolean }.
+     */
+    @PluginMethod
+    fun requestBluetoothPermissions(call: PluginCall) {
+        if (hasBluetoothPermissions()) {
+            val result = JSObject()
+            result.put("granted", true)
+            call.resolve(result)
+            return
+        }
+
+        val aliases: Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf("bluetoothScan", "bluetoothConnect")
+        } else {
+            arrayOf("bluetooth", "bluetoothAdmin", "location")
+        }
+        requestPermissionForAliases(aliases, call, "bluetoothPermsCallback")
+    }
+
+    @PermissionCallback
+    private fun bluetoothPermsCallback(call: PluginCall) {
+        val granted = hasBluetoothPermissions()
+        Log.d(TAG, "[BT] requestBluetoothPermissions result: granted=$granted")
+        val result = JSObject()
+        result.put("granted", granted)
+        call.resolve(result)
+    }
+
     @PluginMethod
     fun getPairedDevices(call: PluginCall) {
         if (!hasBluetoothPermissions()) {

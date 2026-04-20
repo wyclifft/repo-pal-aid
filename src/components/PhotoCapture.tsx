@@ -4,8 +4,22 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
-import { Camera as CapacitorCamera, CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';
+// Lazy-load @capacitor/camera to avoid eager Proxy resolution on Android startup
+// (which caused "Camera.then() is not implemented on android" unhandled rejections).
+import type { Camera as CapacitorCameraType } from '@capacitor/camera';
+import { CameraResultType, CameraSource, CameraDirection } from '@capacitor/camera';
 import { compressImage } from '@/utils/imageCompression';
+
+const loadCapacitorCamera = async (): Promise<typeof CapacitorCameraType | null> => {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const mod = await import('@capacitor/camera');
+    return mod.Camera;
+  } catch (e) {
+    console.warn('📷 Failed to lazy-load @capacitor/camera:', e);
+    return null;
+  }
+};
 
 interface PhotoCaptureProps {
   open: boolean;
@@ -68,6 +82,17 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
     setCameraError(null);
     
     try {
+      // Lazy-load native camera plugin (returns null on web / when unavailable)
+      const CapacitorCamera = await loadCapacitorCamera();
+      if (!CapacitorCamera) {
+        console.warn('📷 Native camera plugin unavailable, falling back to web camera');
+        toast.info('Using in-app camera');
+        nativeCaptureInProgress = false;
+        setUseNativeCamera(false);
+        setIsLoading(false);
+        return;
+      }
+
       // First, request camera permissions explicitly
       const permStatus = await CapacitorCamera.requestPermissions({ permissions: ['camera'] });
       console.log('Camera permission status:', permStatus);

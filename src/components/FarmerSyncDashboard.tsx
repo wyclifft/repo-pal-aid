@@ -9,6 +9,18 @@ import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { CheckCircle2, AlertCircle, RefreshCw, Users, Database, Loader2, Search } from 'lucide-react';
 import type { Farmer } from '@/lib/supabase';
+import { generateDeviceFingerprint, getStoredDeviceId } from '@/utils/deviceFingerprint';
+
+// Resolve fingerprint via canonical 'device_id' key (legacy 'device_fingerprint' key was wrong).
+const resolveFingerprint = async (): Promise<string> => {
+  const stored = getStoredDeviceId();
+  if (stored) return stored;
+  try {
+    return await generateDeviceFingerprint();
+  } catch {
+    return '';
+  }
+};
 
 interface FarmerSyncEntry {
   farmer_id: string;
@@ -53,7 +65,7 @@ export const FarmerSyncDashboard = () => {
    */
   const buildNameLookup = useCallback(async (): Promise<Map<string, Farmer>> => {
     const lookup = new Map<string, Farmer>();
-    const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
+    const deviceFingerprint = await resolveFingerprint();
 
     // Try API first for the most complete list
     if (navigator.onLine && deviceFingerprint) {
@@ -84,7 +96,7 @@ export const FarmerSyncDashboard = () => {
     nameLookup: Map<string, Farmer>,
     route?: string
   ): Promise<FarmerSyncEntry[] | null> => {
-    const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
+    const deviceFingerprint = await resolveFingerprint();
     if (!deviceFingerprint) return null;
 
     try {
@@ -209,7 +221,7 @@ export const FarmerSyncDashboard = () => {
 
         // Refresh cumulative cache from server
         setProgressInfo({ current: 0, total: 0, status: 'Fetching cumulative totals from server...' });
-        const deviceFingerprint = localStorage.getItem('device_fingerprint') || '';
+        const deviceFingerprint = await resolveFingerprint();
         if (deviceFingerprint) {
           try {
             const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, activeRoute || undefined);
