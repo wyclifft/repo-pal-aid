@@ -112,9 +112,9 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
       const photo = await CapacitorCamera.getPhoto({
         quality: 70,
         allowEditing: false,
-        resultType: CameraResultType.DataUrl,
-        source: CameraSource.Camera,
-        direction: facingMode === 'user' ? CameraDirection.Front : CameraDirection.Rear,
+        resultType: 'dataUrl' as any,
+        source: 'CAMERA' as any,
+        direction: (facingMode === 'user' ? 'FRONT' : 'REAR') as any,
         correctOrientation: true,
         saveToGallery: false,
       });
