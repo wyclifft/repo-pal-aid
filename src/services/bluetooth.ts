@@ -137,6 +137,27 @@ let printer: BluetoothPrinter = {
   isConnected: false,
 };
 
+// v2.10.54: Track when scale was last (re)connected to defer printer auto-reconnect
+let lastScaleConnectedAt = 0;
+export const getLastScaleConnectedAt = (): number => lastScaleConnectedAt;
+
+// v2.10.54: Module-level BLE op mutex — serialize connect/scan/reconnect to
+// prevent the shared Android GATT client from killing the other device.
+let bleOperationLock: Promise<unknown> = Promise.resolve();
+const runBleOp = <T>(label: string, fn: () => Promise<T>): Promise<T> => {
+  const next = bleOperationLock.then(async () => {
+    console.log(`🔒 [BLE-LOCK] acquired by ${label}`);
+    try {
+      return await fn();
+    } finally {
+      console.log(`🔓 [BLE-LOCK] released by ${label}`);
+    }
+  });
+  // Ensure chain doesn't break on rejection
+  bleOperationLock = next.catch(() => undefined);
+  return next as Promise<T>;
+};
+
 // Store device info for quick reconnect
 interface StoredDeviceInfo {
   deviceId: string;
@@ -400,6 +421,11 @@ const clearPrinterState = () => {
 // Broadcast connection state change events
 export const broadcastScaleConnectionChange = (connected: boolean) => {
   console.log(`📡 Broadcasting scale connection: ${connected}`);
+  if (connected) {
+    // v2.10.54: Track last successful connect time so the printer auto-reconnect
+    // can defer if the scale is "warming up" (avoids cross-talk on Android GATT).
+    lastScaleConnectedAt = Date.now();
+  }
   window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
 };
 
@@ -671,8 +697,12 @@ export const connectBluetoothScale = async (
 
       console.log(`📱 Device selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
       
-      // Connect with disconnect callback
+      // Connect with device-scoped disconnect callback (v2.10.54)
       await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
+        if (disconnectedDeviceId !== scale.deviceId) {
+          console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active scale (${scale.deviceId})`);
+          return;
+        }
         console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
         clearScaleState();
       });
@@ -1150,17 +1180,27 @@ export const quickReconnect = async (
         
         console.log(`🔄 Quick reconnecting to scale: ${deviceId} (attempt ${attempt}/${retries})`);
         
-        // Disconnect any stale connection
-        try {
-          await BleClient.disconnect(deviceId);
-          console.log('🔌 Disconnected stale scale connection');
-        } catch {
-          // Ignore - device may not be connected
+        // v2.10.54: Only disconnect if this id matches our current scale slot.
+        // Calling BleClient.disconnect on an unrelated id can reset the shared
+        // Android GATT client and kill the printer connection.
+        if (scale.deviceId === deviceId) {
+          try {
+            await BleClient.disconnect(deviceId);
+            console.log('🔌 Disconnected stale scale connection');
+          } catch {
+            // Ignore — device may not be connected
+          }
+        } else {
+          console.log(`ℹ️ Skipping stale-disconnect: ${deviceId} is not the active scale slot`);
         }
         
         await new Promise(resolve => setTimeout(resolve, 300 * attempt));
         
         await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+          if (disconnectedDeviceId !== scale.deviceId) {
+            console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active scale`);
+            return;
+          }
           console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
           clearScaleState();
         });
@@ -1478,57 +1518,104 @@ export interface DiscoveredPrinter {
   rssi?: number;
 }
 
-export const scanForPrinters = async (scanDuration: number = 5000): Promise<{
+export const scanForPrinters = async (scanDuration: number = 3000): Promise<{
   success: boolean;
   printers: DiscoveredPrinter[];
   error?: string;
 }> => {
-  const discoveredPrinters: DiscoveredPrinter[] = [];
-  
-  try {
-    if (Capacitor.isNativePlatform()) {
-      await BleClient.initialize();
-      
-      console.log('🔍 Scanning for Bluetooth printers...');
-      
-      await BleClient.requestLEScan(
-        { allowDuplicates: false },
-        (result) => {
-          const deviceName = result.device.name || '';
-          const isPrinter = deviceName.toLowerCase().includes('print') ||
-                           deviceName.toLowerCase().includes('pos') ||
-                           deviceName.toLowerCase().includes('thermal') ||
-                           deviceName.toLowerCase().includes('receipt') ||
-                           deviceName.length > 0;
-          
-          if (isPrinter && !discoveredPrinters.find(p => p.deviceId === result.device.deviceId)) {
-            console.log(`📱 Found device: ${deviceName || 'Unknown'}`);
-            discoveredPrinters.push({
-              deviceId: result.device.deviceId,
-              name: deviceName || `Unknown Device (${result.device.deviceId.slice(-6)})`,
-              rssi: result.rssi,
-            });
-          }
-        }
-      );
-      
-      await new Promise(resolve => setTimeout(resolve, scanDuration));
-      await BleClient.stopLEScan();
-      
-      console.log(`✅ Scan complete. Found ${discoveredPrinters.length} devices.`);
-      return { success: true, printers: discoveredPrinters };
-    } else {
-      return { 
-        success: false, 
-        printers: [], 
-        error: 'Printer scanning requires native app.' 
-      };
+  return runBleOp('scanForPrinters', async () => {
+    const discoveredPrinters: DiscoveredPrinter[] = [];
+
+    // v2.10.54: Pause scale notifications during the LE scan to avoid GATT
+    // resource contention that can supervision-timeout the scale link.
+    let pausedScaleNotifications = false;
+    const scaleSnapshot = {
+      deviceId: scale.deviceId,
+      serviceUuid: scale.serviceUuid,
+      characteristic: scale.characteristic,
+      connectionType: scale.connectionType,
+    };
+    if (
+      Capacitor.isNativePlatform() &&
+      scale.isConnected &&
+      scaleSnapshot.connectionType === 'ble' &&
+      scaleSnapshot.deviceId &&
+      scaleSnapshot.serviceUuid &&
+      typeof scaleSnapshot.characteristic === 'string'
+    ) {
+      try {
+        await BleClient.stopNotifications(
+          scaleSnapshot.deviceId,
+          scaleSnapshot.serviceUuid,
+          scaleSnapshot.characteristic as string
+        );
+        pausedScaleNotifications = true;
+        console.log('⏸️ Paused scale notifications during printer scan');
+      } catch (e) {
+        console.warn('Could not pause scale notifications before scan (continuing):', e);
+      }
     }
-  } catch (error: any) {
-    console.error('❌ Printer scan failed:', error);
-    try { await BleClient.stopLEScan(); } catch {}
-    return { success: false, printers: discoveredPrinters, error: error.message || 'Scan failed' };
-  }
+
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await BleClient.initialize();
+
+        console.log('🔍 Scanning for Bluetooth printers...');
+
+        await BleClient.requestLEScan(
+          { allowDuplicates: false },
+          (result) => {
+            const deviceName = result.device.name || '';
+            const isPrinter = deviceName.toLowerCase().includes('print') ||
+                             deviceName.toLowerCase().includes('pos') ||
+                             deviceName.toLowerCase().includes('thermal') ||
+                             deviceName.toLowerCase().includes('receipt') ||
+                             deviceName.length > 0;
+
+            if (isPrinter && !discoveredPrinters.find(p => p.deviceId === result.device.deviceId)) {
+              console.log(`📱 Found device: ${deviceName || 'Unknown'}`);
+              discoveredPrinters.push({
+                deviceId: result.device.deviceId,
+                name: deviceName || `Unknown Device (${result.device.deviceId.slice(-6)})`,
+                rssi: result.rssi,
+              });
+            }
+          }
+        );
+
+        await new Promise(resolve => setTimeout(resolve, scanDuration));
+        await BleClient.stopLEScan();
+
+        console.log(`✅ Scan complete. Found ${discoveredPrinters.length} devices.`);
+        return { success: true, printers: discoveredPrinters };
+      } else {
+        return {
+          success: false,
+          printers: [],
+          error: 'Printer scanning requires native app.'
+        };
+      }
+    } catch (error: any) {
+      console.error('❌ Printer scan failed:', error);
+      try { await BleClient.stopLEScan(); } catch {}
+      return { success: false, printers: discoveredPrinters, error: error.message || 'Scan failed' };
+    } finally {
+      // Resume scale notifications if we paused them
+      if (pausedScaleNotifications && scaleSnapshot.deviceId && scaleSnapshot.serviceUuid && typeof scaleSnapshot.characteristic === 'string') {
+        try {
+          await BleClient.startNotifications(
+            scaleSnapshot.deviceId,
+            scaleSnapshot.serviceUuid,
+            scaleSnapshot.characteristic as string,
+            () => { /* re-attached by main scale handler via existing wiring */ }
+          );
+          console.log('▶️ Resumed scale notifications after printer scan');
+        } catch (e) {
+          console.warn('Could not resume scale notifications after scan:', e);
+        }
+      }
+    }
+  });
 };
 
 export const connectToSpecificPrinter = async (deviceId: string, deviceName: string): Promise<{
@@ -1552,6 +1639,10 @@ export const connectToSpecificPrinter = async (deviceId: string, deviceName: str
       console.log(`🔗 Connecting to printer: ${deviceName} (${deviceId})`);
       
       await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+        if (disconnectedDeviceId !== printer.deviceId) {
+          console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active printer (${printer.deviceId})`);
+          return;
+        }
         console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
         clearPrinterState();
       });
@@ -1608,6 +1699,10 @@ export const connectBluetoothPrinter = async (): Promise<{
       console.log(`📱 Printer selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
       
       await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
+        if (disconnectedDeviceId !== printer.deviceId) {
+          console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active printer (${printer.deviceId})`);
+          return;
+        }
         console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
         clearPrinterState();
       });
@@ -1675,17 +1770,25 @@ export const quickReconnectPrinter = async (deviceId: string, retries: number = 
         await BleClient.initialize();
         console.log(`🔄 Quick reconnecting to printer: ${deviceId} (attempt ${attempt}/${retries})`);
         
-        // Disconnect stale connection
-        try {
-          await BleClient.disconnect(deviceId);
-          console.log('🔌 Disconnected stale connection');
-        } catch {
-          // Ignore
+        // v2.10.54: Only disconnect if this id matches our current printer slot
+        if (printer.deviceId === deviceId) {
+          try {
+            await BleClient.disconnect(deviceId);
+            console.log('🔌 Disconnected stale printer connection');
+          } catch {
+            // Ignore
+          }
+        } else {
+          console.log(`ℹ️ Skipping stale-disconnect: ${deviceId} is not the active printer slot`);
         }
         
         await new Promise(resolve => setTimeout(resolve, 300 * attempt));
         
         await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+          if (disconnectedDeviceId !== printer.deviceId) {
+            console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active printer`);
+            return;
+          }
           console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
           clearPrinterState();
         });

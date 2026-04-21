@@ -9,6 +9,9 @@ import {
   getStoredPrinterInfo,
   quickReconnectPrinter,
   isPrinterConnected as checkPrinterConnected,
+  isScaleConnected,
+  getLastScaleConnectedAt,
+  verifyPrinterConnection,
   DiscoveredPrinter 
 } from '@/services/bluetooth';
 import { Capacitor } from '@capacitor/core';
@@ -90,13 +93,37 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
       
       // On native platform, attempt actual reconnection
       if (Capacitor.isNativePlatform() && !isPrinterConnected) {
-        // Delay initial reconnect to allow app to fully initialize
+        // v2.10.54: Defer if a scale was just connected (within last 5s) to avoid
+        // racing the printer auto-reconnect against an in-progress scale connect.
+        const sinceScale = Date.now() - getLastScaleConnectedAt();
+        const scaleWarmingUp = isScaleConnected() && sinceScale < 5000;
+        const baseDelay = scaleWarmingUp ? 5500 - sinceScale : 1500;
+        if (scaleWarmingUp) {
+          console.log(`⏳ [PrinterSelector] Deferring auto-reconnect ${baseDelay}ms — scale just connected`);
+        }
         const timer = setTimeout(() => {
           attemptAutoReconnect(false);
-        }, 1500);
+        }, baseDelay);
         return () => clearTimeout(timer);
       }
     }
+  }, []);
+
+  // v2.10.54: Verify before flipping the badge to "disconnected" — guards against
+  // spurious disconnect callbacks during the other device's connect handshake.
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent<{ connected: boolean }>).detail;
+      if (detail?.connected === false) {
+        const reallyConnected = await verifyPrinterConnection();
+        if (reallyConnected) {
+          console.log('🛡️ [PrinterSelector] Ignored spurious disconnect — printer still connected');
+          return;
+        }
+      }
+    };
+    window.addEventListener('printerConnectionChange', handler);
+    return () => window.removeEventListener('printerConnectionChange', handler);
   }, []);
 
   const handleScan = async () => {
