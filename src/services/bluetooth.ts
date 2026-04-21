@@ -692,8 +692,12 @@ export const connectBluetoothScale = async (
 
       console.log(`📱 Device selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
       
-      // Connect with disconnect callback
+      // Connect with device-scoped disconnect callback (v2.10.54)
       await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
+        if (disconnectedDeviceId !== scale.deviceId) {
+          console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active scale (${scale.deviceId})`);
+          return;
+        }
         console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
         clearScaleState();
       });
@@ -1171,17 +1175,27 @@ export const quickReconnect = async (
         
         console.log(`🔄 Quick reconnecting to scale: ${deviceId} (attempt ${attempt}/${retries})`);
         
-        // Disconnect any stale connection
-        try {
-          await BleClient.disconnect(deviceId);
-          console.log('🔌 Disconnected stale scale connection');
-        } catch {
-          // Ignore - device may not be connected
+        // v2.10.54: Only disconnect if this id matches our current scale slot.
+        // Calling BleClient.disconnect on an unrelated id can reset the shared
+        // Android GATT client and kill the printer connection.
+        if (scale.deviceId === deviceId) {
+          try {
+            await BleClient.disconnect(deviceId);
+            console.log('🔌 Disconnected stale scale connection');
+          } catch {
+            // Ignore — device may not be connected
+          }
+        } else {
+          console.log(`ℹ️ Skipping stale-disconnect: ${deviceId} is not the active scale slot`);
         }
         
         await new Promise(resolve => setTimeout(resolve, 300 * attempt));
         
         await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+          if (disconnectedDeviceId !== scale.deviceId) {
+            console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active scale`);
+            return;
+          }
           console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
           clearScaleState();
         });
@@ -1573,6 +1587,10 @@ export const connectToSpecificPrinter = async (deviceId: string, deviceName: str
       console.log(`🔗 Connecting to printer: ${deviceName} (${deviceId})`);
       
       await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+        if (disconnectedDeviceId !== printer.deviceId) {
+          console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active printer (${printer.deviceId})`);
+          return;
+        }
         console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
         clearPrinterState();
       });
@@ -1629,6 +1647,10 @@ export const connectBluetoothPrinter = async (): Promise<{
       console.log(`📱 Printer selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
       
       await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
+        if (disconnectedDeviceId !== printer.deviceId) {
+          console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active printer (${printer.deviceId})`);
+          return;
+        }
         console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
         clearPrinterState();
       });
@@ -1696,17 +1718,25 @@ export const quickReconnectPrinter = async (deviceId: string, retries: number = 
         await BleClient.initialize();
         console.log(`🔄 Quick reconnecting to printer: ${deviceId} (attempt ${attempt}/${retries})`);
         
-        // Disconnect stale connection
-        try {
-          await BleClient.disconnect(deviceId);
-          console.log('🔌 Disconnected stale connection');
-        } catch {
-          // Ignore
+        // v2.10.54: Only disconnect if this id matches our current printer slot
+        if (printer.deviceId === deviceId) {
+          try {
+            await BleClient.disconnect(deviceId);
+            console.log('🔌 Disconnected stale printer connection');
+          } catch {
+            // Ignore
+          }
+        } else {
+          console.log(`ℹ️ Skipping stale-disconnect: ${deviceId} is not the active printer slot`);
         }
         
         await new Promise(resolve => setTimeout(resolve, 300 * attempt));
         
         await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+          if (disconnectedDeviceId !== printer.deviceId) {
+            console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active printer`);
+            return;
+          }
           console.log(`⚠️ Printer ${disconnectedDeviceId} disconnected unexpectedly`);
           clearPrinterState();
         });
