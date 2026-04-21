@@ -883,6 +883,10 @@ export interface FarmerDetailReportData {
   farmer_id: string;
   farmer_name: string;
   farmer_route: string;
+  // v2.10.55: optional route name fields (additive, backend may not always return)
+  farmer_route_name?: string;
+  transaction_route?: string;
+  transaction_route_name?: string;
   produce_name: string;
   start_date: string;
   end_date: string;

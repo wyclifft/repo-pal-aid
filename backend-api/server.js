@@ -1263,6 +1263,16 @@ const server = http.createServer(async (req, res) => {
       const farmerName = farmerRows.length > 0 ? farmerRows[0].descript : 'Unknown';
       const farmerRoute = farmerRows.length > 0 ? farmerRows[0].route : '';
 
+      // v2.10.55: Resolve human-readable route descript for the farmer's registered route
+      let farmerRouteName = '';
+      if (farmerRoute) {
+        const [farmerRouteRows] = await pool.query(
+          'SELECT descript FROM fm_tanks WHERE TRIM(tcode) = TRIM(?) AND ccode = ? LIMIT 1',
+          [farmerRoute, ccode]
+        );
+        farmerRouteName = farmerRouteRows.length > 0 ? (farmerRouteRows[0].descript || '') : '';
+      }
+
       // v2.10.53: Cross-device visibility — filter by ccode (+ optional route),
       // not deviceserial. Old clients omit `route` and get full ccode results.
       const routeFilter = (parsedUrl.query.route || '').toString().trim();
@@ -1305,6 +1315,33 @@ const server = http.createServer(async (req, res) => {
       // Calculate total weight
       const totalWeight = transactions.reduce((sum, t) => sum + (parseFloat(t.quantity) || 0), 0);
 
+      // v2.10.55: Most recent transaction route within the date range, plus its descript.
+      // Used as a fallback to display CENTER on the printed statement when the operator
+      // didn't pick a route on the dashboard.
+      let transactionRoute = '';
+      let transactionRouteName = '';
+      const lastRouteParams = [farmerId, startDate, endDate, ccode];
+      let lastRouteSql = `SELECT TRIM(t.route) AS route
+        FROM transactions t
+        WHERE t.memberno = ?
+          AND t.Transtype = 1
+          AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+          AND t.ccode = ?`;
+      if (routeFilter) {
+        lastRouteSql += ` AND TRIM(t.route) = TRIM(?)`;
+        lastRouteParams.push(routeFilter);
+      }
+      lastRouteSql += ` ORDER BY t.transdate DESC, t.transtime DESC LIMIT 1`;
+      const [lastRouteRows] = await pool.query(lastRouteSql, lastRouteParams);
+      if (lastRouteRows.length > 0 && lastRouteRows[0].route) {
+        transactionRoute = lastRouteRows[0].route;
+        const [txRouteNameRows] = await pool.query(
+          'SELECT descript FROM fm_tanks WHERE TRIM(tcode) = TRIM(?) AND ccode = ? LIMIT 1',
+          [transactionRoute, ccode]
+        );
+        transactionRouteName = txRouteNameRows.length > 0 ? (txRouteNameRows[0].descript || '') : '';
+      }
+
       return sendJSON(res, { 
         success: true, 
         data: {
@@ -1312,6 +1349,9 @@ const server = http.createServer(async (req, res) => {
           farmer_id: farmerId,
           farmer_name: farmerName,
           farmer_route: farmerRoute,
+          farmer_route_name: farmerRouteName,
+          transaction_route: transactionRoute,
+          transaction_route_name: transactionRouteName,
           produce_name: produceName,
           start_date: startDate,
           end_date: endDate,

@@ -2512,6 +2512,8 @@ export const printZReport = async (data: {
 };
 
 // Member Produce Statement print function (for Periodic Report)
+// v2.10.55: added optional centerName, top paper feed, wider date column,
+//           and produceName whitespace trim for symmetric centering.
 export const printMemberProduceStatement = async (data: {
   companyName: string;
   farmerId: string;
@@ -2525,6 +2527,7 @@ export const printMemberProduceStatement = async (data: {
     quantity: number;       // Weight in Kgs
   }>;
   totalWeight: number;
+  centerName?: string;      // v2.10.55: route/center descript shown under company header
 }): Promise<{ success: boolean; error?: string }> => {
   // 58mm thermal paper = 32 characters per line
   const W = 32;
@@ -2547,9 +2550,19 @@ export const printMemberProduceStatement = async (data: {
   });
 
   let receipt = '';
-  
+
+  // v2.10.55: Top paper feed so the company name doesn't print on the tear edge
+  receipt += '\n\n';
+
   // Company Header
   receipt += centerText(data.companyName.toUpperCase(), W) + '\n';
+
+  // v2.10.55: Optional CENTER line (route/center descript)
+  const centerNameClean = (data.centerName || '').trim();
+  if (centerNameClean) {
+    receipt += centerText(`CENTER: ${centerNameClean.toUpperCase()}`, W) + '\n';
+  }
+
   receipt += dashLine + '\n';
   receipt += '\n';
   
@@ -2560,7 +2573,9 @@ export const printMemberProduceStatement = async (data: {
   receipt += '\n';
   
   // Produce Type (e.g., CHERRY RECORD)
-  receipt += centerText(`${data.produceName.toUpperCase()} RECORD`, W) + '\n';
+  // v2.10.55: trim trailing whitespace so centerText padding stays symmetric
+  const produceLabel = `${data.produceName.toUpperCase().trim()} RECORD`;
+  receipt += centerText(produceLabel, W) + '\n';
   receipt += dashLine + '\n';
   receipt += '\n';
   
@@ -2572,7 +2587,9 @@ export const printMemberProduceStatement = async (data: {
   receipt += '\n';
   
   // Transaction Header
-  const dateColW = 10;
+  // v2.10.55: widen DATE column to 12 so a 10-char date has a clear gutter
+  // before the REC NO column (was 10 → "28/02/202600308" with no gap).
+  const dateColW = 12;
   const recColW = 7;
   const qtyColW = W - dateColW - recColW;
   receipt += 'DATE'.padEnd(dateColW) + 'REC NO'.padEnd(recColW) + 'QUANTITY'.padStart(qtyColW) + '\n';

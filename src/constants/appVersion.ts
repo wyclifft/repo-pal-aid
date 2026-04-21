@@ -1,4 +1,14 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.55: Member Produce Statement print layout fixes —
+//           (1) DATE column widened from 10 → 12 (clear gutter before REC NO).
+//           (2) Produce title (e.g. "MBUNI RECORD") trimmed + preview wrapped
+//               in justify-center flex so it visually matches print output.
+//           (3) Two leading newlines before company name so it doesn't print on
+//               the tear edge.
+//           (4) New optional CENTER line on receipt — resolves to active dashboard
+//               route → most recent transaction's route → farmer's registered route.
+//               Backend /api/periodic-report/farmer-detail now returns
+//               transaction_route(_name) and farmer_route_name (additive).
 // v2.10.54: Bluetooth — prevent printer/scale cross-disconnects on Android.
 //           (1) Device-scoped disconnect callbacks: BleClient.connect callbacks
 //           now ignore disconnect events for ids that don't match the active
@@ -43,5 +53,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.54';
-export const APP_VERSION_CODE = 76;
+export const APP_VERSION = '2.10.55';
+export const APP_VERSION_CODE = 77;

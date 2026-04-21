@@ -92,12 +92,35 @@ export function PeriodicReportReceipt({
     onClose();
   };
 
+  // v2.10.55: Resolve a CENTER name with priority:
+  //   active dashboard route → backend transaction route name → backend transaction route code
+  //   → farmer registered route name → farmer registered route code
+  const resolveCenterName = (): string => {
+    try {
+      const raw = localStorage.getItem('active_session_data');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const r = parsed?.route;
+        const active = (r?.descript || r?.tcode || '').toString().trim();
+        if (active) return active;
+      }
+    } catch (e) {
+      // ignore localStorage parse errors
+    }
+    if (data?.transaction_route_name?.trim()) return data.transaction_route_name.trim();
+    if (data?.transaction_route?.trim()) return data.transaction_route.trim();
+    if (data?.farmer_route_name?.trim()) return data.farmer_route_name.trim();
+    if (data?.farmer_route?.trim()) return data.farmer_route.trim();
+    return '';
+  };
+
   const handlePrint = async () => {
     if (!data) return;
     
     setPrinting(true);
     try {
-      console.log('🖨️ Printing member statement:', data);
+      const centerName = resolveCenterName();
+      console.log('🖨️ Printing member statement:', { ...data, centerName });
       
       const result = await printMemberProduceStatement({
         companyName: data.company_name,
@@ -112,6 +135,7 @@ export function PeriodicReportReceipt({
           quantity: tx.quantity,
         })),
         totalWeight: data.total_weight,
+        centerName,
       });
 
       console.log('🖨️ Print result:', result);
@@ -162,6 +186,13 @@ export function PeriodicReportReceipt({
             <div className="bg-muted/50 rounded-lg p-4 font-mono text-xs space-y-2">
               {/* Header */}
               <div className="text-center font-bold">{data.company_name}</div>
+              {/* v2.10.55: CENTER line (mirrors print output) */}
+              {(() => {
+                const centerName = resolveCenterName();
+                return centerName ? (
+                  <div className="text-center font-semibold">CENTER: {centerName.toUpperCase()}</div>
+                ) : null;
+              })()}
               <div className="border-t border-dashed border-muted-foreground/40" />
               
               <div className="text-center font-bold">MEMBER PRODUCE STATEMENT</div>
@@ -170,8 +201,10 @@ export function PeriodicReportReceipt({
               </div>
               <div className="border-t border-dashed border-muted-foreground/40" />
               
-              {/* Produce Type */}
-              <div className="text-center font-bold">{data.produce_name.toUpperCase()} RECORD</div>
+              {/* Produce Type — v2.10.55: enforce centered flex layout */}
+              <div className="flex justify-center font-bold">
+                <span>{data.produce_name.toUpperCase().trim()} RECORD</span>
+              </div>
               <div className="border-t border-dashed border-muted-foreground/40" />
               
               {/* Member Info */}
@@ -188,10 +221,10 @@ export function PeriodicReportReceipt({
                 <div className="border-b border-dotted border-muted-foreground/30" />
               </div>
               
-              {/* Transaction Header */}
-              <div className="grid grid-cols-3 font-bold text-[10px] pt-2">
+              {/* Transaction Header — v2.10.55: explicit columns to mirror print spacing */}
+              <div className="grid font-bold text-[10px] pt-2" style={{ gridTemplateColumns: '12ch 7ch 1fr' }}>
                 <span>DATE</span>
-                <span className="text-center">REC NO</span>
+                <span>REC NO</span>
                 <span className="text-right">QUANTITY</span>
               </div>
               <div className="border-t border-dashed border-muted-foreground/40" />
@@ -200,9 +233,9 @@ export function PeriodicReportReceipt({
               <div className="space-y-1 max-h-[200px] overflow-y-auto">
                 {data.transactions.length > 0 ? (
                   data.transactions.map((tx, idx) => (
-                    <div key={idx} className="grid grid-cols-3 text-[10px]">
+                    <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '12ch 7ch 1fr' }}>
                       <span>{formatDisplayDate(tx.date)}</span>
-                      <span className="text-center">{tx.rec_no?.slice(-5) || '-----'}</span>
+                      <span>{tx.rec_no?.slice(-5) || '-----'}</span>
                       <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
                     </div>
                   ))
