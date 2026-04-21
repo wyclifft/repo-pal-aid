@@ -137,6 +137,27 @@ let printer: BluetoothPrinter = {
   isConnected: false,
 };
 
+// v2.10.54: Track when scale was last (re)connected to defer printer auto-reconnect
+let lastScaleConnectedAt = 0;
+export const getLastScaleConnectedAt = (): number => lastScaleConnectedAt;
+
+// v2.10.54: Module-level BLE op mutex — serialize connect/scan/reconnect to
+// prevent the shared Android GATT client from killing the other device.
+let bleOperationLock: Promise<unknown> = Promise.resolve();
+const runBleOp = <T>(label: string, fn: () => Promise<T>): Promise<T> => {
+  const next = bleOperationLock.then(async () => {
+    console.log(`🔒 [BLE-LOCK] acquired by ${label}`);
+    try {
+      return await fn();
+    } finally {
+      console.log(`🔓 [BLE-LOCK] released by ${label}`);
+    }
+  });
+  // Ensure chain doesn't break on rejection
+  bleOperationLock = next.catch(() => undefined);
+  return next as Promise<T>;
+};
+
 // Store device info for quick reconnect
 interface StoredDeviceInfo {
   deviceId: string;
