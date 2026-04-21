@@ -1,4 +1,18 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.54: Bluetooth — prevent printer/scale cross-disconnects on Android.
+//           (1) Device-scoped disconnect callbacks: BleClient.connect callbacks
+//           now ignore disconnect events for ids that don't match the active
+//           scale/printer slot — fixes "scale connects → printer reports
+//           disconnected" caused by Android GATT renegotiation.
+//           (2) quickReconnect/quickReconnectPrinter: only call BleClient.disconnect
+//           when the deviceId matches the current slot — avoids killing the
+//           other device via process-wide GATT reset.
+//           (3) scanForPrinters: pause scale notifications during LE scan and
+//           reduce default scan window from 5s → 3s to minimize GATT contention.
+//           (4) PrinterSelector startup auto-reconnect: defer up to 5s when the
+//           scale was just connected (lastScaleConnectedAt within 5s).
+//           (5) Settings + PrinterSelector: verify with verifyXxxConnection
+//           before flipping UI badge to "disconnected" on spurious events.
 // v2.10.53: (1) Add Member: backend now hard-fails on duplicate (mcode, ccode)
 //           with a clear 409 toast — removed silent auto-increment retry.
 //           (2) Periodic Report: cross-device visibility within same ccode.
@@ -29,5 +43,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.53';
-export const APP_VERSION_CODE = 75;
+export const APP_VERSION = '2.10.54';
+export const APP_VERSION_CODE = 76;

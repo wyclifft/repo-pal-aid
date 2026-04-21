@@ -23,6 +23,8 @@ import {
   printToBluetoothPrinter,
   isScaleConnected,
   isPrinterConnected,
+  verifyScaleConnection,
+  verifyPrinterConnection,
   ScaleType 
 } from "@/services/bluetooth";
 
@@ -86,10 +88,26 @@ const Settings = () => {
   
   // Listen for connection state changes
   useEffect(() => {
-    const handleScaleChange = (e: CustomEvent<{ connected: boolean }>) => {
+    const handleScaleChange = async (e: CustomEvent<{ connected: boolean }>) => {
+      // v2.10.54: verify before flipping to "disconnected" to ignore spurious
+      // callbacks triggered by the printer's GATT renegotiation.
+      if (e.detail.connected === false) {
+        const reallyConnected = await verifyScaleConnection();
+        if (reallyConnected) {
+          console.log('🛡️ [Settings] Ignored spurious scale disconnect — still connected');
+          return;
+        }
+      }
       setScaleConnected(e.detail.connected);
     };
-    const handlePrinterChange = (e: CustomEvent<{ connected: boolean }>) => {
+    const handlePrinterChange = async (e: CustomEvent<{ connected: boolean }>) => {
+      if (e.detail.connected === false) {
+        const reallyConnected = await verifyPrinterConnection();
+        if (reallyConnected) {
+          console.log('🛡️ [Settings] Ignored spurious printer disconnect — still connected');
+          return;
+        }
+      }
       setPrinterConnected(e.detail.connected);
     };
     
