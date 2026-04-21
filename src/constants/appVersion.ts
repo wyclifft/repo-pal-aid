@@ -19,6 +19,7 @@
 //             from legacy v2.10.32 devices that send a stale SCODE. Dairy
 //             behaviour and existing API contract are unchanged. Logs every
 //             normalization with [NORMALIZE] prefix for production audit.
+// v2.10.55: Member Produce Statement print layout fixes —
 //           (1) DATE column widened from 10 → 12 (clear gutter before REC NO).
 //           (2) Produce title (e.g. "MBUNI RECORD") trimmed + preview wrapped
 //               in justify-center flex so it visually matches print output.
