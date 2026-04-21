@@ -421,6 +421,11 @@ const clearPrinterState = () => {
 // Broadcast connection state change events
 export const broadcastScaleConnectionChange = (connected: boolean) => {
   console.log(`📡 Broadcasting scale connection: ${connected}`);
+  if (connected) {
+    // v2.10.54: Track last successful connect time so the printer auto-reconnect
+    // can defer if the scale is "warming up" (avoids cross-talk on Android GATT).
+    lastScaleConnectedAt = Date.now();
+  }
   window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
 };
 
