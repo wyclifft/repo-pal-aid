@@ -1880,22 +1880,59 @@ const server = http.createServer(async (req, res) => {
         } catch (e) { console.warn('[/api/sales] orgtype lookup failed:', e?.message); }
 
         let salesSessionVal = (body.session_label || body.session || '').toString().trim();
+        let salesSeasonVal  = (seasonCAN || '').toString().trim();
         if (salesOrgtype === 'C') {
-          const scode = (seasonCAN || '').toString().trim();
-          const descript = (body.session_descript || salesSessionVal || '').toString().trim();
-          salesSessionVal = (scode || descript).toUpperCase();
-          if (!salesSessionVal || salesSessionVal === 'AM' || salesSessionVal === 'PM') {
+          // v2.10.56: Authoritative SCODE resolution for legacy clients (e.g. v2.10.32)
+          // that were sending a stale/wrong SCODE for Store/AI. We force session=CAN
+          // and pick the canonical SCODE in this priority:
+          //   (a) Most recent Buy (Transtype=1) for the same ccode + transdate → CAN
+          //   (b) sessions row whose datefrom..dateto covers the row's transdate
+          //   (c) Whatever the device sent (fallback, never destructive)
+          const sentScode    = (seasonCAN || '').toString().trim().toUpperCase();
+          const sentDescript = (body.session_descript || salesSessionVal || '').toString().trim();
+          let canonical = '';
+
+          // (a) Look up today's Buy SCODE for this ccode — what the operator actually used
+          try {
+            const [buyRows] = await conn.query(
+              `SELECT TRIM(CAN) AS CAN
+                 FROM transactions
+                WHERE ccode = ?
+                  AND Transtype = 1
+                  AND CAST(transdate AS DATE) = CAST(? AS DATE)
+                  AND CAN IS NOT NULL AND TRIM(CAN) <> ''
+                ORDER BY transdate DESC, transtime DESC
+                LIMIT 1`,
+              [ccode, transdate]
+            );
+            if (buyRows.length && buyRows[0].CAN) canonical = String(buyRows[0].CAN).toUpperCase();
+          } catch (e) { console.warn('[/api/sales] coffee Buy-SCODE lookup failed:', e?.message); }
+
+          // (b) sessions table fallback (date-range)
+          if (!canonical) {
             try {
               const [s] = await conn.query(
                 `SELECT SCODE FROM sessions WHERE ccode = ? AND ? BETWEEN datefrom AND dateto ORDER BY id DESC LIMIT 1`,
                 [ccode, transdate]
               );
-              if (s.length && s[0].SCODE) salesSessionVal = String(s[0].SCODE).toUpperCase();
+              if (s.length && s[0].SCODE) canonical = String(s[0].SCODE).toUpperCase();
             } catch (e) { console.warn('[/api/sales] coffee SCODE rescue failed:', e?.message); }
           }
-          console.log('☕ /api/sales coffee session normalization:', { raw: body.session_label || body.session, season: seasonCAN, normalized: salesSessionVal });
+
+          // (c) Last resort: trust whatever the device sent (don't write garbage)
+          if (!canonical) {
+            canonical = (sentScode || sentDescript || '').toUpperCase();
+          }
+
+          if (canonical && (sentScode !== canonical || salesSessionVal.toUpperCase() !== canonical)) {
+            console.log(`[NORMALIZE] /api/sales coffee: dev=${body.device_fingerprint || ''} ref=${transrefno} session=${salesSessionVal} CAN=${sentScode} → ${canonical}`);
+          }
+
+          salesSessionVal = canonical;
+          salesSeasonVal  = canonical;
+          console.log('☕ /api/sales coffee session normalization:', { sentScode, sentSession: body.session_label || body.session, canonical });
         }
-        
+
         await conn.query(
           `INSERT INTO transactions 
             (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
@@ -1923,7 +1960,7 @@ const server = http.createServer(async (req, res) => {
             body.price || 0,                    // iprice
             amount,                             // amount
             body.item_code || '',               // icode (from body)
-            seasonCAN,                          // CAN (season ID for coffee orgtypes)
+            salesSeasonVal,                     // v2.10.56: CAN (canonical SCODE for coffee, raw season for dairy)
             timestamp,                          // time
             0,                                  // capType
             '',                                 // milk_session_id
@@ -2132,22 +2169,51 @@ const server = http.createServer(async (req, res) => {
         } catch (e) { console.warn('[/api/sales/batch] orgtype lookup failed:', e?.message); }
 
         let batchSessionVal = (body.session_label || body.session || '').toString().trim();
+        let batchSeasonVal  = (seasonCAN || '').toString().trim();
         if (batchOrgtype === 'C') {
-          const scode = (seasonCAN || '').toString().trim();
-          const descript = (body.session_descript || batchSessionVal || '').toString().trim();
-          batchSessionVal = (scode || descript).toUpperCase();
-          if (!batchSessionVal || batchSessionVal === 'AM' || batchSessionVal === 'PM') {
+          // v2.10.56: Authoritative SCODE resolution for legacy clients (e.g. v2.10.32)
+          // Force session=CAN, prefer today's Buy SCODE for the same ccode (what the
+          // operator actually used for produce), then sessions date-range, then sent.
+          const sentScode    = (seasonCAN || '').toString().trim().toUpperCase();
+          const sentDescript = (body.session_descript || batchSessionVal || '').toString().trim();
+          let canonical = '';
+
+          try {
+            const [buyRows] = await conn.query(
+              `SELECT TRIM(CAN) AS CAN
+                 FROM transactions
+                WHERE ccode = ?
+                  AND Transtype = 1
+                  AND CAST(transdate AS DATE) = CAST(? AS DATE)
+                  AND CAN IS NOT NULL AND TRIM(CAN) <> ''
+                ORDER BY transdate DESC, transtime DESC
+                LIMIT 1`,
+              [ccode, transdate]
+            );
+            if (buyRows.length && buyRows[0].CAN) canonical = String(buyRows[0].CAN).toUpperCase();
+          } catch (e) { console.warn('[/api/sales/batch] coffee Buy-SCODE lookup failed:', e?.message); }
+
+          if (!canonical) {
             try {
               const [s] = await conn.query(
                 `SELECT SCODE FROM sessions WHERE ccode = ? AND ? BETWEEN datefrom AND dateto ORDER BY id DESC LIMIT 1`,
                 [ccode, transdate]
               );
-              if (s.length && s[0].SCODE) batchSessionVal = String(s[0].SCODE).toUpperCase();
+              if (s.length && s[0].SCODE) canonical = String(s[0].SCODE).toUpperCase();
             } catch (e) { console.warn('[/api/sales/batch] coffee SCODE rescue failed:', e?.message); }
           }
-          console.log('☕ /api/sales/batch coffee session normalization:', { raw: body.session_label || body.session, season: seasonCAN, normalized: batchSessionVal });
+
+          if (!canonical) canonical = (sentScode || sentDescript || '').toUpperCase();
+
+          if (canonical && (sentScode !== canonical || batchSessionVal.toUpperCase() !== canonical)) {
+            console.log(`[NORMALIZE] /api/sales/batch coffee: dev=${body.device_fingerprint || ''} session=${batchSessionVal} CAN=${sentScode} → ${canonical}`);
+          }
+
+          batchSessionVal = canonical;
+          batchSeasonVal  = canonical;
+          console.log('☕ /api/sales/batch coffee session normalization:', { sentScode, sentSession: body.session_label || body.session, canonical });
         }
-        
+
         for (const item of body.items) {
           const transrefno = item.transrefno;
           const amount = (item.quantity || 0) * (item.price || 0);
@@ -2180,7 +2246,7 @@ const server = http.createServer(async (req, res) => {
                 item.price || 0,
                 amount,
                 item.item_code || '',
-                seasonCAN,                        // CAN (season ID for coffee orgtypes)
+                batchSeasonVal,                   // v2.10.56: CAN (canonical SCODE for coffee, raw season for dairy)
                 timestamp,
                 0,
                 '',

@@ -1,4 +1,24 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.56: Fix Store/AI writing wrong SCODE to transactions.session and CAN.
+//           ROOT CAUSE: Buy reads the active session from the Dashboard
+//           (localStorage.active_session_data), but Store/AI were calling
+//           /api/sessions/active which picks the session matching server wall
+//           clock. Once server time crossed a session's time_to boundary, Store
+//           and AI silently switched to the next SCODE while Buy stayed correct.
+//           FRONTEND: src/pages/Store.tsx + src/pages/AIPage.tsx loadActiveSession
+//             now resolve the Dashboard session FIRST (via new
+//             resolveDashboardActiveSession in src/utils/sessionMetadata.ts) and
+//             only fall back to the backend time-based endpoint at cold-start.
+//           BACKEND: /api/sales and /api/sales/batch now, for coffee orgs only,
+//             resolve the canonical SCODE in priority order:
+//               (a) most recent Buy (Transtype=1) row's CAN for the same
+//                   ccode + transdate (what the operator actually used today),
+//               (b) sessions table date-range rescue,
+//               (c) whatever the device sent.
+//             Then force session = CAN = canonical. This auto-corrects writes
+//             from legacy v2.10.32 devices that send a stale SCODE. Dairy
+//             behaviour and existing API contract are unchanged. Logs every
+//             normalization with [NORMALIZE] prefix for production audit.
 // v2.10.55: Member Produce Statement print layout fixes —
 //           (1) DATE column widened from 10 → 12 (clear gutter before REC NO).
 //           (2) Produce title (e.g. "MBUNI RECORD") trimmed + preview wrapped
@@ -53,5 +73,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.55';
-export const APP_VERSION_CODE = 77;
+export const APP_VERSION = '2.10.56';
+export const APP_VERSION_CODE = 78;
