@@ -1518,57 +1518,104 @@ export interface DiscoveredPrinter {
   rssi?: number;
 }
 
-export const scanForPrinters = async (scanDuration: number = 5000): Promise<{
+export const scanForPrinters = async (scanDuration: number = 3000): Promise<{
   success: boolean;
   printers: DiscoveredPrinter[];
   error?: string;
 }> => {
-  const discoveredPrinters: DiscoveredPrinter[] = [];
-  
-  try {
-    if (Capacitor.isNativePlatform()) {
-      await BleClient.initialize();
-      
-      console.log('🔍 Scanning for Bluetooth printers...');
-      
-      await BleClient.requestLEScan(
-        { allowDuplicates: false },
-        (result) => {
-          const deviceName = result.device.name || '';
-          const isPrinter = deviceName.toLowerCase().includes('print') ||
-                           deviceName.toLowerCase().includes('pos') ||
-                           deviceName.toLowerCase().includes('thermal') ||
-                           deviceName.toLowerCase().includes('receipt') ||
-                           deviceName.length > 0;
-          
-          if (isPrinter && !discoveredPrinters.find(p => p.deviceId === result.device.deviceId)) {
-            console.log(`📱 Found device: ${deviceName || 'Unknown'}`);
-            discoveredPrinters.push({
-              deviceId: result.device.deviceId,
-              name: deviceName || `Unknown Device (${result.device.deviceId.slice(-6)})`,
-              rssi: result.rssi,
-            });
-          }
-        }
-      );
-      
-      await new Promise(resolve => setTimeout(resolve, scanDuration));
-      await BleClient.stopLEScan();
-      
-      console.log(`✅ Scan complete. Found ${discoveredPrinters.length} devices.`);
-      return { success: true, printers: discoveredPrinters };
-    } else {
-      return { 
-        success: false, 
-        printers: [], 
-        error: 'Printer scanning requires native app.' 
-      };
+  return runBleOp('scanForPrinters', async () => {
+    const discoveredPrinters: DiscoveredPrinter[] = [];
+
+    // v2.10.54: Pause scale notifications during the LE scan to avoid GATT
+    // resource contention that can supervision-timeout the scale link.
+    let pausedScaleNotifications = false;
+    const scaleSnapshot = {
+      deviceId: scale.deviceId,
+      serviceUuid: scale.serviceUuid,
+      characteristic: scale.characteristic,
+      connectionType: scale.connectionType,
+    };
+    if (
+      Capacitor.isNativePlatform() &&
+      scale.isConnected &&
+      scaleSnapshot.connectionType === 'ble' &&
+      scaleSnapshot.deviceId &&
+      scaleSnapshot.serviceUuid &&
+      typeof scaleSnapshot.characteristic === 'string'
+    ) {
+      try {
+        await BleClient.stopNotifications(
+          scaleSnapshot.deviceId,
+          scaleSnapshot.serviceUuid,
+          scaleSnapshot.characteristic as string
+        );
+        pausedScaleNotifications = true;
+        console.log('⏸️ Paused scale notifications during printer scan');
+      } catch (e) {
+        console.warn('Could not pause scale notifications before scan (continuing):', e);
+      }
     }
-  } catch (error: any) {
-    console.error('❌ Printer scan failed:', error);
-    try { await BleClient.stopLEScan(); } catch {}
-    return { success: false, printers: discoveredPrinters, error: error.message || 'Scan failed' };
-  }
+
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await BleClient.initialize();
+
+        console.log('🔍 Scanning for Bluetooth printers...');
+
+        await BleClient.requestLEScan(
+          { allowDuplicates: false },
+          (result) => {
+            const deviceName = result.device.name || '';
+            const isPrinter = deviceName.toLowerCase().includes('print') ||
+                             deviceName.toLowerCase().includes('pos') ||
+                             deviceName.toLowerCase().includes('thermal') ||
+                             deviceName.toLowerCase().includes('receipt') ||
+                             deviceName.length > 0;
+
+            if (isPrinter && !discoveredPrinters.find(p => p.deviceId === result.device.deviceId)) {
+              console.log(`📱 Found device: ${deviceName || 'Unknown'}`);
+              discoveredPrinters.push({
+                deviceId: result.device.deviceId,
+                name: deviceName || `Unknown Device (${result.device.deviceId.slice(-6)})`,
+                rssi: result.rssi,
+              });
+            }
+          }
+        );
+
+        await new Promise(resolve => setTimeout(resolve, scanDuration));
+        await BleClient.stopLEScan();
+
+        console.log(`✅ Scan complete. Found ${discoveredPrinters.length} devices.`);
+        return { success: true, printers: discoveredPrinters };
+      } else {
+        return {
+          success: false,
+          printers: [],
+          error: 'Printer scanning requires native app.'
+        };
+      }
+    } catch (error: any) {
+      console.error('❌ Printer scan failed:', error);
+      try { await BleClient.stopLEScan(); } catch {}
+      return { success: false, printers: discoveredPrinters, error: error.message || 'Scan failed' };
+    } finally {
+      // Resume scale notifications if we paused them
+      if (pausedScaleNotifications && scaleSnapshot.deviceId && scaleSnapshot.serviceUuid && typeof scaleSnapshot.characteristic === 'string') {
+        try {
+          await BleClient.startNotifications(
+            scaleSnapshot.deviceId,
+            scaleSnapshot.serviceUuid,
+            scaleSnapshot.characteristic as string,
+            () => { /* re-attached by main scale handler via existing wiring */ }
+          );
+          console.log('▶️ Resumed scale notifications after printer scan');
+        } catch (e) {
+          console.warn('Could not resume scale notifications after scan:', e);
+        }
+      }
+    }
+  });
 };
 
 export const connectToSpecificPrinter = async (deviceId: string, deviceName: string): Promise<{
