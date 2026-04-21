@@ -18,7 +18,7 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { saveToLocalDB } from '@/services/offlineStorage';
-import { resolveSessionMetadata } from '@/utils/sessionMetadata';
+import { resolveSessionMetadata, resolveDashboardActiveSession } from '@/utils/sessionMetadata';
 
 interface CartItem {
   item: Item;
@@ -86,14 +86,27 @@ const AIPage = () => {
   // Online status tracking
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
-  // Fetch active session on mount
+  // Fetch active session on mount.
+  // v2.10.56: PRIORITY → Dashboard selection (same source as Buy/Sell), so AI
+  // never drifts to a different SCODE just because the server time window rolled.
+  // The backend /api/sessions/active endpoint is kept ONLY as a cold-start
+  // fallback (when the operator hasn't opened the Dashboard yet on this device).
   const loadActiveSession = async () => {
     try {
+      // 1. Try Dashboard-persisted session first (matches Buy/Sell behavior)
+      const dashboardSession = resolveDashboardActiveSession();
+      if (dashboardSession && (dashboardSession.SCODE || dashboardSession.descript)) {
+        setActiveSession(dashboardSession as Session);
+        console.log('[AI] Active session from Dashboard:', dashboardSession.SCODE || dashboardSession.descript);
+        return;
+      }
+
+      // 2. Fallback: backend time-based lookup (cold-start only)
       const deviceFingerprint = await generateDeviceFingerprint();
       const response = await mysqlApi.sessions.getActive(deviceFingerprint);
       if (response.success && response.data) {
         setActiveSession(response.data);
-        console.log('[AI] Active session loaded:', response.data.SCODE);
+        console.log('[AI] Active session from backend fallback:', response.data.SCODE);
       }
     } catch (error) {
       console.warn('[AI] Failed to load active session:', error);

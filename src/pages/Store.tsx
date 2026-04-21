@@ -18,7 +18,7 @@ import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/
 import { useAppSettings } from '@/hooks/useAppSettings';
 import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 import { useReprint } from '@/contexts/ReprintContext';
-import { resolveSessionMetadata } from '@/utils/sessionMetadata';
+import { resolveSessionMetadata, resolveDashboardActiveSession } from '@/utils/sessionMetadata';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
 import { saveToLocalDB } from '@/services/offlineStorage';
@@ -130,14 +130,27 @@ const Store = () => {
     return () => clearInterval(interval);
   }, [updatePendingSalesCount]);
 
-  // Fetch active session on mount
+  // Fetch active session on mount.
+  // v2.10.56: PRIORITY → Dashboard selection (same source as Buy/Sell), so Store
+  // never drifts to a different SCODE just because the server time window rolled.
+  // The backend /api/sessions/active endpoint is kept ONLY as a cold-start
+  // fallback (when the operator hasn't opened the Dashboard yet on this device).
   const loadActiveSession = async () => {
     try {
+      // 1. Try Dashboard-persisted session first (matches Buy/Sell behavior)
+      const dashboardSession = resolveDashboardActiveSession();
+      if (dashboardSession && (dashboardSession.SCODE || dashboardSession.descript)) {
+        setActiveSession(dashboardSession as Session);
+        console.log('[Store] Active session from Dashboard:', dashboardSession.SCODE || dashboardSession.descript);
+        return;
+      }
+
+      // 2. Fallback: backend time-based lookup (cold-start only)
       const deviceFingerprint = await generateDeviceFingerprint();
       const response = await mysqlApi.sessions.getActive(deviceFingerprint);
       if (response.success && response.data) {
         setActiveSession(response.data);
-        console.log('[Store] Active session loaded:', response.data.SCODE);
+        console.log('[Store] Active session from backend fallback:', response.data.SCODE);
       }
     } catch (error) {
       console.warn('[Store] Failed to load active session:', error);
