@@ -1,113 +1,88 @@
 
 
-## Fix: Duplicate Member ID + Periodic Report Cross-Device Visibility — v2.10.53
+## Fix: Scale Connection Disconnects the Printer (and vice versa) — v2.10.54
 
-Two independent fixes, both production-safe.
+### Root Cause
 
----
+The two BLE connections are sharing a single Android Bluetooth GATT client and stepping on each other. Three concrete defects in `src/services/bluetooth.ts`:
 
-### Issue 1 — Add Member silently auto-renames duplicate IDs
-
-**Current behavior** (`backend-api/server.js` lines 3252–3358):
-- Backend relies on `ER_DUP_ENTRY` from a UNIQUE index on `cm_members.mcode`.
-- On duplicate, it **auto-increments the numeric tail** ( `M00010` → `M00011` ) and silently saves under a different ID — without telling the operator.
-- Worse: if there is no UNIQUE constraint on `(mcode, ccode)` in production, **two rows with the same mcode within the same ccode can coexist** with no error raised at all.
-
-**Fix (backend-only, additive-safe):**
-
-1. **Pre-check explicitly before insert** inside `/api/members POST`:
-   ```js
-   const [existing] = await pool.query(
-     'SELECT mcode FROM cm_members WHERE TRIM(mcode) = TRIM(?) AND ccode = ? LIMIT 1',
-     [mmcode, ccode]
-   );
-   if (existing.length > 0) {
-     return sendJSON(res, {
-       success: false,
-       error: `Member ID "${mmcode}" already exists for this company. Please use a different ID.`
-     }, 409);
-   }
+1. **Disconnect callback is wired by `deviceId` but the handler clears state blindly.**  
+   When connecting the scale, we register:
+   ```ts
+   await BleClient.connect(scaleDeviceId, (disconnectedDeviceId) => clearScaleState());
    ```
-2. **Disable the silent auto-increment retry loop.** If the typed ID collides, return `409` immediately. The "next available ID" suggestion (`/api/members/next-id`) already prefills a unique value; if the operator overrides it with a duplicate, the action must fail loudly, not silently rename.
-3. **Keep** the existing `ER_DUP_ENTRY` catch as a final safety net (race condition between two devices) — but it now also returns `409` immediately instead of incrementing.
+   and the same for the printer. The Android stack also fires the scale's disconnect callback when **another** GATT client (the printer connect) opens a chooser or runs `BleClient.requestDevice`, briefly tearing down the existing GATT to renegotiate. The callback runs `clearScaleState()` / `clearPrinterState()` without verifying *which* device disconnected, so the still-alive device is marked as disconnected in the UI.
 
-**Frontend** (`src/components/AddMemberModal.tsx`): no change needed — it already toasts `result.error` on `success === false`. The new clearer 409 message will surface automatically.
+2. **`quickReconnect*` calls `BleClient.disconnect(deviceId)` unconditionally before connecting.**  
+   On Android, `BleClient.disconnect` is a process-wide call. When the printer auto-reconnect runs while the scale is mid-connect (or vice versa), the stale-disconnect call resets the shared GATT client and kills the *other* device's connection. The 1.5s startup auto-reconnect timer in `PrinterSelector` makes this fire right when the user is trying to scan for a scale.
 
-**Note on DB constraint:** A separate migration to add `UNIQUE KEY uniq_member_per_company (mcode, ccode)` to `cm_members` is recommended but is out of scope for this code change (would require a DB migration the user must run). The pre-check above closes the gap at the application layer without requiring schema change.
+3. **`scanForPrinters` runs an LE scan while a GATT connection is active.**  
+   On most Android chipsets, `requestLEScan` with `allowDuplicates:false` and a 5s window starves the active GATT link and triggers a supervision-timeout disconnect on whichever device is connected first.
 
----
+### Fix
 
-### Issue 2 — Periodic Report only shows current device's transactions
+#### A. Make disconnect callbacks device-scoped (`src/services/bluetooth.ts`)
+Change the four `BleClient.connect(...)` callsites so the callback only clears state if the disconnected device id matches:
+```ts
+await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+  if (disconnectedDeviceId !== scale.deviceId) {
+    console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our scale`);
+    return;
+  }
+  clearScaleState();
+});
+```
+Same guard for the printer (compare against `printer.deviceId`). This is the single most important fix — it stops the "scale connects → printer reports disconnected" symptom immediately.
 
-**Current behavior** (`backend-api/server.js` lines 1185–1209 and 1276–1292):
-- Both `/api/periodic-report` and `/api/periodic-report/farmer-detail` filter by `t.deviceserial = ?` (the requesting device's fingerprint).
-- Result: a tablet cannot see transactions captured by another tablet on the same `ccode`, even though they share the same company and routes.
+#### B. Stop cross-killing the other device during reconnect
+- Inside `quickReconnect` (scale) and `quickReconnectPrinter`, **only** call `BleClient.disconnect(deviceId)` if `scale.deviceId === deviceId` or `printer.deviceId === deviceId` respectively. Never disconnect by raw id when we're not certain it belongs to *this* device's slot.
+- Wrap with try/catch so a failed disconnect of a stale id never propagates.
 
-**Fix (backend, behavior change — see compatibility note):**
+#### C. Serialize BLE operations with a tiny mutex
+Add a module-level `bleOperationLock` (a `Promise` chain) in `bluetooth.ts`. Wrap `connectBluetoothScale`, `connectBluetoothPrinter`, `connectToSpecificPrinter`, `quickReconnect`, `quickReconnectPrinter`, and `scanForPrinters` so only one runs at a time. This prevents the printer auto-reconnect from racing with the user's scale scan.
 
-1. **Drop the `t.deviceserial = ?` filter** in both endpoints. Keep the strict `t.ccode = ?` filter (multi-tenant boundary stays intact).
-2. **Add an optional `route` query parameter** to scope by the route currently selected on the requesting device:
-   - Frontend passes `route` from `localStorage.active_session_data.route.tcode` (already persisted by `Dashboard.tsx`).
-   - Backend appends `AND TRIM(t.route) = TRIM(?)` when `route` is present; omitted = all routes for the ccode.
-3. **Apply the same change to the farmer-detail endpoint** (line ~1278) — drop `deviceserial`, add optional `route`.
+#### D. Pause active GATT activity during printer scan
+Before `BleClient.requestLEScan` in `scanForPrinters`:
+- If a scale is connected via BLE, stop its notifications (keep the GATT link), run the scan, then re-`startNotifications` after `stopLEScan`.
+- Reduce the default scan window from 5000 ms to 3000 ms to shorten the contention window.
 
-**Backward compatibility:** the `uniquedevcode` parameter is **kept** and still required for **device authorization** (resolving `ccode` from `devsettings`). Only the *data filter* changes from `deviceserial=` to `ccode=` (+ optional route). Old Capacitor clients that don't send `route` get the full ccode results — strictly more data, never less, no breakage.
+#### E. Guard the printer auto-reconnect on Settings/PrinterSelector mount
+In `src/components/PrinterSelector.tsx` and `src/pages/Settings.tsx`, defer the initial `attemptAutoReconnect` if `isScaleConnected()` is currently `true` *and* the scale was connected within the last 5 seconds (treat the scale as "warming up"). This avoids the 1.5s startup-timer race when the user is mid-scale-connect on app launch.
 
-**Frontend** (`src/pages/PeriodicReport.tsx`):
+#### F. Preserve UI state when only one side actually drops
+In `Settings.tsx` and `PrinterSelector.tsx`, listen for `scaleConnectionChange` and `printerConnectionChange` separately — already done — but additionally re-verify with `verifyScaleConnection()` / `verifyPrinterConnection()` on `connected:false` events before flipping the badge. The new `verifyXxx` debounced check confirms whether the device is *really* gone (vs. a spurious callback from fix A's race window).
 
-1. Read the active route from `localStorage.active_session_data` on mount → store in `selectedRoute` state.
-2. Add a small read-only display under the header: `Route: <selectedRoute.descript>` (or "All routes" if none active), so the operator knows what scope they're viewing.
-3. Pass `route: selectedRoute?.tcode` to `mysqlApi.periodicReport.get(...)` and `getFarmerDetail(...)`.
-4. Include `route` in the `cacheKey` so per-route caches don't collide.
-
-**Frontend service** (`src/services/mysqlApi.ts`):
-- Extend `periodicReportApi.get(...)` and `getFarmerDetail(...)` signatures with an optional `route?: string` query param.
-
----
+#### G. Version bump
+Update `src/constants/appVersion.ts` to **v2.10.54 (Code 76)** with note: "Bluetooth: prevent printer/scale cross-disconnects (device-scoped callbacks, BLE op mutex, scan pauses notifications, deferred auto-reconnect)."
 
 ### Files Changed
 
 | File | Change |
 |---|---|
-| `backend-api/server.js` | (1) `/api/members POST`: add explicit pre-check for `(mcode, ccode)` collision → 409; remove silent auto-increment retry, keep `ER_DUP_ENTRY` as race-safety returning 409. (2) `/api/periodic-report` + `/api/periodic-report/farmer-detail`: drop `t.deviceserial =` filter, add optional `route` query param. |
-| `src/services/mysqlApi.ts` | Add optional `route?: string` param to `periodicReportApi.get` and `getFarmerDetail`. |
-| `src/pages/PeriodicReport.tsx` | Read active route from `localStorage.active_session_data`; pass to API; show "Route: <descript>" badge; include in cache key. |
-| `src/constants/appVersion.ts` | Bump to **v2.10.53 (Code 75)** with a changelog comment. |
-
----
+| `src/services/bluetooth.ts` | Device-scoped disconnect callbacks (4 sites); `quickReconnect*` stale-disconnect only if id matches current slot; module-level BLE operation mutex; `scanForPrinters` pauses scale notifications and shortens scan window. |
+| `src/components/PrinterSelector.tsx` | Defer initial auto-reconnect 5s if a scale was just connected; verify on `printerConnectionChange:false` before flipping badge. |
+| `src/pages/Settings.tsx` | Same verify-before-flip pattern for both scale and printer state listeners. |
+| `src/constants/appVersion.ts` | Bump to v2.10.54 (Code 76). |
 
 ### What Does NOT Change
 
-- Z-Reports — remain strictly device-isolated per [Report Isolation Rules](mem://constraints/report-isolation-rules) memory.
-- Multi-tenant `ccode` JWT/device authorization boundary — unchanged.
-- IndexedDB schema, sync engines, reference generators, photo system — unchanged.
-- v2.10.51 coffee SCODE logic — unchanged.
-- v2.10.52 Debtors prefix logic — unchanged.
-- `AddMemberModal.tsx` UI — unchanged (existing error toast surfaces the new 409 message).
-- `/api/members/next-id` — unchanged (still suggests next sequential available ID).
-
----
+- Backend `server.js` — untouched.
+- Classic SPP plugin (`bluetoothClassic.ts` / `BluetoothClassicPlugin.kt`) — untouched. Classic and BLE already coexist independently; the fix is purely on the BLE side.
+- IndexedDB schema, sync engines, references, photo system — untouched.
+- v2.10.51 coffee SCODE, v2.10.52 Debtors prefix, v2.10.53 Periodic Report — untouched.
 
 ### Verification After Deploy
 
-**Issue 1:**
-1. Dashboard → Add Member → create `M00500` → succeeds.
-2. Add Member again → manually type `M00500` → toast: `Member ID "M00500" already exists for this company. Please use a different ID.` Form stays open, no row inserted.
-3. Add Member with cleared field → suggested next ID is `M00501` → succeeds.
-
-**Issue 2:**
-1. Device A captures milk collection on Route `R01` for member `M00100`.
-2. Device B (same ccode) opens Periodic Report → date range covering today → sees Device A's `M00100` row.
-3. Device B selects a different route on Dashboard → reopens Periodic Report → sees badge "Route: <other route>" and `M00100` is filtered out.
-4. Device B switches back to `R01` on Dashboard → reopens Periodic Report → `M00100` reappears.
-5. Open `View & Print` on that farmer → individual transaction list now shows entries from both Device A and Device B for that route.
-6. Confirm Z-Report on Device B still shows ONLY Device B's transactions (isolation preserved).
-
----
+1. **Cold start**: open app → printer auto-reconnect runs → confirm printer badge turns green.
+2. **Connect scale while printer connected**: tap "Connect Scale" → BLE flow → scale connects. Printer badge **must remain green** throughout.
+3. **Reverse**: with scale connected, open Printer dialog → "Scan for Printers" → connect a printer. Scale badge **must remain green**, weight stream **must keep flowing**.
+4. **Print a receipt while live weight is streaming**: capture a transaction → print → confirm both devices stay connected and weight resumes after print.
+5. **Force disconnect one device manually** (turn off scale): only the scale badge flips to disconnected; printer stays green.
+6. **Repeat 1–5 with Classic-SPP scale + BLE printer combo** to confirm no regression to the Classic path.
 
 ### Out of Scope
 
-- Adding `UNIQUE KEY (mcode, ccode)` to `cm_members` (separate DB migration; the application-level pre-check is sufficient for this fix).
-- Multi-route selector in Periodic Report (uses dashboard active route only — matches existing UX).
-- Backfill of any historical duplicate `cm_members` rows.
+- Migrating printer to Classic SPP (bigger rewrite; not needed once cross-talk is fixed).
+- Replacing `@capacitor-community/bluetooth-le` with a multi-GATT-client native bridge.
+- Backfill or schema changes.
 
