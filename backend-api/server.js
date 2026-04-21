@@ -2169,22 +2169,51 @@ const server = http.createServer(async (req, res) => {
         } catch (e) { console.warn('[/api/sales/batch] orgtype lookup failed:', e?.message); }
 
         let batchSessionVal = (body.session_label || body.session || '').toString().trim();
+        let batchSeasonVal  = (seasonCAN || '').toString().trim();
         if (batchOrgtype === 'C') {
-          const scode = (seasonCAN || '').toString().trim();
-          const descript = (body.session_descript || batchSessionVal || '').toString().trim();
-          batchSessionVal = (scode || descript).toUpperCase();
-          if (!batchSessionVal || batchSessionVal === 'AM' || batchSessionVal === 'PM') {
+          // v2.10.56: Authoritative SCODE resolution for legacy clients (e.g. v2.10.32)
+          // Force session=CAN, prefer today's Buy SCODE for the same ccode (what the
+          // operator actually used for produce), then sessions date-range, then sent.
+          const sentScode    = (seasonCAN || '').toString().trim().toUpperCase();
+          const sentDescript = (body.session_descript || batchSessionVal || '').toString().trim();
+          let canonical = '';
+
+          try {
+            const [buyRows] = await conn.query(
+              `SELECT TRIM(CAN) AS CAN
+                 FROM transactions
+                WHERE ccode = ?
+                  AND Transtype = 1
+                  AND CAST(transdate AS DATE) = CAST(? AS DATE)
+                  AND CAN IS NOT NULL AND TRIM(CAN) <> ''
+                ORDER BY transdate DESC, transtime DESC
+                LIMIT 1`,
+              [ccode, transdate]
+            );
+            if (buyRows.length && buyRows[0].CAN) canonical = String(buyRows[0].CAN).toUpperCase();
+          } catch (e) { console.warn('[/api/sales/batch] coffee Buy-SCODE lookup failed:', e?.message); }
+
+          if (!canonical) {
             try {
               const [s] = await conn.query(
                 `SELECT SCODE FROM sessions WHERE ccode = ? AND ? BETWEEN datefrom AND dateto ORDER BY id DESC LIMIT 1`,
                 [ccode, transdate]
               );
-              if (s.length && s[0].SCODE) batchSessionVal = String(s[0].SCODE).toUpperCase();
+              if (s.length && s[0].SCODE) canonical = String(s[0].SCODE).toUpperCase();
             } catch (e) { console.warn('[/api/sales/batch] coffee SCODE rescue failed:', e?.message); }
           }
-          console.log('☕ /api/sales/batch coffee session normalization:', { raw: body.session_label || body.session, season: seasonCAN, normalized: batchSessionVal });
+
+          if (!canonical) canonical = (sentScode || sentDescript || '').toUpperCase();
+
+          if (canonical && (sentScode !== canonical || batchSessionVal.toUpperCase() !== canonical)) {
+            console.log(`[NORMALIZE] /api/sales/batch coffee: dev=${body.device_fingerprint || ''} session=${batchSessionVal} CAN=${sentScode} → ${canonical}`);
+          }
+
+          batchSessionVal = canonical;
+          batchSeasonVal  = canonical;
+          console.log('☕ /api/sales/batch coffee session normalization:', { sentScode, sentSession: body.session_label || body.session, canonical });
         }
-        
+
         for (const item of body.items) {
           const transrefno = item.transrefno;
           const amount = (item.quantity || 0) * (item.price || 0);
