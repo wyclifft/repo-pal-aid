@@ -1960,7 +1960,7 @@ const server = http.createServer(async (req, res) => {
             body.price || 0,                    // iprice
             amount,                             // amount
             body.item_code || '',               // icode (from body)
-            seasonCAN,                          // CAN (season ID for coffee orgtypes)
+            salesSeasonVal,                     // v2.10.56: CAN (canonical SCODE for coffee, raw season for dairy)
             timestamp,                          // time
             0,                                  // capType
             '',                                 // milk_session_id
