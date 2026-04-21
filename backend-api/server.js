@@ -2246,7 +2246,7 @@ const server = http.createServer(async (req, res) => {
                 item.price || 0,
                 amount,
                 item.item_code || '',
-                seasonCAN,                        // CAN (season ID for coffee orgtypes)
+                batchSeasonVal,                   // v2.10.56: CAN (canonical SCODE for coffee, raw season for dairy)
                 timestamp,
                 0,
                 '',
