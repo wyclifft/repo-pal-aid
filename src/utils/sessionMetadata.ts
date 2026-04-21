@@ -47,6 +47,24 @@ const isCoffeeOrg = (): boolean => {
   }
 };
 
+/**
+ * v2.10.56: Resolve the active session selected on the Dashboard.
+ * Returns the raw session object (with SCODE, descript, time_from, time_to, etc.)
+ * or null if nothing is persisted.
+ *
+ * Used by Store and AI to align their season source with Buy (which already
+ * reads the Dashboard selection). Eliminates the bug where Store/AI fetched a
+ * different SCODE from the time-based /api/sessions/active endpoint after the
+ * server clock rolled into the next session window.
+ */
+export const resolveDashboardActiveSession = (): any | null => {
+  return (
+    readPersistedSession('active_session_data') ||
+    readPersistedSession('delicoop_session_data') ||
+    null
+  );
+};
+
 const pick = (s: any | null | undefined): { season: string; session_label: string } | null => {
   if (!s) return null;
   const season = String(s.SCODE || '').trim();
