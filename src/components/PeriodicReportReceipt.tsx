@@ -92,12 +92,35 @@ export function PeriodicReportReceipt({
     onClose();
   };
 
+  // v2.10.55: Resolve a CENTER name with priority:
+  //   active dashboard route → backend transaction route name → backend transaction route code
+  //   → farmer registered route name → farmer registered route code
+  const resolveCenterName = (): string => {
+    try {
+      const raw = localStorage.getItem('active_session_data');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const r = parsed?.route;
+        const active = (r?.descript || r?.tcode || '').toString().trim();
+        if (active) return active;
+      }
+    } catch (e) {
+      // ignore localStorage parse errors
+    }
+    if (data?.transaction_route_name?.trim()) return data.transaction_route_name.trim();
+    if (data?.transaction_route?.trim()) return data.transaction_route.trim();
+    if (data?.farmer_route_name?.trim()) return data.farmer_route_name.trim();
+    if (data?.farmer_route?.trim()) return data.farmer_route.trim();
+    return '';
+  };
+
   const handlePrint = async () => {
     if (!data) return;
     
     setPrinting(true);
     try {
-      console.log('🖨️ Printing member statement:', data);
+      const centerName = resolveCenterName();
+      console.log('🖨️ Printing member statement:', { ...data, centerName });
       
       const result = await printMemberProduceStatement({
         companyName: data.company_name,
@@ -112,6 +135,7 @@ export function PeriodicReportReceipt({
           quantity: tx.quantity,
         })),
         totalWeight: data.total_weight,
+        centerName,
       });
 
       console.log('🖨️ Print result:', result);
