@@ -1033,6 +1033,8 @@ export const membersApi = {
    * v2.10.58: Optional `prefix` ('M' | 'D') so the operator can request the
    * next ID for either Members or Debtors regardless of the most recent
    * record's prefix. Backend treats omitted prefix as legacy behavior.
+   * v2.10.59: Response may include `reservedRange` and `jumped` indicating
+   * the suggestion skipped a reserved test-ID range (e.g. 9000–9999).
    * Uses query-string fingerprint (no custom headers → no CORS preflight).
    */
   getNextId: async (
@@ -1042,6 +1044,9 @@ export const membersApi = {
     suggested: string;
     prefix: string;
     padLength: number;
+    // v2.10.59 (optional, additive)
+    reservedRange?: [number, number];
+    jumped?: boolean;
   }>> => {
     const qs = encodeURIComponent(deviceFingerprint);
     const prefixQs = prefix ? `&prefix=${encodeURIComponent(prefix)}` : '';
