@@ -1030,15 +1030,22 @@ export const membersApi = {
 
   /**
    * v2.10.43: Suggest the next available mmcode for the device's ccode.
+   * v2.10.58: Optional `prefix` ('M' | 'D') so the operator can request the
+   * next ID for either Members or Debtors regardless of the most recent
+   * record's prefix. Backend treats omitted prefix as legacy behavior.
    * Uses query-string fingerprint (no custom headers → no CORS preflight).
    */
-  getNextId: async (deviceFingerprint: string): Promise<ApiResponse<{
+  getNextId: async (
+    deviceFingerprint: string,
+    prefix?: 'M' | 'D'
+  ): Promise<ApiResponse<{
     suggested: string;
     prefix: string;
     padLength: number;
   }>> => {
     const qs = encodeURIComponent(deviceFingerprint);
-    return apiRequest(`/members/next-id?device_fingerprint=${qs}`, { method: 'GET' });
+    const prefixQs = prefix ? `&prefix=${encodeURIComponent(prefix)}` : '';
+    return apiRequest(`/members/next-id?device_fingerprint=${qs}${prefixQs}`, { method: 'GET' });
   },
 };
 
