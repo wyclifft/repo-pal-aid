@@ -248,8 +248,8 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
         // Keep `route` and `multOpt` defaults the operator most likely wants again
         setMmcode('');
 
-        // Pre-fill the next suggested ID
-        void fetchAndApplyNextId();
+        // Pre-fill the next suggested ID for the same chosen prefix (sticky)
+        void fetchAndApplyNextId(memberType);
       } else {
         const errMsg = (result as any).error || 'Failed to add member';
         toast.error(errMsg);
@@ -295,6 +295,38 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
             <Badge variant="secondary">{ccode || 'unknown'}</Badge>
           </div>
 
+          {/* v2.10.58: Member vs Debtor selector — drives the next-id prefix */}
+          <div className="space-y-1.5">
+            <Label>Member Type *</Label>
+            <ToggleGroup
+              type="single"
+              value={memberType}
+              onValueChange={handleMemberTypeChange}
+              aria-label="Member type"
+              className="justify-start"
+            >
+              <ToggleGroupItem
+                value="M"
+                aria-label="Member (M prefix)"
+                disabled={submitting}
+                className="data-[state=on]:bg-primary data-[state=on]:text-primary-foreground border"
+              >
+                Member (M)
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="D"
+                aria-label="Debtor (D prefix)"
+                disabled={submitting}
+                className="data-[state=on]:bg-primary data-[state=on]:text-primary-foreground border"
+              >
+                Debtor (D)
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-xs text-muted-foreground">
+              Choose whether the next ID should be a Member (M) or Debtor (D).
+            </p>
+          </div>
+
           <div className="space-y-1.5">
             <Label htmlFor="mm-mmcode">Member ID *</Label>
             <div className="relative">
@@ -302,7 +334,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
                 id="mm-mmcode"
                 value={mmcode}
                 onChange={(e) => { setMmcode(e.target.value); editingClear(); }}
-                placeholder={suggestingId ? 'Fetching next ID…' : 'e.g. M00001'}
+                placeholder={suggestingId ? 'Fetching next ID…' : (memberType === 'D' ? 'e.g. D00001' : 'e.g. M00001')}
                 maxLength={50}
                 disabled={submitting}
               />
@@ -311,8 +343,14 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              Auto-suggested next ID — you can edit if needed.
+              Auto-suggested next {memberType === 'D' ? 'Debtor' : 'Member'} ID — you can edit if needed.
             </p>
+            {/* Soft prefix-mismatch hint (no hard block) */}
+            {mmcode.trim() && mmcode.trim().charAt(0).toUpperCase() !== memberType && /^[A-Za-z]/.test(mmcode.trim()) && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Heads-up: ID starts with “{mmcode.trim().charAt(0).toUpperCase()}” but type is {memberType === 'D' ? 'Debtor' : 'Member'}.
+              </p>
+            )}
           </div>
 
           <div className="space-y-1.5">
