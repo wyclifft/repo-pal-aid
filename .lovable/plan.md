@@ -1,104 +1,168 @@
 
 
-## Add Member Type Selector (M = Member, D = Debtor) — v2.10.58
+## Skip Reserved Test-Member IDs in Next-ID Suggestion — v2.10.59
 
 ### Problem
 
-The "Add New Member" modal auto-suggests the next ID by reading the **most recently inserted** member's prefix. So if the operator just added a `D00012` (Debtor), the next suggestion will be `D00013` even when they now want to add a Member (`M…`). The operator has no way to tell the system which type they want.
+Your operations team uses high-numbered IDs (e.g., `M9999`, `M9998`, `M9000`…) as **test/sentinel members**. The current `/api/members/next-id` logic computes `MAX(numericTail)` across the recent 200 mcodes, which can return:
 
-Backend `/api/members/next-id` picks `prefix` from `rows[0]` (latest by `id DESC`) — see `backend-api/server.js` lines 3318–3354. There is no prefix filter.
+- The test sentinel itself → it suggests `M10000` after a real next of `M3557`, **or**
+- When the recent batch is dominated by old test rows but the latest real members got pushed off the 200-row window → it can collapse back to the test row's neighborhood, suggesting something like `M1000` while the real ledger is at `M3556`.
 
-### Fix — let the operator choose Member or Debtor
+Either way, the suggested next ID is wrong: operators want it to be the next ID after the **real production members**, ignoring the reserved test range.
 
-#### 1. `backend-api/server.js` — additive `prefix` query param (production-safe)
+### Fix — exclude a configurable "reserved test" numeric range
 
-Extend `GET /api/members/next-id` to accept an **optional** `?prefix=M` or `?prefix=D` (case-insensitive, single letter). Behavior:
+Treat IDs whose numeric tail falls in a **reserved test range** as invisible to the next-id calculation. Default range: `9000–9999` (covers your `M9999` example with breathing room). The range applies per-prefix (so `M9999` and `D9999` are both reserved).
 
-- If `prefix` is provided and valid (`M` or `D`):
-  - Compute `MAX(numericTail)` across the recent batch **filtered to that prefix only**.
-  - Use that prefix for the suggestion.
-  - If no existing rows match the requested prefix, start at `1` with default `padLength = 5` (or inherit padding from the latest same-prefix row if any).
-- If `prefix` is **omitted**: behave **exactly** as today (full backward compatibility for v2.10.32–v2.10.57 clients).
-- Also widen the recent-batch query slightly so we don't miss the latest same-prefix row when many opposite-prefix rows were inserted recently:
-  - Change `LIMIT 50` → `LIMIT 200` (safe, indexed read on `ccode`, single-row result, negligible cost).
-  - Or better: when `prefix` is provided, run a tiny targeted query:
-    ```sql
-    SELECT mcode FROM cm_members
+Real members in `1…8999` and `10000+` are still considered. If real members ever cross `9000`, the system still keeps incrementing past `9999` correctly (the exclusion is only applied when computing MAX; once the real `MAX` is, say, `M8999`, suggesting `M9000`… we then *jump* over the reserved window — see "Jump rule" below).
+
+#### 1. `backend-api/server.js` — exclude reserved range, drop the LIMIT, jump the gap
+
+Rewrite the next-id query so it computes the true MAX of the numeric tail in SQL — **not** in JS over a `LIMIT 200` window. This also fixes the latent "real MAX outside the recent batch" bug.
+
+```sql
+SELECT
+  COALESCE(
+    MAX(
+      CAST(
+        SUBSTRING(mcode, LENGTH(?) + 1) AS UNSIGNED
+      )
+    ),
+    0
+  ) AS max_num,
+  -- detect padding from the most-recent same-prefix row for stability
+  (SELECT LENGTH(SUBSTRING(mcode, LENGTH(?) + 1))
+     FROM cm_members
     WHERE ccode = ? AND mcode LIKE CONCAT(?, '%')
-    ORDER BY id DESC LIMIT 200
-    ```
-- Validate input: ignore anything that isn't `[A-Za-z]{1}`; uppercase before use; only `M` and `D` are accepted to match app domain (others fall through to legacy behavior).
-- Response shape unchanged: `{ success, data: { suggested, prefix, padLength } }`.
-
-This is purely additive — older builds that don't send `prefix` keep working unchanged.
-
-#### 2. `src/services/mysqlApi.ts` — pass optional prefix
-
-Update `members.getNextId` signature to accept an optional `prefix?: 'M' | 'D'` and append `&prefix=…` to the query string when provided. No header changes (still preflight-free).
-
-#### 3. `src/components/AddMemberModal.tsx` — Member-Type selector
-
-Add a **Member Type** toggle at the top of the form (above the Member ID field):
-
-```
-Member Type: ( • Member [M] )  ( ○ Debtor [D] )
+      AND mcode REGEXP CONCAT('^', ?, '[0-9]+$')
+    ORDER BY id DESC LIMIT 1) AS pad_length
+FROM cm_members
+WHERE ccode = ?
+  AND mcode LIKE CONCAT(?, '%')
+  AND mcode REGEXP CONCAT('^', ?, '[0-9]+$')
+  AND CAST(SUBSTRING(mcode, LENGTH(?) + 1) AS UNSIGNED)
+      NOT BETWEEN ? AND ?;
 ```
 
-UI: a `ToggleGroup` (or two segmented buttons) with two options:
-- **Member** → prefix `M` (default on open)
-- **Debtor** → prefix `D`
+Bind variables:
+- `prefix` (`M` or `D`) used for `LENGTH(?)`, `LIKE`, and the `REGEXP` anchor
+- `ccode`
+- `RESERVED_TEST_MIN` (default `9000`) and `RESERVED_TEST_MAX` (default `9999`)
 
-Behavior:
-- New state: `memberType: 'M' | 'D'` (default `'M'`).
-- On modal open, default to `'M'` and call `fetchAndApplyNextId('M')`.
-- When the operator switches the toggle, immediately call `fetchAndApplyNextId(newType)` to refresh the suggested `mmcode`.
-- After a successful submit, **preserve the operator's last-chosen `memberType`** (sticky for rapid sequential entry of the same type) and call `fetchAndApplyNextId(memberType)` to fill the next ID of the same type.
-- Helper text under the field reads: *"Auto-suggested next {Member|Debtor} ID — you can edit if needed."*
+Then in JS:
 
-Validation:
-- Keep `mmcode` editable, but if the typed prefix doesn't match the selected `memberType`, show an inline hint (no hard block) — e.g., *"Heads-up: ID starts with D but type is Member."* This avoids regressing operators who manually type the full code.
+```js
+const RESERVED_TEST_MIN = 9000;
+const RESERVED_TEST_MAX = 9999;
 
-Accessibility:
-- The toggle group has an `aria-label="Member type"`; `DialogDescription` already present.
+let nextNumber = (max_num || 0) + 1;
 
-#### 4. Version bump (per workspace rule)
+// Jump rule: if the natural next number lands inside the reserved test range,
+// jump straight past it. Real members can keep growing forever.
+if (nextNumber >= RESERVED_TEST_MIN && nextNumber <= RESERVED_TEST_MAX) {
+  nextNumber = RESERVED_TEST_MAX + 1; // -> 10000
+}
 
-- `src/constants/appVersion.ts` → `v2.10.58` (Code 80).
-- `android/app/build.gradle` → `versionName "2.10.58"`, `versionCode 80`.
-- Comment: *"v2.10.58 — Add Member modal: explicit M/D type selector; backend next-id accepts optional prefix."*
+const padded = String(nextNumber).padStart(pad_length || 5, '0');
+const suggested = `${prefix}${padded}`;
+```
 
-### Backward Compatibility
+Behavior matrix (prefix `M`, default reserved `9000–9999`):
 
-| Client | Backend behavior |
+| Real MAX in DB (excl. reserved) | Suggested |
 |---|---|
-| v2.10.32–v2.10.57 (no `prefix` param) | Unchanged — falls back to "latest record's prefix" exactly as today |
-| v2.10.58 (sends `prefix=M` or `prefix=D`) | Returns next ID for that specific prefix |
+| `3556` | `M3557` |
+| `8999` | `M9000` → bumped to **`M10000`** (jumps the gap) |
+| `10042` | `M10043` |
+| no rows | `M00001` |
 
-No DB schema changes. No migrations. No changes to `/api/members` POST. No changes to `cm_members` columns. No effect on transactions, sync, receipts, cumulative, or photos.
+`M9999`, `M9000`, etc. are **ignored** when computing MAX, but they still exist and can still be looked up / used in transactions — only the auto-suggestion treats them as invisible.
+
+**Backward compatibility:** when `prefix` is omitted (legacy v2.10.32–v2.10.57 clients), keep today's branch as a fallback so legacy devices see no behavior change. The reserved-range exclusion is applied **only on the prefix-scoped branch** (v2.10.58+ clients) so we don't regress devices that don't know about prefixes.
+
+#### 2. Make the reserved range configurable (no code redeploy needed long-term)
+
+Read the range from `psettings` if a column exists, otherwise fall back to constants:
+
+```js
+// Per-ccode override (additive; falls back to defaults if columns missing or null)
+const [psRows] = await pool.query(
+  `SELECT
+     CAST(reserved_testid_min AS UNSIGNED) AS rmin,
+     CAST(reserved_testid_max AS UNSIGNED) AS rmax
+   FROM psettings WHERE ccode = ? LIMIT 1`,
+  [ccode]
+).catch(() => [[]]);
+const reservedMin = Number(psRows?.[0]?.rmin) > 0 ? Number(psRows[0].rmin) : 9000;
+const reservedMax = Number(psRows?.[0]?.rmax) > 0 ? Number(psRows[0].rmax) : 9999;
+```
+
+If the columns don't exist in your `psettings` table, the `.catch` swallows the error and we keep the safe defaults. **No DB migration is required for this fix to work**; the override is purely opt-in if your team later wants to change the range per cooperative.
+
+#### 3. `src/components/AddMemberModal.tsx` — surface the rule to the operator
+
+Tiny UX nudge so operators understand why a suggestion may "jump":
+
+- Below the auto-suggested ID, when the suggested numeric tail equals `RESERVED_TEST_MAX + 1` (e.g., `M10000`) **or** the response includes a flag `jumped: true`, show a subtle hint:
+  > *"Skipped reserved test range (M9000–M9999)."*
+- The backend response gains two optional, additive fields: `reservedRange: [9000, 9999]` and `jumped: boolean`. Older clients ignore them.
+
+#### 4. `src/services/mysqlApi.ts`
+
+Widen the response type with the optional fields:
+
+```ts
+getNextId: async (deviceFingerprint, prefix?) => Promise<ApiResponse<{
+  suggested: string;
+  prefix: string;
+  padLength: number;
+  reservedRange?: [number, number];
+  jumped?: boolean;
+}>>
+```
+
+No call-site changes elsewhere — it's purely additive.
+
+#### 5. Version bump
+
+- `src/constants/appVersion.ts` → **v2.10.59** (Code **81**)
+- `android/app/build.gradle` → `versionName "2.10.59"`, `versionCode 81`
+
+Comment: *"v2.10.59 — Member next-id ignores reserved test range (default 9000–9999) and computes true MAX in SQL; jump rule prevents suggesting reserved IDs."*
+
+### Why this is production-safe
+
+- **No schema change required.** The `psettings` override is best-effort with `.catch` fallback. Existing tables work unchanged.
+- **Legacy clients (no `prefix` query param)** keep the original code path → zero behavior change for v2.10.32–v2.10.57.
+- **No effect on `/api/members` POST** (still hard-fails on duplicate), no effect on transactions, sync, receipts, cumulative, or photos.
+- **Reserved members remain fully usable** — they're just hidden from the *suggestion* algorithm, not deleted or blocked.
+- **SQL change is a true `MAX(...)`** instead of a JS scan over the latest 200 rows → also fixes the latent "real top ID outside the recent window" bug that's likely contributing to the `M1000` suggestion you're seeing today.
 
 ### Files Touched
 
 | File | Change |
 |---|---|
-| `backend-api/server.js` | `/api/members/next-id` accepts optional `?prefix=M\|D`; targeted query when provided; legacy behavior preserved otherwise |
-| `src/services/mysqlApi.ts` | `members.getNextId(fp, prefix?)` appends `&prefix=` when set |
-| `src/components/AddMemberModal.tsx` | Add `memberType` state + toggle UI; refetch suggestion on toggle change and after submit; updated helper text |
-| `src/constants/appVersion.ts` | Bump to v2.10.58 (Code 80) |
-| `android/app/build.gradle` | Bump `versionName`/`versionCode` to 2.10.58 / 80 |
+| `backend-api/server.js` | `/api/members/next-id` (prefix branch): true SQL MAX with reserved-range exclusion + jump rule; optional `psettings` override; returns `reservedRange` + `jumped` |
+| `src/services/mysqlApi.ts` | `getNextId` response type gains optional `reservedRange`, `jumped` |
+| `src/components/AddMemberModal.tsx` | Subtle hint under the ID field when suggestion jumped over reserved range |
+| `src/constants/appVersion.ts` | Bump to v2.10.59 (Code 81) + changelog comment |
+| `android/app/build.gradle` | `versionName "2.10.59"`, `versionCode 81` |
 
 ### Verification Checklist
 
-1. Open Add Member with no recent activity → defaults to Member, suggests next `M…`.
-2. Switch toggle to Debtor → field refreshes to next `D…` instantly.
-3. Add a `D00012` → modal stays open, type stays "Debtor", next suggestion is `D00013`.
-4. Switch back to Member after adding several Debtors → suggestion correctly returns to next `M…` (not `D…`). ✓ root-cause fix.
-5. Old v2.10.32 / v2.10.57 phones still hit `/api/members/next-id` without `prefix` and get the legacy behavior — no regression.
-6. Manually typing a full ID still works; mismatch shows a soft hint, not a block.
-7. No new console errors; transactions, sync, receipts, photo audit all unchanged.
+1. With test member `M9999` present and real members up to `M3556` → suggestion is `M3557` (not `M10000`, not `M1000`). ✓
+2. With real members up to `M8999` and `M9999` test present → suggestion is `M10000` (jump rule). ✓
+3. With real members up to `M10042` → suggestion is `M10043`. ✓
+4. With no members at all → `M00001`. ✓
+5. Switch toggle to Debtor with test `D9999` and real `D0123` → suggestion `D0124`. ✓
+6. Legacy v2.10.57 phone (no `prefix` param) → original behavior, no regression. ✓
+7. Manually typing `M9999` still allowed (no hard block), and POST `/api/members` still de-dupes correctly. ✓
+8. No new console errors; transactions/sync/receipts/photo audit unchanged. ✓
 
 ### Out of Scope
 
-- Changing the POST `/api/members` validation (still hard-fails on duplicate `(mcode, ccode)`).
-- Migrating existing mis-prefixed members.
-- Adding more prefixes beyond `M` and `D`.
+- Migrating or hiding existing test members from any list views.
+- Adding a UI to edit the reserved range from inside the app (the `psettings` override path is wired up, but UI configuration can come later if you want).
+- Any changes to prefixes other than `M` and `D`.
 
