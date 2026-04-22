@@ -73,6 +73,8 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
   const [multOpt, setMultOpt] = useState(true);
   // v2.10.58: explicit Member (M) vs Debtor (D) selector for the next-id suggestion
   const [memberType, setMemberType] = useState<'M' | 'D'>('M');
+  // v2.10.59: surface when next-id skipped a reserved test-ID range
+  const [reservedSkipInfo, setReservedSkipInfo] = useState<{ min: number; max: number } | null>(null);
 
   // v2.10.43: inline success banner state
   const [lastSuccessMessage, setLastSuccessMessage] = useState<string | null>(null);
@@ -106,6 +108,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
   const fetchAndApplyNextId = async (prefixOverride?: 'M' | 'D') => {
     if (!navigator.onLine) return;
     setSuggestingId(true);
+    setReservedSkipInfo(null);
     try {
       const fp = await resolveFingerprint();
       if (!fp) return;
@@ -113,6 +116,13 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
       const result = await mysqlApi.members.getNextId(fp, requestedPrefix);
       if (result.success && result.data?.suggested) {
         setMmcode(result.data.suggested);
+        // v2.10.59: show subtle hint if backend jumped over the reserved test range
+        if (result.data.jumped && Array.isArray(result.data.reservedRange) && result.data.reservedRange.length === 2) {
+          setReservedSkipInfo({
+            min: Number(result.data.reservedRange[0]),
+            max: Number(result.data.reservedRange[1]),
+          });
+        }
       }
     } catch (err) {
       console.warn('[AddMember] getNextId failed:', err);
