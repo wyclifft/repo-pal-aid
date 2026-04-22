@@ -355,6 +355,12 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
             <p className="text-xs text-muted-foreground">
               Auto-suggested next {memberType === 'D' ? 'Debtor' : 'Member'} ID — you can edit if needed.
             </p>
+            {/* v2.10.59: hint shown when backend jumped over the reserved test range */}
+            {reservedSkipInfo && (
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                Skipped reserved test range ({memberType}{String(reservedSkipInfo.min).padStart(5, '0')}–{memberType}{String(reservedSkipInfo.max).padStart(5, '0')}).
+              </p>
+            )}
             {/* Soft prefix-mismatch hint (no hard block) */}
             {mmcode.trim() && mmcode.trim().charAt(0).toUpperCase() !== memberType && /^[A-Za-z]/.test(mmcode.trim()) && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
