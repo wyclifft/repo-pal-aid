@@ -1,4 +1,12 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.57: Photo Audit Viewer — preserve grid scroll position when closing a
+//           viewed photo. Root cause: list Dialog was unmounted while detail
+//           was open (`open={open && !selectedPhoto}`), destroying the
+//           scrollable grid and forcing scrollTop=0 on close. Fix: keep list
+//           Dialog mounted (open={open}); detail Dialog stacks on top. Added
+//           defensive scrollTop capture/restore via gridRef + savedScrollRef
+//           with a data-photo-id scrollIntoView fallback. Added DialogDescription
+//           for a11y. No backend, no logic, no API changes.
 // v2.10.56: Fix Store/AI writing wrong SCODE to transactions.session and CAN.
 //           ROOT CAUSE: Buy reads the active session from the Dashboard
 //           (localStorage.active_session_data), but Store/AI were calling
@@ -73,5 +81,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.56';
-export const APP_VERSION_CODE = 78;
+export const APP_VERSION = '2.10.57';
+export const APP_VERSION_CODE = 79;
