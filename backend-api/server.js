@@ -3321,6 +3321,34 @@ const server = http.createServer(async (req, res) => {
           ? rawPrefix
           : null;
 
+        // v2.10.59: Reserved test-ID range (default 9000–9999) is excluded from
+        // the next-id calculation. Operators reserve high-numbered IDs for test
+        // members; auto-suggestion must skip them so it doesn't propose
+        // M10000 (sitting on top of M9999) or collapse to a stale window.
+        // Range can be overridden per ccode via psettings.reserved_testid_min /
+        // reserved_testid_max (additive — if columns missing, defaults apply).
+        let reservedMin = 9000;
+        let reservedMax = 9999;
+        try {
+          const [psRows] = await pool.query(
+            `SELECT
+               CAST(reserved_testid_min AS UNSIGNED) AS rmin,
+               CAST(reserved_testid_max AS UNSIGNED) AS rmax
+             FROM psettings WHERE ccode = ? LIMIT 1`,
+            [ccode]
+          );
+          if (psRows && psRows[0]) {
+            const rmin = Number(psRows[0].rmin);
+            const rmax = Number(psRows[0].rmax);
+            if (rmin > 0 && rmax > 0 && rmax >= rmin) {
+              reservedMin = rmin;
+              reservedMax = rmax;
+            }
+          }
+        } catch (psErr) {
+          // psettings columns may not exist on this deployment — keep defaults silently
+        }
+
         // Pull recent mcodes for this ccode. When a prefix is requested, scope
         // the query to that prefix so we never miss the latest same-prefix row.
         let rows;
@@ -3345,22 +3373,61 @@ const server = http.createServer(async (req, res) => {
         let prefix = requestedPrefix || 'M';
         let padLength = 5;
         let nextNumber = 1;
+        let jumped = false;
 
-        if (rows.length > 0) {
-          // Use the most recent mcode to detect prefix + padding
+        // v2.10.59: Prefix-scoped branch uses true SQL MAX (across ALL rows,
+        // not just the recent 200) and excludes the reserved test range.
+        // Legacy branch (no prefix) preserves v2.10.43–v2.10.58 behavior so
+        // older clients see no change.
+        if (requestedPrefix) {
+          // Detect padding from the most recent same-prefix non-reserved row
+          let detectedPad = 5;
+          for (const r of rows) {
+            const code = String(r.mcode).trim();
+            const m = code.match(/^(\D*)(\d+)$/);
+            if (m && m[1] === requestedPrefix) {
+              const n = parseInt(m[2], 10);
+              if (!isNaN(n) && (n < reservedMin || n > reservedMax)) {
+                detectedPad = m[2].length;
+                break;
+              }
+            }
+          }
+          padLength = detectedPad;
+          prefix = requestedPrefix;
+
+          // True MAX numeric tail in SQL — bypasses LIMIT 200 entirely so we
+          // never miss the real top member because of recent test inserts.
+          // Filter: prefix + numeric-tail-only + outside reserved range.
+          const prefixLen = requestedPrefix.length;
+          const [maxRows] = await pool.query(
+            `SELECT COALESCE(MAX(CAST(SUBSTRING(mcode, ?) AS UNSIGNED)), 0) AS max_num
+             FROM cm_members
+             WHERE ccode = ?
+               AND mcode LIKE ?
+               AND mcode REGEXP CONCAT('^', ?, '[0-9]+$')
+               AND CAST(SUBSTRING(mcode, ?) AS UNSIGNED) NOT BETWEEN ? AND ?`,
+            [prefixLen + 1, ccode, `${requestedPrefix}%`, requestedPrefix, prefixLen + 1, reservedMin, reservedMax]
+          );
+          const maxNum = Number(maxRows?.[0]?.max_num || 0);
+          nextNumber = maxNum + 1;
+
+          // Jump rule: never propose an ID inside the reserved range
+          if (nextNumber >= reservedMin && nextNumber <= reservedMax) {
+            nextNumber = reservedMax + 1;
+            jumped = true;
+          }
+        } else if (rows.length > 0) {
+          // Legacy path (no prefix param) — unchanged from v2.10.58
           const latest = String(rows[0].mcode).trim();
           const match = latest.match(/^(\D*)(\d+)$/);
           if (match) {
-            // When a prefix was explicitly requested, keep it (don't let a
-            // non-matching legacy row overwrite the operator's choice).
-            prefix = requestedPrefix || (match[1] || '');
+            prefix = match[1] || '';
             padLength = match[2].length;
           } else {
-            prefix = requestedPrefix || '';
+            prefix = '';
             padLength = Math.max(5, latest.length);
           }
-
-          // Compute MAX(numericTail) across the recent batch (only matching prefix)
           let maxNum = 0;
           for (const r of rows) {
             const code = String(r.mcode).trim();
@@ -3378,7 +3445,14 @@ const server = http.createServer(async (req, res) => {
 
         return sendJSON(res, {
           success: true,
-          data: { suggested, prefix, padLength }
+          data: {
+            suggested,
+            prefix,
+            padLength,
+            // v2.10.59: additive fields — older clients ignore these
+            reservedRange: [reservedMin, reservedMax],
+            jumped
+          }
         });
       } catch (err) {
         console.error('[ERROR] /api/members/next-id GET failed:', err?.message);

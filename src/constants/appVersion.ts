@@ -1,4 +1,17 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.59: Member next-id ignores reserved test-ID range (default 9000–9999)
+//           and computes a true SQL MAX across all same-prefix rows (not just
+//           the recent 200), so suggestions correctly land at the next REAL
+//           member ID instead of collapsing to test-sentinel neighborhoods
+//           (e.g. M9999 test → real top M3556 → suggest M3557, not M10000 or
+//           M1000). Jump rule: if the natural next number falls inside the
+//           reserved range, jump straight past it. Range is per-ccode
+//           overridable via optional psettings.reserved_testid_min / _max
+//           columns (graceful fallback to defaults if columns absent — no
+//           migration required). Response gains optional `reservedRange` +
+//           `jumped` fields; modal shows a subtle hint when the suggestion
+//           skipped the reserved range. Legacy clients (no `prefix` param)
+//           keep prior behavior for full backward compatibility.
 // v2.10.58: Add Member modal — explicit Member (M) vs Debtor (D) type selector.
 //           Backend /api/members/next-id now accepts an optional ?prefix=M|D
 //           query parameter and, when present, scopes the suggestion to that
