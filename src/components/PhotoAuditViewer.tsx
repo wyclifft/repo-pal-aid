@@ -162,14 +162,18 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
 
   return (
     <>
-      {/* Main Photo List Dialog */}
-      <Dialog open={open && !selectedPhoto} onOpenChange={(isOpen) => !isOpen && onClose()}>
+      {/* Main Photo List Dialog — v2.10.57: stays mounted while detail is open
+          so the grid scroll position is preserved when closing a photo. */}
+      <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] p-0 overflow-hidden" hideCloseButton>
           <DialogHeader className="px-4 py-3 border-b bg-[#5E35B1] text-white flex flex-row items-center justify-between">
             <DialogTitle className="text-white flex items-center gap-2">
               <Image className="h-5 w-5" />
               Photo Audit Viewer
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Browse and inspect transaction photos for the active route.
+            </DialogDescription>
             <button onClick={onClose} className="p-2 bg-[#E53935] text-white rounded">
               <X className="h-4 w-4" />
             </button>
@@ -214,7 +218,7 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
             </div>
 
             {/* Photo Grid */}
-            <div className="max-h-[50vh] overflow-y-auto">
+            <div ref={gridRef} className="max-h-[50vh] overflow-y-auto">
               {loading ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-[#5E35B1]" />
@@ -241,7 +245,16 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
                   {photos.filter(p => !brokenPhotoIds.has(p.ID)).map((photo) => (
                     <button
                       key={photo.ID}
-                      onClick={() => setSelectedPhoto(photo)}
+                      data-photo-id={photo.ID}
+                      onClick={() => {
+                        // v2.10.57: capture scroll BEFORE opening detail so
+                        // we can restore it on close.
+                        if (gridRef.current) {
+                          savedScrollRef.current = gridRef.current.scrollTop;
+                        }
+                        lastViewedPhotoIdRef.current = photo.ID;
+                        setSelectedPhoto(photo);
+                      }}
                       className="bg-gray-50 rounded-lg overflow-hidden border hover:border-[#5E35B1] transition-colors text-left"
                     >
                       <div className="aspect-square bg-gray-200 relative">
