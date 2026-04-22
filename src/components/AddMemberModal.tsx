@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   Select,
   SelectContent,
@@ -70,6 +71,8 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
   const [idno, setIdno] = useState('');
   const [route, setRoute] = useState('');
   const [multOpt, setMultOpt] = useState(true);
+  // v2.10.58: explicit Member (M) vs Debtor (D) selector for the next-id suggestion
+  const [memberType, setMemberType] = useState<'M' | 'D'>('M');
 
   // v2.10.43: inline success banner state
   const [lastSuccessMessage, setLastSuccessMessage] = useState<string | null>(null);
@@ -99,14 +102,15 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
     return fp;
   };
 
-  // Helper: fetch next-id suggestion and pre-fill mmcode
-  const fetchAndApplyNextId = async () => {
+  // Helper: fetch next-id suggestion (optionally for a specific prefix) and pre-fill mmcode
+  const fetchAndApplyNextId = async (prefixOverride?: 'M' | 'D') => {
     if (!navigator.onLine) return;
     setSuggestingId(true);
     try {
       const fp = await resolveFingerprint();
       if (!fp) return;
-      const result = await mysqlApi.members.getNextId(fp);
+      const requestedPrefix = prefixOverride ?? memberType;
+      const result = await mysqlApi.members.getNextId(fp, requestedPrefix);
       if (result.success && result.data?.suggested) {
         setMmcode(result.data.suggested);
       }
@@ -126,14 +130,25 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
       setIdno('');
       setRoute('');
       setMultOpt(true);
+      // Default to Member on every fresh open
+      setMemberType('M');
       clearSuccessBanner();
-      // Fire-and-forget: pre-fill mmcode with next available ID
-      void fetchAndApplyNextId();
+      // Fire-and-forget: pre-fill mmcode with next available Member ID
+      void fetchAndApplyNextId('M');
     } else {
       clearSuccessBanner();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Handle Member/Debtor toggle: refresh the suggested ID for the chosen prefix
+  const handleMemberTypeChange = (value: string) => {
+    if (value !== 'M' && value !== 'D') return; // ToggleGroup may emit '' on deselect
+    if (value === memberType) return;
+    setMemberType(value);
+    editingClear();
+    void fetchAndApplyNextId(value);
+  };
 
   // Cleanup timer on unmount
   useEffect(() => {
