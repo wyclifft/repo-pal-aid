@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useState, useEffect, useRef } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { X, Search, ChevronLeft, ChevronRight, Image, Calendar, User, FileText, Loader2, Package } from 'lucide-react';
 import { API_CONFIG } from '@/config/api';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -36,6 +36,15 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
 
   // Track photos whose image failed to load (deleted on server)
   const [brokenPhotoIds, setBrokenPhotoIds] = useState<Set<number>>(new Set());
+
+  // v2.10.57: Preserve grid scroll position when opening/closing the photo detail.
+  // Previously the list Dialog was unmounted while detail was open
+  // (`open={open && !selectedPhoto}`), which destroyed the scrollable grid and
+  // forced it back to the top on close. We now keep the list mounted and also
+  // capture/restore scrollTop as a defensive backup.
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const savedScrollRef = useRef<number>(0);
+  const lastViewedPhotoIdRef = useRef<number | null>(null);
 
   // Fetch transaction photos from server — filtered by device ccode
   const fetchPhotos = async () => {
@@ -102,6 +111,31 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, dateFilter]);
+
+  // v2.10.57: When the detail dialog closes, restore the grid scroll position
+  // so the operator stays where they were instead of being thrown to the top.
+  useEffect(() => {
+    if (selectedPhoto !== null) return;
+    if (!gridRef.current) return;
+    const grid = gridRef.current;
+    const saved = savedScrollRef.current;
+    const lastId = lastViewedPhotoIdRef.current;
+
+    // Restore on the next frame so layout is settled after the detail unmounts.
+    const raf = requestAnimationFrame(() => {
+      if (!gridRef.current) return;
+      // Primary: restore exact scrollTop.
+      grid.scrollTop = saved;
+      // Fallback: if the saved position is no longer valid (list shrank or
+      // refreshed while detail was open), scroll the previously viewed
+      // thumbnail back into view.
+      if (lastId !== null && grid.scrollTop !== saved) {
+        const node = grid.querySelector<HTMLElement>(`[data-photo-id="${lastId}"]`);
+        node?.scrollIntoView({ block: 'center' });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [selectedPhoto]);
 
   // Build full photo URL
   const getPhotoUrl = (photo: TransactionPhoto): string => {
