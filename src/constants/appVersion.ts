@@ -1,4 +1,16 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.58: Add Member modal — explicit Member (M) vs Debtor (D) type selector.
+//           Backend /api/members/next-id now accepts an optional ?prefix=M|D
+//           query parameter and, when present, scopes the suggestion to that
+//           prefix (targeted SQL: mcode LIKE 'M%' or 'D%', LIMIT 200). When the
+//           param is omitted, behavior is identical to v2.10.43–v2.10.57
+//           (latest-row prefix) — full backward compatibility for legacy
+//           devices. Frontend modal defaults to Member, refetches the next ID
+//           on toggle change, and keeps the chosen type sticky across rapid
+//           sequential entries. Soft inline hint when typed prefix differs
+//           from selected type (no hard block). Adds DialogDescription a11y.
+//           No DB migrations, no schema changes, no impact on transactions /
+//           sync / receipts / cumulative / photos.
 // v2.10.57: Photo Audit Viewer — preserve grid scroll position when closing a
 //           viewed photo. Root cause: list Dialog was unmounted while detail
 //           was open (`open={open && !selectedPhoto}`), destroying the
@@ -81,5 +93,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.57';
-export const APP_VERSION_CODE = 79;
+export const APP_VERSION = '2.10.58';
+export const APP_VERSION_CODE = 80;

@@ -3314,16 +3314,35 @@ const server = http.createServer(async (req, res) => {
         }
         const ccode = deviceRows[0].ccode;
 
-        // Pull the most recent batch of mcodes for this ccode
-        const [rows] = await pool.query(
-          `SELECT mcode FROM cm_members
-           WHERE ccode = ? AND mcode IS NOT NULL AND mcode <> ''
-           ORDER BY id DESC LIMIT 50`,
-          [ccode]
-        );
+        // v2.10.58: optional explicit prefix (M | D). Backward compatible:
+        // when omitted, behavior matches v2.10.43–v2.10.57 (latest-row prefix).
+        const rawPrefix = (parsedUrl.query.prefix || '').toString().trim().toUpperCase();
+        const requestedPrefix = /^[A-Z]$/.test(rawPrefix) && (rawPrefix === 'M' || rawPrefix === 'D')
+          ? rawPrefix
+          : null;
+
+        // Pull recent mcodes for this ccode. When a prefix is requested, scope
+        // the query to that prefix so we never miss the latest same-prefix row.
+        let rows;
+        if (requestedPrefix) {
+          [rows] = await pool.query(
+            `SELECT mcode FROM cm_members
+             WHERE ccode = ? AND mcode IS NOT NULL AND mcode <> ''
+               AND mcode LIKE ?
+             ORDER BY id DESC LIMIT 200`,
+            [ccode, `${requestedPrefix}%`]
+          );
+        } else {
+          [rows] = await pool.query(
+            `SELECT mcode FROM cm_members
+             WHERE ccode = ? AND mcode IS NOT NULL AND mcode <> ''
+             ORDER BY id DESC LIMIT 200`,
+            [ccode]
+          );
+        }
 
         // Default if no members exist yet
-        let prefix = 'M';
+        let prefix = requestedPrefix || 'M';
         let padLength = 5;
         let nextNumber = 1;
 
@@ -3332,11 +3351,12 @@ const server = http.createServer(async (req, res) => {
           const latest = String(rows[0].mcode).trim();
           const match = latest.match(/^(\D*)(\d+)$/);
           if (match) {
-            prefix = match[1] || '';
+            // When a prefix was explicitly requested, keep it (don't let a
+            // non-matching legacy row overwrite the operator's choice).
+            prefix = requestedPrefix || (match[1] || '');
             padLength = match[2].length;
           } else {
-            // Non-conforming format — fall back to defaults but keep latest as-is hint
-            prefix = '';
+            prefix = requestedPrefix || '';
             padLength = Math.max(5, latest.length);
           }
 
