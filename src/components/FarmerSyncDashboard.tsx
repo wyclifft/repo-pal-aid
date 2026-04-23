@@ -48,7 +48,7 @@ const getActiveRoute = (): string => {
 };
 
 export const FarmerSyncDashboard = () => {
-  const { getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
+  const { db, getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
   const { settings } = useAppSettings();
   const [entries, setEntries] = useState<FarmerSyncEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -315,20 +315,20 @@ export const FarmerSyncDashboard = () => {
       // Step 3: Load farmer list — transaction-driven (online) or cached (offline)
       let results: FarmerSyncEntry[] | null = null;
 
-      if (navigator.onLine) {
-        // Build name lookup from cm_members (for display names only)
-        setProgressInfo({ current: 0, total: 0, status: 'Fetching farmer names...' });
-        const nameLookup = await buildNameLookup();
+      // Always build name lookup — used by both online and offline paths for display names
+      setProgressInfo({ current: 0, total: 0, status: 'Fetching farmer names...' });
+      const nameLookup = await buildNameLookup();
 
+      if (navigator.onLine) {
         // Use batch API as the sole source of the farmer list
         setProgressInfo({ current: 0, total: 0, status: 'Fetching transaction data...' });
         results = await loadFromBatchAPI(nameLookup, activeRoute || undefined);
       }
 
-      // Offline fallback or batch API failure
+      // Offline fallback or batch API failure — transaction-driven (v2.10.62)
       if (!results) {
         setProgressInfo({ current: 0, total: 0, status: 'Loading from offline cache...' });
-        results = await loadFromOfflineCache();
+        results = await loadFromOfflineCache(nameLookup);
       }
 
       // Sort: cached first, then alphabetical
