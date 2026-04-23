@@ -1,4 +1,20 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.60: Fix multOpt=0 silent data loss after offline captures.
+//           LAYER 1 (capture): useSessionBlacklist now org-aware. Coffee orgs
+//           compare receipt's season_code/session against the active SCODE
+//           (e.g. S0002), closing the offline blind-spot where coffee farmers
+//           could be re-captured freely. Dairy keeps AM/PM but tolerates
+//           legacy stamps like 'AM SESSION'/'MORNING'. Date comparison now
+//           uses local YYYY-MM-DD instead of toISOString to fix EAT midnight
+//           rollover. Index.tsx passes activeSession.scode into the hook.
+//           LAYER 2 (sync): useDataSync no longer silently deletes the second
+//           offline receipt when the backend rejects it with
+//           DUPLICATE_SESSION_DELIVERY. The local IndexedDB row is preserved,
+//           a deduped toast surfaces the conflict to the operator, and an
+//           in-memory conflictedReceiptsCount is exposed for UI badging.
+//           The "real duplicate by transrefno" cleanup path is unchanged.
+//           LAYER 3 (UI): Dashboard sync row shows a small amber chip
+//           "⚠ N stuck" when conflictedReceiptsCount > 0. No backend change.
 // v2.10.59: Member next-id ignores reserved test-ID range (default 9000–9999)
 //           and computes a true SQL MAX across all same-prefix rows (not just
 //           the recent 200), so suggestions correctly land at the next REAL
@@ -106,5 +122,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.59';
-export const APP_VERSION_CODE = 81;
+export const APP_VERSION = '2.10.60';
+export const APP_VERSION_CODE = 82;

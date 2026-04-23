@@ -111,7 +111,7 @@ const Index = () => {
   } = useIndexedDB();
   
   // Data sync hook for background syncing
-  const { isSyncing, pendingCount, pendingMilkCount, pendingSalesCount, syncAllData } = useDataSync();
+  const { isSyncing, pendingCount, pendingMilkCount, pendingSalesCount, conflictedReceiptsCount, syncAllData } = useDataSync();
   
   // App-wide settings from psettings
   const { 
@@ -154,7 +154,9 @@ const Index = () => {
   const activeSessionTimeFrom = activeSession ? 
     (typeof activeSession.time_from === 'number' ? activeSession.time_from : parseInt(String(activeSession.time_from), 10)) 
     : undefined;
-  const { blacklistedFarmerIds, isBlacklisted, addToBlacklist, refreshBlacklist, clearBlacklist, getSessionType } = useSessionBlacklist(activeSessionTimeFrom);
+  // v2.10.60: pass active SCODE so coffee orgs can blacklist offline duplicates by season
+  const activeSeasonCode = activeSession ? String((activeSession as any).scode || '').trim() : undefined;
+  const { blacklistedFarmerIds, isBlacklisted, addToBlacklist, refreshBlacklist, clearBlacklist, getSessionType } = useSessionBlacklist(activeSessionTimeFrom, activeSeasonCode);
   
   // Local session-scoped set to track submitted farmers (extra safeguard for edge cases)
   // This covers scenarios where IndexedDB might not have the record yet
@@ -1563,6 +1565,7 @@ const Index = () => {
         pendingCount={pendingCount}
         pendingMilkCount={pendingMilkCount}
         pendingSalesCount={pendingSalesCount}
+        conflictedReceiptsCount={conflictedReceiptsCount}
         onStartCollection={handleStartCollection}
         onStartSelling={handleStartSelling}
         onLogout={handleLogout}

@@ -60,6 +60,8 @@ interface DashboardProps {
   pendingCount: number;
   pendingMilkCount?: number;
   pendingSalesCount?: number;
+  // v2.10.60: count of multOpt=0 receipts the sync engine refused to upload (DUPLICATE_SESSION_DELIVERY)
+  conflictedReceiptsCount?: number;
   onStartCollection: (route: Route, session: Session, product: Item | null) => void;
   onStartSelling: (route: Route, session: Session, product: Item | null) => void;
   onLogout: () => void;
@@ -74,6 +76,7 @@ export const Dashboard = ({
   pendingCount,
   pendingMilkCount = 0,
   pendingSalesCount = 0,
+  conflictedReceiptsCount = 0,
   onStartCollection,
   onStartSelling,
   onLogout,
@@ -470,7 +473,7 @@ export const Dashboard = ({
       <div className="flex-1 bg-white flex flex-col px-3 py-2" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
         
         {/* Sync Status */}
-        <div className="text-center py-1.5 flex items-center justify-center gap-3">
+        <div className="text-center py-1.5 flex items-center justify-center gap-3 flex-wrap">
           <span className="text-gray-800 font-bold tracking-wide" style={{ fontSize: 'clamp(0.7rem, 2.5vw, 0.8rem)' }}>
             {produceLabel}: {pendingMilkCount}
           </span>
@@ -478,6 +481,16 @@ export const Dashboard = ({
           <span className="text-gray-800 font-bold tracking-wide" style={{ fontSize: 'clamp(0.7rem, 2.5vw, 0.8rem)' }}>
             Store/AI: {pendingSalesCount}
           </span>
+          {/* v2.10.60: stuck multOpt=0 conflicts (kept locally, awaiting review) */}
+          {conflictedReceiptsCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-semibold"
+              style={{ fontSize: 'clamp(0.65rem, 2.3vw, 0.75rem)' }}
+              title="One or more offline receipts could not be uploaded because the server already has a delivery for that farmer in this session. Open Recent Receipts to review."
+            >
+              ⚠ {conflictedReceiptsCount} stuck
+            </span>
+          )}
         </div>
 
         {/* Reconnect Button */}

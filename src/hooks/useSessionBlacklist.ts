@@ -16,12 +16,36 @@ export const getCurrentSessionType = (): 'AM' | 'PM' => {
   return hour < 12 ? 'AM' : 'PM';
 };
 
-// Get today's date in YYYY-MM-DD format
-export const getTodayDate = (): string => {
-  return new Date().toISOString().split('T')[0];
+// v2.10.60: local-date helper (YYYY-MM-DD) per timezone-date-integrity-standard.
+// Replaces toISOString().split('T')[0] which shifts dates in EAT around midnight.
+const getLocalDateString = (d: Date): string => {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 };
 
-export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
+// Get today's date in YYYY-MM-DD format (local time)
+export const getTodayDate = (): string => {
+  return getLocalDateString(new Date());
+};
+
+// v2.10.60: Org-type detection from cached app_settings
+const isCoffeeOrg = (): boolean => {
+  try {
+    const cached = localStorage.getItem('app_settings');
+    if (!cached) return false;
+    const s = JSON.parse(cached);
+    return s?.orgtype === 'C';
+  } catch {
+    return false;
+  }
+};
+
+export const useSessionBlacklist = (
+  activeSessionTimeFrom?: number,
+  activeSeasonCode?: string // v2.10.60: SCODE for coffee orgs (e.g. 'S0002')
+) => {
   const [blacklistedFarmerIds, setBlacklistedFarmerIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
   const { getUnsyncedReceipts } = useIndexedDB();
@@ -54,19 +78,36 @@ export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
     const blacklist = new Set<string>();
     const today = getTodayDate();
     const sessionType = getSessionType();
+    const coffee = isCoffeeOrg();
+    const seasonCode = String(activeSeasonCode || '').trim();
 
     try {
       // 1. Check IndexedDB for unsynced receipts (offline submissions that were submitted but not synced)
+      // v2.10.60: Org-aware session matching — fixes coffee blind-spot and dairy 'AM SESSION' legacy stamps.
       try {
         const unsyncedReceipts = await getUnsyncedReceipts();
         unsyncedReceipts.forEach((r: MilkCollection) => {
-          const cleanId = r.farmer_id.replace(/^#/, '').trim();
-          const receiptDate = new Date(r.collection_date).toISOString().split('T')[0];
-          if (
-            farmersWithMultOptZero.has(cleanId) &&
-            r.session === sessionType &&
-            receiptDate === today
-          ) {
+          const cleanId = String(r.farmer_id || '').replace(/^#/, '').trim();
+          // Use local date (not UTC) — prevents EAT midnight rollover false-negatives.
+          const receiptDate = r.collection_date
+            ? getLocalDateString(new Date(r.collection_date))
+            : today;
+
+          if (!farmersWithMultOptZero.has(cleanId)) return;
+          if (receiptDate !== today) return;
+
+          let sessionMatches = false;
+          if (coffee) {
+            // Coffee: compare receipt's season_code (preferred) or session against active SCODE.
+            const rCode = String((r as any).season_code || r.session || '').trim();
+            sessionMatches = !!seasonCode && rCode === seasonCode;
+          } else {
+            // Dairy: AM/PM. Tolerate legacy stamps like 'AM SESSION', 'MORNING', etc.
+            const rSession = String(r.session || '').trim().toUpperCase();
+            sessionMatches = rSession === sessionType || rSession.includes(sessionType);
+          }
+
+          if (sessionMatches) {
             blacklist.add(cleanId);
           }
         });
@@ -82,12 +123,14 @@ export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
           // Batch check multOpt=0 farmers with concurrency limit
           const unchecked = Array.from(farmersWithMultOptZero).filter(id => !blacklist.has(id));
           const CONCURRENCY = 5;
+          // For coffee, the backend session value is the SCODE; for dairy it's AM/PM.
+          const apiSession = coffee ? (seasonCode || sessionType) : sessionType;
           for (let i = 0; i < unchecked.length; i += CONCURRENCY) {
             const batch = unchecked.slice(i, i + CONCURRENCY);
             const results = await Promise.allSettled(
               batch.map(async (fId) => {
                 const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-                  fId, sessionType, today, today, deviceFingerprint
+                  fId, apiSession, today, today, deviceFingerprint
                 );
                 if (existing) blacklist.add(fId);
               })
@@ -99,13 +142,13 @@ export const useSessionBlacklist = (activeSessionTimeFrom?: number) => {
       }
 
       setBlacklistedFarmerIds(blacklist);
-      console.log(`🚫 Blacklisted ${blacklist.size} farmers for ${sessionType} session:`, Array.from(blacklist));
+      console.log(`🚫 Blacklisted ${blacklist.size} farmers for ${coffee ? `coffee/${seasonCode}` : sessionType} session:`, Array.from(blacklist));
     } catch (error) {
       console.error('Failed to refresh blacklist:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [getSessionType, getUnsyncedReceipts]);
+  }, [getSessionType, getUnsyncedReceipts, activeSeasonCode]);
 
   // Add a farmer to the blacklist (called after successful submission, not capture)
   const addToBlacklist = useCallback((farmerId: string) => {

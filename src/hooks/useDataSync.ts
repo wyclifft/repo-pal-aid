@@ -36,6 +36,10 @@ export const useDataSync = () => {
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingMilkCount, setPendingMilkCount] = useState(0);
   const [pendingSalesCount, setPendingSalesCount] = useState(0);
+  // v2.10.60: count of receipts the sync engine has refused to upload
+  // because of DUPLICATE_SESSION_DELIVERY (multOpt=0). These rows are
+  // intentionally KEPT in IndexedDB for human review.
+  const [conflictedReceiptsCount, setConflictedReceiptsCount] = useState(0);
   // Member sync state for banner display
   const [isSyncingMembers, setIsSyncingMembers] = useState(false);
   const [memberSyncCount, setMemberSyncCount] = useState(0);
@@ -99,6 +103,30 @@ export const useDataSync = () => {
     let synced = 0;
     let failed = 0;
     const useNativeStorage = isNativeStorageAvailable();
+    // v2.10.60: dedupe DUPLICATE_SESSION_DELIVERY toasts within a single sync run
+    // (one toast per farmer+session+date) and count stuck receipts for UI badge.
+    const conflictKeysToasted = new Set<string>();
+    const conflictKeysSeen = new Set<string>();
+    const recordConflict = (
+      farmerId: string,
+      sessionVal: string,
+      dateVal: string,
+      localRef: string,
+      remoteUploadRef?: string
+    ) => {
+      const key = `${farmerId}|${sessionVal}|${dateVal}`;
+      conflictKeysSeen.add(key);
+      if (!conflictKeysToasted.has(key)) {
+        conflictKeysToasted.add(key);
+        const tail = remoteUploadRef
+          ? ` (server has workflow ${remoteUploadRef})`
+          : '';
+        toast.error(
+          `Farmer ${farmerId} already has a synced delivery for ${sessionVal} on ${dateVal}. Local receipt #${localRef} was not uploaded${tail} — please review.`,
+          { duration: 8000 }
+        );
+      }
+    };
 
     try {
       const rawReceipts = await getUnsyncedReceipts();
@@ -169,6 +197,9 @@ export const useDataSync = () => {
 
           console.log(`[SYNC] Processing ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
 
+          // v2.10.60: hoist normalizedSession so the catch block can reference it
+          let normalizedSession: string = 'AM';
+
           try {
             // v2.10.51: Coffee orgs → send SCODE as session value (NEVER AM/PM).
             // Dairy orgs → normalize to AM/PM as before.
@@ -178,7 +209,7 @@ export const useDataSync = () => {
                 return s?.orgtype === 'C';
               } catch { return false; }
             })();
-            let normalizedSession: string = 'AM';
+            // normalizedSession declared in outer scope (above try) — assign here
             if (orgIsCoffee) {
               normalizedSession = String(receipt.season_code || receipt.session || '').trim();
             } else {
@@ -188,10 +219,13 @@ export const useDataSync = () => {
 
             // Client-side FINAL GUARD for multOpt=0 during background sync
             if (receipt.multOpt === 0) {
-              const receiptDate = new Date(receipt.collection_date).toISOString().split('T')[0];
+              // v2.10.60: use local date (YYYY-MM-DD) — no toISOString shift.
+              const cd = new Date(receipt.collection_date);
+              const receiptDate = `${cd.getFullYear()}-${String(cd.getMonth() + 1).padStart(2, '0')}-${String(cd.getDate()).padStart(2, '0')}`;
               try {
+                const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                 const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-                  String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+                  cleanFarmerId,
                   normalizedSession,
                   receiptDate,
                   receiptDate,
@@ -209,14 +243,16 @@ export const useDataSync = () => {
                   ) {
                     console.log(`[SYNC] multOpt=0: uploadrefno matches (${incomingUploadRef}); proceeding: ${receipt.reference_no}`);
                   } else {
-                    // SAFETY: Do NOT delete local record on ambiguous multOpt=0 cases
-                    // Instead, mark as failed so it can be retried or reviewed
-                    // This prevents silent cumulative drops when the existing record
-                    // is from a different workflow
-                    console.warn(`[SYNC] multOpt=0 conflict: existing uploadrefno=${existingUploadRef}, incoming=${incomingUploadRef}. Keeping local record for review: ${receipt.reference_no}`);
+                    // v2.10.60: DUPLICATE_SESSION_DELIVERY conflict — KEEP local row,
+                    // surface a clear toast, count for UI badge. Never silently drop.
+                    console.warn(`[SYNC] DUPLICATE_SESSION_DELIVERY (frontend guard): farmer=${cleanFarmerId} session=${normalizedSession} date=${receiptDate}; existing uploadrefno=${existingUploadRef}, incoming=${incomingUploadRef}. Keeping local row: ${receipt.reference_no}`);
                     if (useNativeStorage) {
-                      await markNativeRecordFailed(receipt.reference_no, `multOpt=0 conflict: existing workflow ${existingUploadRef} differs from ${incomingUploadRef}`);
+                      await markNativeRecordFailed(
+                        receipt.reference_no,
+                        `DUPLICATE_SESSION_DELIVERY: server already has uploadrefno=${existingUploadRef} for farmer ${cleanFarmerId} ${normalizedSession} ${receiptDate}`
+                      );
                     }
+                    recordConflict(cleanFarmerId, normalizedSession, receiptDate, receipt.reference_no, String(existingUploadRef || ''));
                     failed++;
                     continue;
                   }
@@ -351,7 +387,28 @@ export const useDataSync = () => {
               }
             } else {
               const errorMsg = (result.error || result.message || '').toLowerCase();
-              if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+              const errorCode = String((result as any).error || (result as any).code || '').toUpperCase();
+              const isSessionDuplicate =
+                errorCode === 'DUPLICATE_SESSION_DELIVERY' ||
+                errorMsg.includes('duplicate_session_delivery') ||
+                errorMsg.includes('session delivery');
+
+              if (isSessionDuplicate) {
+                // v2.10.60: backend rejected with DUPLICATE_SESSION_DELIVERY (multOpt=0).
+                // KEEP local row, surface toast, count for UI badge. NEVER delete.
+                const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
+                const cd = new Date(receipt.collection_date);
+                const receiptDate = `${cd.getFullYear()}-${String(cd.getMonth() + 1).padStart(2, '0')}-${String(cd.getDate()).padStart(2, '0')}`;
+                console.warn(`[SYNC] DUPLICATE_SESSION_DELIVERY (backend 409): keeping local row ${receipt.reference_no}`);
+                if (useNativeStorage) {
+                  await markNativeRecordFailed(
+                    receipt.reference_no,
+                    `DUPLICATE_SESSION_DELIVERY: server rejected farmer ${cleanFarmerId} ${normalizedSession} ${receiptDate}`
+                  );
+                }
+                recordConflict(cleanFarmerId, normalizedSession, receiptDate, receipt.reference_no, (result as any)?.existing_uploadrefno);
+                failed++;
+              } else if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
                 // Duplicate response: verify payload matches before deleting local
                 let safeToDelete = false;
                 try {
@@ -403,9 +460,27 @@ export const useDataSync = () => {
             }
           } catch (err: any) {
             console.error(`[ERROR] Exception syncing ${receipt.reference_no}:`, err);
-            
+
             const errorMsg = (err?.message || '').toLowerCase();
-            if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+            // v2.10.60: detect DUPLICATE_SESSION_DELIVERY surfaced as a thrown error too
+            const isSessionDuplicate =
+              errorMsg.includes('duplicate_session_delivery') ||
+              errorMsg.includes('session delivery');
+
+            if (isSessionDuplicate) {
+              const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
+              const cd = new Date(receipt.collection_date);
+              const receiptDate = `${cd.getFullYear()}-${String(cd.getMonth() + 1).padStart(2, '0')}-${String(cd.getDate()).padStart(2, '0')}`;
+              console.warn(`[SYNC] DUPLICATE_SESSION_DELIVERY (exception): keeping local row ${receipt.reference_no}`);
+              if (useNativeStorage) {
+                await markNativeRecordFailed(
+                  receipt.reference_no,
+                  `DUPLICATE_SESSION_DELIVERY: ${err?.message || 'session delivery conflict'}`
+                );
+              }
+              recordConflict(cleanFarmerId, normalizedSession, receiptDate, receipt.reference_no);
+              failed++;
+            } else if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
               console.log(`[SKIP] Already synced (exception duplicate): ${receipt.reference_no}`);
               if (useNativeStorage) {
                 await markNativeRecordSynced(receipt.reference_no);
@@ -450,6 +525,8 @@ export const useDataSync = () => {
 
       if (mountedRef.current) {
         setPendingCount(failed);
+        // v2.10.60: surface stuck multOpt=0 conflicts for UI badge
+        setConflictedReceiptsCount(conflictKeysSeen.size);
       }
       
       console.log(`[SYNC] Sync complete: ${synced} synced, ${failed} failed out of ${unsyncedReceipts.length} total`);
@@ -901,6 +978,9 @@ export const useDataSync = () => {
     pendingCount,
     pendingMilkCount,
     pendingSalesCount,
+    // v2.10.60: count of multOpt=0 receipts kept locally because the server
+    // already has a delivery for that farmer/session/date (DUPLICATE_SESSION_DELIVERY).
+    conflictedReceiptsCount,
     updatePendingCount,
     // Member sync state for banner
     isSyncingMembers,
