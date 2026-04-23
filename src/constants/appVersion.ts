@@ -136,5 +136,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.60';
-export const APP_VERSION_CODE = 82;
+export const APP_VERSION = '2.10.61';
+export const APP_VERSION_CODE = 83;
