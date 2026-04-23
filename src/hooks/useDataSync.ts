@@ -457,9 +457,27 @@ export const useDataSync = () => {
             }
           } catch (err: any) {
             console.error(`[ERROR] Exception syncing ${receipt.reference_no}:`, err);
-            
+
             const errorMsg = (err?.message || '').toLowerCase();
-            if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+            // v2.10.60: detect DUPLICATE_SESSION_DELIVERY surfaced as a thrown error too
+            const isSessionDuplicate =
+              errorMsg.includes('duplicate_session_delivery') ||
+              errorMsg.includes('session delivery');
+
+            if (isSessionDuplicate) {
+              const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
+              const cd = new Date(receipt.collection_date);
+              const receiptDate = `${cd.getFullYear()}-${String(cd.getMonth() + 1).padStart(2, '0')}-${String(cd.getDate()).padStart(2, '0')}`;
+              console.warn(`[SYNC] DUPLICATE_SESSION_DELIVERY (exception): keeping local row ${receipt.reference_no}`);
+              if (useNativeStorage) {
+                await markNativeRecordFailed(
+                  receipt.reference_no,
+                  `DUPLICATE_SESSION_DELIVERY: ${err?.message || 'session delivery conflict'}`
+                );
+              }
+              recordConflict(cleanFarmerId, normalizedSession, receiptDate, receipt.reference_no);
+              failed++;
+            } else if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
               console.log(`[SKIP] Already synced (exception duplicate): ${receipt.reference_no}`);
               if (useNativeStorage) {
                 await markNativeRecordSynced(receipt.reference_no);
