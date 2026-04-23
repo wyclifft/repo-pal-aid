@@ -209,7 +209,7 @@ export const useDataSync = () => {
                 return s?.orgtype === 'C';
               } catch { return false; }
             })();
-            let normalizedSession: string = 'AM';
+            // normalizedSession declared in outer scope (above try) — assign here
             if (orgIsCoffee) {
               normalizedSession = String(receipt.season_code || receipt.session || '').trim();
             } else {
