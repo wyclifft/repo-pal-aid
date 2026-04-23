@@ -103,6 +103,30 @@ export const useDataSync = () => {
     let synced = 0;
     let failed = 0;
     const useNativeStorage = isNativeStorageAvailable();
+    // v2.10.60: dedupe DUPLICATE_SESSION_DELIVERY toasts within a single sync run
+    // (one toast per farmer+session+date) and count stuck receipts for UI badge.
+    const conflictKeysToasted = new Set<string>();
+    const conflictKeysSeen = new Set<string>();
+    const recordConflict = (
+      farmerId: string,
+      sessionVal: string,
+      dateVal: string,
+      localRef: string,
+      remoteUploadRef?: string
+    ) => {
+      const key = `${farmerId}|${sessionVal}|${dateVal}`;
+      conflictKeysSeen.add(key);
+      if (!conflictKeysToasted.has(key)) {
+        conflictKeysToasted.add(key);
+        const tail = remoteUploadRef
+          ? ` (server has workflow ${remoteUploadRef})`
+          : '';
+        toast.error(
+          `Farmer ${farmerId} already has a synced delivery for ${sessionVal} on ${dateVal}. Local receipt #${localRef} was not uploaded${tail} — please review.`,
+          { duration: 8000 }
+        );
+      }
+    };
 
     try {
       const rawReceipts = await getUnsyncedReceipts();
@@ -192,10 +216,13 @@ export const useDataSync = () => {
 
             // Client-side FINAL GUARD for multOpt=0 during background sync
             if (receipt.multOpt === 0) {
-              const receiptDate = new Date(receipt.collection_date).toISOString().split('T')[0];
+              // v2.10.60: use local date (YYYY-MM-DD) — no toISOString shift.
+              const cd = new Date(receipt.collection_date);
+              const receiptDate = `${cd.getFullYear()}-${String(cd.getMonth() + 1).padStart(2, '0')}-${String(cd.getDate()).padStart(2, '0')}`;
               try {
+                const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                 const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-                  String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+                  cleanFarmerId,
                   normalizedSession,
                   receiptDate,
                   receiptDate,
@@ -213,14 +240,16 @@ export const useDataSync = () => {
                   ) {
                     console.log(`[SYNC] multOpt=0: uploadrefno matches (${incomingUploadRef}); proceeding: ${receipt.reference_no}`);
                   } else {
-                    // SAFETY: Do NOT delete local record on ambiguous multOpt=0 cases
-                    // Instead, mark as failed so it can be retried or reviewed
-                    // This prevents silent cumulative drops when the existing record
-                    // is from a different workflow
-                    console.warn(`[SYNC] multOpt=0 conflict: existing uploadrefno=${existingUploadRef}, incoming=${incomingUploadRef}. Keeping local record for review: ${receipt.reference_no}`);
+                    // v2.10.60: DUPLICATE_SESSION_DELIVERY conflict — KEEP local row,
+                    // surface a clear toast, count for UI badge. Never silently drop.
+                    console.warn(`[SYNC] DUPLICATE_SESSION_DELIVERY (frontend guard): farmer=${cleanFarmerId} session=${normalizedSession} date=${receiptDate}; existing uploadrefno=${existingUploadRef}, incoming=${incomingUploadRef}. Keeping local row: ${receipt.reference_no}`);
                     if (useNativeStorage) {
-                      await markNativeRecordFailed(receipt.reference_no, `multOpt=0 conflict: existing workflow ${existingUploadRef} differs from ${incomingUploadRef}`);
+                      await markNativeRecordFailed(
+                        receipt.reference_no,
+                        `DUPLICATE_SESSION_DELIVERY: server already has uploadrefno=${existingUploadRef} for farmer ${cleanFarmerId} ${normalizedSession} ${receiptDate}`
+                      );
                     }
+                    recordConflict(cleanFarmerId, normalizedSession, receiptDate, receipt.reference_no, String(existingUploadRef || ''));
                     failed++;
                     continue;
                   }
