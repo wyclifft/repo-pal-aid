@@ -8,6 +8,7 @@ import { useHaptics } from '@/hooks/useHaptics';
 import { FarmerSearchModal } from './FarmerSearchModal';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
 import { CoffeeWeightDisplay } from './CoffeeWeightDisplay';
+import { DuplicateDeliveryDialog, type DuplicateDeliveryReason } from './DuplicateDeliveryDialog';
 import { toast } from 'sonner';
 
 interface BuyProduceScreenProps {
@@ -88,6 +89,10 @@ export const BuyProduceScreen = ({
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
+  const [duplicateDialog, setDuplicateDialog] = useState<{
+    farmer: { id: string; name: string };
+    reason: DuplicateDeliveryReason;
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers } = useIndexedDB();
@@ -175,11 +180,18 @@ export const BuyProduceScreen = ({
 
   // Check if a farmer is blocked (blacklisted OR submitted this session OR already in capture queue with multOpt=0)
   const isFarmerBlocked = (farmerId: string, checkMultOpt: boolean = false): boolean => {
+    return getBlockReason(farmerId, checkMultOpt) !== null;
+  };
+
+  // Returns the specific block reason, or null if not blocked. Used to drive the dialog copy.
+  const getBlockReason = (
+    farmerId: string,
+    checkMultOpt: boolean = false
+  ): DuplicateDeliveryReason | null => {
     const cleanId = farmerId.replace(/^#/, '').trim();
-    if (blacklistedFarmerIds?.has(cleanId)) return true;
-    if (sessionSubmittedFarmerIds?.has(cleanId)) return true;
-    
-    // Check if farmer with multOpt=0 is already in capturedCollections
+    if (blacklistedFarmerIds?.has(cleanId)) return 'blacklist';
+    if (sessionSubmittedFarmerIds?.has(cleanId)) return 'session-submitted';
+
     if (checkMultOpt) {
       const today = new Date().toISOString().split('T')[0];
       const currentSessionType = getSessionType();
@@ -192,32 +204,41 @@ export const BuyProduceScreen = ({
           c.multOpt === 0
         );
       });
-      if (alreadyCaptured) return true;
+      if (alreadyCaptured) return 'queue';
     }
-    
-    return false;
+
+    return null;
+  };
+
+  // Show the duplicate-delivery modal (and a short fallback toast for POS UI lag).
+  const showDuplicateDialog = (farmer: Farmer, reason: DuplicateDeliveryReason) => {
+    setDuplicateDialog({
+      farmer: { id: farmer.farmer_id.replace(/^#/, '').trim(), name: farmer.name },
+      reason,
+    });
+    toast.error(`${farmer.name} already delivered this session`, { duration: 2000 });
   };
 
   // Resolve numeric input to full farmer ID (only from available farmers)
   const resolveFarmerId = (input: string): Farmer | null => {
     if (!input.trim()) return null;
-    
+
     const numericInput = input.replace(/\D/g, '');
-    
+
     // Search by exact farmer_id first (in ALL cached farmers to detect blocked ones)
     const exactMatch = cachedFarmers.find(
       f => f.farmer_id.toLowerCase() === input.toLowerCase()
     );
     if (exactMatch) {
-      // Check if this farmer is blocked (multOpt=0 and already submitted or in queue)
       const cleanId = exactMatch.farmer_id.replace(/^#/, '').trim();
-      if (exactMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-        toast.error(`${exactMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+      const reason = exactMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
+      if (reason) {
+        showDuplicateDialog(exactMatch, reason);
         return null;
       }
       return exactMatch;
     }
-    
+
     // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
     if (numericInput && numericInput === input.trim()) {
       const paddedId = `M${numericInput.padStart(5, '0')}`;
@@ -226,13 +247,14 @@ export const BuyProduceScreen = ({
       );
       if (paddedMatch) {
         const cleanId = paddedMatch.farmer_id.replace(/^#/, '').trim();
-        if (paddedMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-          toast.error(`${paddedMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+        const reason = paddedMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
+        if (reason) {
+          showDuplicateDialog(paddedMatch, reason);
           return null;
         }
         return paddedMatch;
       }
-      
+
       // Also try matching by numeric portion
       const numericMatch = cachedFarmers.find(f => {
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
@@ -240,14 +262,15 @@ export const BuyProduceScreen = ({
       });
       if (numericMatch) {
         const cleanId = numericMatch.farmer_id.replace(/^#/, '').trim();
-        if (numericMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-          toast.error(`${numericMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+        const reason = numericMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
+        if (reason) {
+          showDuplicateDialog(numericMatch, reason);
           return null;
         }
         return numericMatch;
       }
     }
-    
+
     return null;
   };
 
@@ -292,13 +315,30 @@ export const BuyProduceScreen = ({
   const handleSelectFarmer = (farmer: Farmer) => {
     // Check if farmer is blocked before allowing selection (includes queue check)
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
-    if (farmer.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-      toast.error(`${farmer.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+    const reason = farmer.multOpt === 0 ? getBlockReason(cleanId, true) : null;
+    if (reason) {
+      showDuplicateDialog(farmer, reason);
+      setShowSearchModal(false);
       return;
     }
     setMemberNo(cleanId);
     setShowSearchModal(false);
     onSelectFarmer(farmer);
+  };
+
+  // Friendly session label for the duplicate dialog (AM/PM for dairy, season name for coffee)
+  const sessionLabelForDialog = isCoffee
+    ? ((session as Session & { descript?: string; scode?: string }).descript ||
+        (session as Session & { descript?: string; scode?: string }).scode ||
+        'Current Season')
+    : getSessionType();
+
+  // Dismiss the duplicate dialog and reset the input so the operator can pick a new farmer
+  const handleDuplicateDialogClose = () => {
+    setDuplicateDialog(null);
+    setMemberNo('');
+    onClearFarmer();
+    focusMemberInput();
   };
   
   // Focus input when member is cleared (for post-submit flow)
@@ -479,6 +519,15 @@ export const BuyProduceScreen = ({
           onClose={() => setShowSearchModal(false)}
           onSelectFarmer={handleSelectFarmer}
           farmers={availableFarmers}
+        />
+
+        {/* Duplicate Delivery (multOpt=0) blocking dialog — replaces silent toast */}
+        <DuplicateDeliveryDialog
+          open={!!duplicateDialog}
+          farmer={duplicateDialog?.farmer ?? null}
+          sessionLabel={sessionLabelForDialog}
+          reason={duplicateDialog?.reason ?? 'blacklist'}
+          onClose={handleDuplicateDialogClose}
         />
 
         {/* Member Info Card */}

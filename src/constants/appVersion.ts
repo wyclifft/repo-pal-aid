@@ -1,4 +1,18 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.61: multOpt=0 duplicate capture — replace transient toast with a
+//           persistent AlertDialog ("Already Delivered This Session") so
+//           operators cannot miss the block under bright sunlight or while
+//           the printer is running. New DuplicateDeliveryDialog.tsx (uses
+//           shadcn AlertDialog, amber AlertTriangle, farmer/session/date
+//           card, multOpt=0 policy subtext, offline-aware footnote, single
+//           "OK, Got It" CTA). BuyProduceScreen wires it into all four
+//           multOpt=0 block paths (resolveFarmerId × 3 + handleSelectFarmer)
+//           via new getBlockReason() helper; old 5s toast becomes a 2s
+//           fallback only. Coffee orgs show season descript/scode; dairy
+//           shows AM/PM. Dismissal clears member input + focuses for next
+//           farmer. SellProduceScreen unchanged (transtype=2 exempt). No
+//           backend, no IndexedDB schema, no sync, no receipt-generation
+//           changes.
 // v2.10.60: Fix multOpt=0 silent data loss after offline captures.
 //           LAYER 1 (capture): useSessionBlacklist now org-aware. Coffee orgs
 //           compare receipt's season_code/session against the active SCODE
@@ -122,5 +136,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.60';
-export const APP_VERSION_CODE = 82;
+export const APP_VERSION = '2.10.61';
+export const APP_VERSION_CODE = 83;
