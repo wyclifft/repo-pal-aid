@@ -180,11 +180,18 @@ export const BuyProduceScreen = ({
 
   // Check if a farmer is blocked (blacklisted OR submitted this session OR already in capture queue with multOpt=0)
   const isFarmerBlocked = (farmerId: string, checkMultOpt: boolean = false): boolean => {
+    return getBlockReason(farmerId, checkMultOpt) !== null;
+  };
+
+  // Returns the specific block reason, or null if not blocked. Used to drive the dialog copy.
+  const getBlockReason = (
+    farmerId: string,
+    checkMultOpt: boolean = false
+  ): DuplicateDeliveryReason | null => {
     const cleanId = farmerId.replace(/^#/, '').trim();
-    if (blacklistedFarmerIds?.has(cleanId)) return true;
-    if (sessionSubmittedFarmerIds?.has(cleanId)) return true;
-    
-    // Check if farmer with multOpt=0 is already in capturedCollections
+    if (blacklistedFarmerIds?.has(cleanId)) return 'blacklist';
+    if (sessionSubmittedFarmerIds?.has(cleanId)) return 'session-submitted';
+
     if (checkMultOpt) {
       const today = new Date().toISOString().split('T')[0];
       const currentSessionType = getSessionType();
@@ -197,32 +204,41 @@ export const BuyProduceScreen = ({
           c.multOpt === 0
         );
       });
-      if (alreadyCaptured) return true;
+      if (alreadyCaptured) return 'queue';
     }
-    
-    return false;
+
+    return null;
+  };
+
+  // Show the duplicate-delivery modal (and a short fallback toast for POS UI lag).
+  const showDuplicateDialog = (farmer: Farmer, reason: DuplicateDeliveryReason) => {
+    setDuplicateDialog({
+      farmer: { id: farmer.farmer_id.replace(/^#/, '').trim(), name: farmer.name },
+      reason,
+    });
+    toast.error(`${farmer.name} already delivered this session`, { duration: 2000 });
   };
 
   // Resolve numeric input to full farmer ID (only from available farmers)
   const resolveFarmerId = (input: string): Farmer | null => {
     if (!input.trim()) return null;
-    
+
     const numericInput = input.replace(/\D/g, '');
-    
+
     // Search by exact farmer_id first (in ALL cached farmers to detect blocked ones)
     const exactMatch = cachedFarmers.find(
       f => f.farmer_id.toLowerCase() === input.toLowerCase()
     );
     if (exactMatch) {
-      // Check if this farmer is blocked (multOpt=0 and already submitted or in queue)
       const cleanId = exactMatch.farmer_id.replace(/^#/, '').trim();
-      if (exactMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-        toast.error(`${exactMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+      const reason = exactMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
+      if (reason) {
+        showDuplicateDialog(exactMatch, reason);
         return null;
       }
       return exactMatch;
     }
-    
+
     // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
     if (numericInput && numericInput === input.trim()) {
       const paddedId = `M${numericInput.padStart(5, '0')}`;
@@ -231,13 +247,14 @@ export const BuyProduceScreen = ({
       );
       if (paddedMatch) {
         const cleanId = paddedMatch.farmer_id.replace(/^#/, '').trim();
-        if (paddedMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-          toast.error(`${paddedMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+        const reason = paddedMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
+        if (reason) {
+          showDuplicateDialog(paddedMatch, reason);
           return null;
         }
         return paddedMatch;
       }
-      
+
       // Also try matching by numeric portion
       const numericMatch = cachedFarmers.find(f => {
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
@@ -245,14 +262,15 @@ export const BuyProduceScreen = ({
       });
       if (numericMatch) {
         const cleanId = numericMatch.farmer_id.replace(/^#/, '').trim();
-        if (numericMatch.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-          toast.error(`${numericMatch.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+        const reason = numericMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
+        if (reason) {
+          showDuplicateDialog(numericMatch, reason);
           return null;
         }
         return numericMatch;
       }
     }
-    
+
     return null;
   };
 
