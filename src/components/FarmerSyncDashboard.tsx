@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { mysqlApi } from '@/services/mysqlApi';
@@ -91,6 +92,10 @@ export const FarmerSyncDashboard = () => {
   /**
    * Online path: use batch cumulative API as the sole source of the farmer list.
    * Returns null if the batch API call fails (caller should fall back to offline).
+   *
+   * v2.10.62: On Capacitor (legacy WebView 52 / native HTTP bridge can flake),
+   * retry once with a 2s back-off so we stay on the transaction-driven path
+   * whenever the network is genuinely available — matching web behaviour.
    */
   const loadFromBatchAPI = useCallback(async (
     nameLookup: Map<string, Farmer>,
@@ -99,13 +104,26 @@ export const FarmerSyncDashboard = () => {
     const deviceFingerprint = await resolveFingerprint();
     if (!deviceFingerprint) return null;
 
-    try {
-      const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(
-        deviceFingerprint,
-        route || undefined
-      );
+    const isNative = (() => {
+      try { return Capacitor.isNativePlatform(); } catch { return false; }
+    })();
+    const maxAttempts = isNative ? 2 : 1;
 
-      if (!batchResult.success || !batchResult.data?.farmers) return null;
+    let batchResult: Awaited<ReturnType<typeof mysqlApi.farmerFrequency.getMonthlyFrequencyBatch>> | null = null;
+    try {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(
+          deviceFingerprint,
+          route || undefined
+        );
+        if (batchResult?.success && batchResult.data?.farmers) break;
+        if (attempt < maxAttempts) {
+          console.warn(`[SyncDash] Batch API attempt ${attempt} failed, retrying in 2s...`);
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      if (!batchResult || !batchResult.success || !batchResult.data?.farmers) return null;
 
       const batchFarmers = batchResult.data.farmers;
       console.log(`[SyncDash] Batch API returned ${batchFarmers.length} farmers${route ? ` for route ${route}` : ''}`);
