@@ -89,6 +89,10 @@ export const BuyProduceScreen = ({
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
+  const [duplicateDialog, setDuplicateDialog] = useState<{
+    farmer: { id: string; name: string };
+    reason: DuplicateDeliveryReason;
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers } = useIndexedDB();
