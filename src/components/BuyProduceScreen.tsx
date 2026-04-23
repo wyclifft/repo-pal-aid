@@ -8,6 +8,7 @@ import { useHaptics } from '@/hooks/useHaptics';
 import { FarmerSearchModal } from './FarmerSearchModal';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
 import { CoffeeWeightDisplay } from './CoffeeWeightDisplay';
+import { DuplicateDeliveryDialog, type DuplicateDeliveryReason } from './DuplicateDeliveryDialog';
 import { toast } from 'sonner';
 
 interface BuyProduceScreenProps {
