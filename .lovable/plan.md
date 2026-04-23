@@ -1,122 +1,87 @@
 
 
-## Block multOpt=0 duplicate captures with a clear modal — v2.10.61
+## Make Capacitor Farmer Sync Dashboard match Web behaviour — v2.10.62
 
-### Problem
+### What you're seeing
 
-Today, when an operator (online or offline) tries to re-select a `multOpt=0` farmer who already has a delivery this session/day, the app:
+- **Web app (correct):** the "Farmer Sync Status" card on Settings shows **only farmers who have transactions this period**, and the route filter strictly narrows them to the selected center.
+- **Capacitor (wrong):** the same card lists **every cached farmer** (with or without weight) and the route filter is partial or returns nothing.
 
-- Refuses to select the farmer (good — no capture, no receipt)
-- Shows a small toast that disappears in 5s (bad — operators miss it under bright sunlight, or while the printer is running)
+### Root cause
 
-You want a **persistent, unmissable modal/card** that the operator must explicitly dismiss, making it crystal clear *why* the farmer can't be captured again. Receipt generation is already prevented; this is purely a UX visibility upgrade.
+`src/components/FarmerSyncDashboard.tsx` has two data paths:
 
-### Where the blocking happens today (post-v2.10.60)
+1. **Online path — `loadFromBatchAPI`** (lines 95-152) calls `/api/farmer-monthly-frequency-batch`, which `GROUP BY memberno` over the `transactions` table. It returns **only farmers with weights** and applies `TRIM(route) = TRIM(?)` server-side. This is the web behaviour.
+2. **Offline fallback — `loadFromOfflineCache`** (lines 157-206) reads the **entire `cm_members` IndexedDB store**, optionally filtering by `f.route.trim() === activeRoute`. This includes **all farmers regardless of transactions**, and the route filter is fragile because `cm_members.route` doesn't always match the active route exactly (legacy whitespace / member moved between centers / coffee farmers with no fixed route).
 
-`src/components/BuyProduceScreen.tsx`:
-- `resolveFarmerId()` (lines 202–252) — when typed/scanned, returns `null` and shows toast
-- `handleSelectFarmer()` (lines 292–302) — when picked from search modal, returns early and shows toast
+The dashboard falls into path #2 when path #1 returns `null`. On the production Capacitor app, path #1 is failing silently — most likely causes:
 
-Both correctly stop the flow before `onSelectFarmer` propagates to `Index.tsx` → so no capture, no receipt, no IndexedDB row. The fix is purely the **UX surface** at these two gates.
+- Capacitor's native HTTP bridge / legacy WebView 52 occasionally trips a 503 / proxy error on this single GET, even when other requests succeed (covered by `legacy-android-native-http-bridge` and `network-request-resilience` memories — but `getMonthlyFrequencyBatch` doesn't yet use the resilient retry).
+- `apiRequest` returns `{ success: false }` on any 5xx, AbortError, or JSON parse hiccup → `loadFromBatchAPI` returns `null` → fallback path runs → the user sees the "all farmers, broken filter" view.
 
-### Fix — replace toast with a blocking AlertDialog
+The web app rarely hits this fallback because it has no proxy bridge between the browser and the API.
 
-#### 1. New component: `src/components/DuplicateDeliveryDialog.tsx`
+### Fix — three small, additive changes
 
-A small, focused `AlertDialog` (uses existing `@/components/ui/alert-dialog.tsx`) with:
+#### 1. `src/components/FarmerSyncDashboard.tsx` — make the offline fallback transaction-driven
 
-- Header icon: amber `AlertTriangle` (Lucide)
-- Title: **"Already Delivered This Session"**
-- Body: structured info card showing
-  - Farmer ID + Name (large, bold)
-  - Session label (AM / PM for dairy, season name for coffee)
-  - Date (today, formatted)
-  - The reference of the existing receipt when known (else "Synced delivery on record")
-  - Subtext: *"This farmer is set to one delivery per session (multOpt=0). Capture is blocked until the next session."*
-- Single CTA: **"OK, Got It"** (no destructive option — this is informational, not actionable)
-- Offline-aware footnote when `!navigator.onLine`: *"You're offline. The earlier delivery is saved locally and will sync when you reconnect."*
-- Includes `AlertDialogDescription` for accessibility
-- Cannot be dismissed by clicking outside or ESC by accident — only the OK button (matches the existing `SessionExpiredDialog` pattern)
+Stop showing every cached `cm_members` row. Instead, derive the offline farmer list from **what we actually have evidence of transactions for**:
 
-Props:
-```ts
-interface DuplicateDeliveryDialogProps {
-  open: boolean;
-  farmer: { id: string; name: string } | null;
-  sessionLabel: string;        // "AM", "PM", or season descript like "Main Season"
-  reason: 'blacklist' | 'queue' | 'session-submitted';
-  onClose: () => void;
-}
-```
+- Read every key from the `farmer_cumulative` IndexedDB object store (this store is populated by the batch cumulative cache refresh; each entry has `baseCount + localCount > 0` only if there are transactions).
+- Read all unsynced receipts from IndexedDB and union those farmer IDs in (so just-captured offline deliveries appear immediately).
+- Drop any farmer whose `(baseCount + localCount)` is `0` AND has no unsynced receipts.
+- Hydrate display name and route from the existing `cm_members` cache via the existing `nameLookup` map.
+- Apply the route filter using the **same precedence the online path uses**: prefer `cm_members.route`, but if the cumulative entry was recorded under the active route (we'll start tagging it — see #2), trust that.
 
-The `reason` lets us tweak the subtext slightly:
-- `blacklist` → "Already submitted (synced or pending sync)"
-- `queue` → "Already in this session's capture queue"
-- `session-submitted` → "Already submitted in this session"
+Behaviour after this change:
+- Capacitor offline → only shows farmers with cached weights or pending receipts (matches web).
+- Capacitor online → unchanged (still uses the batch API).
+- Web → unchanged (rarely needs the fallback at all).
 
-#### 2. Wire it into `BuyProduceScreen.tsx`
+#### 2. `src/components/FarmerSyncDashboard.tsx` — add resilient retry to the online path
 
-- Add state: `const [duplicateDialog, setDuplicateDialog] = useState<{ farmer; reason } | null>(null)`
-- Replace each of the **four** `toast.error("…has already delivered…")` calls (lines 215, 230, 244, 296) with `setDuplicateDialog({ farmer: …, reason: … })`
-- Determine `reason` in `isFarmerBlocked()` by which branch matched (return a small object instead of just `boolean`, or expose a sibling helper `getBlockReason(farmerId)`)
-- Render `<DuplicateDeliveryDialog … />` near the bottom of the JSX (next to `FarmerSearchModal`)
-- Pass a friendly `sessionLabel` derived from:
-  - Coffee (`isCoffee` from `useAppSettings`): `session.descript || session.scode || 'Current Season'`
-  - Dairy: `getSessionType()` → "AM" or "PM"
-- After dismissal, also call `onClearFarmer()` and clear `memberNo` so the input is ready for the next farmer (matches existing post-block behaviour)
+Wrap the `getMonthlyFrequencyBatch` call in a small retry (1 retry, 2-second back-off) **only when running on Capacitor** (`Capacitor.isNativePlatform()`). This pushes the Capacitor app onto the same code path as the web app whenever the network is genuinely available — so the user sees the correct "transaction-driven" view almost every time, and the fallback only triggers when the device is truly offline.
 
-#### 3. Keep the toast as a redundant *short* fallback (optional, recommended)
+No new endpoint, no backend change.
 
-Some POS hardware delays modal rendering by ~200ms while the camera/printer hold the main thread. To avoid an awkward silent gap, keep a 2-second toast under the modal trigger (existing toast.error stays, just shortened). The modal is the primary surface; the toast is secondary. If you'd rather have a *single* surface, we drop the toast — your call (default in this plan: keep both, modal is primary).
+#### 3. `src/components/FarmerSyncDashboard.tsx` — tighten the route filter on both paths
 
-#### 4. SellProduceScreen — leave alone
+- Online path: already correct (server-side `TRIM(route) = TRIM(?)`). Keep.
+- Offline path: when an `activeRoute` is set, filter the union list by `nameLookup.get(farmer_id)?.route.trim() === activeRoute.trim()`. If `cm_members` doesn't have that farmer (rare), include them anyway so transactions are never silently hidden — but tag them with route `'N/A'` in the row so the operator can see the gap.
 
-Per memory `multopt-session-blocking-rules`: Sell Portal (`transtype=2`) is exempt from multOpt blocking. No changes there.
+This stops the "partial / empty" route filter symptom on Capacitor.
 
-#### 5. Receipt generation — already prevented
+### What does NOT change
 
-`onSelectFarmer` is not called when the gate trips → `farmerId`/`farmerName` in `Index.tsx` stays empty → `handleCapture()` early-returns at its existing farmer-required guard → no `MilkCollection` created → no IndexedDB row → no receipt printed/displayed. **No changes needed in capture/submit/print paths.**
-
-#### 6. Version bump (per workspace rule)
-
-- `src/constants/appVersion.ts` → **v2.10.61** (Code **83**) with comment *"v2.10.61 — multOpt=0 duplicate capture: replace toast with persistent AlertDialog so operators cannot miss the block."*
-- `android/app/build.gradle` → `versionName "2.10.61"`, `versionCode 83`
+- `backend-api/server.js` — untouched (the endpoint already does the right thing).
+- `useIndexedDB.ts` — schema, key paths, `farmer_cumulative` store all untouched.
+- `useDataSync.ts`, `useSessionBlacklist.ts`, capture/submit/print/photo audit — untouched.
+- Reference generator, `transrefno`/`uploadrefno`/`reference_no` mapping — untouched.
+- `multOpt=0` blocking and `DuplicateDeliveryDialog` (v2.10.61) — untouched.
+- The Buy/Sell capture screens — untouched. This change is **only** in the Settings → Farmer Sync Status card.
 
 ### Files Touched
 
 | File | Change |
 |---|---|
-| `src/components/DuplicateDeliveryDialog.tsx` | **NEW** — AlertDialog component (uses existing `@/components/ui/alert-dialog`) |
-| `src/components/BuyProduceScreen.tsx` | Add dialog state + render; keep `isFarmerBlocked` logic untouched; replace 4 toast.error calls with `setDuplicateDialog(...)`; pass session label from `useAppSettings().isCoffee` + `session` |
-| `src/constants/appVersion.ts` | Bump to v2.10.61 (Code 83) + changelog comment |
-| `android/app/build.gradle` | `versionName "2.10.61"`, `versionCode 83` |
-
-### What does NOT change
-
-- Backend (`server.js`) — untouched
-- `useSessionBlacklist.ts` — already correct after v2.10.60 (org-aware, local-date)
-- `useDataSync.ts` — already correct after v2.10.60 (no silent drops)
-- `Dashboard.tsx` "⚠ stuck receipts" chip — untouched
-- IndexedDB schema, reference generator, sync engine, photo audit, Z-Reports — untouched
-- Sell Portal (`transtype=2`) — still no blocking
-- `multOpt=1` farmers — zero behaviour change
+| `src/components/FarmerSyncDashboard.tsx` | Rewrite `loadFromOfflineCache` to be transaction-driven (union of `farmer_cumulative` keys + unsynced receipt farmer IDs, hydrated via `nameLookup`); add 1-retry/2s back-off to the online batch call when on Capacitor; tighten route filter for the offline path |
+| `src/constants/appVersion.ts` | Bump to **v2.10.62** (Code **84**) + changelog comment *"v2.10.62 — Farmer Sync Status: Capacitor offline list is now transaction-driven and route-filtered to match the web app."* |
+| `android/app/build.gradle` | `versionName "2.10.62"`, `versionCode 84` |
 
 ### Verification Checklist
 
-1. **Online, multOpt=0**: capture+submit `M00123` for AM → re-select via search → modal appears, OK clears it, no receipt generated. ✓
-2. **Offline (dairy)**: capture+submit `M00123` AM offline → close app → reopen offline → re-select → modal appears (Layer 1 from v2.10.60 keeps it blacklisted). ✓
-3. **Offline (coffee)**: capture+submit for season `S0002` offline → re-select → modal appears with season name in body. ✓
-4. **Re-key by typing** the farmer ID into the input + arrow button → modal appears (covers `resolveFarmerId` paths). ✓
-5. **Re-key by typing numeric** (`123` → `M00123`) → modal appears. ✓
-6. **Already in capture queue, not yet submitted** → modal appears with `reason='queue'` subtext. ✓
-7. **multOpt=1 farmer** → no modal, capture proceeds normally. ✓
-8. Sell Portal — unlimited captures, no modal. ✓
-9. No new console errors; transactions/sync/receipts/photo audit unchanged.
+1. **Capacitor, online, no route selected** → list matches web exactly: only farmers with weight this month/season. ✓
+2. **Capacitor, online, route `R03` selected** → list narrows to farmers with weight on `R03` only (server-side filter). ✓
+3. **Capacitor, online, intermittent batch-API failure** → retry succeeds, list still matches web. ✓
+4. **Capacitor, fully offline** → list shows only farmers with cached cumulatives or pending receipts (no zero-weight `cm_members` rows). Route filter narrows correctly. ✓
+5. **Capacitor, fully offline, just captured a delivery for a brand-new farmer** → that farmer appears immediately in the list with `localCount > 0`. ✓
+6. **Web app** → unchanged, identical look and content as today. ✓
+7. Settings page renders, Refresh button works, search input still filters, "Show more" pagination still works. ✓
+8. No new console errors. Buy/Sell capture, sync engine, multOpt=0 modal, receipts, photo audit, Z-Reports, periodic reports all unchanged. ✓
 
 ### Out of scope
 
-- Replacing toasts elsewhere in the app (only the four multOpt=0 blocks change)
-- Server-side changes
-- Adding a "View existing receipt" button inside the modal (operators can find it in Recent Receipts; can come later if needed)
-- Auto-clearing the input on dismiss is included; auto-jumping focus into the search bar is not (preserves current keyboard flow)
+- Adding a "show all cached farmers" toggle — operators have asked for the transaction-driven view; we keep one mode.
+- Exposing the cumulative period range (month vs season) in the card UI — already shown via `CardDescription`.
+- Backend changes to `farmer-monthly-frequency-batch` — not needed.
 
