@@ -49,11 +49,7 @@ export const DuplicateDeliveryDialog = ({
 
   return (
     <AlertDialog open={open}>
-      <AlertDialogContent
-        className="max-w-md border-2 border-amber-400"
-        onPointerDownOutside={(e) => e.preventDefault()}
-        onEscapeKeyDown={(e) => e.preventDefault()}
-      >
+      <AlertDialogContent className="max-w-md border-2 border-amber-400">
         <AlertDialogHeader>
           <div className="mx-auto w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center mb-2">
             <AlertTriangle className="w-8 h-8 text-amber-600" />
