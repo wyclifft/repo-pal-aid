@@ -80,6 +80,10 @@ export const useSessionBlacklist = (
     const sessionType = getSessionType();
     const coffee = isCoffeeOrg();
     const seasonCode = String(activeSeasonCode || '').trim();
+    // v2.10.63: surface the coffee-org SCODE-missing bug instead of failing silently.
+    if (coffee && !seasonCode) {
+      console.warn('[WARN] Coffee org with empty seasonCode — using date-only fallback for duplicate blacklist');
+    }
 
     try {
       // 1. Check IndexedDB for unsynced receipts (offline submissions that were submitted but not synced)
@@ -99,8 +103,14 @@ export const useSessionBlacklist = (
           let sessionMatches = false;
           if (coffee) {
             // Coffee: compare receipt's season_code (preferred) or session against active SCODE.
+            // v2.10.63: defensive fallback — if seasonCode is missing (legacy cache or bug),
+            // fall back to date-only matching so the duplicate block is never silently disabled.
             const rCode = String((r as any).season_code || r.session || '').trim();
-            sessionMatches = !!seasonCode && rCode === seasonCode;
+            if (seasonCode) {
+              sessionMatches = rCode === seasonCode;
+            } else {
+              sessionMatches = true; // date already matched above
+            }
           } else {
             // Dairy: AM/PM. Tolerate legacy stamps like 'AM SESSION', 'MORNING', etc.
             const rSession = String(r.session || '').trim().toUpperCase();

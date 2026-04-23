@@ -151,11 +151,22 @@ const Index = () => {
 
   const [loadedFarmers, setLoadedFarmers] = useState<Farmer[]>([]);
   const [lastSessionType, setLastSessionType] = useState<'AM' | 'PM' | null>(null);
-  const activeSessionTimeFrom = activeSession ? 
-    (typeof activeSession.time_from === 'number' ? activeSession.time_from : parseInt(String(activeSession.time_from), 10)) 
+  // v2.10.63: harden time_from coercion — default to undefined (not NaN) when missing/invalid
+  // so the wall-clock fallback inside useSessionBlacklist only fires when truly absent.
+  const activeSessionTimeFrom = (() => {
+    if (!activeSession) return undefined;
+    const raw = (activeSession as any).time_from;
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+    return Number.isFinite(n) ? n : undefined;
+  })();
+  // v2.10.63: read SCODE in the same case as the Session interface (uppercase).
+  // The previous lowercase '.scode' lookup always returned undefined, which silently
+  // disabled the coffee-org duplicate blacklist after app restart. Tolerate legacy
+  // lowercase by checking both, normalize to a trimmed string.
+  const activeSeasonCode = activeSession
+    ? String((activeSession as any).SCODE ?? (activeSession as any).scode ?? '').trim()
     : undefined;
-  // v2.10.60: pass active SCODE so coffee orgs can blacklist offline duplicates by season
-  const activeSeasonCode = activeSession ? String((activeSession as any).scode || '').trim() : undefined;
   const { blacklistedFarmerIds, isBlacklisted, addToBlacklist, refreshBlacklist, clearBlacklist, getSessionType } = useSessionBlacklist(activeSessionTimeFrom, activeSeasonCode);
   
   // Local session-scoped set to track submitted farmers (extra safeguard for edge cases)
@@ -186,6 +197,38 @@ const Index = () => {
       refreshBlacklist([], farmersWithMultOptZero());
     }
   }, [activeSession, loadedFarmers, refreshBlacklist, farmersWithMultOptZero]);
+
+  // v2.10.63: Eager preload of cached farmers on app start.
+  // After app restart, activeSession is restored from localStorage but loadedFarmers
+  // stays empty until the user opens Buy/Sell — leaving a window where the multOpt=0
+  // blacklist is empty and a fast operator can re-capture a duplicate. This one-shot
+  // effect hydrates loadedFarmers from IndexedDB as soon as a session is restored,
+  // so refreshBlacklist runs before the operator can navigate into Buy Produce.
+  useEffect(() => {
+    if (!activeSession || !isReady || loadedFarmers.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = await getFarmers();
+        if (cancelled || !cached || cached.length === 0) return;
+        const routeCode = String(selectedRouteCode || '').trim();
+        const mprefix = String(selectedRouteMprefix || '').trim();
+        const filtered = cached.filter((f: Farmer) => {
+          if (!routeCode && !mprefix) return true;
+          if (routeCode && String(f.route || '').trim() === routeCode) return true;
+          if (mprefix && String(f.farmer_id || '').replace(/^#/, '').startsWith(mprefix)) return true;
+          return false;
+        });
+        if (!cancelled && filtered.length > 0) {
+          setLoadedFarmers(filtered);
+          console.log(`[v2.10.63] Eager-preloaded ${filtered.length} farmers for blacklist refresh on app restart`);
+        }
+      } catch (e) {
+        console.warn('[v2.10.63] Eager farmer preload failed:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeSession, isReady, loadedFarmers.length, getFarmers, selectedRouteCode, selectedRouteMprefix]);
 
   // Clear blacklist when session TYPE changes (AM → PM or PM → AM)
   // This ensures Submit button re-enables correctly when session rolls over
