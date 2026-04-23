@@ -4,6 +4,7 @@
  */
 
 import { API_CONFIG } from '@/config/api';
+import { resilientFetch } from '@/utils/resilientFetch';
 
 const API_BASE_URL = `${API_CONFIG.MYSQL_API_URL}/api`;
 
@@ -49,7 +50,9 @@ async function apiRequest<T>(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    // v2.10.64: use resilientFetch — falls back to XHR for non-GETs when
+    // window.fetch is wrapped/broken (Lovable preview, legacy WebViews).
+    const response = await resilientFetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
       signal: controller.signal,
       headers: {
