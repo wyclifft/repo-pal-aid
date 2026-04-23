@@ -1,4 +1,25 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.63: Fix multOpt=0 duplicate-capture block bypassed after app restart for
+//           coffee orgs. ROOT CAUSE: Index.tsx read activeSession.scode (lowercase)
+//           but the Session interface uses .SCODE (uppercase) everywhere else, so
+//           useSessionBlacklist always received an empty seasonCode and the coffee
+//           blacklist stayed empty after restart — letting the operator capture a
+//           second receipt for the same farmer/season. The duplicate then surfaced
+//           later as a "stuck receipt" via DUPLICATE_SESSION_DELIVERY, but the
+//           paper receipt was already printed and handed out.
+//           FIXES (additive, two files):
+//             (1) Index.tsx: read .SCODE with lowercase fallback; harden
+//                 activeSessionTimeFrom int coercion (default undefined, not NaN);
+//                 add eager loadedFarmers preload from IndexedDB whenever an
+//                 activeSession is restored — closes the post-login window where
+//                 the blacklist is empty until the user opens Buy/Sell.
+//             (2) useSessionBlacklist.ts: defensive date-only fallback for coffee
+//                 orgs when seasonCode is missing, plus a [WARN] log so the bug
+//                 cannot silently re-appear. Public API unchanged.
+//           No backend, no IndexedDB schema, no sync engine, no reference
+//           generator, no receipt/photo-audit/Z-Report changes. Buy/Sell screens,
+//           DuplicateDeliveryDialog (v2.10.61), and FarmerSyncDashboard
+//           (v2.10.62) are all untouched.
 // v2.10.62: Farmer Sync Status (Settings) — Capacitor list now matches the
 //           Web app: transaction-driven, route-filtered, no zero-weight rows.
 //           ROOT CAUSE: when the batch API call from Capacitor failed (legacy
@@ -160,5 +181,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.62';
-export const APP_VERSION_CODE = 84;
+export const APP_VERSION = '2.10.63';
+export const APP_VERSION_CODE = 85;
