@@ -1565,6 +1565,7 @@ const Index = () => {
         pendingCount={pendingCount}
         pendingMilkCount={pendingMilkCount}
         pendingSalesCount={pendingSalesCount}
+        conflictedReceiptsCount={conflictedReceiptsCount}
         onStartCollection={handleStartCollection}
         onStartSelling={handleStartSelling}
         onLogout={handleLogout}
