@@ -36,6 +36,10 @@ export const useDataSync = () => {
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingMilkCount, setPendingMilkCount] = useState(0);
   const [pendingSalesCount, setPendingSalesCount] = useState(0);
+  // v2.10.60: count of receipts the sync engine has refused to upload
+  // because of DUPLICATE_SESSION_DELIVERY (multOpt=0). These rows are
+  // intentionally KEPT in IndexedDB for human review.
+  const [conflictedReceiptsCount, setConflictedReceiptsCount] = useState(0);
   // Member sync state for banner display
   const [isSyncingMembers, setIsSyncingMembers] = useState(false);
   const [memberSyncCount, setMemberSyncCount] = useState(0);
