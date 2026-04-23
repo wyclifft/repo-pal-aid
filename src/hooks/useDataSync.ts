@@ -384,7 +384,28 @@ export const useDataSync = () => {
               }
             } else {
               const errorMsg = (result.error || result.message || '').toLowerCase();
-              if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
+              const errorCode = String((result as any).error || (result as any).code || '').toUpperCase();
+              const isSessionDuplicate =
+                errorCode === 'DUPLICATE_SESSION_DELIVERY' ||
+                errorMsg.includes('duplicate_session_delivery') ||
+                errorMsg.includes('session delivery');
+
+              if (isSessionDuplicate) {
+                // v2.10.60: backend rejected with DUPLICATE_SESSION_DELIVERY (multOpt=0).
+                // KEEP local row, surface toast, count for UI badge. NEVER delete.
+                const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
+                const cd = new Date(receipt.collection_date);
+                const receiptDate = `${cd.getFullYear()}-${String(cd.getMonth() + 1).padStart(2, '0')}-${String(cd.getDate()).padStart(2, '0')}`;
+                console.warn(`[SYNC] DUPLICATE_SESSION_DELIVERY (backend 409): keeping local row ${receipt.reference_no}`);
+                if (useNativeStorage) {
+                  await markNativeRecordFailed(
+                    receipt.reference_no,
+                    `DUPLICATE_SESSION_DELIVERY: server rejected farmer ${cleanFarmerId} ${normalizedSession} ${receiptDate}`
+                  );
+                }
+                recordConflict(cleanFarmerId, normalizedSession, receiptDate, receipt.reference_no, (result as any)?.existing_uploadrefno);
+                failed++;
+              } else if (errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique')) {
                 // Duplicate response: verify payload matches before deleting local
                 let safeToDelete = false;
                 try {
