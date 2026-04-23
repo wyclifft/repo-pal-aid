@@ -1,168 +1,100 @@
 
 
-## Skip Reserved Test-Member IDs in Next-ID Suggestion — v2.10.59
+## Fix multOpt=0 silent data loss after offline captures — v2.10.60
 
-### Problem
+### What you're seeing (and why)
 
-Your operations team uses high-numbered IDs (e.g., `M9999`, `M9998`, `M9000`…) as **test/sentinel members**. The current `/api/members/next-id` logic computes `MAX(numericTail)` across the recent 200 mcodes, which can return:
+You're right: **multOpt=0** means *one delivery per session per farmer*. The first offline capture syncs fine. The second offline capture for the same farmer/session **never reaches the DB** and operators get no clear warning. Two independent bugs cause this:
 
-- The test sentinel itself → it suggests `M10000` after a real next of `M3557`, **or**
-- When the recent batch is dominated by old test rows but the latest real members got pushed off the 200-row window → it can collapse back to the test row's neighborhood, suggesting something like `M1000` while the real ledger is at `M3556`.
+#### Bug A — Capture is *not* blocked offline for coffee orgs
 
-Either way, the suggested next ID is wrong: operators want it to be the next ID after the **real production members**, ignoring the reserved test range.
+`src/hooks/useSessionBlacklist.ts` line 67 builds the offline blacklist by reading `getUnsyncedReceipts()` and matching `r.session === sessionType` where `sessionType` is always `'AM'` or `'PM'`.
 
-### Fix — exclude a configurable "reserved test" numeric range
+But for **coffee** orgs, captured receipts store `session = SCODE` (e.g. `S0002`). The match fails → no coffee multOpt=0 farmer ever gets blacklisted from offline receipts → operator can re-capture freely. (Dairy is partially protected because both sides use AM/PM, but the date comparison via `toISOString()` is timezone-shifted — a separate latent bug already covered by the `timezone-date-integrity-standard` memory.)
 
-Treat IDs whose numeric tail falls in a **reserved test range** as invisible to the next-id calculation. Default range: `9000–9999` (covers your `M9999` example with breathing room). The range applies per-prefix (so `M9999` and `D9999` are both reserved).
+#### Bug B — Sync silently drops the second receipt
 
-Real members in `1…8999` and `10000+` are still considered. If real members ever cross `9000`, the system still keeps incrementing past `9999` correctly (the exclusion is only applied when computing MAX; once the real `MAX` is, say, `M8999`, suggesting `M9000`… we then *jump* over the reserved window — see "Jump rule" below).
+When two offline captures for the same farmer/session exist with different `uploadrefno` (which happens any time the operator restarts the buy workflow, closes the app, or the second capture is a different day), sync handles them like this:
 
-#### 1. `backend-api/server.js` — exclude reserved range, drop the LIMIT, jump the gap
+1. **Frontend guard** in `src/hooks/useDataSync.ts` lines 189–227 calls `getByFarmerSessionDate`. Existing record found, `uploadrefno` differs → marks the receipt as **failed** in native SQLite, `continue`s. The IndexedDB row is **never deleted, never sent to backend, never surfaced to the operator**. It just rots locally and re-fails on every sync.
+2. **If the guard misses** and the request reaches the backend, `server.js` line 909–918 returns HTTP **409** `DUPLICATE_SESSION_DELIVERY`. The sync handler at line 353–394 catches the word "duplicate", calls `getByReference(receipt.reference_no)`, gets `null` (because the server rejected it, never stored it), falls into `safeToDelete = true` (line 369), **deletes the IndexedDB row, and counts it as `synced`**. Silent loss.
 
-Rewrite the next-id query so it computes the true MAX of the numeric tail in SQL — **not** in JS over a `LIMIT 200` window. This also fixes the latent "real MAX outside the recent batch" bug.
+Combined effect: operator sees "all synced", but a real delivery is missing in the cooperative's books.
 
-```sql
-SELECT
-  COALESCE(
-    MAX(
-      CAST(
-        SUBSTRING(mcode, LENGTH(?) + 1) AS UNSIGNED
-      )
-    ),
-    0
-  ) AS max_num,
-  -- detect padding from the most-recent same-prefix row for stability
-  (SELECT LENGTH(SUBSTRING(mcode, LENGTH(?) + 1))
-     FROM cm_members
-    WHERE ccode = ? AND mcode LIKE CONCAT(?, '%')
-      AND mcode REGEXP CONCAT('^', ?, '[0-9]+$')
-    ORDER BY id DESC LIMIT 1) AS pad_length
-FROM cm_members
-WHERE ccode = ?
-  AND mcode LIKE CONCAT(?, '%')
-  AND mcode REGEXP CONCAT('^', ?, '[0-9]+$')
-  AND CAST(SUBSTRING(mcode, LENGTH(?) + 1) AS UNSIGNED)
-      NOT BETWEEN ? AND ?;
-```
+### The fix — three layers, production-safe
 
-Bind variables:
-- `prefix` (`M` or `D`) used for `LENGTH(?)`, `LIKE`, and the `REGEXP` anchor
-- `ccode`
-- `RESERVED_TEST_MIN` (default `9000`) and `RESERVED_TEST_MAX` (default `9999`)
+#### Layer 1 — Block at capture, even offline, for ALL org types
 
-Then in JS:
+Update `src/hooks/useSessionBlacklist.ts` to compare the receipt's session against the *correct* expected value:
 
-```js
-const RESERVED_TEST_MIN = 9000;
-const RESERVED_TEST_MAX = 9999;
+- For **dairy** orgs (`orgtype !== 'C'`): keep AM/PM comparison, but also check `r.session.toUpperCase().includes(sessionType)` so legacy stamps like `'AM SESSION'` also match.
+- For **coffee** orgs (`orgtype === 'C'`): compare `r.season_code` (preferred) or `r.session` against the **active session SCODE** passed into the hook.
 
-let nextNumber = (max_num || 0) + 1;
+Add a new optional param to the hook: `activeSeasonCode?: string`. `Index.tsx` already knows `activeSession.scode`, so it just passes it down (one-line change).
 
-// Jump rule: if the natural next number lands inside the reserved test range,
-// jump straight past it. Real members can keep growing forever.
-if (nextNumber >= RESERVED_TEST_MIN && nextNumber <= RESERVED_TEST_MAX) {
-  nextNumber = RESERVED_TEST_MAX + 1; // -> 10000
-}
+Replace the timezone-broken `new Date(r.collection_date).toISOString().split('T')[0]` with the local-date helper used elsewhere (per `timezone-date-integrity-standard`), so AM/PM rollover after midnight in EAT is correct.
 
-const padded = String(nextNumber).padStart(pad_length || 5, '0');
-const suggested = `${prefix}${padded}`;
-```
+After this layer, the operator gets a **toast at farmer selection time** (already wired via `BuyProduceScreen.handleSelectFarmer`) the moment they try to re-pick a farmer who already has an unsynced offline receipt — exactly your "they forget they already captured" scenario.
 
-Behavior matrix (prefix `M`, default reserved `9000–9999`):
+#### Layer 2 — Stop the silent drop in the sync engine
 
-| Real MAX in DB (excl. reserved) | Suggested |
-|---|---|
-| `3556` | `M3557` |
-| `8999` | `M9000` → bumped to **`M10000`** (jumps the gap) |
-| `10042` | `M10043` |
-| no rows | `M00001` |
+Two minimal, surgical changes in `src/hooks/useDataSync.ts`:
 
-`M9999`, `M9000`, etc. are **ignored** when computing MAX, but they still exist and can still be looked up / used in transactions — only the auto-suggestion treats them as invisible.
+**(a) Frontend `multOpt=0` conflict guard (lines 189–227)** — when the existing remote `uploadrefno` differs from the incoming one, do NOT silently mark failed and continue. Instead:
 
-**Backward compatibility:** when `prefix` is omitted (legacy v2.10.32–v2.10.57 clients), keep today's branch as a fallback so legacy devices see no behavior change. The reserved-range exclusion is applied **only on the prefix-scoped branch** (v2.10.58+ clients) so we don't regress devices that don't know about prefixes.
+- Mark as failed in native SQLite **with a clear message**: `"DUPLICATE_SESSION_DELIVERY: server already has uploadrefno=X for this farmer/session/date"`.
+- Surface a **visible toast** (one per farmer per sync run, deduped by farmer+session+date) summarising the conflict and the stuck receipt's reference. Phrasing: *"Farmer M00123 already has a synced delivery for AM today. Local receipt #BB01200000044 was not uploaded — please review and clear or re-key intentionally."*
+- Keep the local IndexedDB row in place so the operator/admin can see it. Add it to a new in-memory `conflictedReceipts` list exposed by `useDataSync` for an optional UI badge later (no UI work in this version — just the data + toast).
 
-#### 2. Make the reserved range configurable (no code redeploy needed long-term)
+**(b) Backend-409 deletion path (lines 353–394)** — currently any "duplicate"-flavoured error makes the sync delete the local row when `getByReference` returns null. Tighten it: if the server response includes `error === 'DUPLICATE_SESSION_DELIVERY'` (which it does — see server.js lines 911 and 929), treat it like the (a) path above. **Never** delete the local receipt on `DUPLICATE_SESSION_DELIVERY`. Surface the same toast.
 
-Read the range from `psettings` if a column exists, otherwise fall back to constants:
+The existing "real duplicate by transrefno" path (where the same reference truly already exists on the server) is untouched — we only special-case the `DUPLICATE_SESSION_DELIVERY` error code, which is unambiguous.
 
-```js
-// Per-ccode override (additive; falls back to defaults if columns missing or null)
-const [psRows] = await pool.query(
-  `SELECT
-     CAST(reserved_testid_min AS UNSIGNED) AS rmin,
-     CAST(reserved_testid_max AS UNSIGNED) AS rmax
-   FROM psettings WHERE ccode = ? LIMIT 1`,
-  [ccode]
-).catch(() => [[]]);
-const reservedMin = Number(psRows?.[0]?.rmin) > 0 ? Number(psRows[0].rmin) : 9000;
-const reservedMax = Number(psRows?.[0]?.rmax) > 0 ? Number(psRows[0].rmax) : 9999;
-```
+#### Layer 3 — Operator-visible "blocked at sync" indicator
 
-If the columns don't exist in your `psettings` table, the `.catch` swallows the error and we keep the safe defaults. **No DB migration is required for this fix to work**; the override is purely opt-in if your team later wants to change the range per cooperative.
+Add a small read-only count to the existing pending-sync banner: when there are `n` receipts that the sync engine has flagged as `DUPLICATE_SESSION_DELIVERY conflicts`, show a yellow **"⚠ {n} stuck receipt(s) need review"** chip in the dashboard's existing sync area (re-uses `unified-sync-visibility` styling). Tap-through opens an existing reprint/sync list — no new screen built in this version.
 
-#### 3. `src/components/AddMemberModal.tsx` — surface the rule to the operator
+This makes the historical stuck rows that already exist on devices in the field visible immediately after upgrade, instead of staying invisible forever.
 
-Tiny UX nudge so operators understand why a suggestion may "jump":
+### Backend — no changes required
 
-- Below the auto-suggested ID, when the suggested numeric tail equals `RESERVED_TEST_MAX + 1` (e.g., `M10000`) **or** the response includes a flag `jumped: true`, show a subtle hint:
-  > *"Skipped reserved test range (M9000–M9999)."*
-- The backend response gains two optional, additive fields: `reservedRange: [9000, 9999]` and `jumped: boolean`. Older clients ignore them.
+`server.js` already enforces `multOpt=0` correctly (lines 881–943) and returns the unambiguous `DUPLICATE_SESSION_DELIVERY` error code we'll key off. **No backend redeploy needed.** Older app versions keep the old (broken) behaviour, but every device that updates to v2.10.60 stops losing data immediately.
 
-#### 4. `src/services/mysqlApi.ts`
+### What does NOT change
 
-Widen the response type with the optional fields:
-
-```ts
-getNextId: async (deviceFingerprint, prefix?) => Promise<ApiResponse<{
-  suggested: string;
-  prefix: string;
-  padLength: number;
-  reservedRange?: [number, number];
-  jumped?: boolean;
-}>>
-```
-
-No call-site changes elsewhere — it's purely additive.
-
-#### 5. Version bump
-
-- `src/constants/appVersion.ts` → **v2.10.59** (Code **81**)
-- `android/app/build.gradle` → `versionName "2.10.59"`, `versionCode 81`
-
-Comment: *"v2.10.59 — Member next-id ignores reserved test range (default 9000–9999) and computes true MAX in SQL; jump rule prevents suggesting reserved IDs."*
-
-### Why this is production-safe
-
-- **No schema change required.** The `psettings` override is best-effort with `.catch` fallback. Existing tables work unchanged.
-- **Legacy clients (no `prefix` query param)** keep the original code path → zero behavior change for v2.10.32–v2.10.57.
-- **No effect on `/api/members` POST** (still hard-fails on duplicate), no effect on transactions, sync, receipts, cumulative, or photos.
-- **Reserved members remain fully usable** — they're just hidden from the *suggestion* algorithm, not deleted or blocked.
-- **SQL change is a true `MAX(...)`** instead of a JS scan over the latest 200 rows → also fixes the latent "real top ID outside the recent window" bug that's likely contributing to the `M1000` suggestion you're seeing today.
+- `multOpt=0` business rule itself — still "one delivery per farmer per session per day".
+- Sell Portal (`transtype=2`) — still exempt from multOpt (per memory `multopt-session-blocking-rules`).
+- Reference generator format, `transrefno`/`uploadrefno`/`reference_no` mapping, sync idempotency matrix, IndexedDB schema, photo audit, cumulative engine, receipts, printing — all untouched.
+- The "same uploadrefno = same workflow, allow extra rows" rule on the backend — preserved.
+- The Sell Portal capture screen — `SellProduceScreen` is already a no-op for multOpt (memory).
 
 ### Files Touched
 
 | File | Change |
 |---|---|
-| `backend-api/server.js` | `/api/members/next-id` (prefix branch): true SQL MAX with reserved-range exclusion + jump rule; optional `psettings` override; returns `reservedRange` + `jumped` |
-| `src/services/mysqlApi.ts` | `getNextId` response type gains optional `reservedRange`, `jumped` |
-| `src/components/AddMemberModal.tsx` | Subtle hint under the ID field when suggestion jumped over reserved range |
-| `src/constants/appVersion.ts` | Bump to v2.10.59 (Code 81) + changelog comment |
-| `android/app/build.gradle` | `versionName "2.10.59"`, `versionCode 81` |
+| `src/hooks/useSessionBlacklist.ts` | Org-type-aware session matching (AM/PM for dairy, SCODE for coffee); local-date comparison; new optional `activeSeasonCode` param |
+| `src/pages/Index.tsx` | Pass `activeSession?.scode` into `useSessionBlacklist` (one prop) |
+| `src/hooks/useDataSync.ts` | Frontend `multOpt=0` guard: never silent-fail, surface toast, keep local row; backend 409 path: detect `DUPLICATE_SESSION_DELIVERY` and never delete local row; expose `conflictedReceiptsCount` |
+| `src/components/Dashboard.tsx` (or existing sync banner component) | Show small "⚠ {n} stuck receipts" chip when `conflictedReceiptsCount > 0` |
+| `src/constants/appVersion.ts` | Bump to v2.10.60 (Code 82); changelog comment |
+| `android/app/build.gradle` | `versionName "2.10.60"`, `versionCode 82` |
 
 ### Verification Checklist
 
-1. With test member `M9999` present and real members up to `M3556` → suggestion is `M3557` (not `M10000`, not `M1000`). ✓
-2. With real members up to `M8999` and `M9999` test present → suggestion is `M10000` (jump rule). ✓
-3. With real members up to `M10042` → suggestion is `M10043`. ✓
-4. With no members at all → `M00001`. ✓
-5. Switch toggle to Debtor with test `D9999` and real `D0123` → suggestion `D0124`. ✓
-6. Legacy v2.10.57 phone (no `prefix` param) → original behavior, no regression. ✓
-7. Manually typing `M9999` still allowed (no hard block), and POST `/api/members` still de-dupes correctly. ✓
-8. No new console errors; transactions/sync/receipts/photo audit unchanged. ✓
+1. **Dairy, online, multOpt=0**: capture + submit for `M00123` AM → receipt syncs. Try to re-select `M00123` → blocked with toast. ✓ (already works)
+2. **Dairy, offline, multOpt=0**: capture + submit `M00123` AM offline → close app → reopen offline → try to re-select `M00123` → **now blocked** with toast. ✓ (Layer 1 fix; previously could pass under timezone edge)
+3. **Coffee, offline, multOpt=0**: capture + submit `M00123` season `S0002` offline → close app → reopen → try to re-select `M00123` → **now blocked**. ✓ (Layer 1 fix; previously always slipped through)
+4. **Two offline receipts already exist for the same farmer/session with different uploadrefno** (the historical broken state): go online → first syncs OK → second is **kept locally** with a clear toast and shows in the new "⚠ {n} stuck receipts" chip — **not silently deleted**. ✓ (Layer 2 fix)
+5. Backend response `error: 'DUPLICATE_SESSION_DELIVERY'` arriving from a v2.10.32 device that bypasses Layer 1 → still kept locally on devices running v2.10.60. ✓
+6. Sell Portal (`transtype=2`) still allows unlimited captures, no blocking, no toasts. ✓
+7. Receipts whose `transrefno` truly already exists on the server (rare collision case) still get cleaned up correctly via the existing duplicate path. ✓
+8. `multOpt=1` farmers — zero behaviour change. ✓
+9. No new console errors. App build, transactions, sync stats, receipts, photo audit unchanged.
 
-### Out of Scope
+### Out of scope
 
-- Migrating or hiding existing test members from any list views.
-- Adding a UI to edit the reserved range from inside the app (the `psettings` override path is wired up, but UI configuration can come later if you want).
-- Any changes to prefixes other than `M` and `D`.
+- A dedicated "Conflicted Receipts" admin screen with re-key / discard actions (this version surfaces them via toast + chip + existing reprint list; admin screen can come next).
+- Server-side change to `server.js` (not needed; the code already returns the right error code).
+- Auto-merging two offline receipts into a single workflow (operationally unsafe; we deliberately keep them stuck until a human resolves them).
+- Migrating already-stuck-and-deleted historical rows (those are gone — only future losses are prevented; the chip surfaces only rows still in IndexedDB on devices that haven't synced since the bug last fired).
 
