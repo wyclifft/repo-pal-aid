@@ -525,6 +525,8 @@ export const useDataSync = () => {
 
       if (mountedRef.current) {
         setPendingCount(failed);
+        // v2.10.60: surface stuck multOpt=0 conflicts for UI badge
+        setConflictedReceiptsCount(conflictKeysSeen.size);
       }
       
       console.log(`[SYNC] Sync complete: ${synced} synced, ${failed} failed out of ${unsyncedReceipts.length} total`);
@@ -976,6 +978,9 @@ export const useDataSync = () => {
     pendingCount,
     pendingMilkCount,
     pendingSalesCount,
+    // v2.10.60: count of multOpt=0 receipts kept locally because the server
+    // already has a delivery for that farmer/session/date (DUPLICATE_SESSION_DELIVERY).
+    conflictedReceiptsCount,
     updatePendingCount,
     // Member sync state for banner
     isSyncingMembers,
