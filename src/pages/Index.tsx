@@ -111,7 +111,7 @@ const Index = () => {
   } = useIndexedDB();
   
   // Data sync hook for background syncing
-  const { isSyncing, pendingCount, pendingMilkCount, pendingSalesCount, syncAllData } = useDataSync();
+  const { isSyncing, pendingCount, pendingMilkCount, pendingSalesCount, conflictedReceiptsCount, syncAllData } = useDataSync();
   
   // App-wide settings from psettings
   const { 
