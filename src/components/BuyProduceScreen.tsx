@@ -315,13 +315,30 @@ export const BuyProduceScreen = ({
   const handleSelectFarmer = (farmer: Farmer) => {
     // Check if farmer is blocked before allowing selection (includes queue check)
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
-    if (farmer.multOpt === 0 && isFarmerBlocked(cleanId, true)) {
-      toast.error(`${farmer.name} has already delivered this session and cannot deliver again.`, { duration: 5000 });
+    const reason = farmer.multOpt === 0 ? getBlockReason(cleanId, true) : null;
+    if (reason) {
+      showDuplicateDialog(farmer, reason);
+      setShowSearchModal(false);
       return;
     }
     setMemberNo(cleanId);
     setShowSearchModal(false);
     onSelectFarmer(farmer);
+  };
+
+  // Friendly session label for the duplicate dialog (AM/PM for dairy, season name for coffee)
+  const sessionLabelForDialog = isCoffee
+    ? ((session as Session & { descript?: string; scode?: string }).descript ||
+        (session as Session & { descript?: string; scode?: string }).scode ||
+        'Current Season')
+    : getSessionType();
+
+  // Dismiss the duplicate dialog and reset the input so the operator can pick a new farmer
+  const handleDuplicateDialogClose = () => {
+    setDuplicateDialog(null);
+    setMemberNo('');
+    onClearFarmer();
+    focusMemberInput();
   };
   
   // Focus input when member is cleared (for post-submit flow)
