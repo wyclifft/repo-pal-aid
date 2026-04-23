@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { mysqlApi } from '@/services/mysqlApi';
@@ -47,7 +48,7 @@ const getActiveRoute = (): string => {
 };
 
 export const FarmerSyncDashboard = () => {
-  const { getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
+  const { db, getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
   const { settings } = useAppSettings();
   const [entries, setEntries] = useState<FarmerSyncEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -91,6 +92,10 @@ export const FarmerSyncDashboard = () => {
   /**
    * Online path: use batch cumulative API as the sole source of the farmer list.
    * Returns null if the batch API call fails (caller should fall back to offline).
+   *
+   * v2.10.62: On Capacitor (legacy WebView 52 / native HTTP bridge can flake),
+   * retry once with a 2s back-off so we stay on the transaction-driven path
+   * whenever the network is genuinely available — matching web behaviour.
    */
   const loadFromBatchAPI = useCallback(async (
     nameLookup: Map<string, Farmer>,
@@ -99,13 +104,26 @@ export const FarmerSyncDashboard = () => {
     const deviceFingerprint = await resolveFingerprint();
     if (!deviceFingerprint) return null;
 
-    try {
-      const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(
-        deviceFingerprint,
-        route || undefined
-      );
+    const isNative = (() => {
+      try { return Capacitor.isNativePlatform(); } catch { return false; }
+    })();
+    const maxAttempts = isNative ? 2 : 1;
 
-      if (!batchResult.success || !batchResult.data?.farmers) return null;
+    let batchResult: Awaited<ReturnType<typeof mysqlApi.farmerFrequency.getMonthlyFrequencyBatch>> | null = null;
+    try {
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(
+          deviceFingerprint,
+          route || undefined
+        );
+        if (batchResult?.success && batchResult.data?.farmers) break;
+        if (attempt < maxAttempts) {
+          console.warn(`[SyncDash] Batch API attempt ${attempt} failed, retrying in 2s...`);
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      if (!batchResult || !batchResult.success || !batchResult.data?.farmers) return null;
 
       const batchFarmers = batchResult.data.farmers;
       console.log(`[SyncDash] Batch API returned ${batchFarmers.length} farmers${route ? ` for route ${route}` : ''}`);
@@ -152,58 +170,106 @@ export const FarmerSyncDashboard = () => {
   }, [getFarmerCumulative]);
 
   /**
-   * Offline fallback: use IndexedDB cached farmers filtered by ccode/route + cumulative cache.
+   * Offline fallback (v2.10.62): transaction-driven, NOT cm_members-driven.
+   *
+   * Build the farmer list from evidence of activity:
+   *   1. All entries in the `farmer_cumulative` IndexedDB store (cached backend totals).
+   *   2. All unsynced receipts in IndexedDB (offline captures not yet uploaded).
+   *
+   * Drop any farmer whose total weight is 0 AND has no unsynced receipts
+   * (matches web behaviour — only farmers with transactions appear).
+   *
+   * Hydrate display name + route from the cm_members `nameLookup` map.
+   * Apply the active route filter the same way the online path does.
    */
-  const loadFromOfflineCache = useCallback(async (): Promise<FarmerSyncEntry[]> => {
-    const farmers = await getFarmers();
-    const deviceCcode = localStorage.getItem('device_ccode') || '';
-
-    // v2.10.40: gating now driven by psettings.cumulative_frequency_status (or legacy printcumm)
-    // instead of per-member cm_members.currqty.
-    const cumulativeEnabled = (settings.cumulative_frequency_status === 1) || (settings.printcumm === 1);
-
-    let filtered: Farmer[] = cumulativeEnabled
-      ? (deviceCcode ? farmers.filter((f: Farmer) => f.ccode === deviceCcode) : farmers)
-      : [];
-
-    if (activeRoute) {
-      filtered = filtered.filter((f: Farmer) => f.route.trim() === activeRoute);
-    }
-
-    const total = filtered.length;
-    setProgressInfo({ current: 0, total, status: `Processing 0 of ${total} cached farmers...` });
-
-    const results: FarmerSyncEntry[] = [];
-
-    for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
-      if (cancelledRef.current) break;
-      const batch = filtered.slice(i, i + BATCH_SIZE);
-
-      const batchResults = await Promise.all(
-        batch.map(async (farmer) => {
-          const cumData = await getFarmerCumulative(farmer.farmer_id);
-          return {
-            farmer_id: farmer.farmer_id,
-            name: farmer.name || '',
-            route: farmer.route || 'N/A',
-            cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : 0,
-            baseCount: cumData?.baseCount || 0,
-            localCount: cumData?.localCount || 0,
-            isCached: !!cumData,
+  const loadFromOfflineCache = useCallback(async (
+    nameLookup: Map<string, Farmer>
+  ): Promise<FarmerSyncEntry[]> => {
+    // 1. Read every farmer_cumulative key currently cached
+    const cumulativeEntries: Array<{ farmer_id: string; baseCount: number; localCount: number }> = [];
+    if (db) {
+      try {
+        await new Promise<void>((resolve) => {
+          const tx = db.transaction('farmer_cumulative', 'readonly');
+          const store = tx.objectStore('farmer_cumulative');
+          const req = store.getAll();
+          req.onsuccess = () => {
+            const all = (req.result || []) as any[];
+            for (const r of all) {
+              const fid = String(r.farmer_id || '').replace(/^#/, '').trim();
+              if (!fid) continue;
+              cumulativeEntries.push({
+                farmer_id: fid,
+                baseCount: Number(r.baseCount || 0),
+                localCount: Number(r.localCount || 0),
+              });
+            }
+            resolve();
           };
-        })
-      );
-
-      results.push(...batchResults);
-      const processed = Math.min(i + BATCH_SIZE, filtered.length);
-      setProgressInfo({ current: processed, total, status: `Processing ${processed} of ${total} farmers...` });
-      if (i + BATCH_SIZE < filtered.length) {
-        await new Promise(r => setTimeout(r, 0));
+          req.onerror = () => resolve();
+        });
+      } catch (err) {
+        console.warn('[SyncDash] Failed to read farmer_cumulative store:', err);
       }
     }
 
-    return results;
-  }, [getFarmers, getFarmerCumulative, activeRoute]);
+    // 2. Union with farmer IDs from unsynced receipts (just-captured offline deliveries)
+    const unsyncedReceipts = await getUnsyncedReceipts();
+    const unsyncedByFarmer = new Map<string, number>();
+    for (const r of unsyncedReceipts) {
+      if ((r as any).type === 'sale') continue;
+      if ((r as any).transtype === 2) continue;
+      const fid = String((r as any).farmer_id || '').replace(/^#/, '').trim();
+      if (!fid) continue;
+      unsyncedByFarmer.set(fid, (unsyncedByFarmer.get(fid) || 0) + Number((r as any).weight || 0));
+    }
+
+    // Build union set of farmer IDs
+    const farmerIds = new Set<string>();
+    cumulativeEntries.forEach(e => farmerIds.add(e.farmer_id));
+    unsyncedByFarmer.forEach((_, fid) => farmerIds.add(fid));
+
+    // Index cumulative entries by farmer ID for O(1) lookup
+    const cumulativeMap = new Map<string, { baseCount: number; localCount: number }>();
+    for (const e of cumulativeEntries) cumulativeMap.set(e.farmer_id, e);
+
+    const cleanActiveRoute = (activeRoute || '').trim();
+
+    // 3. Build entries — drop zero-weight farmers, hydrate from nameLookup, apply route filter
+    const built: FarmerSyncEntry[] = [];
+    for (const fid of farmerIds) {
+      const cum = cumulativeMap.get(fid);
+      const baseCount = cum?.baseCount || 0;
+      const localCount = cum?.localCount || 0;
+      const unsyncedWeight = unsyncedByFarmer.get(fid) || 0;
+      const total = baseCount + localCount + unsyncedWeight;
+
+      // Drop if zero weight AND no unsynced receipts (matches web "with transactions only")
+      if (total <= 0 && unsyncedWeight <= 0) continue;
+
+      const meta = nameLookup.get(fid);
+      const farmerRoute = (meta?.route || '').trim();
+
+      // Tighten route filter: prefer cm_members route; if missing entirely, still include with 'N/A'
+      if (cleanActiveRoute) {
+        if (meta && farmerRoute && farmerRoute !== cleanActiveRoute) continue;
+        // If meta missing OR route blank — include (don't silently hide transactions)
+      }
+
+      built.push({
+        farmer_id: fid,
+        name: meta?.name || fid,
+        route: farmerRoute || 'N/A',
+        cumulativeTotal: total,
+        baseCount,
+        localCount: localCount + unsyncedWeight,
+        isCached: !!cum,
+      });
+    }
+
+    setProgressInfo({ current: built.length, total: built.length, status: `Loaded ${built.length} farmers from offline cache` });
+    return built;
+  }, [db, getUnsyncedReceipts, activeRoute]);
 
   const loadData = useCallback(async (triggerSync = false) => {
     if (!isReady) return;
@@ -249,20 +315,20 @@ export const FarmerSyncDashboard = () => {
       // Step 3: Load farmer list — transaction-driven (online) or cached (offline)
       let results: FarmerSyncEntry[] | null = null;
 
-      if (navigator.onLine) {
-        // Build name lookup from cm_members (for display names only)
-        setProgressInfo({ current: 0, total: 0, status: 'Fetching farmer names...' });
-        const nameLookup = await buildNameLookup();
+      // Always build name lookup — used by both online and offline paths for display names
+      setProgressInfo({ current: 0, total: 0, status: 'Fetching farmer names...' });
+      const nameLookup = await buildNameLookup();
 
+      if (navigator.onLine) {
         // Use batch API as the sole source of the farmer list
         setProgressInfo({ current: 0, total: 0, status: 'Fetching transaction data...' });
         results = await loadFromBatchAPI(nameLookup, activeRoute || undefined);
       }
 
-      // Offline fallback or batch API failure
+      // Offline fallback or batch API failure — transaction-driven (v2.10.62)
       if (!results) {
         setProgressInfo({ current: 0, total: 0, status: 'Loading from offline cache...' });
-        results = await loadFromOfflineCache();
+        results = await loadFromOfflineCache(nameLookup);
       }
 
       // Sort: cached first, then alphabetical
