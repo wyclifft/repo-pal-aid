@@ -1,4 +1,28 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.62: Farmer Sync Status (Settings) — Capacitor list now matches the
+//           Web app: transaction-driven, route-filtered, no zero-weight rows.
+//           ROOT CAUSE: when the batch API call from Capacitor failed (legacy
+//           WebView 52 / native HTTP bridge can flake on a single GET), the
+//           dashboard fell back to listing every cached cm_members row —
+//           including farmers with no transactions — and the route filter
+//           was fragile against legacy whitespace. The web app rarely hit
+//           the fallback, so it always looked correct.
+//           FIX (FarmerSyncDashboard.tsx only):
+//             (1) Online batch call now retries once with a 2s back-off on
+//                 Capacitor (Capacitor.isNativePlatform()) so the device
+//                 stays on the transaction-driven path whenever the network
+//                 is genuinely available.
+//             (2) Offline fallback rewritten to be transaction-driven: the
+//                 list is built from the union of (a) farmer_cumulative
+//                 IndexedDB keys and (b) farmer IDs in unsynced receipts.
+//                 Farmers with zero total weight AND no unsynced receipts
+//                 are dropped — matches web behaviour exactly.
+//             (3) Offline route filter tightened: prefer cm_members.route
+//                 (TRIM both sides), but if cm_members has no record for
+//                 the farmer, include the row tagged 'N/A' so transactions
+//                 are never silently hidden.
+//           No backend, no IndexedDB schema, no sync, no capture/receipt/
+//           photo audit/Z-Report changes. Buy/Sell screens untouched.
 // v2.10.61: multOpt=0 duplicate capture — replace transient toast with a
 //           persistent AlertDialog ("Already Delivered This Session") so
 //           operators cannot miss the block under bright sunlight or while
@@ -136,5 +160,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.61';
-export const APP_VERSION_CODE = 83;
+export const APP_VERSION = '2.10.62';
+export const APP_VERSION_CODE = 84;
