@@ -1,4 +1,21 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.64: Fix login "Failed to fetch" in Lovable preview / wrapped fetch envs.
+//           ROOT CAUSE: external scripts in the preview iframe (lovable.js) wrap
+//           window.fetch and intermittently throw TypeError: Failed to fetch on
+//           POST requests, even when the backend is healthy and GETs succeed.
+//           Same class of failure can occur on legacy WebViews / corporate
+//           proxies. The login screen surfaced this as "Failed to fetch" with
+//           no recovery path.
+//           FIX: new src/utils/resilientFetch.ts wraps window.fetch and, on a
+//           network-level TypeError for any non-GET, transparently falls back
+//           to a raw XMLHttpRequest that bypasses the wrapped fetch entirely.
+//           Returns a real Response object so apiRequest() keeps using
+//           response.json() / response.headers unchanged. mysqlApi.apiRequest
+//           now calls resilientFetch instead of fetch — every POST/PUT/PATCH/
+//           DELETE in the app (login, milk-collection, sales, devices,
+//           members…) gets the fallback for free. GET behaviour is identical.
+//           No backend, no IndexedDB schema, no sync engine, no reference
+//           generator, no receipt/photo/Z-Report changes.
 // v2.10.63: Fix multOpt=0 duplicate-capture block bypassed after app restart for
 //           coffee orgs. ROOT CAUSE: Index.tsx read activeSession.scode (lowercase)
 //           but the Session interface uses .SCODE (uppercase) everywhere else, so
@@ -181,5 +198,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.63';
-export const APP_VERSION_CODE = 85;
+export const APP_VERSION = '2.10.64';
+export const APP_VERSION_CODE = 86;
