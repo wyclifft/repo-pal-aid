@@ -197,6 +197,9 @@ export const useDataSync = () => {
 
           console.log(`[SYNC] Processing ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
 
+          // v2.10.60: hoist normalizedSession so the catch block can reference it
+          let normalizedSession: string = 'AM';
+
           try {
             // v2.10.51: Coffee orgs → send SCODE as session value (NEVER AM/PM).
             // Dairy orgs → normalize to AM/PM as before.
