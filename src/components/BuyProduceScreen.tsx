@@ -521,6 +521,15 @@ export const BuyProduceScreen = ({
           farmers={availableFarmers}
         />
 
+        {/* Duplicate Delivery (multOpt=0) blocking dialog — replaces silent toast */}
+        <DuplicateDeliveryDialog
+          open={!!duplicateDialog}
+          farmer={duplicateDialog?.farmer ?? null}
+          sessionLabel={sessionLabelForDialog}
+          reason={duplicateDialog?.reason ?? 'blacklist'}
+          onClose={handleDuplicateDialogClose}
+        />
+
         {/* Member Info Card */}
         <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-2">
           <div className="flex justify-between items-center border-b border-gray-100 pb-2">
