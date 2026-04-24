@@ -1,4 +1,30 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.71: Fix "trnid starts afresh while storeid syncs correctly" on devices
+//           sharing a devcode prefix (e.g. BA02). syncOfflineCounter had an
+//           absolute SAFETY cap that DISCARDED any backend trnid > 10,000,000
+//           as "clientFetch corruption". On busy shared-devcode estates the
+//           legitimate global MAX(transrefno) for that devcode legitimately
+//           exceeds 10M, so the cap silently rejected the correct authoritative
+//           value, falling back to local 0 → device generated colliding refs
+//           every sync, surfacing as `Reference collision: BA0220000341 …`.
+//           storeid/milkid/aiid have no such cap, which is why the user
+//           observed "storeid syncs but trnid does not".
+//           FIX (frontend only — referenceGenerator.ts): replace the absolute
+//           cap with a RELATIVE sanity check. Backend trnid is rejected only
+//           if BOTH (a) it exceeds 100M AND (b) local already has a non-zero
+//           counter AND (c) the jump exceeds 10M ahead of local. This keeps
+//           protection against truly bogus values while accepting legitimate
+//           high counters from shared-devcode estates. Fresh-install devices
+//           (local=0) ALWAYS accept the backend value, so they immediately
+//           catch up to the global max instead of starting at 1 and colliding.
+//           Also added explanatory comments at the Login.tsx and
+//           DeviceAuthStatus.tsx callsites so the 0/null→undefined fallthrough
+//           is not "fixed" by mistake — it is intentional and relies on the
+//           backend GREATEST(devsettings.trnid, MAX(transrefno)) self-heal
+//           introduced in v2.10.70. No backend change, no IndexedDB schema
+//           change, no sync engine change, no reference format change. The
+//           transrefno format remains devcode + 8-digit trnid (no clientFetch).
+
 // v2.10.70: Fix devices stuck generating colliding milk-collection references
 //           (e.g. New: member=M0000 weight=1 colliding with real members like
 //           M03156). ROOT CAUSE: backend GET /api/devices/fingerprint/:fp only
@@ -351,5 +377,5 @@
 //           Real BLE and Classic SPP scales remain unaffected. Printer
 //           connect/print flow is untouched. No backend, no IndexedDB schema,
 //           no sync engine, no reference generator changes.
-export const APP_VERSION = '2.10.70';
-export const APP_VERSION_CODE = 92;
+export const APP_VERSION = '2.10.71';
+export const APP_VERSION_CODE = 93;

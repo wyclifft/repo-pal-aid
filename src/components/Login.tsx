@@ -96,7 +96,9 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           }
           if (resolvedDeviceData.devcode) {
             localStorage.setItem('devcode', resolvedDeviceData.devcode);
-            // Sync counters in background (fire and forget)
+            // Sync counters in background (fire and forget).
+            // Note: 0/null both → undefined, so syncOfflineCounter keeps the local counter.
+            //       The backend GREATEST(devsettings.trnid, MAX(transrefno)) self-heals on next call.
             const lastTrnId = resolvedDeviceData.trnid ? parseInt(String(resolvedDeviceData.trnid), 10) : undefined;
             const lastMilkId = resolvedDeviceData.milkid ? parseInt(String(resolvedDeviceData.milkid), 10) : undefined;
             const lastStoreId = resolvedDeviceData.storeid ? parseInt(String(resolvedDeviceData.storeid), 10) : undefined;
