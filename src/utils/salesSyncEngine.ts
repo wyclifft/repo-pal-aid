@@ -158,15 +158,37 @@ export const syncSalesFromDB = async (
         } else {
           const errorMsg = (result.error || '').toLowerCase();
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
-            for (const sale of batchSales) {
-              if (sale.orderId) {
-                try { await deleteSale(sale.orderId); } catch (e) {
-                  console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
+            // v2.10.66: collision likely means local counter is behind backend.
+            // Refresh counters once per run, regenerate refs for THIS batch,
+            // and retry once. Only treat as "already synced" after retry also
+            // collides — that's the genuine idempotent case.
+            await handleCounterDrift(uploadrefno);
+            const retried = await retryBatchWithFreshRefs(batchRequest, batchSales, deviceFingerprint);
+            if (retried.success) {
+              for (const sale of batchSales) {
+                if (sale.orderId) {
+                  try { await deleteSale(sale.orderId); } catch (e) {
+                    console.warn(`[WARN] Failed to delete synced sale ${sale.orderId}:`, e);
+                  }
                 }
               }
+              synced += batchSales.length;
+              console.log(`[SUCCESS] Recovered batch after counter-drift retry: ${retried.uploadrefno || uploadrefno}`);
+            } else if (retried.stillDuplicate) {
+              // Genuine idempotent — original batch was actually already synced
+              for (const sale of batchSales) {
+                if (sale.orderId) {
+                  try { await deleteSale(sale.orderId); } catch (e) {
+                    console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
+                  }
+                }
+              }
+              synced += batchSales.length;
+              console.log(`[SKIP] Batch already synced (verified duplicate): ${uploadrefno}`);
+            } else {
+              failed += batchSales.length;
+              console.warn(`[WARN] Batch retry failed for ${uploadrefno}: ${retried.error || 'unknown'}`);
             }
-            synced += batchSales.length;
-            console.log(`[SKIP] Batch already synced (duplicate): ${uploadrefno}`);
           } else {
             failed += batchSales.length;
             console.warn(`[WARN] Batch sync failed for ${uploadrefno}: ${result.error || 'Unknown error'}`);
@@ -175,14 +197,29 @@ export const syncSalesFromDB = async (
       } catch (error: any) {
         const errorMsg = (error?.message || '').toLowerCase();
         if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
-          for (const sale of batchSales) {
-            if (sale.orderId) {
-              try { await deleteSale(sale.orderId); } catch (e) {
-                console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
+          await handleCounterDrift(uploadrefno);
+          const retried = await retryBatchWithFreshRefs(batchRequest, batchSales, deviceFingerprint);
+          if (retried.success) {
+            for (const sale of batchSales) {
+              if (sale.orderId) {
+                try { await deleteSale(sale.orderId); } catch (e) {
+                  console.warn(`[WARN] Failed to delete synced sale ${sale.orderId}:`, e);
+                }
               }
             }
+            synced += batchSales.length;
+          } else if (retried.stillDuplicate) {
+            for (const sale of batchSales) {
+              if (sale.orderId) {
+                try { await deleteSale(sale.orderId); } catch (e) {
+                  console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
+                }
+              }
+            }
+            synced += batchSales.length;
+          } else {
+            failed += batchSales.length;
           }
-          synced += batchSales.length;
         } else {
           failed += batchSales.length;
           console.error(`[ERROR] Batch sync exception for ${uploadrefno}:`, error);
