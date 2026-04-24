@@ -266,5 +266,33 @@
 //           transrefno, globally unique on device) makes the extra calls
 //           idempotent. No backend, no IndexedDB schema, no sync engine, no
 //           reference generator, no receipt/photo/Z-Report changes.
-export const APP_VERSION = '2.10.67';
-export const APP_VERSION_CODE = 89;
+// v2.10.68: Fix "ghost scale connects when printer connects" — Dashboard scale
+//           indicator was turning green even with no scale paired, the moment
+//           a Bluetooth printer was connected.
+//           ROOT CAUSE: BluetoothClassicPlugin uses ONE shared RFCOMM socket
+//           for both scale and printer roles, and `dataReceived` events carry
+//           no device-address tag. The scale's global dataReceived listener
+//           (registered the first time Settings touched the scale flow) stayed
+//           alive and parsed printer ACK/status bytes as a "weight" via the
+//           permissive integer-grams strategy in parseSerialWeightData. Each
+//           parsed value broadcast `scaleWeightUpdate`, and useScaleConnection
+//           unconditionally called `setScaleConnected(true)` on every weight
+//           event — flipping the indicator on with no real scale present.
+//           FIXES (frontend-only, no native rebuild required):
+//             (1) bluetoothClassic.ts: dataReceived listener now drops inbound
+//                 bytes unless the scale role is currently flagged connected
+//                 (classicScale.isConnected && classicScale.address).
+//             (2) bluetoothClassic.ts: parseSerialWeightData rejects frames
+//                 with no decimal point and no kg/g/lb/oz unit — printer ACKs
+//                 (e.g. \x06, \x10, short numeric flags) never have either,
+//                 so they no longer match the integer-grams fallback.
+//             (3) useScaleConnection.ts: scaleWeightUpdate listener no longer
+//                 treats a stray weight event as proof a scale is connected;
+//                 it verifies isScaleConnected() before updating live weight
+//                 and notifying parents. Connection state remains driven by
+//                 scaleConnectionChange events only.
+//           Real scales (BLE and Classic SPP) keep working unchanged because
+//           classicScale.isConnected is set by connectClassicScale BEFORE the
+//           first dataReceived can arrive, and BLE scales use a separate path.
+export const APP_VERSION = '2.10.68';
+export const APP_VERSION_CODE = 90;
