@@ -38,6 +38,9 @@ export const syncSalesFromDB = async (
   let synced = 0;
   let failed = 0;
 
+  // Reset per-run drift flag — allow one snapshot refresh per sync invocation
+  counterDriftHandledThisRun = false;
+
   try {
     const allRecords = await getUnsyncedSales();
     const pendingSales: SaleRecord[] = allRecords.filter(
@@ -50,6 +53,20 @@ export const syncSalesFromDB = async (
 
     console.log(`[SYNC-ENGINE] Starting sync of ${pendingSales.length} pending sales/AI transactions...`);
     const deviceFingerprint = await generateDeviceFingerprint();
+
+    // v2.10.66: self-heal helper — on first duplicate detected this run,
+    // pull true counters from backend so subsequent generations skip past
+    // the colliding range.
+    const handleCounterDrift = async (collidedRef: string) => {
+      if (counterDriftHandledThisRun) return;
+      counterDriftHandledThisRun = true;
+      console.warn(`[COUNTER-DRIFT] Detected duplicate ${collidedRef} — refreshing counters from backend`);
+      try {
+        await refreshCountersFromBackend(deviceFingerprint);
+      } catch (e) {
+        console.warn('[COUNTER-DRIFT] refresh failed:', (e as Error)?.message);
+      }
+    };
 
     // Group store sales by uploadrefno for batch sync
     const storeBatches: Record<string, SaleRecord[]> = {};
