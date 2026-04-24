@@ -86,19 +86,18 @@ const Store = () => {
   const [entryType, setEntryType] = useState<'scale' | 'manual'>('manual');
   
   // Scale connection hook
+  // v2.10.65: Store is cart-based and does NOT read weight from the scale.
+  // We keep the hook wired so any in-flight weight broadcast doesn't crash,
+  // but we deliberately DO NOT call autoReconnect() on mount — that call was
+  // toggling Classic BT plugin state and feeding the printer-disconnect bug
+  // on integrated POS units that share a single BluetoothClassic instance.
   const {
     scaleConnected,
     liveWeight,
-    autoReconnect,
   } = useScaleConnection({ 
     onWeightChange: setWeight, 
     onEntryTypeChange: setEntryType 
   });
-
-  // Auto-reconnect scale on mount
-  useEffect(() => {
-    autoReconnect();
-  }, []);
 
   // Clerk info - user_id for tracking, clerkName for display
   const userId = currentUser?.user_id || 'unknown';
