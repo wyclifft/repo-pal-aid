@@ -600,3 +600,89 @@ export const resetDeviceConfig = async (): Promise<void> => {
 export const initializeDeviceConfig = async (companyName: string, devcode: string): Promise<void> => {
   await storeDeviceConfig(companyName, devcode);
 };
+
+/**
+ * v2.10.66: Refresh local counters from backend's true source of truth.
+ * Calls /api/devices/counter-snapshot/:fingerprint which returns the MAX of
+ * devsettings counters AND the actual transactions table — guaranteed to
+ * never be lower than what's already on the server.
+ *
+ * Falls back to legacy /api/devices/fingerprint/:fingerprint if the snapshot
+ * endpoint isn't available (older backend). Used as a self-healing safety net
+ * when the sync engine detects a duplicate-reference collision.
+ */
+export const refreshCountersFromBackend = async (deviceFingerprint: string): Promise<boolean> => {
+  if (!navigator.onLine || !deviceFingerprint) return false;
+
+  try {
+    const { API_CONFIG } = await import('@/config/api');
+    const apiUrl = API_CONFIG.MYSQL_API_URL;
+
+    // Try the new snapshot endpoint first
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    let snapshotData: any = null;
+    try {
+      const snapshotRes = await fetch(
+        `${apiUrl}/api/devices/counter-snapshot/${encodeURIComponent(deviceFingerprint)}`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeoutId);
+
+      if (snapshotRes.ok) {
+        const json = await snapshotRes.json();
+        if (json?.success && json?.data?.devcode) {
+          snapshotData = json.data;
+        }
+      } else if (snapshotRes.status !== 404) {
+        console.warn(`[COUNTER-DRIFT] snapshot endpoint returned ${snapshotRes.status}`);
+      }
+    } catch (snapErr) {
+      clearTimeout(timeoutId);
+      console.warn('[COUNTER-DRIFT] snapshot fetch failed, will try legacy endpoint:', (snapErr as Error)?.message);
+    }
+
+    if (snapshotData) {
+      await syncOfflineCounter(
+        snapshotData.devcode,
+        Number(snapshotData.true_trnid) || 0,
+        Number(snapshotData.true_milkid) || 0,
+        Number(snapshotData.true_storeid) || 0,
+        Number(snapshotData.true_aiid) || 0
+      );
+      console.log('[COUNTER-DRIFT] Counters refreshed from snapshot:', snapshotData);
+      return true;
+    }
+
+    // Fallback to legacy endpoint
+    const legacyController = new AbortController();
+    const legacyTimeout = setTimeout(() => legacyController.abort(), 5000);
+    const legacyRes = await fetch(
+      `${apiUrl}/api/devices/fingerprint/${encodeURIComponent(deviceFingerprint)}`,
+      { signal: legacyController.signal }
+    );
+    clearTimeout(legacyTimeout);
+
+    if (legacyRes.ok) {
+      const json = await legacyRes.json();
+      const d = json?.data;
+      if (json?.success && d?.devcode) {
+        await syncOfflineCounter(
+          d.devcode,
+          Number(d.trnid) || 0,
+          Number(d.milkid) || 0,
+          Number(d.storeid) || 0,
+          Number(d.aiid) || 0
+        );
+        console.log('[COUNTER-DRIFT] Counters refreshed from legacy endpoint:', d);
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn('[COUNTER-DRIFT] refreshCountersFromBackend failed:', (e as Error)?.message);
+  }
+
+  return false;
+};
+

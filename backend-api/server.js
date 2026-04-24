@@ -2468,6 +2468,123 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, data: mappedRows });
     }
 
+    // v2.10.66: counter-snapshot endpoint — returns TRUE max of devsettings
+    // counters AND actual transactions table. Self-heals legacy devices whose
+    // devsettings.trnid/storeid/aiid lagged behind transactions.transrefno
+    // (e.g. v2.10.32 store sales never bumped trnid). Read-only, scoped to
+    // one device, indexed lookups — negligible cost.
+    if (path.startsWith('/api/devices/counter-snapshot/') && method === 'GET') {
+      const fingerprint = decodeURIComponent(path.split('/')[4]);
+
+      const [devRows] = await pool.query(
+        'SELECT uniquedevcode, ccode, devcode, IFNULL(trnid, 0) AS trnid, IFNULL(milkid, 0) AS milkid, IFNULL(storeid, 0) AS storeid, IFNULL(aiid, 0) AS aiid FROM devsettings WHERE uniquedevcode = ?',
+        [fingerprint]
+      );
+
+      if (devRows.length === 0) {
+        return sendJSON(res, { success: false, error: 'Device not found' }, 404);
+      }
+
+      const dev = devRows[0];
+      const devcode = dev.devcode || '';
+      const ccode = dev.ccode || '';
+      const uniquedevcode = dev.uniquedevcode;
+
+      // True trnid: max of devsettings.trnid and any transrefno starting with devcode
+      // (transrefno = devcode + 8-digit trnid, total length = devcode.length + 8)
+      let trueTrnId = Number(dev.trnid) || 0;
+      if (devcode) {
+        try {
+          const [trnRows] = await pool.query(
+            `SELECT MAX(CAST(SUBSTRING(transrefno, ?) AS UNSIGNED)) AS max_trn
+             FROM transactions
+             WHERE transrefno LIKE ?
+               AND ccode = ?
+               AND LENGTH(transrefno) = ?`,
+            [devcode.length + 1, `${devcode}%`, ccode, devcode.length + 8]
+          );
+          const fromTx = Number(trnRows?.[0]?.max_trn) || 0;
+          if (fromTx > trueTrnId) trueTrnId = fromTx;
+        } catch (e) {
+          console.warn('[COUNTER-SNAPSHOT] trnid lookup failed:', e?.message);
+        }
+      }
+
+      // True milkid: max of devsettings.milkid and numeric Uploadrefno from
+      // milk transactions (Transtype=1) for this device. Legacy milk uploadrefno
+      // was a plain integer — REGEXP filter keeps the lookup safe.
+      let trueMilkId = Number(dev.milkid) || 0;
+      try {
+        const [milkRows] = await pool.query(
+          `SELECT MAX(CAST(Uploadrefno AS UNSIGNED)) AS max_milk
+           FROM transactions
+           WHERE deviceserial = ?
+             AND Transtype = 1
+             AND Uploadrefno REGEXP '^[0-9]+$'`,
+          [uniquedevcode]
+        );
+        const fromTx = Number(milkRows?.[0]?.max_milk) || 0;
+        if (fromTx > trueMilkId) trueMilkId = fromTx;
+      } catch (e) {
+        console.warn('[COUNTER-SNAPSHOT] milkid lookup failed:', e?.message);
+      }
+
+      // True storeid: max of devsettings.storeid and Store sale Uploadrefno
+      // (Transtype=2). Format: devcode + clientFetch(1 digit) + 8-digit storeid,
+      // so total length = devcode.length + 9; storeid lives in last 8 chars.
+      let trueStoreId = Number(dev.storeid) || 0;
+      if (devcode) {
+        try {
+          const [storeRows] = await pool.query(
+            `SELECT MAX(CAST(SUBSTRING(Uploadrefno, ?) AS UNSIGNED)) AS max_store
+             FROM transactions
+             WHERE deviceserial = ?
+               AND Transtype = 2
+               AND Uploadrefno LIKE ?
+               AND LENGTH(Uploadrefno) = ?`,
+            [devcode.length + 2, uniquedevcode, `${devcode}%`, devcode.length + 9]
+          );
+          const fromTx = Number(storeRows?.[0]?.max_store) || 0;
+          if (fromTx > trueStoreId) trueStoreId = fromTx;
+        } catch (e) {
+          console.warn('[COUNTER-SNAPSHOT] storeid lookup failed:', e?.message);
+        }
+      }
+
+      // True aiid: max of devsettings.aiid and AI sale Uploadrefno (Transtype=3).
+      let trueAiId = Number(dev.aiid) || 0;
+      if (devcode) {
+        try {
+          const [aiRows] = await pool.query(
+            `SELECT MAX(CAST(SUBSTRING(Uploadrefno, ?) AS UNSIGNED)) AS max_ai
+             FROM transactions
+             WHERE deviceserial = ?
+               AND Transtype = 3
+               AND Uploadrefno LIKE ?
+               AND LENGTH(Uploadrefno) = ?`,
+            [devcode.length + 2, uniquedevcode, `${devcode}%`, devcode.length + 9]
+          );
+          const fromTx = Number(aiRows?.[0]?.max_ai) || 0;
+          if (fromTx > trueAiId) trueAiId = fromTx;
+        } catch (e) {
+          console.warn('[COUNTER-SNAPSHOT] aiid lookup failed:', e?.message);
+        }
+      }
+
+      return sendJSON(res, {
+        success: true,
+        data: {
+          uniquedevcode,
+          devcode,
+          ccode,
+          true_trnid: trueTrnId,
+          true_milkid: trueMilkId,
+          true_storeid: trueStoreId,
+          true_aiid: trueAiId,
+        },
+      });
+    }
+
     // Devices endpoints
     if (path.startsWith('/api/devices/fingerprint/') && method === 'GET') {
       const fingerprint = decodeURIComponent(path.split('/')[4]);
@@ -3695,5 +3812,101 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// v2.10.66: One-time bootstrap on server start — backfill devsettings counters
+// from the transactions table. Idempotent (uses GREATEST), never decrements.
+// Runs once at boot to fix legacy devices whose counters were never bumped by
+// the early /api/sales path.
+async function bootstrapDeviceCounters() {
+  try {
+    const [devices] = await pool.query(
+      'SELECT uniquedevcode, ccode, devcode, IFNULL(trnid,0) AS trnid, IFNULL(milkid,0) AS milkid, IFNULL(storeid,0) AS storeid, IFNULL(aiid,0) AS aiid FROM devsettings WHERE devcode IS NOT NULL AND devcode <> ""'
+    );
+
+    let updated = 0;
+    for (const d of devices) {
+      const devcode = d.devcode;
+      const ccode = d.ccode || '';
+      const uniquedevcode = d.uniquedevcode;
+      let trueTrn = Number(d.trnid) || 0;
+      let trueMilk = Number(d.milkid) || 0;
+      let trueStore = Number(d.storeid) || 0;
+      let trueAi = Number(d.aiid) || 0;
+
+      try {
+        const [r] = await pool.query(
+          `SELECT MAX(CAST(SUBSTRING(transrefno, ?) AS UNSIGNED)) AS m
+           FROM transactions
+           WHERE transrefno LIKE ? AND ccode = ? AND LENGTH(transrefno) = ?`,
+          [devcode.length + 1, `${devcode}%`, ccode, devcode.length + 8]
+        );
+        const m = Number(r?.[0]?.m) || 0;
+        if (m > trueTrn) trueTrn = m;
+      } catch {}
+
+      try {
+        const [r] = await pool.query(
+          `SELECT MAX(CAST(Uploadrefno AS UNSIGNED)) AS m
+           FROM transactions
+           WHERE deviceserial = ? AND Transtype = 1 AND Uploadrefno REGEXP '^[0-9]+$'`,
+          [uniquedevcode]
+        );
+        const m = Number(r?.[0]?.m) || 0;
+        if (m > trueMilk) trueMilk = m;
+      } catch {}
+
+      try {
+        const [r] = await pool.query(
+          `SELECT MAX(CAST(SUBSTRING(Uploadrefno, ?) AS UNSIGNED)) AS m
+           FROM transactions
+           WHERE deviceserial = ? AND Transtype = 2 AND Uploadrefno LIKE ? AND LENGTH(Uploadrefno) = ?`,
+          [devcode.length + 2, uniquedevcode, `${devcode}%`, devcode.length + 9]
+        );
+        const m = Number(r?.[0]?.m) || 0;
+        if (m > trueStore) trueStore = m;
+      } catch {}
+
+      try {
+        const [r] = await pool.query(
+          `SELECT MAX(CAST(SUBSTRING(Uploadrefno, ?) AS UNSIGNED)) AS m
+           FROM transactions
+           WHERE deviceserial = ? AND Transtype = 3 AND Uploadrefno LIKE ? AND LENGTH(Uploadrefno) = ?`,
+          [devcode.length + 2, uniquedevcode, `${devcode}%`, devcode.length + 9]
+        );
+        const m = Number(r?.[0]?.m) || 0;
+        if (m > trueAi) trueAi = m;
+      } catch {}
+
+      if (
+        trueTrn > Number(d.trnid) ||
+        trueMilk > Number(d.milkid) ||
+        trueStore > Number(d.storeid) ||
+        trueAi > Number(d.aiid)
+      ) {
+        try {
+          await pool.query(
+            `UPDATE devsettings
+               SET trnid = GREATEST(IFNULL(trnid,0), ?),
+                   milkid = GREATEST(IFNULL(milkid,0), ?),
+                   storeid = GREATEST(IFNULL(storeid,0), ?),
+                   aiid = GREATEST(IFNULL(aiid,0), ?)
+             WHERE uniquedevcode = ?`,
+            [trueTrn, trueMilk, trueStore, trueAi, uniquedevcode]
+          );
+          updated++;
+        } catch (e) {
+          console.warn('[BOOTSTRAP] Update failed for', uniquedevcode, e?.message);
+        }
+      }
+    }
+    console.log(`[BOOTSTRAP] Counter sync complete — updated ${updated}/${devices.length} devices`);
+  } catch (e) {
+    console.warn('[BOOTSTRAP] Skipped (non-fatal):', e?.message);
+  }
+}
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+  // Fire and forget — never block listening on bootstrap
+  bootstrapDeviceCounters().catch(err => console.warn('[BOOTSTRAP] error:', err?.message));
+});

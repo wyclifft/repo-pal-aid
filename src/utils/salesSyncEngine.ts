@@ -1,6 +1,11 @@
 import { mysqlApi, type Sale, type BatchSaleRequest } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { resolveSessionMetadata } from '@/utils/sessionMetadata';
+import {
+  refreshCountersFromBackend,
+  generateReferenceWithUploadRef,
+  generateTransRefOnly,
+} from '@/utils/referenceGenerator';
 
 interface SaleRecord extends Sale {
   orderId?: number;
@@ -16,6 +21,10 @@ interface SaleRecord extends Sale {
   other_details?: string;
 }
 
+// v2.10.66: module-level guard — only refresh counters once per sync run to
+// avoid hammering the snapshot endpoint when an entire batch collides.
+let counterDriftHandledThisRun = false;
+
 /**
  * Shared sales sync engine — used by both useDataSync (global) and useSalesSync (page-level).
  * Groups store items by uploadrefno for batch upload; syncs AI items individually.
@@ -29,6 +38,9 @@ export const syncSalesFromDB = async (
   let synced = 0;
   let failed = 0;
 
+  // Reset per-run drift flag — allow one snapshot refresh per sync invocation
+  counterDriftHandledThisRun = false;
+
   try {
     const allRecords = await getUnsyncedSales();
     const pendingSales: SaleRecord[] = allRecords.filter(
@@ -41,6 +53,20 @@ export const syncSalesFromDB = async (
 
     console.log(`[SYNC-ENGINE] Starting sync of ${pendingSales.length} pending sales/AI transactions...`);
     const deviceFingerprint = await generateDeviceFingerprint();
+
+    // v2.10.66: self-heal helper — on first duplicate detected this run,
+    // pull true counters from backend so subsequent generations skip past
+    // the colliding range.
+    const handleCounterDrift = async (collidedRef: string) => {
+      if (counterDriftHandledThisRun) return;
+      counterDriftHandledThisRun = true;
+      console.warn(`[COUNTER-DRIFT] Detected duplicate ${collidedRef} — refreshing counters from backend`);
+      try {
+        await refreshCountersFromBackend(deviceFingerprint);
+      } catch (e) {
+        console.warn('[COUNTER-DRIFT] refresh failed:', (e as Error)?.message);
+      }
+    };
 
     // Group store sales by uploadrefno for batch sync
     const storeBatches: Record<string, SaleRecord[]> = {};
@@ -73,6 +99,51 @@ export const syncSalesFromDB = async (
 
       console.log(`[SYNC-ENGINE] Batch ${i + 1}/${batchEntries.length}: ${uploadrefno} (${batchSales.length} items)`);
 
+      // Hoist batchRequest so catch handler can also retry it
+      let batchRequest: BatchSaleRequest | null = null;
+
+      // v2.10.66: rebuild a batch with freshly-generated refs and retry once
+      const retryBatchWithFreshRefs = async (
+        original: BatchSaleRequest,
+        sales: SaleRecord[]
+      ): Promise<{ success: boolean; uploadrefno?: string; stillDuplicate?: boolean; error?: string }> => {
+        try {
+          // Generate a new uploadrefno for the batch (use first item's transtype)
+          const clientFetchStr = localStorage.getItem('clientFetch');
+          const clientFetch = clientFetchStr ? Number(clientFetchStr) : undefined;
+          const newRefs = await generateReferenceWithUploadRef('store', clientFetch);
+          if (!newRefs) return { success: false, error: 'Could not generate new refs' };
+
+          // Generate a fresh transrefno per item
+          const newItems = await Promise.all(
+            original.items.map(async (it) => ({
+              ...it,
+              transrefno: (await generateTransRefOnly()) || it.transrefno,
+            }))
+          );
+
+          const fresh: BatchSaleRequest = {
+            ...original,
+            uploadrefno: newRefs.uploadrefno,
+            items: newItems,
+          };
+
+          const r = await mysqlApi.sales.createBatch(fresh);
+          if (r.success) return { success: true, uploadrefno: newRefs.uploadrefno };
+          const em = (r.error || '').toLowerCase();
+          if (em.includes('duplicate') || em.includes('already exists')) {
+            return { success: false, stillDuplicate: true };
+          }
+          return { success: false, error: r.error };
+        } catch (e: any) {
+          const em = (e?.message || '').toLowerCase();
+          if (em.includes('duplicate') || em.includes('already exists')) {
+            return { success: false, stillDuplicate: true };
+          }
+          return { success: false, error: e?.message };
+        }
+      };
+
       try {
         const firstSale = batchSales[0];
 
@@ -95,7 +166,7 @@ export const syncSalesFromDB = async (
           ? (finalSeason || rawSessionLabel || enriched?.session_label || '')
           : (rawSessionLabel || enriched?.session_label || '');
 
-        const batchRequest: BatchSaleRequest = {
+        batchRequest = {
           uploadrefno,
           transtype: 2,
           farmer_id: String(firstSale.farmer_id || '').replace(/^#/, '').trim(),
@@ -132,15 +203,37 @@ export const syncSalesFromDB = async (
         } else {
           const errorMsg = (result.error || '').toLowerCase();
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
-            for (const sale of batchSales) {
-              if (sale.orderId) {
-                try { await deleteSale(sale.orderId); } catch (e) {
-                  console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
+            // v2.10.66: collision likely means local counter is behind backend.
+            // Refresh counters once per run, regenerate refs for THIS batch,
+            // and retry once. Only treat as "already synced" after retry also
+            // collides — that's the genuine idempotent case.
+            await handleCounterDrift(uploadrefno);
+            const retried = await retryBatchWithFreshRefs(batchRequest, batchSales, deviceFingerprint);
+            if (retried.success) {
+              for (const sale of batchSales) {
+                if (sale.orderId) {
+                  try { await deleteSale(sale.orderId); } catch (e) {
+                    console.warn(`[WARN] Failed to delete synced sale ${sale.orderId}:`, e);
+                  }
                 }
               }
+              synced += batchSales.length;
+              console.log(`[SUCCESS] Recovered batch after counter-drift retry: ${retried.uploadrefno || uploadrefno}`);
+            } else if (retried.stillDuplicate) {
+              // Genuine idempotent — original batch was actually already synced
+              for (const sale of batchSales) {
+                if (sale.orderId) {
+                  try { await deleteSale(sale.orderId); } catch (e) {
+                    console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
+                  }
+                }
+              }
+              synced += batchSales.length;
+              console.log(`[SKIP] Batch already synced (verified duplicate): ${uploadrefno}`);
+            } else {
+              failed += batchSales.length;
+              console.warn(`[WARN] Batch retry failed for ${uploadrefno}: ${retried.error || 'unknown'}`);
             }
-            synced += batchSales.length;
-            console.log(`[SKIP] Batch already synced (duplicate): ${uploadrefno}`);
           } else {
             failed += batchSales.length;
             console.warn(`[WARN] Batch sync failed for ${uploadrefno}: ${result.error || 'Unknown error'}`);
@@ -149,14 +242,29 @@ export const syncSalesFromDB = async (
       } catch (error: any) {
         const errorMsg = (error?.message || '').toLowerCase();
         if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
-          for (const sale of batchSales) {
-            if (sale.orderId) {
-              try { await deleteSale(sale.orderId); } catch (e) {
-                console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
+          await handleCounterDrift(uploadrefno);
+          const retried = await retryBatchWithFreshRefs(batchRequest, batchSales, deviceFingerprint);
+          if (retried.success) {
+            for (const sale of batchSales) {
+              if (sale.orderId) {
+                try { await deleteSale(sale.orderId); } catch (e) {
+                  console.warn(`[WARN] Failed to delete synced sale ${sale.orderId}:`, e);
+                }
               }
             }
+            synced += batchSales.length;
+          } else if (retried.stillDuplicate) {
+            for (const sale of batchSales) {
+              if (sale.orderId) {
+                try { await deleteSale(sale.orderId); } catch (e) {
+                  console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
+                }
+              }
+            }
+            synced += batchSales.length;
+          } else {
+            failed += batchSales.length;
           }
-          synced += batchSales.length;
         } else {
           failed += batchSales.length;
           console.error(`[ERROR] Batch sync exception for ${uploadrefno}:`, error);
