@@ -3812,5 +3812,101 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// v2.10.66: One-time bootstrap on server start — backfill devsettings counters
+// from the transactions table. Idempotent (uses GREATEST), never decrements.
+// Runs once at boot to fix legacy devices whose counters were never bumped by
+// the early /api/sales path.
+async function bootstrapDeviceCounters() {
+  try {
+    const [devices] = await pool.query(
+      'SELECT uniquedevcode, ccode, devcode, IFNULL(trnid,0) AS trnid, IFNULL(milkid,0) AS milkid, IFNULL(storeid,0) AS storeid, IFNULL(aiid,0) AS aiid FROM devsettings WHERE devcode IS NOT NULL AND devcode <> ""'
+    );
+
+    let updated = 0;
+    for (const d of devices) {
+      const devcode = d.devcode;
+      const ccode = d.ccode || '';
+      const uniquedevcode = d.uniquedevcode;
+      let trueTrn = Number(d.trnid) || 0;
+      let trueMilk = Number(d.milkid) || 0;
+      let trueStore = Number(d.storeid) || 0;
+      let trueAi = Number(d.aiid) || 0;
+
+      try {
+        const [r] = await pool.query(
+          `SELECT MAX(CAST(SUBSTRING(transrefno, ?) AS UNSIGNED)) AS m
+           FROM transactions
+           WHERE transrefno LIKE ? AND ccode = ? AND LENGTH(transrefno) = ?`,
+          [devcode.length + 1, `${devcode}%`, ccode, devcode.length + 8]
+        );
+        const m = Number(r?.[0]?.m) || 0;
+        if (m > trueTrn) trueTrn = m;
+      } catch {}
+
+      try {
+        const [r] = await pool.query(
+          `SELECT MAX(CAST(Uploadrefno AS UNSIGNED)) AS m
+           FROM transactions
+           WHERE deviceserial = ? AND Transtype = 1 AND Uploadrefno REGEXP '^[0-9]+$'`,
+          [uniquedevcode]
+        );
+        const m = Number(r?.[0]?.m) || 0;
+        if (m > trueMilk) trueMilk = m;
+      } catch {}
+
+      try {
+        const [r] = await pool.query(
+          `SELECT MAX(CAST(SUBSTRING(Uploadrefno, ?) AS UNSIGNED)) AS m
+           FROM transactions
+           WHERE deviceserial = ? AND Transtype = 2 AND Uploadrefno LIKE ? AND LENGTH(Uploadrefno) = ?`,
+          [devcode.length + 2, uniquedevcode, `${devcode}%`, devcode.length + 9]
+        );
+        const m = Number(r?.[0]?.m) || 0;
+        if (m > trueStore) trueStore = m;
+      } catch {}
+
+      try {
+        const [r] = await pool.query(
+          `SELECT MAX(CAST(SUBSTRING(Uploadrefno, ?) AS UNSIGNED)) AS m
+           FROM transactions
+           WHERE deviceserial = ? AND Transtype = 3 AND Uploadrefno LIKE ? AND LENGTH(Uploadrefno) = ?`,
+          [devcode.length + 2, uniquedevcode, `${devcode}%`, devcode.length + 9]
+        );
+        const m = Number(r?.[0]?.m) || 0;
+        if (m > trueAi) trueAi = m;
+      } catch {}
+
+      if (
+        trueTrn > Number(d.trnid) ||
+        trueMilk > Number(d.milkid) ||
+        trueStore > Number(d.storeid) ||
+        trueAi > Number(d.aiid)
+      ) {
+        try {
+          await pool.query(
+            `UPDATE devsettings
+               SET trnid = GREATEST(IFNULL(trnid,0), ?),
+                   milkid = GREATEST(IFNULL(milkid,0), ?),
+                   storeid = GREATEST(IFNULL(storeid,0), ?),
+                   aiid = GREATEST(IFNULL(aiid,0), ?)
+             WHERE uniquedevcode = ?`,
+            [trueTrn, trueMilk, trueStore, trueAi, uniquedevcode]
+          );
+          updated++;
+        } catch (e) {
+          console.warn('[BOOTSTRAP] Update failed for', uniquedevcode, e?.message);
+        }
+      }
+    }
+    console.log(`[BOOTSTRAP] Counter sync complete — updated ${updated}/${devices.length} devices`);
+  } catch (e) {
+    console.warn('[BOOTSTRAP] Skipped (non-fatal):', e?.message);
+  }
+}
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+  // Fire and forget — never block listening on bootstrap
+  bootstrapDeviceCounters().catch(err => console.warn('[BOOTSTRAP] error:', err?.message));
+});
