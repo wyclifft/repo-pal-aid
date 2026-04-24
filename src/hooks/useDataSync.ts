@@ -283,12 +283,36 @@ export const useDataSync = () => {
 
             console.log(`[API] Response for ${receipt.reference_no}:`, JSON.stringify(result));
 
-            // Handle REFERENCE_COLLISION: regenerate reference and retry once
+            // Handle REFERENCE_COLLISION: ask the backend for an authoritative
+            // fresh reference (which also self-heals devsettings.trnid), then resync
+            // the local counter so subsequent generations start from the correct base.
+            // v2.10.70: Previously we just incremented the local counter, which kept
+            // colliding when the local trnid was far behind the backend (root cause
+            // of the "M0000 weight=1 colliding with real members" bug).
             if (!result.success && (result as any).collision) {
-              console.warn(`[SYNC] Reference collision for ${receipt.reference_no}, regenerating and retrying...`);
+              console.warn(`[SYNC] Reference collision for ${receipt.reference_no}, requesting authoritative ref from backend...`);
               try {
-                const { generateOfflineReference } = await import('@/utils/referenceGenerator');
-                const newRef = await generateOfflineReference();
+                const { syncOfflineCounter, generateOfflineReference } = await import('@/utils/referenceGenerator');
+                let newRef: string | null = null;
+                try {
+                  const nextRefResp = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
+                  const backendRef = (nextRefResp.data?.reference_no || '').trim();
+                  if (backendRef) {
+                    newRef = backendRef;
+                    // Self-heal local counter: extract trnid tail and push local forward
+                    const devcode = localStorage.getItem('devcode') || '';
+                    const trnidTail = parseInt(backendRef.slice(-8), 10) || 0;
+                    if (devcode && trnidTail > 0) {
+                      try { await syncOfflineCounter(devcode, trnidTail); } catch {}
+                    }
+                  }
+                } catch (refErr) {
+                  console.warn('[SYNC] Backend next-reference failed, falling back to local:', refErr);
+                }
+                if (!newRef) {
+                  // Last-resort fallback: bump local counter
+                  newRef = await generateOfflineReference();
+                }
                 if (newRef) {
                   console.log(`[SYNC] Retrying with new reference: ${newRef} (was: ${receipt.reference_no})`);
                   const retryResult = await mysqlApi.milkCollection.create({
