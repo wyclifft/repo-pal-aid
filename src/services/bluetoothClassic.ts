@@ -227,6 +227,20 @@ export const parseSerialWeightData = (data: string): number | null => {
   // Clean the data
   const cleanData = data.trim().replace(/[\x00-\x1F\x7F]/g, '');
   console.log(`📊 Cleaned data: "${cleanData}"`);
+
+  // v2.10.68: Belt-and-braces noise guard — real scale frames always carry either
+  // a decimal point or an explicit unit token (kg/g/lb/oz). Printer ACK/status
+  // bytes (e.g. \x06, \x10, short numeric flags) never do, so reject them up
+  // front instead of letting the permissive integer-grams strategy below match.
+  const hasDecimal = /\d\.\d/.test(cleanData);
+  const hasUnit = /\b(kg|g|lb|oz)\b/i.test(cleanData);
+  if (!hasDecimal && !hasUnit) {
+    // Allow only the explicit "all zeros" sentinel through; everything else is noise.
+    if (!/^[+\-]?0+$/.test(cleanData)) {
+      console.log(`⚠️ Ignoring noise frame (no decimal, no unit): "${cleanData}"`);
+      return null;
+    }
+  }
   
   // Check for negative values - return 0
   const negativeMatch = cleanData.match(/-\s*(\d+\.?\d*)/);
@@ -313,6 +327,15 @@ export const connectClassicScale = async (
 
     // Set up data listener - uses global broadcast as primary, callback as secondary
     dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (event: any) => {
+      // v2.10.68: Drop inbound bytes when our scale role is not active.
+      // The native plugin shares ONE RFCOMM socket across scale & printer roles,
+      // and the dataReceived event has no device-address tag. Without this guard,
+      // printer ACK/status bytes (emitted while only a printer is connected) get
+      // misparsed as a "weight" by parseSerialWeightData, fire scaleWeightUpdate,
+      // and flip the scale indicator green even though no scale is paired.
+      if (!classicScale.isConnected || !classicScale.address) {
+        return;
+      }
       // Native plugin sends { data: "..." }, handle both .data and .value for compatibility
       const rawData = event.data ?? event.value ?? '';
       console.log(`📡 Classic BT dataReceived event keys: ${Object.keys(event).join(', ')}, raw: "${rawData}"`);

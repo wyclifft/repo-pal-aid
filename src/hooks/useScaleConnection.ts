@@ -111,10 +111,20 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     const handleWeightUpdate = (e: CustomEvent<{ weight: number; scaleType: ScaleType }>) => {
       const { weight, scaleType: type } = e.detail;
       console.log(`🎯 useScaleConnection received scaleWeightUpdate event: ${weight} kg from ${type}`);
+
+      // v2.10.68: Trust the connection-state event, not weight broadcasts, for "connected".
+      // A weight broadcast must NOT be treated as proof a scale is paired — otherwise
+      // shared-socket noise from a connected printer (Classic SPP) flips the scale
+      // indicator green even when no scale is paired. We still propagate weight
+      // values when a real scale connection exists.
+      if (!isScaleConnected()) {
+        console.log('🚫 Ignoring scaleWeightUpdate — no scale currently connected (likely printer cross-talk)');
+        return;
+      }
+
       setLiveWeight(weight);
       setScaleType(type);
-      setScaleConnected(true);
-      
+
       // Always update parent via callback when scale is connected
       // Use refs to avoid stale closures
       console.log(`🎯 useScaleConnection calling onWeightChangeRef.current(${weight})`);
