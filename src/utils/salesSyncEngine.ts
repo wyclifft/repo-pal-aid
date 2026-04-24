@@ -1,6 +1,11 @@
 import { mysqlApi, type Sale, type BatchSaleRequest } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { resolveSessionMetadata } from '@/utils/sessionMetadata';
+import {
+  refreshCountersFromBackend,
+  generateReferenceWithUploadRef,
+  generateTransRefOnly,
+} from '@/utils/referenceGenerator';
 
 interface SaleRecord extends Sale {
   orderId?: number;
@@ -15,6 +20,10 @@ interface SaleRecord extends Sale {
   number_of_calves?: string;
   other_details?: string;
 }
+
+// v2.10.66: module-level guard — only refresh counters once per sync run to
+// avoid hammering the snapshot endpoint when an entire batch collides.
+let counterDriftHandledThisRun = false;
 
 /**
  * Shared sales sync engine — used by both useDataSync (global) and useSalesSync (page-level).
