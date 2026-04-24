@@ -458,6 +458,9 @@ const AIPage = () => {
 
       // Build AI transaction data — each cart item needs a unique transrefno
       let currentTransRefNo = refs.transrefno;
+      // v2.10.66: collect every per-item transrefno used in this batch so the
+      // reprint snapshot has a stable identity (survives uploadrefno rollbacks).
+      const batchItemRefs: string[] = [];
       for (let i = 0; i < cart.length; i++) {
         const cartItem = cart[i];
         // First item uses the original transrefno; subsequent items get a new one
@@ -469,6 +472,7 @@ const AIPage = () => {
           }
           currentTransRefNo = newRef;
         }
+        batchItemRefs.push(currentTransRefNo);
         // Read Dashboard-selected route tcode from localStorage
         const dashboardSession = JSON.parse(localStorage.getItem('active_session_data') || localStorage.getItem('delicoop_session_data') || '{}');
         const selectedRouteTcode = dashboardSession?.route?.tcode || '';
@@ -543,6 +547,8 @@ const AIPage = () => {
         items: reprintItems,
         totalAmount: cartTotal,
         transactionDate: new Date(),
+        // v2.10.66: per-item refs anchor the receipt's identity in Recent Receipts
+        itemRefs: batchItemRefs,
       });
 
       const statusMsg = navigator.onLine ? '' : ' (saved offline)';

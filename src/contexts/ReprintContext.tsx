@@ -3,29 +3,28 @@ import type { MilkCollection } from '@/lib/supabase';
 import type { ReprintItem, PrintedReceipt } from '@/components/ReprintModal';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 
+interface StoreAIReceiptInput {
+  farmerId: string;
+  farmerName: string;
+  memberRoute?: string;
+  clerkName: string;
+  uploadrefno: string;
+  items: ReprintItem[];
+  totalAmount: number;
+  transactionDate?: Date;
+  /**
+   * v2.10.66: per-item transrefno values for the batch. Stored on the receipt
+   * as a stable identity so we never suppress a real new Store/AI receipt
+   * just because its uploadrefno happens to match an older one.
+   */
+  itemRefs?: string[];
+}
+
 interface ReprintContextValue {
   printedReceipts: PrintedReceipt[];
   addMilkReceipt: (collections: MilkCollection[], cumulativeWeight?: number, cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>) => Promise<boolean>;
-  addStoreReceipt: (data: {
-    farmerId: string;
-    farmerName: string;
-    memberRoute?: string;
-    clerkName: string;
-    uploadrefno: string;
-    items: ReprintItem[];
-    totalAmount: number;
-    transactionDate?: Date;
-  }) => Promise<boolean>;
-  addAIReceipt: (data: {
-    farmerId: string;
-    farmerName: string;
-    memberRoute?: string;
-    clerkName: string;
-    uploadrefno: string;
-    items: ReprintItem[];
-    totalAmount: number;
-    transactionDate?: Date;
-  }) => Promise<boolean>;
+  addStoreReceipt: (data: StoreAIReceiptInput) => Promise<boolean>;
+  addAIReceipt: (data: StoreAIReceiptInput) => Promise<boolean>;
   deleteReceipts: (indices: number[]) => Promise<void>;
   isReady: boolean;
 }
@@ -43,6 +42,53 @@ export const useReprint = () => {
 interface ReprintProviderProps {
   children: ReactNode;
 }
+
+/**
+ * v2.10.66: Build a stable identity key for Store/AI receipts.
+ * Prefers the per-item transrefno list (most precise), falls back to
+ * uploadrefno + item code/qty signature for legacy callers.
+ */
+const buildStoreAIIdentity = (
+  uploadrefno: string,
+  items: ReprintItem[],
+  itemRefs?: string[]
+): string => {
+  if (itemRefs && itemRefs.length > 0) {
+    return [...itemRefs].sort().join('|');
+  }
+  // Legacy fallback: derive identity from item code+qty so two distinct
+  // batches that share an uploadrefno still produce different identities.
+  return `${uploadrefno}::${items
+    .map(i => `${i.item_code}#${i.quantity}#${i.price}`)
+    .sort()
+    .join(',')}`;
+};
+
+const matchesStoreAIIdentity = (
+  receipt: PrintedReceipt,
+  identity: string,
+  type: 'store' | 'ai',
+  uploadrefno: string,
+  items: ReprintItem[]
+): boolean => {
+  if (receipt.type !== type) return false;
+  // New entries (have itemRefs/localReceiptId) — use stable identity.
+  if (receipt.itemRefs && receipt.itemRefs.length > 0) {
+    const existingId = [...receipt.itemRefs].sort().join('|');
+    return existingId === identity;
+  }
+  if (receipt.localReceiptId) {
+    return receipt.localReceiptId === identity;
+  }
+  // Legacy entry (saved before v2.10.66) — fall back to the old uploadrefno
+  // rule, but ALSO require item count + total to match so a counter rollback
+  // cannot wrongly mask a brand-new receipt as a duplicate.
+  if (!receipt.uploadrefno || receipt.uploadrefno !== uploadrefno) return false;
+  if ((receipt.items?.length || 0) !== items.length) return false;
+  const newTotal = items.reduce((s, i) => s + (i.lineTotal || 0), 0);
+  const oldTotal = receipt.totalAmount || 0;
+  return Math.abs(newTotal - oldTotal) < 0.01;
+};
 
 export const ReprintProvider = ({ children }: ReprintProviderProps) => {
   const [printedReceipts, setPrintedReceipts] = useState<PrintedReceipt[]>([]);
@@ -113,23 +159,18 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
   }, [printedReceipts, savePrintedReceipts]);
 
   // Save Store receipt
-  const addStoreReceipt = useCallback(async (data: {
-    farmerId: string;
-    farmerName: string;
-    memberRoute?: string;
-    clerkName: string;
-    uploadrefno: string;
-    items: ReprintItem[];
-    totalAmount: number;
-    transactionDate?: Date;
-  }): Promise<boolean> => {
-    // Check for duplicate by uploadrefno
+  const addStoreReceipt = useCallback(async (data: StoreAIReceiptInput): Promise<boolean> => {
+    // v2.10.66: identity is per-batch (transrefno list) — uploadrefno alone is
+    // not enough to call something a duplicate. Operators were losing real
+    // receipts from Recent Receipts after a counter rollback that produced a
+    // repeat uploadrefno; this guard now only blocks the EXACT same batch.
+    const identity = buildStoreAIIdentity(data.uploadrefno, data.items, data.itemRefs);
     const existingReceipt = printedReceipts.find(r =>
-      r.uploadrefno === data.uploadrefno && r.type === 'store'
+      matchesStoreAIIdentity(r, identity, 'store', data.uploadrefno, data.items)
     );
 
     if (existingReceipt) {
-      console.log('[REPRINT] Store receipt already saved, skipping duplicate');
+      console.log('[REPRINT] Store receipt already saved (same batch identity), skipping duplicate');
       return false;
     }
 
@@ -146,6 +187,8 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
       clerkName: data.clerkName,
       memberRoute: data.memberRoute,
       transactionDate: data.transactionDate || new Date(),
+      localReceiptId: identity,
+      itemRefs: data.itemRefs && data.itemRefs.length > 0 ? [...data.itemRefs] : undefined,
     };
 
     const updatedReceipts = [newReceipt, ...printedReceipts];
@@ -162,23 +205,15 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
   }, [printedReceipts, savePrintedReceipts]);
 
   // Save AI receipt
-  const addAIReceipt = useCallback(async (data: {
-    farmerId: string;
-    farmerName: string;
-    memberRoute?: string;
-    clerkName: string;
-    uploadrefno: string;
-    items: ReprintItem[];
-    totalAmount: number;
-    transactionDate?: Date;
-  }): Promise<boolean> => {
-    // Check for duplicate by uploadrefno
+  const addAIReceipt = useCallback(async (data: StoreAIReceiptInput): Promise<boolean> => {
+    // v2.10.66: see addStoreReceipt — same identity rule for AI batches.
+    const identity = buildStoreAIIdentity(data.uploadrefno, data.items, data.itemRefs);
     const existingReceipt = printedReceipts.find(r =>
-      r.uploadrefno === data.uploadrefno && r.type === 'ai'
+      matchesStoreAIIdentity(r, identity, 'ai', data.uploadrefno, data.items)
     );
 
     if (existingReceipt) {
-      console.log('[REPRINT] AI receipt already saved, skipping duplicate');
+      console.log('[REPRINT] AI receipt already saved (same batch identity), skipping duplicate');
       return false;
     }
 
@@ -195,6 +230,8 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
       clerkName: data.clerkName,
       memberRoute: data.memberRoute,
       transactionDate: data.transactionDate || new Date(),
+      localReceiptId: identity,
+      itemRefs: data.itemRefs && data.itemRefs.length > 0 ? [...data.itemRefs] : undefined,
     };
 
     const updatedReceipts = [newReceipt, ...printedReceipts];

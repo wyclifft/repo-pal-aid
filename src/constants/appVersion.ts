@@ -1,8 +1,30 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.66: Keep Store/AI receipts in Recent Receipts even when sync fails or
+//           the uploadrefno counter rolls back to a previously used value.
+//           ROOT CAUSE: ReprintContext.addStoreReceipt / addAIReceipt treated
+//           any existing Store (or AI) receipt with a matching uploadrefno as
+//           a duplicate and silently skipped saving the new one. After a
+//           downgrade-then-upgrade (v2.10.32 → v2.10.62) the device's
+//           devsettings.trnid effectively went backwards and the new batch's
+//           uploadrefno repeated an older value — so the brand-new receipt
+//           was never added to Recent Receipts even though the transaction
+//           was real and offline-queued for sync. Operators perceived this
+//           as "the app deleted my receipts".
+//           FIX (frontend only, no schema, no sync, no backend):
+//             (1) PrintedReceipt gains optional localReceiptId + itemRefs
+//                 fields (legacy entries without them keep working).
+//             (2) Store/AI submit handlers now pass the per-item transrefno
+//                 list into addStoreReceipt / addAIReceipt.
+//             (3) Duplicate detection now keys on the batch's transrefno
+//                 identity, not uploadrefno alone. A repeated uploadrefno
+//                 with a different item set is correctly saved as a NEW
+//                 Recent Receipt entry. Legacy fallback (no itemRefs) still
+//                 requires uploadrefno + item count + total to match before
+//                 suppressing — so the old guard cannot wrongly hide new
+//                 receipts either.
+//           Recent Receipts history is independent of the offline sync queue,
+//           so receipts now also persist when sync deletes the queued items.
 // v2.10.65: Fix Classic BT printer state being cleared by spurious scale-side
-//           connectionStateChanged events during Store/AI receipt printing on
-//           integrated POS units that share a single BluetoothClassic plugin
-//           instance across both roles. ROOT CAUSE: in bluetoothClassic.ts,
 //           connectClassicScale() and connectClassicPrinter() each registered
 //           a 'connectionStateChanged' listener on the shared plugin. Native
 //           events carried no device address, so a single `connected: false`
@@ -229,5 +251,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.65';
-export const APP_VERSION_CODE = 87;
+export const APP_VERSION = '2.10.66';
+export const APP_VERSION_CODE = 88;
