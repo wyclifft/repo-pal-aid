@@ -166,7 +166,7 @@ export const syncSalesFromDB = async (
           ? (finalSeason || rawSessionLabel || enriched?.session_label || '')
           : (rawSessionLabel || enriched?.session_label || '');
 
-        const batchRequest: BatchSaleRequest = {
+        batchRequest = {
           uploadrefno,
           transtype: 2,
           farmer_id: String(firstSale.farmer_id || '').replace(/^#/, '').trim(),
