@@ -1,43 +1,4 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.10.66: Fix uploadrefno/trnid going backwards after upgrading from v2.10.32
-//           → v2.10.62. Symptom: a wave of "Duplicate item skipped (already
-//           synced): BA0300001032 / 1033 / 1034 …" because newly-generated
-//           transrefno values collided with rows already in the transactions
-//           table from the v2.10.32 era. ROOT CAUSE: legacy v2.10.32 backend
-//           never bumped devsettings.trnid/storeid/aiid after store/AI sale
-//           inserts (that block was only added in a recent release), so
-//           devsettings counters lagged far behind transactions.transrefno.
-//           On upgrade, syncOfflineCounter ran Math.max(localTrnId=0,
-//           backendTrnId=5) and started generating refs from 6 — colliding
-//           with every existing 1032+ store sale.
-//           FIXES (additive, fully backward-compatible):
-//             (1) backend-api/server.js: new GET /api/devices/counter-snapshot/
-//                 :fingerprint that returns true_trnid / true_milkid /
-//                 true_storeid / true_aiid as the MAX of devsettings AND the
-//                 actual transactions table (per-Transtype, indexed). Existing
-//                 /api/devices/fingerprint/ endpoint untouched so older clients
-//                 keep working unchanged.
-//             (2) backend-api/server.js: bootstrapDeviceCounters() runs once
-//                 on server start, idempotently UPDATEs devsettings with
-//                 GREATEST(stored, true) — never decrements. Permanently
-//                 fixes legacy state for every device.
-//             (3) src/services/mysqlApi.ts: devicesApi.getByFingerprint
-//                 transparently augments its response with true_* values from
-//                 the snapshot endpoint. Login.tsx + DeviceAuthStatus.tsx
-//                 inherit the fix with NO call-site changes.
-//             (4) src/utils/referenceGenerator.ts: new export
-//                 refreshCountersFromBackend(deviceFingerprint) — calls
-//                 snapshot endpoint, falls back to legacy endpoint if 404,
-//                 feeds syncOfflineCounter (which already does Math.max).
-//             (5) src/utils/salesSyncEngine.ts + src/hooks/useDataSync.ts:
-//                 on duplicate-reference collision, log [COUNTER-DRIFT],
-//                 call refreshCountersFromBackend() once, then retry the
-//                 batch with regenerated refs. Devices self-heal on the
-//                 first collision instead of churning through 1000 of them.
-//           No IndexedDB schema, no reference format, no transactions schema,
-//           no migration. Reference format unchanged
-//           (transrefno = devcode + 8-digit trnid; uploadrefno =
-//           devcode + clientFetch + 8-digit typeId for store/AI).
 // v2.10.65: Fix Classic BT printer state being cleared by spurious scale-side
 //           connectionStateChanged events during Store/AI receipt printing on
 //           integrated POS units that share a single BluetoothClassic plugin
@@ -268,5 +229,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.66';
-export const APP_VERSION_CODE = 88;
+export const APP_VERSION = '2.10.65';
+export const APP_VERSION_CODE = 87;
