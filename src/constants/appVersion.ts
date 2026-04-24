@@ -294,5 +294,34 @@
 //           Real scales (BLE and Classic SPP) keep working unchanged because
 //           classicScale.isConnected is set by connectClassicScale BEFORE the
 //           first dataReceived can arrive, and BLE scales use a separate path.
-export const APP_VERSION = '2.10.68';
-export const APP_VERSION_CODE = 90;
+// v2.10.69: Final hardening for "scale indicator turns green when only the
+//           Classic printer is connected" on integrated POS hardware.
+//           Reported scenario: connect Classic printer → open Buy portal →
+//           Dashboard scale dot flips green even with no scale paired.
+//           Remaining holes after v2.10.68:
+//             (a) useScaleConnection.autoReconnect (called on
+//                 LiveWeightDisplay/CoffeeWeightDisplay mount) ran a BLE
+//                 quickReconnect on the stored "scale" deviceId, which on
+//                 some integrated POS units is actually the printer's MAC.
+//                 The reopen succeeded and broadcast scaleConnectionChange.
+//             (b) scaleConnectionChange events had no truth-source guard, so
+//                 any caller could turn the indicator green.
+//           FIX (frontend-only, no native rebuild required):
+//             (1) bluetoothClassic.ts: new getCurrentClassicPrinterInfo();
+//                 connectClassicScale and clearClassicScaleState now route
+//                 through broadcastScaleConnectionChange instead of dispatching
+//                 raw events.
+//             (2) bluetooth.ts: broadcastScaleConnectionChange suppresses
+//                 connected:true unless a real scale role is active
+//                 ((scale.deviceId && scale.isConnected) || isClassicScaleConnected()).
+//                 Re-exports getCurrentClassicPrinterInfo.
+//             (3) useScaleConnection.ts: autoReconnect skips when a Classic
+//                 printer is connected and its address matches the stored
+//                 scale deviceId (case-insensitive).
+//             (4) Dashboard.tsx: handleScaleChange double-checks
+//                 isScaleConnected() before flipping the dot green.
+//           Real BLE and Classic SPP scales remain unaffected. Printer
+//           connect/print flow is untouched. No backend, no IndexedDB schema,
+//           no sync engine, no reference generator changes.
+export const APP_VERSION = '2.10.69';
+export const APP_VERSION_CODE = 91;

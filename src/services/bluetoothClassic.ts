@@ -14,7 +14,7 @@
  */
 
 import { Capacitor, registerPlugin, PluginListenerHandle } from '@capacitor/core';
-import { broadcastScaleWeightUpdate } from './bluetooth';
+import { broadcastScaleWeightUpdate, broadcastScaleConnectionChange } from './bluetooth';
 
 // ============================================================================
 // NATIVE PLUGIN INTERFACE - Capacitor 7 Compatible
@@ -402,8 +402,11 @@ export const connectClassicScale = async (
     // Save device for quick reconnect
     saveClassicDeviceInfo(device);
 
-    // Broadcast connection change
-    window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: true } }));
+    // v2.10.69: Use the guarded broadcaster (in bluetooth.ts) so the
+    // scaleConnectionChange event cannot fire unless a scale role is truly
+    // active. Avoids any future code path leaking a printer connect as a
+    // scale connect on integrated POS hardware.
+    broadcastScaleConnectionChange(true);
 
     console.log(`✅ Connected to Classic BT scale: ${device.name}`);
     return { success: true };
@@ -460,7 +463,8 @@ const clearClassicScaleState = () => {
     isConnected: false,
     connectionType: 'classic-spp',
   };
-  window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: false } }));
+  // v2.10.69: route through guarded broadcaster (false is always allowed)
+  broadcastScaleConnectionChange(false);
 };
 
 // ============================================================================
@@ -707,6 +711,19 @@ const clearClassicPrinterState = () => {
  */
 export const isClassicPrinterConnected = (): boolean => {
   return classicPrinter.isConnected;
+};
+
+/**
+ * v2.10.69: Get current Classic printer info (address + name).
+ * Used by useScaleConnection to detect when a stored "scale" device id
+ * actually belongs to the connected printer (integrated POS hardware).
+ */
+export const getCurrentClassicPrinterInfo = (): { address: string; name: string } | null => {
+  if (!classicPrinter.device || !classicPrinter.isConnected || !classicPrinter.address) return null;
+  return {
+    address: classicPrinter.address,
+    name: classicPrinter.device.name,
+  };
 };
 
 /**

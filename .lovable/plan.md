@@ -1,100 +1,114 @@
-# Fix "ghost scale" turning green when only the printer connects — v2.10.68
 
-## What's actually happening
+## Problem
 
-When the user connects only a Bluetooth printer (no scale paired), the Dashboard's scale indicator still flips to green. Tracing the chain:
+On integrated POS hardware (Classic printer + native plugin sharing one RFCOMM socket), the **Dashboard scale indicator turns green** specifically after:
+1. Connecting only the Classic Bluetooth printer.
+2. Opening the Buy portal.
 
-1. The **native `BluetoothClassicPlugin.kt`** uses ONE shared socket. When you connect the printer over Classic SPP, the printer emits inbound bytes (status ACKs, idle bytes, command echoes). The plugin forwards every inbound packet as a single `dataReceived` event with no device-address tag.
+The v2.10.68 fix gated the `dataReceived` listener and stopped weight broadcasts from flipping the indicator. The remaining leaks are on the **connection-change event path** and the **Buy-portal auto-reconnect path**, both of which can spuriously emit `scaleConnectionChange { connected: true }` while only a printer is paired.
 
-2. In `src/services/bluetoothClassic.ts` `connectClassicScale()` (line 315) registers a **global `dataReceived` listener** that is never removed unless `disconnectClassicScale()` is called. If the user previously visited Settings and tried/touched the scale flow, that listener stays alive for the rest of the session.
+## Root cause (remaining holes)
 
-3. When printer ACK bytes arrive, the leftover scale listener calls `parseSerialWeightData(rawData)`. The parser is permissive (Strategy 3 will treat any 3+ digit run as grams), so printer status bytes frequently parse into a plausible "weight". It then calls `broadcastScaleWeightUpdate(weight, 'Classic-SPP')`.
+1. **`useScaleConnection.autoReconnect`** runs on `LiveWeightDisplay` / `CoffeeWeightDisplay` mount. It calls `quickReconnect(...)` (BLE) using whatever device id is in `getStoredDeviceInfo()`. On integrated POS units, the *stored* "scale" device id can actually be the printer's MAC (saved during a prior misclassification, or because the same controller exposes both). The BLE quickReconnect succeeds, fires `broadcastScaleConnectionChange(true)`, and the dashboard turns green.
 
-4. In `src/hooks/useScaleConnection.ts` (lines 110–123), the `scaleWeightUpdate` listener unconditionally runs `setScaleConnected(true)` — flipping the Dashboard indicator green even though no scale is connected.
+2. **`scaleConnectionChange` event has no payload identifying the source device.** Any code path that dispatches `{ connected: true }` is trusted globally. There is no guard against a printer-side reconnect surfacing as a scale event.
 
-There is also a second, milder path: the BLE `connectBluetoothPrinter()` could in theory race with a leftover scale GATT subscription, but that's not the cause for the user reporting "no scale paired" — the Classic-SPP shared-socket cross-talk is.
+3. **No telemetry** on which exact dispatch is fired during the Buy-portal navigation, so the user (and us) cannot distinguish path 1 vs another path.
 
-## The fix
+## Fix
 
-Three small, defensive guards. No behavior change when a real scale IS connected.
+### 1. `src/hooks/useScaleConnection.ts` — gate `autoReconnect` by printer state
 
-### 1. Gate the `dataReceived` handler in `bluetoothClassic.ts`
+Skip BLE auto-reconnect when:
+- A Classic printer is currently connected (`isClassicPrinterConnected()`), AND
+- The stored "scale" device address matches the connected printer address.
 
-Before parsing or broadcasting, the scale's `dataReceived` listener must check `classicScale.isConnected && classicScale.address`. If our scale role is not currently flagged connected, drop the bytes silently — they belong to the printer (or another role) sharing the native socket.
+This stops the Buy portal from re-opening the printer's socket as a "scale".
 
 ```ts
-dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (event: any) => {
-  // v2.10.68: Drop inbound bytes when our scale role is not active.
-  // The native plugin shares one RFCOMM socket across scale & printer roles,
-  // and printer ACK/status bytes can otherwise be misparsed as a "weight".
-  if (!classicScale.isConnected || !classicScale.address) {
-    return;
+const autoReconnect = useCallback(async () => {
+  const storedDevice = getStoredDeviceInfo();
+  if (!storedDevice || scaleConnected) return;
+
+  // Guard: don't auto-reconnect a "scale" that is actually the printer
+  if (isClassicPrinterConnected()) {
+    const printerInfo = getCurrentClassicPrinterInfo?.();
+    if (printerInfo && printerInfo.address === storedDevice.deviceId) {
+      console.warn('🚫 Skipping scale autoReconnect — stored scale id matches connected printer');
+      return;
+    }
   }
-  const rawData = event.data ?? event.value ?? '';
-  // ... existing parse + broadcast ...
-});
+  // ... existing flow
+}, [...]);
 ```
 
-Also: make sure `disconnectClassicScale()` removes the listener handle before any other path can fire it (it already does — keep as is, just verify ordering).
+### 2. `src/services/bluetooth.ts` — verify before broadcasting `scaleConnectionChange(true)`
 
-### 2. Tighten the `scaleWeightUpdate` listener in `useScaleConnection.ts`
-
-Stop using a stray weight broadcast as proof that a scale is connected. Only update `liveWeight` / call parent callbacks when the connection is actually live.
+In `broadcastScaleConnectionChange`, when `connected === true`, require that **either** a BLE scale `deviceId` is set on the `scale` singleton **or** `isClassicScaleConnected()` is true. Otherwise drop the event and log a warning. This makes the event impossible to fake from any future code path.
 
 ```ts
-const handleWeightUpdate = (e: CustomEvent<{ weight: number; scaleType: ScaleType }>) => {
-  const { weight, scaleType: type } = e.detail;
-  // v2.10.68: Trust the connection-state event, not weight broadcasts, for "connected".
-  // This stops a phantom "scale online" indicator when only the printer is connected
-  // and shared-socket bytes leak through the parser.
-  if (!isScaleConnected()) {
-    return;
+export const broadcastScaleConnectionChange = (connected: boolean) => {
+  if (connected) {
+    const real = (scale.isConnected && !!scale.deviceId) || isClassicScaleConnected();
+    if (!real) {
+      console.warn('🚫 Suppressed scaleConnectionChange(true) — no scale role active');
+      return;
+    }
   }
-  setLiveWeight(weight);
-  setScaleType(type);
-  // (no more setScaleConnected(true) here)
-  onWeightChangeRef.current(weight);
-  onEntryTypeChangeRef.current('scale');
+  window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
 };
 ```
 
-The same `isScaleConnected()` check should be applied in `Dashboard.tsx` and `Settings.tsx` if they ever flip state from a weight event (they don't today — they only listen to `scaleConnectionChange`, which is fine).
+### 3. `src/services/bluetoothClassic.ts` — same guard on the direct dispatch
 
-### 3. Make `parseSerialWeightData` slightly less greedy on noise
+The `connectClassicScale` success path dispatches `scaleConnectionChange { connected: true }` directly (line ~406). Replace the direct `window.dispatchEvent` with the guarded `broadcastScaleConnectionChange(true)` so the same verification runs.
 
-Reject parses where the cleaned input has no `kg`/`g` suffix AND is shorter than 3 chars or contains no digit-cluster ≥ 3. Strategy 3 (raw integer → grams) is the main culprit for misparsing printer ACKs like `\x06\x00\x10`. Tighten:
+### 4. `Dashboard.tsx` — final UI-level sanity check
 
-- Require the original `data` string to contain at least one decimal point OR an explicit unit token (`kg`, `g`, `lb`, `oz`) for any parse to succeed.
-- If neither is present, return `null` — printer ACKs never have these.
+In the `handleScaleChange` listener, when an event arrives with `connected: true`, double-check `isScaleConnected()` before flipping the dot green. If the truth source disagrees, ignore the event and log it. This prevents any stray dispatch from any module from misleading the UI.
 
-This is a belt-and-braces guard. The role check in step 1 is the actual fix; this just prevents future regressions if another caller registers a `dataReceived` listener.
+```ts
+const handleScaleChange = (e: CustomEvent<{ connected: boolean }>) => {
+  if (e.detail.connected && !isScaleConnected()) {
+    console.warn('🚫 Dashboard ignored scaleConnectionChange(true) — truth source says no scale');
+    return;
+  }
+  setScaleConnected(e.detail.connected);
+};
+```
 
-## Files to change
+### 5. Diagnostic logs
 
-- `src/services/bluetoothClassic.ts` — role-gate the `dataReceived` listener; tighten `parseSerialWeightData`.
-- `src/hooks/useScaleConnection.ts` — drop the unconditional `setScaleConnected(true)` inside `handleWeightUpdate`; verify with `isScaleConnected()` first.
-- `src/constants/appVersion.ts` — bump to **v2.10.68** with changelog note.
-- `android/app/build.gradle` — bump `versionCode` to **90**, `versionName` to **2.10.68**.
+Add a single, very visible log line at each of: `autoReconnect` entry (with stored id + printer address), `broadcastScaleConnectionChange(true)` (with caller stack), and the Dashboard's `handleScaleChange`. These are guarded to native only and stripped of secrets so the user can paste them back if the issue persists.
 
-## Compatibility & safety
+### 6. Version bump
 
-- A real Classic-SPP scale: `classicScale.isConnected = true` after `connectClassicScale()`, so the listener still parses and broadcasts normally. No regression.
-- BLE scale: unaffected — uses a separate code path (`connectBluetoothScale` / GATT notifications), no change.
-- BLE printer: unaffected — no `dataReceived` plumbing.
-- Classic printer: now confirmed not to flip the scale indicator green, even when its inbound bytes look weight-ish.
-- Recent Receipts, sync, IndexedDB, transactions, references, login: untouched.
-
-## Verification checklist
-
-1. With no scale paired, connect only the Classic printer → scale indicator stays grey. ✓
-2. With no scale paired, connect only the BLE printer → scale indicator stays grey. ✓
-3. With a real BLE scale connected → weight updates show as before. ✓
-4. With a real Classic SPP scale connected → weight updates and "Connected" badge work as before. ✓
-5. Print a Store/AI receipt while only the printer is connected → no spurious scale indicator flip mid-print. ✓
-6. No new console errors. ✓
+- `src/constants/appVersion.ts`: `APP_VERSION = '2.10.69'`, `APP_VERSION_CODE = 91`, with a changelog entry describing the four guards.
+- `android/app/build.gradle`: `versionCode 91`, `versionName "2.10.69"`.
 
 ## Out of scope
 
-- Per-address native sockets in `BluetoothClassicPlugin.kt` (only relevant if someone pairs both Classic peripherals at once — current evidence is printer-only).
-- Refactoring `printerConnectionChange` / `scaleConnectionChange` into a typed event bus.
-- Backend changes.
+- No changes to the native `BluetoothClassicPlugin.kt`. The shared-socket architecture is preserved; we are defending purely on the JS side, which is safer for the production app.
+- No change to printer behavior, BLE scan logic, or receipt/sync paths.
+
+## Verification checklist
+
+After install of v2.10.69 (fully close + reopen):
+
+1. No scale paired. Connect only the Classic printer.
+2. Open Buy portal. Indicator must remain **red**. Console should show one of:
+   - `🚫 Skipping scale autoReconnect — stored scale id matches connected printer`, or
+   - `🚫 Suppressed scaleConnectionChange(true) — no scale role active`, or
+   - `🚫 Dashboard ignored scaleConnectionChange(true) — truth source says no scale`.
+3. Now connect a real scale. Indicator turns green normally. Live weight displays.
+4. Disconnect scale, keep printer. Indicator returns to red, printer indicator unaffected.
+5. Print a receipt. Printer indicator stays green throughout.
+
+## Files to modify
+
+- `src/hooks/useScaleConnection.ts`
+- `src/services/bluetooth.ts`
+- `src/services/bluetoothClassic.ts`
+- `src/components/Dashboard.tsx`
+- `src/constants/appVersion.ts`
+- `android/app/build.gradle`

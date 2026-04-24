@@ -128,6 +128,14 @@ export const Dashboard = ({
   // Listen for connection state changes from Settings or other components
   useEffect(() => {
     const handleScaleChange = (e: CustomEvent<{ connected: boolean }>) => {
+      // v2.10.69: UI-level sanity check. Even if some module fires
+      // scaleConnectionChange(true), only flip the dot green when the truth
+      // source (isScaleConnected) agrees. Final defense against printer
+      // cross-talk on integrated POS hardware.
+      if (e.detail.connected && !isScaleConnected()) {
+        console.warn('🚫 [v2.10.69] Dashboard ignored scaleConnectionChange(true) — truth source says no scale');
+        return;
+      }
       setScaleConnected(e.detail.connected);
     };
     const handlePrinterChange = (e: CustomEvent<{ connected: boolean }>) => {
