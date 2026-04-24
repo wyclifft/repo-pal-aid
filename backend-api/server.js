@@ -2573,20 +2573,44 @@ const server = http.createServer(async (req, res) => {
       deviceData.cumulative_frequency_status = cumulativeFrequencyStatus;
       deviceData.app_settings = appSettings;
       
-      // Get last used trnid for this devcode for counter sync
-      let lastTrnId = deviceData.trnid || 0;
-      if (deviceData.devcode && !lastTrnId) {
-        // Fallback: query transactions table if trnid not in devsettings
-        const [lastRefRows] = await pool.query(
-          `SELECT transrefno FROM transactions 
-           WHERE transrefno LIKE ? 
-           ORDER BY transrefno DESC LIMIT 1`,
-          [`${deviceData.devcode}%`]
-        );
-        if (lastRefRows.length > 0 && lastRefRows[0].transrefno) {
-          const lastRef = lastRefRows[0].transrefno;
-          // Extract trnid using last 8 digits to avoid clientFetch corruption
-          lastTrnId = parseInt(lastRef.slice(-8), 10) || 0;
+      // Get last used trnid for this devcode for counter sync.
+      // CRITICAL FIX (v2.10.70): Always cross-check devsettings.trnid against the
+      // actual MAX(transrefno) tail in transactions. devsettings.trnid can become
+      // stale (e.g. when offline syncs land but the counter UPDATE silently fails,
+      // or when records are imported out-of-band). Returning a stale low trnid
+      // causes the device to regenerate references that collide with existing
+      // backend records (e.g. New: member=M0000 colliding with M03156).
+      // We take the GREATEST of the two so the counter never goes backwards.
+      let lastTrnId = parseInt(deviceData.trnid, 10) || 0;
+      if (deviceData.devcode) {
+        try {
+          const [lastRefRows] = await pool.query(
+            `SELECT transrefno FROM transactions 
+             WHERE transrefno LIKE ? 
+             ORDER BY transrefno DESC LIMIT 1`,
+            [`${deviceData.devcode}%`]
+          );
+          if (lastRefRows.length > 0 && lastRefRows[0].transrefno) {
+            const lastRef = lastRefRows[0].transrefno;
+            // Extract trnid using last 8 digits to avoid clientFetch corruption
+            const txTrnId = parseInt(lastRef.slice(-8), 10) || 0;
+            if (txTrnId > lastTrnId) {
+              console.log(`🔧 [TRNID-SYNC] devsettings.trnid (${lastTrnId}) is stale for ${deviceData.devcode}; using transactions MAX (${txTrnId})`);
+              lastTrnId = txTrnId;
+              // Self-heal: persist the corrected trnid back to devsettings so
+              // future calls (and counter-update statements) start from a sane base.
+              try {
+                await pool.query(
+                  'UPDATE devsettings SET trnid = GREATEST(IFNULL(trnid, 0), ?) WHERE uniquedevcode = ?',
+                  [lastTrnId, fingerprint]
+                );
+              } catch (healErr) {
+                console.warn('⚠️ [TRNID-SYNC] Failed to self-heal devsettings.trnid:', healErr?.message || healErr);
+              }
+            }
+          }
+        } catch (txErr) {
+          console.warn('⚠️ [TRNID-SYNC] transactions MAX lookup failed:', txErr?.message || txErr);
         }
       }
       deviceData.trnid = lastTrnId;
