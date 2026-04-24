@@ -506,18 +506,44 @@ export const devicesApi = {
   },
 
   /**
-   * Get device by fingerprint with fallback for old backend
+   * Get device by fingerprint with fallback for old backend.
+   * v2.10.66: When the new counter-snapshot endpoint is available, prefer its
+   * `true_*` values for trnid/milkid/storeid/aiid (computed from MAX of
+   * devsettings + transactions). Falls back transparently if snapshot is 404
+   * (older backend) — payload shape is unchanged for callers.
    */
   getByFingerprint: async (fingerprint: string): Promise<ApprovedDevice | null> => {
     const response = await apiRequest<ApprovedDevice>(`/devices/fingerprint/${encodeURIComponent(fingerprint)}`);
-    
+
     // If old backend error, return null and let caller handle with cached data
     if (!response.success && response.details?.includes('outdated version')) {
       console.warn('[FALLBACK] Using cached device data due to old backend');
       return null;
     }
-    
-    return response.data || null;
+
+    const device = response.data || null;
+
+    // Best-effort enhancement: pull true counters from the snapshot endpoint
+    // and override the legacy values. Never blocks login on failure.
+    if (device) {
+      try {
+        const snap = await apiRequest<any>(`/devices/counter-snapshot/${encodeURIComponent(fingerprint)}`, {}, 5000);
+        if (snap.success && snap.data) {
+          const d: any = device;
+          if (typeof snap.data.true_trnid === 'number') d.trnid = snap.data.true_trnid;
+          if (typeof snap.data.true_milkid === 'number') d.milkid = snap.data.true_milkid;
+          if (typeof snap.data.true_storeid === 'number') d.storeid = snap.data.true_storeid;
+          if (typeof snap.data.true_aiid === 'number') d.aiid = snap.data.true_aiid;
+          console.log('[COUNTER-SNAPSHOT] Applied true counters:', {
+            trnid: d.trnid, milkid: d.milkid, storeid: d.storeid, aiid: d.aiid,
+          });
+        }
+      } catch (e) {
+        // Silent — snapshot is optional, legacy values remain
+      }
+    }
+
+    return device;
   },
 
   /**
