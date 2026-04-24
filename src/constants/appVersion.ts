@@ -1,5 +1,33 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.10.66: Keep Store/AI receipts in Recent Receipts even when sync fails or
+// v2.10.70: Fix devices stuck generating colliding milk-collection references
+//           (e.g. New: member=M0000 weight=1 colliding with real members like
+//           M03156). ROOT CAUSE: backend GET /api/devices/fingerprint/:fp only
+//           fell back to MAX(transrefno) from transactions when devsettings.trnid
+//           was 0/null. If devsettings.trnid was stale-but-nonzero (e.g. 100)
+//           while the real backend high-water mark was at 348, the device kept
+//           receiving trnid=100 on every login/auth-check and re-issued refs
+//           starting from 101 — every one of which collided with an existing
+//           transaction and was rejected as REFERENCE_COLLISION. The frontend
+//           collision-retry path then bumped the local counter by 1 (to 102,
+//           103…) and kept colliding because it never re-asked the backend for
+//           an authoritative reference.
+//           FIXES (additive, no schema change, no API contract change):
+//             (1) backend-api/server.js GET /api/devices/fingerprint/:fp now
+//                 ALWAYS cross-checks devsettings.trnid against the actual
+//                 MAX(transrefno) tail in transactions (filtered by devcode)
+//                 and returns the GREATEST of the two. When the transactions
+//                 table is ahead, it self-heals by writing the corrected value
+//                 back to devsettings.trnid via GREATEST(IFNULL(trnid,0), ?)
+//                 — never decrements, safe under concurrent device sessions.
+//             (2) src/hooks/useDataSync.ts collision-retry now requests a fresh
+//                 authoritative reference from /api/milk-collection/next-reference
+//                 (which already advances and persists devsettings.trnid) and
+//                 then resyncs the local IndexedDB counter via syncOfflineCounter
+//                 so subsequent generations start from the correct base. Falls
+//                 back to the previous local-bump path only if the network call
+//                 fails. No backend insert path, sync queue, photo, Z-Report,
+//                 receipt, cumulative, or auth flow changed.
+
 //           the uploadrefno counter rolls back to a previously used value.
 //           ROOT CAUSE: ReprintContext.addStoreReceipt / addAIReceipt treated
 //           any existing Store (or AI) receipt with a matching uploadrefno as
