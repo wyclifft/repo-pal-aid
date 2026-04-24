@@ -715,6 +715,9 @@ const Store = () => {
         items: reprintItems,
         totalAmount: cartTotal,
         transactionDate: new Date(),
+        // v2.10.66: pass per-item transrefno list so the receipt has a stable
+        // identity that survives an uploadrefno counter rollback.
+        itemRefs: batchItems.map(b => b.transrefno),
       });
 
       toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.uploadrefno}]`);
