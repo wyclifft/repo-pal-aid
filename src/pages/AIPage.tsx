@@ -547,6 +547,8 @@ const AIPage = () => {
         items: reprintItems,
         totalAmount: cartTotal,
         transactionDate: new Date(),
+        // v2.10.66: per-item refs anchor the receipt's identity in Recent Receipts
+        itemRefs: batchItemRefs,
       });
 
       const statusMsg = navigator.onLine ? '' : ' (saved offline)';
