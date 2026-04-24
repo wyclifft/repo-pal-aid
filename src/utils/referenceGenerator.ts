@@ -404,10 +404,21 @@ export const syncOfflineCounter = async (
   const backendStoreId = (lastBackendStoreId !== undefined && lastBackendStoreId > 0) ? lastBackendStoreId : 0;
   const backendAiId = (lastBackendAiId !== undefined && lastBackendAiId > 0) ? lastBackendAiId : 0;
   
-  // SAFETY: Detect corrupted trnid from backend (e.g. clientFetch digit parsed as part of trnid)
-  // A trnid > 10,000,000 likely means the backend parsed a clientFetch-prefixed reference incorrectly
-  if (backendTrnId > 10000000) {
-    console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is unreasonably large — possible clientFetch corruption. Ignoring backend value.`);
+  // SAFETY (v2.10.71): Only reject backend trnid if it is *implausibly* far ahead
+  // of the local counter. The earlier absolute cap (>10M) caused real outages on
+  // shared-devcode estates (multiple devices, same devcode prefix) where the
+  // global MAX(transrefno) legitimately exceeded 10M — the legit value was
+  // discarded, local stayed behind, and the device kept generating colliding
+  // references. The relative check below preserves the original protection
+  // against a clientFetch-corrupted huge value while letting legitimately high
+  // counters through.
+  const MAX_REASONABLE_JUMP = 10_000_000; // headroom for shared-devcode estates
+  if (
+    backendTrnId > 100_000_000 &&
+    currentLocalTrnId > 0 &&
+    backendTrnId - currentLocalTrnId > MAX_REASONABLE_JUMP
+  ) {
+    console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is implausibly far ahead of local ${currentLocalTrnId}; ignoring (possible corruption).`);
     backendTrnId = 0;
   }
   

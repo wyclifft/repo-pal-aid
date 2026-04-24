@@ -299,7 +299,10 @@ export const useDataSync = () => {
                   const backendRef = (nextRefResp.data?.reference_no || '').trim();
                   if (backendRef) {
                     newRef = backendRef;
-                    // Self-heal local counter: extract trnid tail and push local forward
+                    // Push local forward to backend's authoritative trnid.
+                    // (The relaxed sanity check in syncOfflineCounter (v2.10.71)
+                    //  accepts high values from shared-devcode estates that
+                    //  legitimately exceed 10M.)
                     const devcode = localStorage.getItem('devcode') || '';
                     const trnidTail = parseInt(backendRef.slice(-8), 10) || 0;
                     if (devcode && trnidTail > 0) {

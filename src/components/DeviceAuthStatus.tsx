@@ -139,7 +139,9 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
             // Store devcode and sync all counters for reference generation
             if (data.data.devcode) {
               localStorage.setItem('devcode', data.data.devcode);
-              // Sync all counters from backend to maintain consistency
+              // Sync all counters from backend to maintain consistency.
+              // Note: 0/null both → undefined, so syncOfflineCounter keeps the local counter.
+              //       The backend GREATEST(devsettings.trnid, MAX(transrefno)) self-heals on next call.
               const lastTrnId = data.data.trnid ? parseInt(String(data.data.trnid), 10) : undefined;
               const lastMilkId = data.data.milkid ? parseInt(String(data.data.milkid), 10) : undefined;
               const lastStoreId = data.data.storeid ? parseInt(String(data.data.storeid), 10) : undefined;

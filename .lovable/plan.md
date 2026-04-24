@@ -1,114 +1,133 @@
 
-## Problem
+# Fix: trnid "starting afresh" while storeid syncs correctly (v2.10.71)
 
-On integrated POS hardware (Classic printer + native plugin sharing one RFCOMM socket), the **Dashboard scale indicator turns green** specifically after:
-1. Connecting only the Classic Bluetooth printer.
-2. Opening the Buy portal.
+## Symptom
+Device `BA02` keeps generating references like `BA0220000341..348` that collide with already-existing backend rows owned by real members (e.g. `M03156`, `M02857`, `M00914`). Storeid/milkid/aiid sync from `devsettings` correctly, but `trnid` appears to "start afresh" — the device keeps trying low-or-stale values that are already taken.
 
-The v2.10.68 fix gated the `dataReceived` listener and stopped weight broadcasts from flipping the indicator. The remaining leaks are on the **connection-change event path** and the **Buy-portal auto-reconnect path**, both of which can spuriously emit `scaleConnectionChange { connected: true }` while only a printer is paired.
+## Root Cause (confirmed by code review)
 
-## Root cause (remaining holes)
-
-1. **`useScaleConnection.autoReconnect`** runs on `LiveWeightDisplay` / `CoffeeWeightDisplay` mount. It calls `quickReconnect(...)` (BLE) using whatever device id is in `getStoredDeviceInfo()`. On integrated POS units, the *stored* "scale" device id can actually be the printer's MAC (saved during a prior misclassification, or because the same controller exposes both). The BLE quickReconnect succeeds, fires `broadcastScaleConnectionChange(true)`, and the dashboard turns green.
-
-2. **`scaleConnectionChange` event has no payload identifying the source device.** Any code path that dispatches `{ connected: true }` is trusted globally. There is no guard against a printer-side reconnect surfacing as a scale event.
-
-3. **No telemetry** on which exact dispatch is fired during the Buy-portal navigation, so the user (and us) cannot distinguish path 1 vs another path.
-
-## Fix
-
-### 1. `src/hooks/useScaleConnection.ts` — gate `autoReconnect` by printer state
-
-Skip BLE auto-reconnect when:
-- A Classic printer is currently connected (`isClassicPrinterConnected()`), AND
-- The stored "scale" device address matches the connected printer address.
-
-This stops the Buy portal from re-opening the printer's socket as a "scale".
+In `src/utils/referenceGenerator.ts` → `syncOfflineCounter(...)`:
 
 ```ts
-const autoReconnect = useCallback(async () => {
-  const storedDevice = getStoredDeviceInfo();
-  if (!storedDevice || scaleConnected) return;
-
-  // Guard: don't auto-reconnect a "scale" that is actually the printer
-  if (isClassicPrinterConnected()) {
-    const printerInfo = getCurrentClassicPrinterInfo?.();
-    if (printerInfo && printerInfo.address === storedDevice.deviceId) {
-      console.warn('🚫 Skipping scale autoReconnect — stored scale id matches connected printer');
-      return;
-    }
-  }
-  // ... existing flow
-}, [...]);
+// SAFETY: Detect corrupted trnid from backend (e.g. clientFetch digit parsed as part of trnid)
+if (backendTrnId > 10000000) {
+  console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is unreasonably large — possible clientFetch corruption. Ignoring backend value.`);
+  backendTrnId = 0;
+}
+const safeTrnId = Math.max(currentLocalTrnId, backendTrnId);
 ```
 
-### 2. `src/services/bluetooth.ts` — verify before broadcasting `scaleConnectionChange(true)`
+This cap was added to defend against a previous bug where the backend parsed clientFetch-prefixed strings into a 9-digit trnid. But:
 
-In `broadcastScaleConnectionChange`, when `connected === true`, require that **either** a BLE scale `deviceId` is set on the `scale` singleton **or** `isClassicScaleConnected()` is true. Otherwise drop the event and log a warning. This makes the event impossible to fake from any future code path.
+1. **Multiple devices share the same `devcode`** (memory: `multi-device-company-code-sharing`). The backend's fingerprint endpoint already self-heals via `MAX(transrefno) WHERE transrefno LIKE '<devcode>%'`, so it legitimately returns the **global** trnid for that devcode — which can grow well past 10,000,000 over time on busy collection centers (especially coffee/dairy shared-devcode estates).
+2. When the legitimate global trnid passes 10M, the frontend silently discards it and falls back to `0`. The local counter then "wins" `Math.max(local, 0) = local`, but local is far behind the global state because another device on the same devcode has written newer rows.
+3. The device generates the next-after-its-local-counter reference, which is already taken by the sibling device → `REFERENCE_COLLISION` on every sync attempt.
+
+`storeid`/`milkid`/`aiid` are NOT capped (they have no equivalent guard) — that's why they sync correctly while `trnid` does not. This perfectly explains the user's report.
+
+The 10M guard is also obsolete now that `transrefno` is generated **without** clientFetch (only `uploadrefno` carries clientFetch — see `generateOfflineReference` vs `generateFormattedUploadRef`), so the original "clientFetch corruption" failure mode it was protecting against no longer exists.
+
+## Plan
+
+### 1. `src/utils/referenceGenerator.ts` — replace the broken 10M cap
+
+Replace the absolute cap with a **relative sanity check** that only rejects backend values that are wildly larger than what local has seen, instead of penalising legitimately high counters.
+
+Change the guard around line 407–412 from:
 
 ```ts
-export const broadcastScaleConnectionChange = (connected: boolean) => {
-  if (connected) {
-    const real = (scale.isConnected && !!scale.deviceId) || isClassicScaleConnected();
-    if (!real) {
-      console.warn('🚫 Suppressed scaleConnectionChange(true) — no scale role active');
-      return;
-    }
-  }
-  window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
-};
+if (backendTrnId > 10000000) {
+  console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is unreasonably large — possible clientFetch corruption. Ignoring backend value.`);
+  backendTrnId = 0;
+}
 ```
 
-### 3. `src/services/bluetoothClassic.ts` — same guard on the direct dispatch
-
-The `connectClassicScale` success path dispatches `scaleConnectionChange { connected: true }` directly (line ~406). Replace the direct `window.dispatchEvent` with the guarded `broadcastScaleConnectionChange(true)` so the same verification runs.
-
-### 4. `Dashboard.tsx` — final UI-level sanity check
-
-In the `handleScaleChange` listener, when an event arrives with `connected: true`, double-check `isScaleConnected()` before flipping the dot green. If the truth source disagrees, ignore the event and log it. This prevents any stray dispatch from any module from misleading the UI.
+to:
 
 ```ts
-const handleScaleChange = (e: CustomEvent<{ connected: boolean }>) => {
-  if (e.detail.connected && !isScaleConnected()) {
-    console.warn('🚫 Dashboard ignored scaleConnectionChange(true) — truth source says no scale');
-    return;
-  }
-  setScaleConnected(e.detail.connected);
-};
+// SAFETY: Only reject backend trnid if it is *implausibly* larger than the local
+// counter (suggests a stale clientFetch-corrupted value). Devices that share a devcode
+// can legitimately reach very high trnids (>10M), so an absolute cap caused real
+// outages — the device kept generating colliding references because the legit
+// high backend value was discarded. We instead require backend to be within a
+// reasonable jump (e.g. 10M ahead of local) before accepting it as authoritative.
+const MAX_REASONABLE_JUMP = 10_000_000; // tolerant headroom for shared-devcode estates
+if (
+  backendTrnId > 100_000_000 &&
+  currentLocalTrnId > 0 &&
+  backendTrnId - currentLocalTrnId > MAX_REASONABLE_JUMP
+) {
+  console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is implausibly far ahead of local ${currentLocalTrnId}; ignoring (possible corruption).`);
+  backendTrnId = 0;
+}
 ```
 
-### 5. Diagnostic logs
+Effect:
+- A device whose local counter is `0` (fresh install / cache wipe) will **always** accept the backend value (no rejection at zero), letting it catch up to the shared-devcode global max immediately.
+- A device with local `20_000_340` and backend `20_000_341` accepts backend (delta 1, well within tolerance).
+- Only obviously bogus values (e.g. local 100, backend 999_999_999) are rejected.
 
-Add a single, very visible log line at each of: `autoReconnect` entry (with stored id + printer address), `broadcastScaleConnectionChange(true)` (with caller stack), and the Dashboard's `handleScaleChange`. These are guarded to native only and stripped of secrets so the user can paste them back if the issue persists.
+### 2. `src/utils/referenceGenerator.ts` — fix truthy-check for legit zero in callers
 
-### 6. Version bump
+In `Login.tsx:100-103` and `DeviceAuthStatus.tsx:143-146` the pattern is:
 
-- `src/constants/appVersion.ts`: `APP_VERSION = '2.10.69'`, `APP_VERSION_CODE = 91`, with a changelog entry describing the four guards.
-- `android/app/build.gradle`: `versionCode 91`, `versionName "2.10.69"`.
+```ts
+const lastTrnId = data.data.trnid ? parseInt(String(data.data.trnid), 10) : undefined;
+```
 
-## Out of scope
+This treats `0` and `null` identically (both → `undefined`). That's fine for first-ever device, but it means a device whose backend value is `0` (not yet healed) sees `undefined` passed in, and `syncOfflineCounter` then leaves whatever local has — which is the desired fallback behavior. **No change needed**, but document it in the function comment so this is not "fixed" later by mistake.
 
-- No changes to the native `BluetoothClassicPlugin.kt`. The shared-socket architecture is preserved; we are defending purely on the JS side, which is safer for the production app.
-- No change to printer behavior, BLE scan logic, or receipt/sync paths.
+Add a one-line comment above lines 100/143 in both files:
 
-## Verification checklist
+```ts
+// Note: 0/null both → undefined, so syncOfflineCounter keeps the local counter.
+//       The backend GREATEST(devsettings.trnid, MAX(transrefno)) self-heals on the next call.
+```
 
-After install of v2.10.69 (fully close + reopen):
+### 3. `src/hooks/useDataSync.ts` — make collision recovery resilient to high trnids
 
-1. No scale paired. Connect only the Classic printer.
-2. Open Buy portal. Indicator must remain **red**. Console should show one of:
-   - `🚫 Skipping scale autoReconnect — stored scale id matches connected printer`, or
-   - `🚫 Suppressed scaleConnectionChange(true) — no scale role active`, or
-   - `🚫 Dashboard ignored scaleConnectionChange(true) — truth source says no scale`.
-3. Now connect a real scale. Indicator turns green normally. Live weight displays.
-4. Disconnect scale, keep printer. Indicator returns to red, printer indicator unaffected.
-5. Print a receipt. Printer indicator stays green throughout.
+Around line 304:
 
-## Files to modify
+```ts
+const trnidTail = parseInt(backendRef.slice(-8), 10) || 0;
+if (devcode && trnidTail > 0) {
+  try { await syncOfflineCounter(devcode, trnidTail); } catch {}
+}
+```
 
-- `src/hooks/useScaleConnection.ts`
-- `src/services/bluetooth.ts`
-- `src/services/bluetoothClassic.ts`
-- `src/components/Dashboard.tsx`
-- `src/constants/appVersion.ts`
-- `android/app/build.gradle`
+This is fine for trnids ≤ 99,999,999 (8 digits). Since collision recovery requests an authoritative ref from the backend (via `/api/milk-collection/next-reference` which uses the same devcode-prefix MAX query), it will return the correct global max. The new sanity check above will accept it.
+
+**No code change needed here**, but add an inline comment noting that this path now relies on the relaxed sanity check in `syncOfflineCounter` to absorb high values:
+
+```ts
+// Push local forward to backend's authoritative trnid.
+// (The relaxed sanity check in syncOfflineCounter accepts high values from
+// shared-devcode estates that legitimately exceed 10M.)
+```
+
+### 4. Backend `backend-api/server.js` — make the self-heal also bound trnid to MAX storeid/milkid/aiid where applicable (optional, defensive)
+
+Currently the fingerprint endpoint's self-heal only checks `MAX(transrefno) LIKE '<devcode>%'`. That's correct for `transrefno` but, just to belt-and-braces against any future reset of `devsettings.trnid` on a shared-devcode estate, we leave the existing healing logic untouched. **No change** — the existing v2.10.70 backend logic is correct; the bug was 100% client-side.
+
+### 5. Version bump (per `version-alignment-and-cache-management-protocol`)
+
+- `src/constants/appVersion.ts`: `APP_VERSION = '2.10.71'`, `APP_VERSION_CODE = 93`. Add a release note explaining the relaxed sanity check and why the absolute 10M cap was wrong for shared-devcode estates.
+- `android/app/build.gradle`: bump `versionCode` to 93 and `versionName` to `"2.10.71"`.
+- `public/sw.js`: bump cache version constant in line with the existing protocol so clients re-fetch the new bundle.
+
+## Production-safety notes
+
+- **No backend changes** — the existing v2.10.70 self-heal endpoint is preserved verbatim. Production mobile clients that haven't yet upgraded continue to work as before; they simply remain affected by the same collision until they upgrade.
+- **Idempotent on existing devices**: Devices currently above 10M whose local counter already happens to be ahead won't change behavior. Devices currently colliding will, on next login / device-auth refresh / collision-recovery cycle, receive the high backend value, accept it, and start generating non-colliding references.
+- **No data is overwritten or deleted.** The relaxed guard is purely additive in the "what values are accepted" sense.
+- **Behavior on cache-wipe / fresh install** improves: previously a fresh device on a shared-devcode estate with global trnid >10M would silently generate `<devcode>00000001` and collide forever; now it correctly inherits the global max on first authorization.
+
+## Files to edit
+
+1. `src/utils/referenceGenerator.ts` — relax the trnid sanity check in `syncOfflineCounter`.
+2. `src/components/Login.tsx` — add explanatory comment near the trnid sync site (no behavior change).
+3. `src/components/DeviceAuthStatus.tsx` — add explanatory comment near the trnid sync site (no behavior change).
+4. `src/hooks/useDataSync.ts` — add explanatory comment in collision-recovery path (no behavior change).
+5. `src/constants/appVersion.ts` — bump to `2.10.71` (code 93) with release notes.
+6. `android/app/build.gradle` — bump `versionCode` 93, `versionName` `"2.10.71"`.
+7. `public/sw.js` — bump cache version per the version-alignment protocol.
