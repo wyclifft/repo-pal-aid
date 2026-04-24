@@ -251,5 +251,20 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.66';
-export const APP_VERSION_CODE = 88;
+// v2.10.67: Milk and coffee receipts are always saved to Recent Receipts after a
+//           transaction is made, even if the backend rejects it as a duplicate
+//           (DUPLICATE_SESSION_DELIVERY) or every local IndexedDB save fails.
+//           ROOT CAUSE: Index.tsx returned early on `hardStopped` before
+//           addMilkReceipt() ran, and the normal save was only reached when
+//           successCount > 0 OR offlineCount > 0 — so a real, printed
+//           transaction could disappear from Recent Receipts. Matches the
+//           v2.10.66 fix already applied to Store/AI receipts.
+//           FIX (frontend only — Index.tsx): call addMilkReceipt(...) on the
+//           hardStopped early-return path AND as a defensive last step when
+//           the loop processed nothing successfully. Existing duplicate guard
+//           in ReprintContext.addMilkReceipt (keyed on reference_no /
+//           transrefno, globally unique on device) makes the extra calls
+//           idempotent. No backend, no IndexedDB schema, no sync engine, no
+//           reference generator, no receipt/photo/Z-Report changes.
+export const APP_VERSION = '2.10.67';
+export const APP_VERSION_CODE = 89;
