@@ -99,6 +99,51 @@ export const syncSalesFromDB = async (
 
       console.log(`[SYNC-ENGINE] Batch ${i + 1}/${batchEntries.length}: ${uploadrefno} (${batchSales.length} items)`);
 
+      // Hoist batchRequest so catch handler can also retry it
+      let batchRequest: BatchSaleRequest | null = null;
+
+      // v2.10.66: rebuild a batch with freshly-generated refs and retry once
+      const retryBatchWithFreshRefs = async (
+        original: BatchSaleRequest,
+        sales: SaleRecord[]
+      ): Promise<{ success: boolean; uploadrefno?: string; stillDuplicate?: boolean; error?: string }> => {
+        try {
+          // Generate a new uploadrefno for the batch (use first item's transtype)
+          const clientFetchStr = localStorage.getItem('clientFetch');
+          const clientFetch = clientFetchStr ? Number(clientFetchStr) : undefined;
+          const newRefs = await generateReferenceWithUploadRef('store', clientFetch);
+          if (!newRefs) return { success: false, error: 'Could not generate new refs' };
+
+          // Generate a fresh transrefno per item
+          const newItems = await Promise.all(
+            original.items.map(async (it) => ({
+              ...it,
+              transrefno: (await generateTransRefOnly()) || it.transrefno,
+            }))
+          );
+
+          const fresh: BatchSaleRequest = {
+            ...original,
+            uploadrefno: newRefs.uploadrefno,
+            items: newItems,
+          };
+
+          const r = await mysqlApi.sales.createBatch(fresh);
+          if (r.success) return { success: true, uploadrefno: newRefs.uploadrefno };
+          const em = (r.error || '').toLowerCase();
+          if (em.includes('duplicate') || em.includes('already exists')) {
+            return { success: false, stillDuplicate: true };
+          }
+          return { success: false, error: r.error };
+        } catch (e: any) {
+          const em = (e?.message || '').toLowerCase();
+          if (em.includes('duplicate') || em.includes('already exists')) {
+            return { success: false, stillDuplicate: true };
+          }
+          return { success: false, error: e?.message };
+        }
+      };
+
       try {
         const firstSale = batchSales[0];
 
