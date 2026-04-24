@@ -1,35 +1,4 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.10.65: Fix Classic BT printer state being cleared by spurious scale-side
-//           connectionStateChanged events during Store/AI receipt printing on
-//           integrated POS units that share a single BluetoothClassic plugin
-//           instance across both roles. ROOT CAUSE: in bluetoothClassic.ts,
-//           connectClassicScale() and connectClassicPrinter() each registered
-//           a 'connectionStateChanged' listener on the shared plugin. Native
-//           events carried no device address, so a single `connected: false`
-//           tick (often emitted between print chunks by some POS firmwares)
-//           was delivered to BOTH listeners — the printer listener then called
-//           clearClassicPrinterState() and broadcast printerConnectionChange,
-//           dropping the user back to the "Select Printer" prompt mid-receipt.
-//           Visible to the affected user as "printer moves to scale even when
-//           no scale is paired".
-//           FIXES (additive, JS-only — no native rebuild required):
-//             (1) bluetoothClassic.ts: scope each listener by its device
-//                 address captured in closure; ignore events for any other
-//                 address (or cross-role events when address is absent);
-//                 verify with BluetoothClassic.isConnected() before clearing
-//                 state — preserves connection on transient false-disconnects.
-//             (2) bluetooth.ts: in printToBluetoothPrinter catch block, replace
-//                 unconditional clearPrinterState() with verifyPrinterConnection()
-//                 gate — a single failed BLE chunk write no longer kills the
-//                 printer session.
-//             (3) Store.tsx: remove no-op scale autoReconnect() on mount —
-//                 Store is cart-based, never reads weight, and the call was
-//                 toggling Classic plugin state and feeding (1) above. Buy/Sell
-//                 still auto-reconnect normally.
-//           No backend, no IndexedDB schema, no sync engine, no reference
-//           generator, no receipt/photo/Z-Report changes. BLE scale, BLE
-//           printer, Buy/Sell weight capture, and the BluetoothClassicPlugin.kt
-//           native plugin are all untouched.
 // v2.10.64: Fix login "Failed to fetch" in Lovable preview / wrapped fetch envs.
 //           ROOT CAUSE: external scripts in the preview iframe (lovable.js) wrap
 //           window.fetch and intermittently throw TypeError: Failed to fetch on
@@ -229,5 +198,5 @@
 //           `.then` on Capacitor Proxy and throws on Android).
 // v2.10.48: Fix Android camera crash (remove static @capacitor/camera enum imports);
 //           add DialogDescription for a11y; backend diagnostic log for coffee SCODE.
-export const APP_VERSION = '2.10.65';
-export const APP_VERSION_CODE = 87;
+export const APP_VERSION = '2.10.64';
+export const APP_VERSION_CODE = 86;
