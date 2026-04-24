@@ -20,6 +20,8 @@ import {
   connectClassicScale,
   quickReconnectClassicScale,
   requestClassicBluetoothPermissions,
+  isClassicPrinterConnected,
+  getCurrentClassicPrinterInfo,
   type ClassicBluetoothDevice,
 } from '@/services/bluetoothClassic';
 import { useAppSettings } from '@/hooks/useAppSettings';
@@ -341,16 +343,34 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   // Quick reconnect to last used device
   const autoReconnect = useCallback(async () => {
     const storedDevice = getStoredDeviceInfo();
-    if (storedDevice && !scaleConnected) {
-      setIsConnecting(true);
-      const result = await quickReconnect(storedDevice.deviceId, handleScaleReading);
-      setIsConnecting(false);
-      
-      if (result.success) {
-        setScaleConnected(true);
-        setScaleType(result.type);
-        setConnectionType('ble');
+    if (!storedDevice || scaleConnected) return;
+
+    // v2.10.69: Guard for integrated POS hardware. If a Classic printer is
+    // currently connected and its address matches the stored "scale" device id
+    // (which can happen when the same controller exposes both roles), do NOT
+    // attempt to reopen the socket as a scale — that would fire
+    // scaleConnectionChange(true) and turn the Dashboard scale indicator green
+    // even though no real scale is paired.
+    if (isClassicPrinterConnected()) {
+      const printerInfo = getCurrentClassicPrinterInfo();
+      const storedId = (storedDevice.deviceId || '').toUpperCase();
+      const printerAddr = (printerInfo?.address || '').toUpperCase();
+      if (printerInfo && storedId && printerAddr && storedId === printerAddr) {
+        console.warn(
+          `🚫 [v2.10.69] Skipping scale autoReconnect — stored scale id (${storedId}) matches connected printer (${printerAddr}).`
+        );
+        return;
       }
+    }
+
+    setIsConnecting(true);
+    const result = await quickReconnect(storedDevice.deviceId, handleScaleReading);
+    setIsConnecting(false);
+
+    if (result.success) {
+      setScaleConnected(true);
+      setScaleType(result.type);
+      setConnectionType('ble');
     }
   }, [handleScaleReading, scaleConnected]);
 
