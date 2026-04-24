@@ -334,11 +334,38 @@ export const connectClassicScale = async (
     });
 
     // Set up connection state listener
-    connectionListenerHandle = await BluetoothClassic.addListener('connectionStateChanged', (state) => {
-      if (!state.connected) {
-        console.log('⚠️ Classic BT connection lost');
-        clearClassicScaleState();
+    // v2.10.65: Scope by device address + verify-before-clear gate.
+    // The native plugin shares one BluetoothClassic instance across scale & printer,
+    // so a printer disconnect event must NOT clear scale state (and vice versa).
+    // 1. If event carries an address, ignore it unless it matches THIS scale.
+    // 2. If event has no address (older plugin), only act if our role is currently
+    //    flagged connected — prevents cross-role clearing.
+    // 3. Verify against the native side before actually clearing — guards against
+    //    transient false-disconnects emitted by some POS firmwares between writes.
+    const scaleAddress = device.address;
+    connectionListenerHandle = await BluetoothClassic.addListener('connectionStateChanged', async (state: any) => {
+      if (state.connected) return;
+      const eventAddress: string | undefined = state.address;
+      if (eventAddress && eventAddress !== scaleAddress) {
+        // Event is for a different device (e.g. the printer) — ignore.
+        return;
       }
+      if (!classicScale.isConnected) {
+        // Already cleared / not our role — ignore.
+        return;
+      }
+      // Verify with native before clearing
+      try {
+        const check = await BluetoothClassic.isConnected();
+        if (check?.connected) {
+          console.warn('⚠️ Classic BT scale: spurious disconnect event — native still connected, preserving state');
+          return;
+        }
+      } catch {
+        // If verify fails, fall through to clear (safer than leaving stale state)
+      }
+      console.log('⚠️ Classic BT scale connection lost (verified)');
+      clearClassicScaleState();
     });
 
     // Update state
@@ -573,11 +600,36 @@ export const connectClassicPrinter = async (
     }
 
     // Set up connection state listener
-    await BluetoothClassic.addListener('connectionStateChanged', (state) => {
-      if (!state.connected) {
-        console.log('⚠️ Classic BT printer connection lost');
-        clearClassicPrinterState();
+    // v2.10.65: Scope by printer address + verify-before-clear gate.
+    // Critical fix for the affected user: a connectionStateChanged event fired
+    // mid-print (or by the scale role) was clearing printer state and dropping
+    // the user back to the "Select Printer" prompt. Now we only clear state
+    // when the event genuinely belongs to this printer AND the native socket
+    // confirms it is gone.
+    const printerAddress = device.address;
+    await BluetoothClassic.addListener('connectionStateChanged', async (state: any) => {
+      if (state.connected) return;
+      const eventAddress: string | undefined = state.address;
+      if (eventAddress && eventAddress !== printerAddress) {
+        // Event is for a different device (e.g. the scale) — ignore.
+        return;
       }
+      if (!classicPrinter.isConnected) {
+        // Already cleared / not our role — ignore.
+        return;
+      }
+      // Verify with native before clearing — protects against spurious mid-print events
+      try {
+        const check = await BluetoothClassic.isConnected();
+        if (check?.connected) {
+          console.warn('⚠️ Classic BT printer: spurious disconnect event — native still connected, preserving state');
+          return;
+        }
+      } catch {
+        // If verify fails, fall through to clear (safer than leaving stale state)
+      }
+      console.log('⚠️ Classic BT printer connection lost (verified)');
+      clearClassicPrinterState();
     });
 
     // Update state

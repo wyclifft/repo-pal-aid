@@ -2062,8 +2062,21 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
     }
   } catch (error: any) {
     console.error('❌ Print failed:', error);
-    // Mark printer as disconnected on error
-    clearPrinterState();
+    // v2.10.65: Don't blindly mark the printer disconnected on a single failed
+    // write — verify first. A transient BLE buffer hiccup must not drop the
+    // user back to the "Select Printer" screen mid-receipt.
+    try {
+      const stillConnected = await verifyPrinterConnection();
+      if (stillConnected) {
+        console.warn('⚠️ Print failed but printer is still connected — preserving state');
+      } else {
+        clearPrinterState();
+      }
+    } catch {
+      // If verify itself throws, err on the side of preserving state — the
+      // next print attempt will reveal a true disconnect anyway.
+      console.warn('⚠️ verifyPrinterConnection threw — preserving printer state');
+    }
     return { success: false, error: error.message || 'Failed to print' };
   }
 };
