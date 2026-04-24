@@ -463,7 +463,8 @@ const clearClassicScaleState = () => {
     isConnected: false,
     connectionType: 'classic-spp',
   };
-  window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected: false } }));
+  // v2.10.69: route through guarded broadcaster (false is always allowed)
+  broadcastScaleConnectionChange(false);
 };
 
 // ============================================================================

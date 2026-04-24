@@ -17,6 +17,7 @@ import {
   connectClassicPrinter,
   disconnectClassicPrinter,
   isClassicPrinterConnected,
+  getCurrentClassicPrinterInfo,
   printToClassicPrinter,
   getPairedPrinters,
   quickReconnectClassicPrinter,
@@ -40,6 +41,7 @@ export {
   connectClassicPrinter,
   disconnectClassicPrinter,
   isClassicPrinterConnected,
+  getCurrentClassicPrinterInfo,
   printToClassicPrinter,
   getPairedPrinters,
   quickReconnectClassicPrinter,
@@ -420,12 +422,23 @@ const clearPrinterState = () => {
 
 // Broadcast connection state change events
 export const broadcastScaleConnectionChange = (connected: boolean) => {
-  console.log(`📡 Broadcasting scale connection: ${connected}`);
+  // v2.10.69: Truth-source guard. A `connected: true` event MUST correspond to
+  // an actual scale role being active — either a BLE scale with a deviceId on
+  // the `scale` singleton, or a Classic SPP scale (isClassicScaleConnected()).
+  // Otherwise it is suppressed. This makes it impossible for any future code
+  // path (including printer reconnects on integrated POS hardware that share
+  // the RFCOMM socket) to flip the Dashboard scale indicator green.
   if (connected) {
-    // v2.10.54: Track last successful connect time so the printer auto-reconnect
-    // can defer if the scale is "warming up" (avoids cross-talk on Android GATT).
+    const real = (scale.isConnected && !!scale.deviceId) || isClassicScaleConnected();
+    if (!real) {
+      console.warn('🚫 Suppressed scaleConnectionChange(true) — no scale role active (likely printer cross-talk)');
+      return;
+    }
+    // Track last successful connect time so the printer auto-reconnect can
+    // defer if the scale is "warming up" (avoids cross-talk on Android GATT).
     lastScaleConnectedAt = Date.now();
   }
+  console.log(`📡 Broadcasting scale connection: ${connected}`);
   window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
 };
 
