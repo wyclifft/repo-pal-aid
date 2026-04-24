@@ -40,6 +40,12 @@ export interface PrintedReceipt {
   // Cumulative weight for milk/coffee receipts
   cumulativeWeight?: number;
   cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
+  // v2.10.66: stable local identity for Store/AI receipts so a repeated
+  // uploadrefno (e.g. after a counter rollback when downgrading then
+  // re-upgrading) cannot suppress a brand-new receipt from Recent Receipts.
+  // Legacy entries without these fields keep working via fallback matching.
+  localReceiptId?: string;
+  itemRefs?: string[];
 }
 
 interface ReprintModalProps {
