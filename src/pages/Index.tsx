@@ -1199,14 +1199,36 @@ const Index = () => {
     // Dispatch sync complete event
     window.dispatchEvent(new CustomEvent('syncComplete'));
 
-    // If the server rejected inserts as duplicates, do not proceed with receipt saving or blacklisting.
-    // Keep captures intact so the user can review/clear intentionally.
+    // If the server rejected inserts as duplicates, do not proceed with blacklisting,
+    // but DO preserve the receipt in Recent Receipts — the operator made and (in
+    // printCopies > 0 mode) printed a real transaction. v2.10.67: matches the
+    // v2.10.66 Store/AI behaviour so coffee/milk receipts are never silently lost.
     if (hardStopped) {
+      try {
+        addMilkReceipt(printData.collections).catch(() => {});
+        console.log('[REPRINT] Milk receipt preserved despite server duplicate-session rejection');
+      } catch {
+        // Never let history-save failures interrupt the submit flow.
+      }
       toast.error('Submission stopped: server reports this farmer already submitted for this session.', {
         duration: 6000,
       });
       setIsSubmitting(false);
       return;
+    }
+
+    // v2.10.67: Defensive last-resort snapshot — if every IndexedDB write failed
+    // (successCount === 0 && offlineCount === 0) the normal flow below would
+    // skip addMilkReceipt entirely, so we save the snapshot here too. The
+    // duplicate guard in ReprintContext makes this idempotent if the normal
+    // path also runs (e.g. a partial-success batch).
+    if (successCount === 0 && offlineCount === 0 && capturedCollections.length > 0) {
+      try {
+        addMilkReceipt(printData.collections).catch(() => {});
+        console.log('[REPRINT] Milk receipt preserved despite all local saves failing');
+      } catch {
+        // Never let history-save failures interrupt the submit flow.
+      }
     }
 
     // Show appropriate feedback
