@@ -983,6 +983,12 @@ const server = http.createServer(async (req, res) => {
           );
 
           // SUCCESS: Update trnid AND milkid AFTER successful insert
+          // v2.10.72: Always advance milkid using the row's actual Uploadrefno.
+          // Older APKs may not post `uploadrefno`, in which case attemptUploadrefno=0
+          // and the previous GREATEST(milkid, 0) was a no-op — leaving devsettings.milkid
+          // permanently stale and causing fresh devices to restart uploadrefno at 1.
+          // We now fall back to MAX(Uploadrefno) for this ccode+Transtype=1 when the
+          // request omits uploadrefno, so milkid always tracks reality.
           const [devRows] = await pool.query(
             'SELECT devcode FROM devsettings WHERE uniquedevcode = ?',
             [deviceserial]
@@ -991,15 +997,33 @@ const server = http.createServer(async (req, res) => {
             const devcode = devRows[0].devcode;
             // Extract trnid using last 8 digits to avoid clientFetch corruption
             const insertedTrnId = parseInt(attemptTransrefno.slice(-8), 10);
+
+            // Derive the milkid we should advance to. Prefer the value the client
+            // posted; if missing/zero, fall back to MAX(Uploadrefno) for this ccode.
+            let advanceMilkId = parseInt(attemptUploadrefno, 10) || 0;
+            if (!advanceMilkId) {
+              try {
+                const [maxRows] = await pool.query(
+                  `SELECT CAST(MAX(CAST(Uploadrefno AS UNSIGNED)) AS UNSIGNED) AS maxId
+                   FROM transactions
+                   WHERE ccode = ? AND Transtype = 1`,
+                  [ccode]
+                );
+                advanceMilkId = (maxRows[0] && maxRows[0].maxId) ? Number(maxRows[0].maxId) : 0;
+              } catch (e) {
+                console.warn('⚠️ [MILKID] MAX(Uploadrefno) lookup failed:', e?.message || e);
+              }
+            }
+
             if (!isNaN(insertedTrnId)) {
               await pool.query(
                 `UPDATE devsettings SET 
                   trnid = GREATEST(IFNULL(trnid, 0), ?),
                   milkid = GREATEST(IFNULL(milkid, 0), ?)
                  WHERE uniquedevcode = ?`,
-                [insertedTrnId, attemptUploadrefno || 0, deviceserial]
+                [insertedTrnId, advanceMilkId, deviceserial]
               );
-              console.log(`✅ Updated trnid to ${insertedTrnId}, milkid to ${attemptUploadrefno} for device`);
+              console.log(`✅ Updated trnid=${insertedTrnId}, milkid=${advanceMilkId} for ${deviceserial}`);
             }
           }
 
@@ -2614,7 +2638,49 @@ const server = http.createServer(async (req, res) => {
         }
       }
       deviceData.trnid = lastTrnId;
-      
+
+      // v2.10.72: Self-heal milkid / storeid / aiid using MAX(Uploadrefno) per Transtype.
+      // Mirrors the trnid self-heal above. Without this, devices that wipe their cache
+      // (or run an older APK that omits uploadrefno on insert) receive a stale 0 from
+      // devsettings and start uploadrefno at 1, colliding with existing approval-workflow
+      // IDs. Multi-tenant safe: filtered by ccode. Column names are hardcoded — no injection.
+      // Recommended index for large datasets: (ccode, Transtype, Uploadrefno).
+      if (deviceData.ccode) {
+        const counterMap = [
+          { col: 'milkid',  transtype: 1 },
+          { col: 'storeid', transtype: 2 },
+          { col: 'aiid',    transtype: 3 },
+        ];
+        for (const { col, transtype } of counterMap) {
+          try {
+            const [rows] = await pool.query(
+              `SELECT CAST(MAX(CAST(Uploadrefno AS UNSIGNED)) AS UNSIGNED) AS maxId
+               FROM transactions
+               WHERE ccode = ? AND Transtype = ?`,
+              [deviceData.ccode, transtype]
+            );
+            const txMax = (rows[0] && rows[0].maxId) ? Number(rows[0].maxId) : 0;
+            const current = parseInt(deviceData[col], 10) || 0;
+            if (txMax > current) {
+              console.log(`🔧 [${col.toUpperCase()}-SYNC] devsettings.${col} (${current}) is stale for ccode=${deviceData.ccode}; using MAX (${txMax})`);
+              deviceData[col] = txMax;
+              try {
+                await pool.query(
+                  `UPDATE devsettings
+                   SET ${col} = GREATEST(IFNULL(${col}, 0), ?)
+                   WHERE uniquedevcode = ?`,
+                  [txMax, fingerprint]
+                );
+              } catch (healErr) {
+                console.warn(`⚠️ [${col.toUpperCase()}-SYNC] self-heal failed:`, healErr?.message || healErr);
+              }
+            }
+          } catch (lookupErr) {
+            console.warn(`⚠️ [${col.toUpperCase()}-SYNC] MAX lookup failed:`, lookupErr?.message || lookupErr);
+          }
+        }
+      }
+
       return sendJSON(res, { success: true, data: deviceData });
     }
 

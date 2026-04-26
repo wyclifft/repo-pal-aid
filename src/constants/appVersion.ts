@@ -1,4 +1,37 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.72: Fix uploadrefno restarting at 1 on cache-wiped devices AND milkid
+//           never advancing in devsettings. SERVER-ONLY (backend-api/server.js).
+//           Two root causes:
+//             (A) Milk insert success path called
+//                   GREATEST(milkid, attemptUploadrefno || 0)
+//                 — older APKs that don't post uploadrefno made the second
+//                 argument 0, so milkid never moved (unlike storeid/aiid which
+//                 derive from the inserted Uploadrefno). devsettings.milkid
+//                 then stays at 0 forever, and freshly-installed devices that
+//                 fetch this value start uploadrefno at 1 → collisions.
+//             (B) The fingerprint endpoint already self-heals trnid via
+//                 MAX(transrefno), but milkid/storeid/aiid were returned raw
+//                 from devsettings — so a wiped device would receive 0 and
+//                 begin its local uploadrefno at 1 even though backend rows
+//                 with much higher Uploadrefno already exist.
+//           FIX:
+//             (1) Milk insert: when attemptUploadrefno is missing/zero, fall
+//                 back to MAX(Uploadrefno) WHERE ccode=? AND Transtype=1, then
+//                 advance milkid via GREATEST. Backward-compatible with all
+//                 APKs in the field.
+//             (2) GET /api/devices/fingerprint/:fp now self-heals milkid
+//                 (Transtype=1), storeid (=2), aiid (=3) using
+//                 MAX(Uploadrefno) per ccode + Transtype, mirroring the
+//                 existing trnid self-heal. Persists corrected value to
+//                 devsettings via GREATEST. Multi-tenant safe (filtered by
+//                 ccode), idempotent, never decreases counters.
+//           No schema change, no API contract change, no APK update required —
+//           field devices already absorb higher backend counters via
+//           Math.max(local, backend) on the next 30s authorization poll
+//           (referenceGenerator.syncOfflineCounter / type-specific paths).
+//           Recommended index for production performance:
+//             CREATE INDEX idx_tx_ccode_type_upload
+//               ON transactions (ccode, Transtype, Uploadrefno);
 // v2.10.71: Fix "trnid starts afresh while storeid syncs correctly" on devices
 //           sharing a devcode prefix (e.g. BA02). syncOfflineCounter had an
 //           absolute SAFETY cap that DISCARDED any backend trnid > 10,000,000
@@ -377,5 +410,5 @@
 //           Real BLE and Classic SPP scales remain unaffected. Printer
 //           connect/print flow is untouched. No backend, no IndexedDB schema,
 //           no sync engine, no reference generator changes.
-export const APP_VERSION = '2.10.71';
-export const APP_VERSION_CODE = 93;
+export const APP_VERSION = '2.10.72';
+export const APP_VERSION_CODE = 94;
