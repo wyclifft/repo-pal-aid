@@ -1,133 +1,112 @@
 
-# Fix: trnid "starting afresh" while storeid syncs correctly (v2.10.71)
+# Stop offline cumulative regression — root cause confirmed (v2.10.72)
 
-## Symptom
-Device `BA02` keeps generating references like `BA0220000341..348` that collide with already-existing backend rows owned by real members (e.g. `M03156`, `M02857`, `M00914`). Storeid/milkid/aiid sync from `devsettings` correctly, but `trnid` appears to "start afresh" — the device keeps trying low-or-stale values that are already taken.
+## You found the actual root cause
 
-## Root Cause (confirmed by code review)
+Your scenario is exactly right and is the missing piece. Here is the precise sequence that produces the 553.4 → 326.5 kg drop:
 
-In `src/utils/referenceGenerator.ts` → `syncOfflineCounter(...)`:
+```text
+Day 1 — 18:00 (online)
+  ├─ User taps "Sync Now" → POST /api/milk-collection succeeds for all pending rows
+  ├─ useDataSync deletes those rows from IndexedDB (they're now in the cloud)
+  ├─ farmer_cumulative.baseCount for ANNE KAIMURI MURUNGI is still the OLD value
+  │  (e.g. 326.5 kg from the last prefetch earlier that morning)
+  ├─ prefetchCumulatives is scheduled to run in 5s (Index.tsx line 577)
+  │
+  └─ ⚠ Within those 5 seconds, the device loses internet (van moves, signal drops,
+     operator walks indoors, modem reboots). Batch GET /farmer-cumulative fails.
 
-```ts
-// SAFETY: Detect corrupted trnid from backend (e.g. clientFetch digit parsed as part of trnid)
-if (backendTrnId > 10000000) {
-  console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is unreasonably large — possible clientFetch corruption. Ignoring backend value.`);
-  backendTrnId = 0;
-}
-const safeTrnId = Math.max(currentLocalTrnId, backendTrnId);
+Day 1 — 22:00 (offline, app killed)
+
+Day 2 — 06:30 (still offline, OR online but farmer not yet re-prefetched)
+  ├─ App reopens. IndexedDB returns:
+  │     baseCount = 326.5  (stale — never refreshed after yesterday's sync)
+  │     unsynced  = 0      (everything was synced & deleted)
+  │     total     = 326.5 kg ← this is what the receipt prints
+  │
+  └─ Real cloud total: 553.4 kg. Regression: 227 kg, silent, no error.
 ```
 
-This cap was added to defend against a previous bug where the backend parsed clientFetch-prefixed strings into a 9-digit trnid. But:
+The offline fallback path **does its job correctly** — the bug is that the **input it relies on (baseCount) was never refreshed** the moment sync deleted the receipts. We trusted a 5-second-delayed background prefetch to catch up, and the network died inside that 5-second window.
 
-1. **Multiple devices share the same `devcode`** (memory: `multi-device-company-code-sharing`). The backend's fingerprint endpoint already self-heals via `MAX(transrefno) WHERE transrefno LIKE '<devcode>%'`, so it legitimately returns the **global** trnid for that devcode — which can grow well past 10,000,000 over time on busy collection centers (especially coffee/dairy shared-devcode estates).
-2. When the legitimate global trnid passes 10M, the frontend silently discards it and falls back to `0`. The local counter then "wins" `Math.max(local, 0) = local`, but local is far behind the global state because another device on the same devcode has written newer rows.
-3. The device generates the next-after-its-local-counter reference, which is already taken by the sibling device → `REFERENCE_COLLISION` on every sync attempt.
+## Where to fix it
 
-`storeid`/`milkid`/`aiid` are NOT capped (they have no equivalent guard) — that's why they sync correctly while `trnid` does not. This perfectly explains the user's report.
+In `src/hooks/useDataSync.ts`, after `syncAllData` finishes a successful POST cycle, we currently:
+1. Delete the local row.
+2. Decrement pending count.
+3. ...nothing else.
 
-The 10M guard is also obsolete now that `transrefno` is generated **without** clientFetch (only `uploadrefno` carries clientFetch — see `generateOfflineReference` vs `generateFormattedUploadRef`), so the original "clientFetch corruption" failure mode it was protecting against no longer exists.
+We need step 4: **before deleting any synced row, refresh `farmer_cumulative.baseCount` for every affected farmer**, while we still have proven internet (we just succeeded a POST). That single missing call is the root cause of the regression you're seeing.
 
-## Plan
+## v2.10.72 — Six-layer fix
 
-### 1. `src/utils/referenceGenerator.ts` — replace the broken 10M cap
+### Layer 0 (NEW — root cause) — Refresh cumulative inside the sync transaction
 
-Replace the absolute cap with a **relative sanity check** that only rejects backend values that are wildly larger than what local has seen, instead of penalising legitimately high counters.
+In `src/hooks/useDataSync.ts`, after each successful `POST /api/milk-collection` and **before** the IndexedDB delete:
 
-Change the guard around line 407–412 from:
+1. Collect the unique `(farmer_id, route, season)` tuples from the receipts that just synced.
+2. For each tuple, call `GET /api/farmer-cumulative` (or the existing batch endpoint) **synchronously within the sync loop**.
+3. Write the fresh `{ baseCount, byProduct }` into `farmer_cumulative` via `updateFarmerCumulative(farmerId, total, true, byProduct)`.
+4. **Only then** delete the local IndexedDB row.
+5. If the cumulative GET fails (network died mid-sync), keep the local row marked `cumulative_refresh_pending = true` and retry on next sync cycle. Do NOT delete until cumulative is refreshed AND verification passed.
 
-```ts
-if (backendTrnId > 10000000) {
-  console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is unreasonably large — possible clientFetch corruption. Ignoring backend value.`);
-  backendTrnId = 0;
-}
-```
+This guarantees: if the receipt was successfully sent to the server, the farmer's cached cumulative reflects it on this device — no matter when the network dies next.
 
-to:
+### Layer 1 — Season-keyed cache (so month rollover doesn't void the cache)
 
-```ts
-// SAFETY: Only reject backend trnid if it is *implausibly* larger than the local
-// counter (suggests a stale clientFetch-corrupted value). Devices that share a devcode
-// can legitimately reach very high trnids (>10M), so an absolute cap caused real
-// outages — the device kept generating colliding references because the legit
-// high backend value was discarded. We instead require backend to be within a
-// reasonable jump (e.g. 10M ahead of local) before accepting it as authoritative.
-const MAX_REASONABLE_JUMP = 10_000_000; // tolerant headroom for shared-devcode estates
-if (
-  backendTrnId > 100_000_000 &&
-  currentLocalTrnId > 0 &&
-  backendTrnId - currentLocalTrnId > MAX_REASONABLE_JUMP
-) {
-  console.warn(`⚠️ [SYNC] Backend trnid ${backendTrnId} is implausibly far ahead of local ${currentLocalTrnId}; ignoring (possible corruption).`);
-  backendTrnId = 0;
-}
-```
+In `src/hooks/useIndexedDB.ts` (lines 785, 828): change `cacheKey` from `${farmerId}_${YYYY-MM}` to `${farmerId}_${seasonCode}`. Read both for backwards compatibility on first hit, then write under the new key. DB version → 12.
 
-Effect:
-- A device whose local counter is `0` (fresh install / cache wipe) will **always** accept the backend value (no rejection at zero), letting it catch up to the shared-devcode global max immediately.
-- A device with local `20_000_340` and backend `20_000_341` accepts backend (delta 1, well within tolerance).
-- Only obviously bogus values (e.g. local 100, backend 999_999_999) are rejected.
+### Layer 2 — Persistent floor-guard (last resort safety net)
 
-### 2. `src/utils/referenceGenerator.ts` — fix truthy-check for legit zero in callers
+New IndexedDB store `farmer_cumulative_floor` keyed by `(farmer + route + product)` storing the last-printed total. Before every print, read it and refuse to print less than `floor + justSubmittedWeight`. Show a yellow toast when the floor protects the value, so the operator knows. Survives app kills, restarts, route changes — works identically online and offline.
 
-In `Login.tsx:100-103` and `DeviceAuthStatus.tsx:143-146` the pattern is:
+### Layer 3 — No more "trust on 404" silent deletion
 
-```ts
-const lastTrnId = data.data.trnid ? parseInt(String(data.data.trnid), 10) : undefined;
-```
+In `src/hooks/useDataSync.ts` lines 377–387: replace the `confirmed = true` shortcut on a 404 verify lookup with retry-and-keep — retry the GET twice with backoff, and if still 404 leave the local row marked `verification_pending` rather than deleting it. Surface a persistent banner when any rows are stuck pending.
 
-This treats `0` and `null` identically (both → `undefined`). That's fine for first-ever device, but it means a device whose backend value is `0` (not yet healed) sees `undefined` passed in, and `syncOfflineCounter` then leaves whatever local has — which is the desired fallback behavior. **No change needed**, but document it in the function comment so this is not "fixed" later by mistake.
+### Layer 4 — Backend SQL normalisation
 
-Add a one-line comment above lines 100/143 in both files:
+In `backend-api/server.js` cumulative queries (~lines 3072 and 3190): widen `TRIM(route) = TRIM(?)` to `UPPER(TRIM(route)) = UPPER(TRIM(?))` for `route`, `memberno`, and `icode`. Strictly additive (more rows match, never fewer) — production safe.
 
-```ts
-// Note: 0/null both → undefined, so syncOfflineCounter keeps the local counter.
-//       The backend GREATEST(devsettings.trnid, MAX(transrefno)) self-heals on the next call.
-```
+### Layer 5 — Forensic diagnostic endpoint
 
-### 3. `src/hooks/useDataSync.ts` — make collision recovery resilient to high trnids
+Additive `GET /api/diagnostics/farmer-cumulative-trace?farmer_id=…&uniquedevcode=…` returning the full ledger inside the active season window. Read-only, device-authorised. Lets us instantly verify whether the issue is on the device or the cloud the next time it happens.
 
-Around line 304:
+## Files to touch
 
-```ts
-const trnidTail = parseInt(backendRef.slice(-8), 10) || 0;
-if (devcode && trnidTail > 0) {
-  try { await syncOfflineCounter(devcode, trnidTail); } catch {}
-}
-```
+| File | Change |
+|---|---|
+| `src/hooks/useDataSync.ts` | Layer 0 (refresh-before-delete) + Layer 3 (no trust on 404) |
+| `src/hooks/useIndexedDB.ts` | Layer 1 (season key) + Layer 2 (`farmer_cumulative_floor` store), DB v12 |
+| `src/pages/Index.tsx` | Layer 2 read/write floor before print + protection toast; pass `seasonCode` to cumulative get/update |
+| `src/components/BackendStatusBanner.tsx` | Persistent banner when `verification_pending` or `cumulative_refresh_pending` rows exist |
+| `backend-api/server.js` | Layer 4 (`UPPER(TRIM(...))`) + Layer 5 (diagnostic endpoint) |
+| `src/constants/appVersion.ts`, `android/app/build.gradle`, `public/sw.js` | Bump to **v2.10.72**, version code **94**, SW cache **v19** |
+| `CUMULATIVE_REGRESSION_PROTECTION.md` | Runbook documenting all six layers and the operator-visible signals |
 
-This is fine for trnids ≤ 99,999,999 (8 digits). Since collision recovery requests an authoritative ref from the backend (via `/api/milk-collection/next-reference` which uses the same devcode-prefix MAX query), it will return the correct global max. The new sanity check above will accept it.
+## Why this stops it from happening again
 
-**No code change needed here**, but add an inline comment noting that this path now relies on the relaxed sanity check in `syncOfflineCounter` to absorb high values:
+The original bug needs **all of the following** to occur to cause a regression:
+- the cumulative cache is stale, AND
+- the offline fallback can't find unsynced receipts to make up the difference, AND
+- nothing remembers what was previously printed.
 
-```ts
-// Push local forward to backend's authoritative trnid.
-// (The relaxed sanity check in syncOfflineCounter accepts high values from
-// shared-devcode estates that legitimately exceed 10M.)
-```
+Each of Layers 0, 1, and 2 alone breaks the chain:
+- **Layer 0** keeps the cache fresh as a transactional consequence of every sync.
+- **Layer 1** ensures the cache lookup hits the right row across month boundaries.
+- **Layer 2** refuses to print a regression even if both above somehow fail.
 
-### 4. Backend `backend-api/server.js` — make the self-heal also bound trnid to MAX storeid/milkid/aiid where applicable (optional, defensive)
-
-Currently the fingerprint endpoint's self-heal only checks `MAX(transrefno) LIKE '<devcode>%'`. That's correct for `transrefno` but, just to belt-and-braces against any future reset of `devsettings.trnid` on a shared-devcode estate, we leave the existing healing logic untouched. **No change** — the existing v2.10.70 backend logic is correct; the bug was 100% client-side.
-
-### 5. Version bump (per `version-alignment-and-cache-management-protocol`)
-
-- `src/constants/appVersion.ts`: `APP_VERSION = '2.10.71'`, `APP_VERSION_CODE = 93`. Add a release note explaining the relaxed sanity check and why the absolute 10M cap was wrong for shared-devcode estates.
-- `android/app/build.gradle`: bump `versionCode` to 93 and `versionName` to `"2.10.71"`.
-- `public/sw.js`: bump cache version constant in line with the existing protocol so clients re-fetch the new bundle.
+Layers 3, 4, 5 add defence-in-depth: no silent deletions, no SQL drift, instant forensic visibility.
 
 ## Production-safety notes
 
-- **No backend changes** — the existing v2.10.70 self-heal endpoint is preserved verbatim. Production mobile clients that haven't yet upgraded continue to work as before; they simply remain affected by the same collision until they upgrade.
-- **Idempotent on existing devices**: Devices currently above 10M whose local counter already happens to be ahead won't change behavior. Devices currently colliding will, on next login / device-auth refresh / collision-recovery cycle, receive the high backend value, accept it, and start generating non-colliding references.
-- **No data is overwritten or deleted.** The relaxed guard is purely additive in the "what values are accepted" sense.
-- **Behavior on cache-wipe / fresh install** improves: previously a fresh device on a shared-devcode estate with global trnid >10M would silently generate `<devcode>00000001` and collide forever; now it correctly inherits the global max on first authorization.
+- **Layer 0 is the lowest-risk fix possible**: we just call an existing GET endpoint inside the existing sync loop, before an existing delete. If the GET fails we keep the row, which is strictly safer than today's behaviour. Online sync throughput is unaffected (the GET piggybacks on a connection we just proved works).
+- IndexedDB upgrade is purely additive (one new store + new optional fields). Legacy rows still read.
+- Backend changes only widen WHERE clauses and add a new endpoint — old clients keep working unchanged.
+- Legacy Android 7 POS unaffected; no new APIs used.
 
-## Files to edit
+## Memory updates after approval
 
-1. `src/utils/referenceGenerator.ts` — relax the trnid sanity check in `syncOfflineCounter`.
-2. `src/components/Login.tsx` — add explanatory comment near the trnid sync site (no behavior change).
-3. `src/components/DeviceAuthStatus.tsx` — add explanatory comment near the trnid sync site (no behavior change).
-4. `src/hooks/useDataSync.ts` — add explanatory comment in collision-recovery path (no behavior change).
-5. `src/constants/appVersion.ts` — bump to `2.10.71` (code 93) with release notes.
-6. `android/app/build.gradle` — bump `versionCode` 93, `versionName` `"2.10.71"`.
-7. `public/sw.js` — bump cache version per the version-alignment protocol.
+- `mem://features/cumulative-regression-protection` — six-layer rule, with Layer 0 as the **root cause** fix: cumulative cache MUST be refreshed inside the sync transaction before any synced row is deleted.
+- `mem://constraints/no-trust-on-404-verify` — record the v2.10.31 shortcut as forbidden.
+- Update `mem://features/farmer-cumulative-id-normalization` to reference season-keyed cache + sync-time refresh.
