@@ -43,7 +43,8 @@
 //           untouched. The collision-retry path (v2.10.70) and DUPLICATE_
 //           SESSION_DELIVERY conflict path (v2.10.60) are preserved.
 
-
+// v2.10.71: Fix "trnid starts afresh while storeid syncs correctly" on devices
+//           sharing a devcode prefix (e.g. BA02). syncOfflineCounter had an
 //           absolute SAFETY cap that DISCARDED any backend trnid > 10,000,000
 //           as "clientFetch corruption". On busy shared-devcode estates the
 //           legitimate global MAX(transrefno) for that devcode legitimately
