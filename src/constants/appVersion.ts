@@ -421,5 +421,5 @@
 //           Real BLE and Classic SPP scales remain unaffected. Printer
 //           connect/print flow is untouched. No backend, no IndexedDB schema,
 //           no sync engine, no reference generator changes.
-export const APP_VERSION = '2.10.71';
-export const APP_VERSION_CODE = 93;
+export const APP_VERSION = '2.10.72';
+export const APP_VERSION_CODE = 94;
