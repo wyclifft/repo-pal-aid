@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSyncManager, deduplicateReceipts } from '@/hooks/useSyncManager';
 import { mysqlApi } from '@/services/mysqlApi';
+import { farmerFrequencyApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { toast } from 'sonner';
 import { 
