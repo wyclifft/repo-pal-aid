@@ -361,34 +361,99 @@ export const useDataSync = () => {
             if (result.success) {
               // CRITICAL: Verify the record payload matches before deleting locally
               let confirmed = false;
-              try {
-                const verifyResult = await mysqlApi.milkCollection.getByReference(receipt.reference_no);
-                if (verifyResult) {
-                  // Verify critical fields match to prevent false-success data loss
-                  const vFarmerId = String((verifyResult as any).farmer_id || (verifyResult as any).memberno || '').trim();
-                  const lFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
-                  const vWeight = Number((verifyResult as any).weight || 0);
-                  const lWeight = Number(receipt.weight || 0);
-                  if (vFarmerId === lFarmerId && Math.abs(vWeight - lWeight) < 0.01) {
-                    confirmed = true;
+              let verifyAttempts = 0;
+              const MAX_VERIFY_ATTEMPTS = 3;
+              while (verifyAttempts < MAX_VERIFY_ATTEMPTS && !confirmed) {
+                verifyAttempts++;
+                try {
+                  const verifyResult = await mysqlApi.milkCollection.getByReference(receipt.reference_no);
+                  if (verifyResult) {
+                    const vFarmerId = String((verifyResult as any).farmer_id || (verifyResult as any).memberno || '').trim();
+                    const lFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
+                    const vWeight = Number((verifyResult as any).weight || 0);
+                    const lWeight = Number(receipt.weight || 0);
+                    if (vFarmerId === lFarmerId && Math.abs(vWeight - lWeight) < 0.01) {
+                      confirmed = true;
+                      break;
+                    } else {
+                      console.warn(`[SYNC] Payload mismatch on verify: ref=${receipt.reference_no}, remote farmer=${vFarmerId}/weight=${vWeight}, local farmer=${lFarmerId}/weight=${lWeight}`);
+                      confirmed = false;
+                      break; // Real mismatch — do not retry, keep local
+                    }
                   } else {
-                    console.warn(`[SYNC] Payload mismatch on verify: ref=${receipt.reference_no}, remote farmer=${vFarmerId}/weight=${vWeight}, local farmer=${lFarmerId}/weight=${lWeight}`);
-                    // Do NOT delete local — data mismatch
-                    confirmed = false;
+                    // v2.10.72: NO MORE "trust on 404". Retry with backoff.
+                    // If we still cannot find the record after MAX attempts, KEEP local
+                    // row (mark verification_pending). Better to retry on next sync than
+                    // to delete a row that the backend may not actually have stored.
+                    console.warn(`[SYNC] Verify lookup empty (attempt ${verifyAttempts}/${MAX_VERIFY_ATTEMPTS}) for ${receipt.reference_no}`);
+                    if (verifyAttempts < MAX_VERIFY_ATTEMPTS) {
+                      await new Promise(r => setTimeout(r, 500 * verifyAttempts));
+                    }
                   }
-                } else {
-                  // v2.10.31: Trust API success even when verification lookup returns 404
-                  // The create endpoint confirmed insertion — GET lookup failure is likely a
-                  // field-mapping or timing issue on the backend, not data loss
-                  console.warn(`[SYNC] API said success but GET lookup not found — trusting API: ${receipt.reference_no}`);
-                  confirmed = true;
+                } catch (verifyErr) {
+                  console.warn(`[SYNC] Verification check failed (attempt ${verifyAttempts}/${MAX_VERIFY_ATTEMPTS}) for ${receipt.reference_no}:`, verifyErr);
+                  if (verifyAttempts < MAX_VERIFY_ATTEMPTS) {
+                    await new Promise(r => setTimeout(r, 500 * verifyAttempts));
+                  }
                 }
-              } catch (verifyErr) {
-                console.warn(`[SYNC] Verification check failed for ${receipt.reference_no}:`, verifyErr);
-                confirmed = true; // On verify failure, trust API response to avoid stuck records
               }
 
               if (confirmed) {
+                // ============================================================
+                // v2.10.72 LAYER 0 (ROOT CAUSE FIX) — refresh farmer's
+                // cumulative cache BEFORE deleting the local row. This closes
+                // the regression window where a successful sync deletes the
+                // local receipt while farmer_cumulative.baseCount still holds
+                // a stale value from an earlier prefetch. If the device then
+                // loses internet (very common right after sync), reopening the
+                // app reads stale base + zero unsynced = REGRESSION on the
+                // next receipt's printed total.
+                //
+                // We piggyback on the proven-good network connection (we just
+                // succeeded a POST). If the GET fails, we KEEP the local row
+                // for the next sync cycle — never delete on a half-confirmed
+                // state.
+                // ============================================================
+                let cumulativeRefreshed = false;
+                try {
+                  const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
+                  const routeForRefresh = String(receipt.route || '').trim();
+                  const refreshResp = await farmerFrequencyApi.getMonthlyFrequency(
+                    cleanFarmerId,
+                    deviceFingerprint,
+                    routeForRefresh || undefined
+                  );
+                  if (refreshResp.success && refreshResp.data) {
+                    const freshTotal = Number(refreshResp.data.cumulative_weight) || 0;
+                    const freshByProduct = (refreshResp.data.by_product || []).map((p: any) => ({
+                      icode: String(p.icode || '').trim().toUpperCase(),
+                      product_name: String(p.product_name || p.icode || ''),
+                      weight: Number(p.weight) || 0,
+                    }));
+                    await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct);
+                    cumulativeRefreshed = true;
+                    console.log(`[SYNC] ✅ Refreshed cumulative for ${cleanFarmerId}: ${freshTotal} kg (${freshByProduct.length} products)`);
+                  } else {
+                    console.warn(`[SYNC] Cumulative refresh returned no data for ${cleanFarmerId} — keeping local row for retry`);
+                  }
+                } catch (cumErr) {
+                  console.warn(`[SYNC] Cumulative refresh FAILED for ${receipt.reference_no} — keeping local row for retry:`, cumErr);
+                }
+
+                if (!cumulativeRefreshed) {
+                  // Network died between POST success and cumulative GET.
+                  // Do NOT delete — leave the row in IndexedDB so:
+                  //  (a) next sync cycle will retry the cumulative refresh
+                  //  (b) the duplicate-on-server path will safely no-op the POST
+                  //  (c) cumulative cache stays consistent with what's on the device
+                  failed++;
+                  if (useNativeStorage) {
+                    await markNativeRecordFailed(receipt.reference_no, 'Cumulative refresh pending — will retry next cycle');
+                  }
+                  console.warn(`[SYNC] cumulative_refresh_pending: keeping ${receipt.reference_no} for next cycle`);
+                  continue;
+                }
+
                 // Mark as synced in native storage FIRST (encrypted backup)
                 if (useNativeStorage) {
                   const backendId = (result as any).backend_id || (result as any).id;
@@ -407,12 +472,12 @@ export const useDataSync = () => {
                 synced++;
                 console.log(`[SUCCESS] Synced ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
               } else {
-                // Payload mismatch or not found — keep local, count as failed for retry
+                // Verification failed after all retries — keep local, count as failed for retry
                 failed++;
                 if (useNativeStorage) {
-                  await markNativeRecordFailed(receipt.reference_no, 'Post-sync verification mismatch');
+                  await markNativeRecordFailed(receipt.reference_no, 'verification_pending — backend lookup did not confirm payload');
                 }
-                console.warn(`[FAILED] Verification failed ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
+                console.warn(`[FAILED] Verification pending ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
               }
             } else {
               const errorMsg = (result.error || result.message || '').toLowerCase();
