@@ -341,6 +341,28 @@ export const useDataSync = () => {
                     }
                   });
                   if (retryResult.success) {
+                    // v2.10.72 LAYER 0: refresh cumulative cache before deleting
+                    try {
+                      const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
+                      const routeForRefresh = String(receipt.route || '').trim();
+                      const refreshResp = await farmerFrequencyApi.getMonthlyFrequency(
+                        cleanFarmerId,
+                        deviceFingerprint,
+                        routeForRefresh || undefined
+                      );
+                      if (refreshResp.success && refreshResp.data) {
+                        const freshTotal = Number(refreshResp.data.cumulative_weight) || 0;
+                        const freshByProduct = (refreshResp.data.by_product || []).map((p: any) => ({
+                          icode: String(p.icode || '').trim().toUpperCase(),
+                          product_name: String(p.product_name || p.icode || ''),
+                          weight: Number(p.weight) || 0,
+                        }));
+                        await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct);
+                        console.log(`[SYNC] ✅ Refreshed cumulative (collision retry) for ${cleanFarmerId}: ${freshTotal} kg`);
+                      }
+                    } catch (cumErr) {
+                      console.warn('[SYNC] Cumulative refresh after collision retry failed (non-fatal):', cumErr);
+                    }
                     if (useNativeStorage) await markNativeRecordSynced(receipt.reference_no);
                     if (receipt.orderId && typeof receipt.orderId === 'number') {
                       try { await deleteReceipt(receipt.orderId); } catch {}
