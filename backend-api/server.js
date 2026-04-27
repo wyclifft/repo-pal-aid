@@ -3185,20 +3185,20 @@ const server = http.createServer(async (req, res) => {
         console.log('⚠️ Could not detect orgtype for individual cumulative, using monthly range:', e.message);
       }
       
-      // Total weight for this farmer
-      const indRouteFilter = route ? ' AND TRIM(route) = TRIM(?)' : '';
+      // Total weight for this farmer (v2.10.72: UPPER+TRIM normalization)
+      const indRouteFilter = route ? ' AND UPPER(TRIM(route)) = UPPER(TRIM(?))' : '';
       const indParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
       
       const [sumRows] = await pool.query(
         `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
-         WHERE TRIM(memberno) = TRIM(?) AND TRIM(ccode) = TRIM(?) AND CAST(Transtype AS UNSIGNED) = 1
+         WHERE UPPER(TRIM(memberno)) = UPPER(TRIM(?)) AND UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
          AND CAST(transdate AS DATE) BETWEEN ? AND ?${indRouteFilter}`,
         indParams
       );
       
       // Per-product breakdown for this farmer
-      const indTRouteFilter = route ? ' AND TRIM(t.route) = TRIM(?)' : '';
+      const indTRouteFilter = route ? ' AND UPPER(TRIM(t.route)) = UPPER(TRIM(?))' : '';
       const indTParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
       
       const [productRows] = await pool.query(
@@ -3206,8 +3206,8 @@ const server = http.createServer(async (req, res) => {
                 IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
                 IFNULL(SUM(t.weight), 0) as weight 
          FROM transactions t
-         LEFT JOIN fm_items fi ON TRIM(fi.icode) = TRIM(t.icode) AND TRIM(fi.ccode) = TRIM(t.ccode)
-         WHERE TRIM(t.memberno) = TRIM(?) AND TRIM(t.ccode) = TRIM(?) AND CAST(t.Transtype AS UNSIGNED) = 1
+         LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
+         WHERE UPPER(TRIM(t.memberno)) = UPPER(TRIM(?)) AND UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
          AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${indTRouteFilter}
          GROUP BY TRIM(t.icode)`,
         indTParams
