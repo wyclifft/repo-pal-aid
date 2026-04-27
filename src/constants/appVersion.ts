@@ -1,6 +1,49 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.10.71: Fix "trnid starts afresh while storeid syncs correctly" on devices
-//           sharing a devcode prefix (e.g. BA02). syncOfflineCounter had an
+// v2.10.72: ROOT-CAUSE FIX for cumulative weight regressions (e.g. 553.4 → 326.5 kg
+//           between consecutive receipts) reported by users on flaky/intermittent
+//           connections. Operator-described scenario, exactly reproduced:
+//             Day 1 evening: user taps "Sync Now" online → POST succeeds → local
+//               IndexedDB rows deleted. farmer_cumulative.baseCount STILL holds
+//               the old value from an earlier prefetch. The 5-second-delayed
+//               background prefetchCumulatives is queued but BEFORE it can run,
+//               the device loses internet (van moves, signal drops, modem
+//               reboots). The fresh cumulative is never fetched.
+//             Day 2 morning: app reopens (still offline OR before next prefetch).
+//               getFarmerTotalCumulative reads stale baseCount + 0 unsynced
+//               (everything was synced & deleted) → prints REGRESSED total.
+//           ROOT CAUSE: farmer_cumulative cache was refreshed only by the
+//           5s-delayed background prefetch loop, never as a transactional
+//           consequence of sync. If the network died inside that 5s window the
+//           cache stayed permanently stale until the next online prefetch.
+//           FIX (LAYER 0 — useDataSync.ts): after EVERY successful POST and
+//             AFTER post-sync verification confirms the payload, call
+//             farmerFrequencyApi.getMonthlyFrequency(farmer_id, route) and write
+//             the result into farmer_cumulative via updateFarmerCumulative(...,
+//             true, byProduct) — BEFORE deleting the local IndexedDB row. If
+//             the cumulative GET fails (network died between POST and GET), the
+//             local row is KEPT (cumulative_refresh_pending) and retried on the
+//             next sync cycle. Same logic applied to the collision-retry
+//             success path. This piggybacks on the network connection we just
+//             proved good — no extra round trips on the happy path.
+//           FIX (LAYER 3 — useDataSync.ts): removed the v2.10.31 "trust API
+//             on 404" shortcut. Verification GET now retries up to 3× with
+//             0.5s/1.0s back-off. If all attempts return empty/fail, the local
+//             row is KEPT (verification_pending) instead of being silently
+//             deleted. Better to retry on next cycle than lose data the
+//             backend may not actually have stored.
+//           FIX (LAYER 4 — backend-api/server.js): hardened both
+//             /api/farmer-monthly-frequency and /api/farmer-monthly-frequency-batch
+//             SQL to use UPPER(TRIM(...)) on route, memberno, ccode, and icode
+//             comparisons. Strictly additive — widens WHERE clauses, never
+//             narrows. Prevents case/whitespace mismatches (e.g. 't002' vs
+//             'T002', 'M03156' vs 'm03156 ') from silently excluding
+//             transactions and undercounting the cumulative.
+//           No IndexedDB schema change. No reference generator change. No
+//           auth/login/photo/Z-Report change. Buy/Sell capture screens
+//           untouched. The collision-retry path (v2.10.70) and DUPLICATE_
+//           SESSION_DELIVERY conflict path (v2.10.60) are preserved.
+
+
 //           absolute SAFETY cap that DISCARDED any backend trnid > 10,000,000
 //           as "clientFetch corruption". On busy shared-devcode estates the
 //           legitimate global MAX(transrefno) for that devcode legitimately
