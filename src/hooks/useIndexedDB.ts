@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 11; // v2.10.16: Fix device_approvals preservation, orderId collisions, byProduct drop, printed_receipts store
+const DB_VERSION = 12; // v2.10.73: farmer_cumulative cache keyed by farmer+route+month for per-factory isolation
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -112,12 +112,21 @@ export const useIndexedDB = () => {
         console.log('[DB] Created device_config store');
       }
 
-      // Add farmer_cumulative store for offline cumulative tracking
-      if (!database.objectStoreNames.contains('farmer_cumulative')) {
-        const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
-        cumStore.createIndex('farmer_month', ['farmer_id', 'month'], { unique: true });
-        console.log('[DB] Created farmer_cumulative store');
+      // farmer_cumulative store for offline cumulative tracking
+      // v2.10.73: cacheKey now includes route for per-factory isolation.
+      // On upgrade we wipe and recreate the store so old farmer-month-only keys
+      // don't leak across factories. Data is recoverable from backend on next sync.
+      if (database.objectStoreNames.contains('farmer_cumulative')) {
+        try {
+          database.deleteObjectStore('farmer_cumulative');
+          console.log('[DB] v2.10.73 migration: dropped legacy farmer_cumulative store (will rebuild from backend)');
+        } catch (e) {
+          console.warn('[DB] Failed to drop legacy farmer_cumulative store:', e);
+        }
       }
+      const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+      cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
+      console.log('[DB] Created farmer_cumulative store (v2.10.73 schema: farmer+route+month key)');
 
       // Add dedicated printed_receipts store (Bug 4 fix: remove mixed-type key from receipts store)
       if (!database.objectStoreNames.contains('printed_receipts')) {
