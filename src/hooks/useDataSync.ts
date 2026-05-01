@@ -357,7 +357,7 @@ export const useDataSync = () => {
                           product_name: String(p.product_name || p.icode || ''),
                           weight: Number(p.weight) || 0,
                         }));
-                        await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct);
+                        await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined);
                         console.log(`[SYNC] ✅ Refreshed cumulative (collision retry) for ${cleanFarmerId}: ${freshTotal} kg`);
                       }
                     } catch (cumErr) {
@@ -452,7 +452,7 @@ export const useDataSync = () => {
                       product_name: String(p.product_name || p.icode || ''),
                       weight: Number(p.weight) || 0,
                     }));
-                    await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct);
+                    await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined);
                     cumulativeRefreshed = true;
                     console.log(`[SYNC] ✅ Refreshed cumulative for ${cleanFarmerId}: ${freshTotal} kg (${freshByProduct.length} products)`);
                   } else {

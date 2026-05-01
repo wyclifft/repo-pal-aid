@@ -50,6 +50,7 @@ interface TypeGroup {
   typeLabel: string;
   transactions: DeviceZReportTransaction[];
   totalWeight: number;
+  totalAmount: number;
 }
 
 export const DeviceZReportReceipt = ({ 
@@ -88,17 +89,17 @@ export const DeviceZReportReceipt = ({
           transtype,
           typeLabel,
           transactions: [],
-          totalWeight: 0
+          totalWeight: 0,
+          totalAmount: 0,
         });
       }
       
       const group = typeMap.get(transtype)!;
       group.transactions.push(tx);
       group.totalWeight += tx.weight;
+      group.totalAmount += Number(tx.amount || 0);
     }
     
-    // Sort by transtype (1=Buy first, then 2=Sell, then 3=AI)
-    // Within each group, sort by product_code so dotted separators group items correctly
     const sorted = Array.from(typeMap.values()).sort((a, b) => a.transtype - b.transtype);
     sorted.forEach(group => {
       group.transactions.sort((a, b) => (a.product_code || '').localeCompare(b.product_code || ''));
@@ -109,9 +110,11 @@ export const DeviceZReportReceipt = ({
   // Calculate filtered totals
   const filteredTotals = useMemo(() => {
     const totalWeight = filteredTransactions.reduce((sum, tx) => sum + tx.weight, 0);
+    const totalAmount = filteredTransactions.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const uniqueFarmers = new Set(filteredTransactions.map(tx => tx.farmer_id)).size;
     return {
       weight: totalWeight,
+      amount: totalAmount,
       entries: filteredTransactions.length,
       farmers: uniqueFarmers
     };
@@ -178,8 +181,11 @@ export const DeviceZReportReceipt = ({
             transtype: tx.transtype,
             transTypeLabel: tx.transTypeLabel,
             session: tx.session,
+            price: tx.price,
+            amount: tx.amount,
           })),
           totalWeight: filteredTotals.weight,
+          totalAmount: filteredTotals.amount,
           clerkName: data.clerkName,
           deviceCode: data.deviceCode,
           isCoffee: data.isCoffee,
@@ -232,146 +238,160 @@ export const DeviceZReportReceipt = ({
   // Get last 5 digits of reference number
   const getShortRef = (refno: string) => (refno || '').slice(-5);
 
-  // Render transactions for a type group - compact single-row layout
-  const renderTypeSection = (group: TypeGroup, isFirst: boolean) => (
-    <div key={group.transtype} className={!isFirst ? 'mt-2' : ''}>
-      {/* Type Header - compact */}
-      <div className="bg-muted py-0.5 px-1 rounded">
-        <p className="font-bold text-center text-[10px]">== {group.typeLabel} ==</p>
-      </div>
-      
-      {/* Column Headers: MNO|REF|QTY|TIME with dotted separators */}
-      <div className="grid grid-cols-4 gap-0 font-bold text-center text-[9px] border-b border-dotted py-0.5 mt-0.5">
-        <span className="border-r border-dotted">MNO</span>
-        <span className="border-r border-dotted">REF</span>
-        <span className="border-r border-dotted">QTY</span>
-        <span>TIME</span>
-      </div>
+  // Render transactions for a type group.
+  // BUY (transtype=1): MNO | REF | QTY | TIME (4 cols)
+  // SELL/AI (transtype 2/3): MNO | REF | QTY | KSh | TIME (5 cols, with monetary value)
+  const renderTypeSection = (group: TypeGroup, isFirst: boolean) => {
+    const showMoney = group.transtype !== 1;
+    const gridCols = showMoney ? 'grid-cols-5' : 'grid-cols-4';
 
-{/* Transaction List - single row per transaction, dotted separator between different item codes */}
-      <div className="py-0.5">
-        {group.transactions.map((tx, index) => {
-          const prevTx = index > 0 ? group.transactions[index - 1] : null;
-          const showItemSeparator = prevTx && prevTx.product_code !== tx.product_code;
-          
-          return (
-            <div key={tx.transrefno || index}>
-              {showItemSeparator && (
-                <div className="my-1">
-                  <div className="border-t-2 border-dotted border-muted-foreground" />
-                  <div className="text-center text-[8px] font-semibold text-muted-foreground tracking-wide py-0.5">
-                    ── {tx.product_name || tx.product_code || 'OTHER'} ──
+    return (
+      <div key={group.transtype} className={!isFirst ? 'mt-3' : ''}>
+        {/* Type Header */}
+        <div className="bg-muted py-1 px-2 rounded">
+          <p className="font-bold text-center text-xs">== {group.typeLabel} ==</p>
+        </div>
+
+        {/* Column Headers */}
+        <div className={`grid ${gridCols} gap-2 font-bold text-[10px] uppercase border-b border-foreground/30 py-1 mt-1`}>
+          <span className="text-left">MNO</span>
+          <span className="text-left">REF</span>
+          <span className="text-right">QTY</span>
+          {showMoney && <span className="text-right">KSh</span>}
+          <span className="text-center">TIME</span>
+        </div>
+
+        {/* Transaction list */}
+        <div className="py-0.5">
+          {group.transactions.map((tx, index) => {
+            const prevTx = index > 0 ? group.transactions[index - 1] : null;
+            const showItemSeparator = prevTx && prevTx.product_code !== tx.product_code;
+
+            return (
+              <div key={tx.transrefno || index}>
+                {showItemSeparator && (
+                  <div className="my-1.5">
+                    <div className="border-t border-dotted border-muted-foreground/60" />
+                    <div className="text-center text-[9px] font-semibold text-muted-foreground tracking-wide py-0.5">
+                      ── {tx.product_name || tx.product_code || 'OTHER'} ──
+                    </div>
                   </div>
-                  <div className="border-b border-dotted border-muted-foreground" />
+                )}
+                <div className={`grid ${gridCols} gap-2 text-[11px] border-b border-dotted border-muted-foreground/30 py-1`}>
+                  <span className="truncate text-left">{tx.farmer_id}</span>
+                  <span className="truncate text-left">{getShortRef(tx.refno)}</span>
+                  <span className="text-right tabular-nums">{tx.weight.toFixed(1)}</span>
+                  {showMoney && (
+                    <span className="text-right tabular-nums">{Number(tx.amount || 0).toFixed(0)}</span>
+                  )}
+                  <span className="text-center tabular-nums">{tx.time.substring(0, 5)}</span>
                 </div>
-              )}
-              <div className="grid grid-cols-4 gap-0 text-center text-[10px] border-b border-dotted py-0.5">
-                <span className="truncate border-r border-dotted">{tx.farmer_id}</span>
-                <span className="truncate border-r border-dotted">{getShortRef(tx.refno)}</span>
-                <span className="border-r border-dotted">{tx.weight.toFixed(1)}</span>
-                <span>{tx.time.substring(0, 5)}</span>
               </div>
+            );
+          })}
+          {group.transactions.length === 0 && (
+            <div className="text-center text-muted-foreground italic text-[11px] py-1">
+              No transactions
             </div>
-          );
-        })}
-        {group.transactions.length === 0 && (
-          <div className="text-center text-muted-foreground italic text-[10px] py-1">
-            No transactions
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      {/* Type Subtotal - compact */}
-      <div className="flex justify-between text-[10px] font-bold pt-0.5">
-        <span>{group.typeLabel}</span>
-        <span>{group.totalWeight.toFixed(1)} {weightUnit}</span>
+        {/* Type subtotal */}
+        <div className="flex justify-between text-xs font-bold pt-1">
+          <span>{group.typeLabel} TOTAL</span>
+          <span className="tabular-nums">
+            {group.totalWeight.toFixed(1)} {weightUnit}
+            {showMoney && (
+              <span className="ml-3">| KSh {group.totalAmount.toFixed(0)}</span>
+            )}
+          </span>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  // Has any monetary section?
+  const hasMoneySections = typeGroups.some(g => g.transtype !== 1);
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md font-mono text-sm max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg font-mono text-sm max-h-[90vh] overflow-y-auto">
         <DialogHeader className="pb-0">
           <DialogTitle className="sr-only">Device Z Report</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-1 text-xs">
-          {/* Company Name - Header */}
+        <div className="space-y-2">
+          {/* Company Name - Header (centered, intentional) */}
           <div className="text-center border-b border-dashed pb-2">
-            <h3 className="font-bold text-base uppercase">{data.companyName}</h3>
-            {/* Z Report Period - shown prominently */}
+            <h3 className="font-bold text-base uppercase tracking-wide">{data.companyName}</h3>
             <p className="font-bold text-sm mt-1">Z REPORT: {periodDisplayLabel.toUpperCase()}</p>
           </div>
 
-          {/* Summary Type */}
-          <div className="pt-1">
-            <p className="font-semibold">* {data.produceLabel.toUpperCase()} SUMMARY</p>
-          </div>
+          {/* Metadata block (left-aligned 2-col grid for readability) */}
+          <div className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm pb-2 border-b border-dashed">
+            <span className="font-semibold">SUMMARY</span>
+            <span>{data.produceLabel.toUpperCase()}</span>
 
-          {/* Season/Session */}
-          <div className="flex">
-            <span className="font-semibold">* {data.periodLabel.toUpperCase()}:</span>
-            <span className="ml-2">{data.seasonName}</span>
-          </div>
+            <span className="font-semibold">{data.periodLabel.toUpperCase()}</span>
+            <span>{data.seasonName}</span>
 
-          {/* Date */}
-          <div className="flex">
-            <span className="font-semibold">* DATE:</span>
-            <span className="ml-2">{formattedDate}</span>
-          </div>
+            <span className="font-semibold">DATE</span>
+            <span>{formattedDate}</span>
 
-          {/* Center */}
-          {centerName && (
-            <div className="flex pb-1">
-              <span className="font-semibold">* {routeLabel.toUpperCase()}:</span>
-              <span className="ml-2">{centerName}</span>
-            </div>
-          )}
+            {centerName && (
+              <>
+                <span className="font-semibold">{routeLabel.toUpperCase()}</span>
+                <span className="truncate">{centerName}</span>
+              </>
+            )}
 
-          {/* Produce */}
-          <div className="flex pb-2">
-            <span className="font-semibold">* PRODUCE:</span>
-            <span className="ml-2">{data.produceName || data.produceLabel.toUpperCase()}</span>
+            <span className="font-semibold">PRODUCE</span>
+            <span>{data.produceName || data.produceLabel.toUpperCase()}</span>
           </div>
 
           {/* Transaction Groups by Type */}
-          <div className="max-h-60 overflow-y-auto">
+          <div className="max-h-80 overflow-y-auto pr-1">
             {typeGroups.length > 0 ? (
               typeGroups.map((group, idx) => renderTypeSection(group, idx === 0))
             ) : (
-              <div className="text-center text-muted-foreground italic py-2">
+              <div className="text-center text-muted-foreground italic py-3">
                 No transactions
               </div>
             )}
           </div>
 
-          {/* Grand Total - compact (uses filtered totals) */}
-          <div className="border-t-2 border-double pt-1 mt-1">
-            <div className="flex justify-between font-bold text-xs">
+          {/* Grand Total */}
+          <div className="border-t-2 border-double pt-2 mt-2 space-y-1">
+            <div className="flex justify-between font-bold text-sm">
               <span>TOTAL</span>
-              <span>{filteredTotals.weight.toFixed(1)} {weightUnit}</span>
+              <span className="tabular-nums">{filteredTotals.weight.toFixed(1)} {weightUnit}</span>
             </div>
+            {hasMoneySections && (
+              <div className="flex justify-between font-bold text-sm">
+                <span>TOTAL VALUE</span>
+                <span className="tabular-nums">KSh {filteredTotals.amount.toFixed(0)}</span>
+              </div>
+            )}
           </div>
 
-          {/* Entry/Member counts - inline (uses filtered totals) */}
-          <div className="flex justify-between text-[10px] text-muted-foreground">
+          {/* Entry/Member counts */}
+          <div className="flex justify-between text-[11px] text-muted-foreground pt-1">
             <span>Entries: {filteredTotals.entries}</span>
             <span>Members: {filteredTotals.farmers}</span>
           </div>
 
-          {/* Footer: Clerk, Print Time, Device - compact */}
-          <div className="border-t border-dashed pt-1 mt-1 space-y-0.5 text-[10px]">
+          {/* Footer */}
+          <div className="border-t border-dashed pt-2 mt-2 space-y-1 text-[11px]">
             <div className="flex justify-between">
-              <span>CLERK:</span>
+              <span className="font-semibold">CLERK</span>
               <span className="uppercase">{data.clerkName}</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between text-muted-foreground">
               <span>{printDate}</span>
               <span>{printTime}</span>
             </div>
             <div className="flex justify-between font-bold">
-              <span>DEV:</span>
+              <span>DEVICE</span>
               <span>{data.deviceCode}</span>
             </div>
           </div>

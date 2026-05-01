@@ -1,4 +1,34 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.73: (1) FACTORY-SCOPED CUMULATIVES — farmer_cumulative IndexedDB
+//           cache key now includes the route/factory:
+//             cacheKey = `${farmerId}__${ROUTE}__${YYYY-MM}`
+//           (was `${farmerId}_${YYYY-MM}`). When a member delivers to multiple
+//           factories the totals no longer leak across factories — selecting
+//           Factory B will display Factory B's independent total even after
+//           Factory A wrote to the cache earlier. DB schema bumped 11→12; the
+//           legacy farmer_cumulative store is dropped on upgrade and rebuilt
+//           from backend on next online sync (no transaction loss — receipts
+//           remain in their own store).
+//           Affected files: src/hooks/useIndexedDB.ts (schema, get/update
+//           signatures take optional `route`), src/hooks/useDataSync.ts (pass
+//           receipt.route on cumulative refresh), src/pages/Index.tsx (pass
+//           selectedRouteCode on every cumulative read/write — 8 call sites),
+//           src/components/FarmerSyncDashboard.tsx (pass activeRoute).
+//           No backend change — /api/farmer-monthly-frequency* already does
+//           UPPER(TRIM(route)) filtering since v2.10.72.
+//
+//       (2) Z-REPORT STORE/AI MONETARY VALUE — the Store and AI sections of
+//           the device Z report now show KSh per row, per-section subtotal,
+//           and a TOTAL VALUE grand line. Backend already returns price/amount
+//           per row (server.js); we just stopped dropping them in the receipt
+//           pipeline. BUY/produce sections unchanged (no money column).
+//
+//       (3) Z-REPORT RECEIPT READABILITY — left-aligned MNO/REF columns with
+//           proper column gaps instead of cell-level dotted dividers, larger
+//           text, blank line between sections, dialog widened max-w-md→lg,
+//           thermal output uses fixed-width columns and lr-justified subtotals.
+//           Pure presentation; data, totals and grouping unchanged.
+
 // v2.10.72: ROOT-CAUSE FIX for cumulative weight regressions (e.g. 553.4 → 326.5 kg
 //           between consecutive receipts) reported by users on flaky/intermittent
 //           connections. Operator-described scenario, exactly reproduced:
@@ -421,5 +451,5 @@
 //           Real BLE and Classic SPP scales remain unaffected. Printer
 //           connect/print flow is untouched. No backend, no IndexedDB schema,
 //           no sync engine, no reference generator changes.
-export const APP_VERSION = '2.10.72';
-export const APP_VERSION_CODE = 94;
+export const APP_VERSION = '2.10.73';
+export const APP_VERSION_CODE = 95;

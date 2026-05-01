@@ -141,7 +141,7 @@ export const FarmerSyncDashboard = () => {
           batch.map(async (bf) => {
             const fId = bf.farmer_id.trim();
             const farmerMeta = nameLookup.get(fId);
-            const cumData = await getFarmerCumulative(fId);
+            const cumData = await getFarmerCumulative(fId, route || activeRoute || undefined);
             return {
               farmer_id: fId,
               name: farmerMeta?.name || fId,
@@ -167,7 +167,7 @@ export const FarmerSyncDashboard = () => {
       console.warn('[SyncDash] Batch API failed:', err);
       return null;
     }
-  }, [getFarmerCumulative]);
+  }, [getFarmerCumulative, activeRoute]);
 
   /**
    * Offline fallback (v2.10.62): transaction-driven, NOT cm_members-driven.
@@ -298,7 +298,7 @@ export const FarmerSyncDashboard = () => {
               for (let i = 0; i < batchFarmers.length; i += WRITE_BATCH) {
                 const wb = batchFarmers.slice(i, i + WRITE_BATCH);
                 await Promise.all(wb.map(async (f) => {
-                  await updateFarmerCumulative(f.farmer_id.trim(), f.cumulative_weight, true, f.by_product || []);
+                  await updateFarmerCumulative(f.farmer_id.trim(), f.cumulative_weight, true, f.by_product || [], activeRoute || undefined);
                 }));
               }
             }

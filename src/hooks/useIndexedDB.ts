@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 11; // v2.10.16: Fix device_approvals preservation, orderId collisions, byProduct drop, printed_receipts store
+const DB_VERSION = 12; // v2.10.73: farmer_cumulative cache keyed by farmer+route+month for per-factory isolation
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -112,12 +112,21 @@ export const useIndexedDB = () => {
         console.log('[DB] Created device_config store');
       }
 
-      // Add farmer_cumulative store for offline cumulative tracking
-      if (!database.objectStoreNames.contains('farmer_cumulative')) {
-        const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
-        cumStore.createIndex('farmer_month', ['farmer_id', 'month'], { unique: true });
-        console.log('[DB] Created farmer_cumulative store');
+      // farmer_cumulative store for offline cumulative tracking
+      // v2.10.73: cacheKey now includes route for per-factory isolation.
+      // On upgrade we wipe and recreate the store so old farmer-month-only keys
+      // don't leak across factories. Data is recoverable from backend on next sync.
+      if (database.objectStoreNames.contains('farmer_cumulative')) {
+        try {
+          database.deleteObjectStore('farmer_cumulative');
+          console.log('[DB] v2.10.73 migration: dropped legacy farmer_cumulative store (will rebuild from backend)');
+        } catch (e) {
+          console.warn('[DB] Failed to drop legacy farmer_cumulative store:', e);
+        }
       }
+      const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+      cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
+      console.log('[DB] Created farmer_cumulative store (v2.10.73 schema: farmer+route+month key)');
 
       // Add dedicated printed_receipts store (Bug 4 fix: remove mixed-type key from receipts store)
       if (!database.objectStoreNames.contains('printed_receipts')) {
@@ -771,20 +780,31 @@ export const useIndexedDB = () => {
   }, [db]);
 
   /**
-   * Get farmer's cumulative count for the current month (for offline/caching)
-   * Returns { baseCount, localCount, month } where:
-   * - baseCount: last known count from backend
-   * - localCount: collections added locally since last sync
+   * Build the cache key for a farmer cumulative entry.
+   * v2.10.73: includes route to keep per-factory totals strictly isolated.
+   * Falls back to "ALL" when no route is provided so legacy callers still work
+   * (but they will read/write a separate "no-route" bucket).
    */
-  const getFarmerCumulative = useCallback(async (farmerId: string): Promise<{ baseCount: number; localCount: number; month: string; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | null> => {
+  const buildCumulativeKey = (cleanId: string, route: string | undefined, month: string): string => {
+    const routeKey = (route || '').trim().toUpperCase() || 'ALL';
+    return `${cleanId}__${routeKey}__${month}`;
+  };
+
+  /**
+   * Get farmer's cumulative count for the current month, scoped to a route/factory.
+   * Returns { baseCount, localCount, month, route, byProduct }.
+   */
+  const getFarmerCumulative = useCallback(async (
+    farmerId: string,
+    route?: string
+  ): Promise<{ baseCount: number; localCount: number; month: string; route: string; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | null> => {
     if (!db) return null;
     try {
-      // Normalize farmerId to prevent cache key mismatches across callers
       const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const cacheKey = `${cleanId}_${month}`;
-      
+      const cacheKey = buildCumulativeKey(cleanId, route, month);
+
       return new Promise((resolve, reject) => {
         const tx = db.transaction('farmer_cumulative', 'readonly');
         const store = tx.objectStore('farmer_cumulative');
@@ -795,6 +815,7 @@ export const useIndexedDB = () => {
               baseCount: request.result.baseCount || 0,
               localCount: request.result.localCount || 0,
               month: request.result.month,
+              route: request.result.route || ((route || '').trim().toUpperCase() || 'ALL'),
               byProduct: request.result.byProduct || []
             });
           } else {
@@ -810,39 +831,39 @@ export const useIndexedDB = () => {
   }, [db]);
 
   /**
-   * Update farmer's cumulative count
-   * - If fromBackend is true, updates baseCount from backend (resets localCount to 0)
-   * - If fromBackend is false, increments localCount by the given amount
+   * Update farmer's cumulative count for a specific route/factory.
+   * - fromBackend=true: replaces baseCount and resets localCount.
+   * - fromBackend=false: increments localCount, preserves baseCount/byProduct.
    */
   const updateFarmerCumulative = useCallback(async (
-    farmerId: string, 
-    count: number, 
+    farmerId: string,
+    count: number,
     fromBackend: boolean = false,
-    byProduct?: Array<{ icode: string; product_name: string; weight: number }>
+    byProduct?: Array<{ icode: string; product_name: string; weight: number }>,
+    route?: string
   ): Promise<void> => {
     if (!db) return;
     try {
-      // Normalize farmerId to prevent cache key mismatches across callers
       const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const cacheKey = `${cleanId}_${month}`;
-      
+      const routeKey = (route || '').trim().toUpperCase() || 'ALL';
+      const cacheKey = buildCumulativeKey(cleanId, route, month);
+
       return new Promise((resolve, reject) => {
         const tx = db.transaction('farmer_cumulative', 'readwrite');
         const store = tx.objectStore('farmer_cumulative');
-        
-        // First get existing record
+
         const getRequest = store.get(cacheKey);
         getRequest.onsuccess = () => {
           const existing = getRequest.result;
           let newRecord;
-          
+
           if (fromBackend) {
-            // Backend sync: update baseCount, reset localCount
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
+              route: routeKey,
               month,
               baseCount: count,
               localCount: 0,
@@ -850,10 +871,10 @@ export const useIndexedDB = () => {
               lastUpdated: new Date().toISOString()
             };
           } else {
-            // Local collection: increment localCount, preserve existing byProduct breakdown
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
+              route: routeKey,
               month,
               baseCount: existing?.baseCount || 0,
               localCount: (existing?.localCount || 0) + count,
@@ -861,10 +882,10 @@ export const useIndexedDB = () => {
               lastUpdated: new Date().toISOString()
             };
           }
-          
+
           const putRequest = store.put(newRecord);
           putRequest.onsuccess = () => {
-            console.log(`✅ Updated farmer cumulative: ${cleanId}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
+            console.log(`✅ Updated farmer cumulative: ${cleanId} route=${routeKey}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
             resolve();
           };
           putRequest.onerror = () => reject(putRequest.error);
@@ -930,7 +951,7 @@ export const useIndexedDB = () => {
    * Returns { total, byProduct } with merged per-product breakdown.
    */
   const getFarmerTotalCumulative = useCallback(async (farmerId: string, routeFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
-    const cached = await getFarmerCumulative(farmerId);
+    const cached = await getFarmerCumulative(farmerId, routeFilter);
     const baseCount = cached?.baseCount || 0;
     const baseProd = cached?.byProduct || [];
     // Always recalculate from actual unsynced receipts instead of using cached localCount

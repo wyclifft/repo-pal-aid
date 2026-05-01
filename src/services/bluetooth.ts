@@ -2378,8 +2378,11 @@ export const printZReport = async (data: {
     transtype?: number; // 1=Buy, 2=Sell/Store, 3=AI
     transTypeLabel?: string; // "BUY", "SELL", "AI"
     session?: string; // Session code for period filtering
+    price?: number;  // Unit price (Store/AI)
+    amount?: number; // Total amount (Store/AI)
   }>;
   totalWeight: number;
+  totalAmount?: number; // v2.10.73: total monetary value across SELL/AI groups
   clerkName: string;
   deviceCode: string;
   isCoffee?: boolean;
@@ -2388,16 +2391,14 @@ export const printZReport = async (data: {
   // 58mm thermal paper = 32 characters per line
   const W = 32;
   const sep = '-'.repeat(W);
-  const dotSep = '. '.repeat(16);
-  const colSep = ':...:'; // Dotted column separator
-  
+
   // Format date as DD/MM/YYYY
   const formattedDate = new Date(data.date).toLocaleDateString('en-GB', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric'
   });
-  
+
   // Format print time as DD/MM/YYYY - HH:MM (24-hour format, no AM/PM)
   const now = new Date();
   const printDate = now.toLocaleDateString('en-GB', {
@@ -2405,79 +2406,89 @@ export const printZReport = async (data: {
     month: '2-digit',
     year: 'numeric'
   });
-  const printTime = now.toLocaleTimeString('en-GB', { 
-    hour: '2-digit', 
+  const printTime = now.toLocaleTimeString('en-GB', {
+    hour: '2-digit',
     minute: '2-digit',
     hour12: false
   });
-  
+
   const weightUnit = 'KGS';
   const routeLabel = data.routeLabel || (data.isCoffee ? 'CENTER' : 'ROUTE');
-  
-  // Group transactions by transaction type first, then by produce, then by center
+
+  // Group transactions by transaction type
   const typeGroups = new Map<number, {
     typeLabel: string;
     transactions: typeof data.transactions;
-    total: number;
+    totalWeight: number;
+    totalAmount: number;
   }>();
-  
+
   for (const tx of data.transactions) {
     const transtype = tx.transtype || 1;
     const typeLabel = tx.transTypeLabel || (transtype === 2 ? 'SELL' : transtype === 3 ? 'AI' : 'BUY');
-    
+
     if (!typeGroups.has(transtype)) {
-      typeGroups.set(transtype, { typeLabel, transactions: [], total: 0 });
+      typeGroups.set(transtype, { typeLabel, transactions: [], totalWeight: 0, totalAmount: 0 });
     }
     const group = typeGroups.get(transtype)!;
     group.transactions.push(tx);
-    group.total += tx.weight;
+    group.totalWeight += tx.weight;
+    group.totalAmount += Number(tx.amount || 0);
   }
-  
+
+  // Helper: build a left/right justified line within W chars
+  const lr = (left: string, right: string): string => {
+    const space = Math.max(1, W - left.length - right.length);
+    return left + ' '.repeat(space) + right;
+  };
+
   let receipt = '';
-  
-  // Header - Company Name
+
+  // Header — Company Name (centered, intentional)
   receipt += centerText(data.companyName, W) + '\n';
-  
-  // Z Report Period - show prominently if specified
   if (data.periodFilter) {
     receipt += centerText(`Z REPORT: ${data.periodFilter.toUpperCase()}`, W) + '\n';
   }
   receipt += sep + '\n';
-  
-  // Summary type
+
+  // Metadata block (left-aligned label : value)
   receipt += `* ${data.produceLabel.toUpperCase()} SUMMARY\n`;
-  
-  // Season/Session
   receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
-  
-  // Date
   receipt += `* DATE: ${formattedDate}\n`;
-  
-  // Center (if single)
   if (data.factoryName) {
     receipt += `* ${routeLabel}: ${data.factoryName.trim()}\n`;
   }
-  
+  if (data.produceName) {
+    receipt += `* PRODUCE: ${data.produceName}\n`;
+  }
   receipt += sep + '\n';
-  
-  // Print transactions grouped by transaction type
+
+  // Transaction sections per type
   let typeIdx = 0;
   for (const [transtype, typeGroup] of typeGroups) {
-    // Type header section
     if (typeIdx > 0) {
       receipt += '\n';
     }
-    receipt += `== ${typeGroup.typeLabel} ==\n`;
-    
-    // Column headers: MNO|REF|QTY|TIME (compact with dotted separators)
-    receipt += 'MNO......:REF..:QTY.:TIME\n';
-    
-    // Transaction rows - all on single line with dotted separators
+    const showMoney = transtype !== 1;
+
+    // Section header
+    receipt += centerText(`== ${typeGroup.typeLabel} ==`, W) + '\n';
+
+    // Column headers — fixed-width
+    // BUY (4 cols): MNO(8) REF(5) QTY(7 R) TIME(6 R) → tot 26 + 3 spaces between = 32-ish
+    // SELL/AI (5 cols): MNO(7) REF(5) QTY(6 R) KSh(6 R) TIME(5 R)
+    if (showMoney) {
+      receipt += 'MNO    REF   QTY   KSh   TIME\n';
+    } else {
+      receipt += 'MNO       REF    QTY    TIME\n';
+    }
+    receipt += '-'.repeat(W) + '\n';
+
     // Sort by product_code for grouping
-    const sortedTxs = [...typeGroup.transactions].sort((a, b) => 
+    const sortedTxs = [...typeGroup.transactions].sort((a, b) =>
       (a.product_code || '').localeCompare(b.product_code || '')
     );
-    
+
     let prevProductCode: string | undefined;
     for (const tx of sortedTxs) {
       // Add produce name separator when product changes
@@ -2487,52 +2498,76 @@ export const printZReport = async (data: {
         receipt += centerText(label, W) + '\n';
       }
       prevProductCode = tx.product_code || '';
-      
+
       const shortRef = (tx.refno || '').slice(-5);
-      const mno = tx.farmer_id; // Show full MNO
-      const ref = shortRef.padEnd(5);
-      const qty = tx.weight.toFixed(1).padStart(4);
       const time = tx.time.substring(0, 5);
-      
-      // Single row: MNO:REF:QTY:TIME
-      receipt += `${mno}:${ref}:${qty}:${time}\n`;
+
+      if (showMoney) {
+        // 5 cols: MNO(7) REF(5) QTY(6 R) KSh(6 R) TIME(5 R)
+        const mno = (tx.farmer_id || '').padEnd(7).substring(0, 7);
+        const ref = shortRef.padEnd(5);
+        const qty = tx.weight.toFixed(1).padStart(6);
+        const ksh = Number(tx.amount || 0).toFixed(0).padStart(6);
+        const tim = time.padStart(5);
+        // 7+1+5+1+6+1+6+1+5 = 33 (one over) — drop a space between QTY and KSh:
+        receipt += `${mno} ${ref} ${qty}${ksh} ${tim}\n`;
+      } else {
+        // 4 cols: MNO(9) REF(6) QTY(7 R) TIME(6 R) → 9+1+6+1+7+1+6 = 31
+        const mno = (tx.farmer_id || '').padEnd(9).substring(0, 9);
+        const ref = shortRef.padEnd(6);
+        const qty = tx.weight.toFixed(1).padStart(7);
+        const tim = time.padStart(6);
+        receipt += `${mno} ${ref} ${qty} ${tim}\n`;
+      }
     }
-    
+
     if (typeGroup.transactions.length === 0) {
-      receipt += 'No transactions\n';
+      receipt += centerText('No transactions', W) + '\n';
     }
-    
-    // Type subtotal (compact)
-    receipt += `${typeGroup.typeLabel}: ${typeGroup.total.toFixed(1)} ${weightUnit}\n`;
-    
+
+    // Subtotal — left/right aligned
+    receipt += lr(`${typeGroup.typeLabel} TOTAL`, `${typeGroup.totalWeight.toFixed(1)} ${weightUnit}`) + '\n';
+    if (showMoney) {
+      receipt += lr(`${typeGroup.typeLabel} VALUE`, `KSh ${typeGroup.totalAmount.toFixed(0)}`) + '\n';
+    }
+
     typeIdx++;
   }
-  
+
+  receipt += '\n';
   receipt += sep + '\n';
-  
-  // Grand Total (compact)
-  receipt += `TOTAL: ${data.totalWeight.toFixed(1)} ${weightUnit}\n`;
-  
-  // Clerk & Device (compact, single line each)
-  receipt += `CLERK: ${data.clerkName.toUpperCase()}\n`;
-  receipt += `${printDate} ${printTime}\n`;
-  receipt += `DEV: ${data.deviceCode}\n`;
+
+  // Grand totals
+  receipt += lr('TOTAL', `${data.totalWeight.toFixed(1)} ${weightUnit}`) + '\n';
+  const grandAmount = (typeof data.totalAmount === 'number')
+    ? data.totalAmount
+    : Array.from(typeGroups.values()).reduce((s, g) => s + g.totalAmount, 0);
+  if (grandAmount > 0) {
+    receipt += lr('TOTAL VALUE', `KSh ${grandAmount.toFixed(0)}`) + '\n';
+  }
+  receipt += sep + '\n';
+
+  // Footer
+  receipt += lr('CLERK', data.clerkName.toUpperCase()) + '\n';
+  receipt += lr(printDate, printTime) + '\n';
+  receipt += lr('DEV', data.deviceCode) + '\n';
   receipt += '\n\n'; // Feed paper
-  
+
   console.log('[ZREPORT] Sending Z Report to printer...');
-  console.log('[ZREPORT] Data:', { 
-    transactions: data.transactions.length, 
+  console.log('[ZREPORT] Data:', {
+    transactions: data.transactions.length,
     total: data.totalWeight,
+    totalAmount: grandAmount,
     device: data.deviceCode,
     typeGroups: Array.from(typeGroups.keys())
   });
-  
-  // Try Classic Bluetooth printer first (for built-in POS printers)
+
+  // Try Classic Bluetooth printer first
   if (isClassicPrinterConnected()) {
     console.log('[ZREPORT] Using Classic Bluetooth printer');
     return printToClassicPrinter(receipt);
   }
-  
+
   // Fall back to BLE printer
   return printToBluetoothPrinter(receipt);
 };

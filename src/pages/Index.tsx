@@ -306,7 +306,7 @@ const Index = () => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
                 const byProd = batchResult.data.farmers.find(f => f.farmer_id.trim() === fId)?.by_product || [];
-                await updateFarmerCumulative(fId, weight, true, byProd);
+                await updateFarmerCumulative(fId, weight, true, byProd, selectedRouteCode || undefined);
               }));
               written += batch.length;
               if (i + WRITE_BATCH < qualifying.length) {
@@ -320,7 +320,7 @@ const Index = () => {
         // Update currently selected farmer's display immediately with FLOOR GUARD
         if (selectedFarmer) {
           const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
-          const cached = await getFarmerCumulative(cleanId);
+          const cached = await getFarmerCumulative(cleanId, selectedRouteCode || undefined);
           const baseCount = cached?.baseCount || 0;
           const baseProd = cached?.byProduct || [];
           const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
@@ -463,7 +463,7 @@ const Index = () => {
               await Promise.all(batch.map(async (farmer) => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
-                await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || []);
+                await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined);
               }));
               written += batch.length;
               
@@ -493,7 +493,7 @@ const Index = () => {
           
           for (const farmer of farmersToCache) {
             const fId = farmer.farmer_id.replace(/^#/, '').trim();
-            const cached = await getFarmerCumulative(fId);
+            const cached = await getFarmerCumulative(fId, selectedRouteCode || undefined);
             if (cached && cached.month === month) continue;
             uncachedFarmers.push(farmer);
           }
@@ -525,7 +525,7 @@ const Index = () => {
                     new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), TIMEOUT))
                   ]);
                   if (res.success && res.data) {
-                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true, res.data.by_product || []);
+                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true, res.data.by_product || [], selectedRouteCode || undefined);
                     return true;
                   }
                   return false;
@@ -639,7 +639,7 @@ const Index = () => {
             if (freqResult.success && freqResult.data) {
               const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
               const cloudByProduct = freqResult.data.by_product || [];
-              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct);
+              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
               // Fresh unsynced weight from actual IndexedDB receipts (no cached localCount)
               const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId, selectedRouteCode || undefined);
               // Merge by-product
@@ -1302,7 +1302,7 @@ const Index = () => {
                   cloudCumulative = previousCumTotal + justSubmittedWeight;
                 }
 
-                await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct);
+                await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
                 const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
                 const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
                 for (const p of cloudByProduct) merged[p.icode] = { ...p };
@@ -1390,7 +1390,7 @@ const Index = () => {
                 }
                 cumulativeForPrint = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, printData.productIcode);
                 // Update cache in background
-                updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct).catch(() => {});
+                updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined).catch(() => {});
               }
             }
             
