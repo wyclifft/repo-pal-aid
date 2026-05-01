@@ -951,7 +951,7 @@ export const useIndexedDB = () => {
    * Returns { total, byProduct } with merged per-product breakdown.
    */
   const getFarmerTotalCumulative = useCallback(async (farmerId: string, routeFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
-    const cached = await getFarmerCumulative(farmerId);
+    const cached = await getFarmerCumulative(farmerId, routeFilter);
     const baseCount = cached?.baseCount || 0;
     const baseProd = cached?.byProduct || [];
     // Always recalculate from actual unsynced receipts instead of using cached localCount
