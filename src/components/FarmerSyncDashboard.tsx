@@ -167,7 +167,7 @@ export const FarmerSyncDashboard = () => {
       console.warn('[SyncDash] Batch API failed:', err);
       return null;
     }
-  }, [getFarmerCumulative]);
+  }, [getFarmerCumulative, activeRoute]);
 
   /**
    * Offline fallback (v2.10.62): transaction-driven, NOT cm_members-driven.
