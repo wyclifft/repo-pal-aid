@@ -50,6 +50,7 @@ interface TypeGroup {
   typeLabel: string;
   transactions: DeviceZReportTransaction[];
   totalWeight: number;
+  totalAmount: number;
 }
 
 export const DeviceZReportReceipt = ({ 
@@ -88,17 +89,17 @@ export const DeviceZReportReceipt = ({
           transtype,
           typeLabel,
           transactions: [],
-          totalWeight: 0
+          totalWeight: 0,
+          totalAmount: 0,
         });
       }
       
       const group = typeMap.get(transtype)!;
       group.transactions.push(tx);
       group.totalWeight += tx.weight;
+      group.totalAmount += Number(tx.amount || 0);
     }
     
-    // Sort by transtype (1=Buy first, then 2=Sell, then 3=AI)
-    // Within each group, sort by product_code so dotted separators group items correctly
     const sorted = Array.from(typeMap.values()).sort((a, b) => a.transtype - b.transtype);
     sorted.forEach(group => {
       group.transactions.sort((a, b) => (a.product_code || '').localeCompare(b.product_code || ''));
@@ -109,9 +110,11 @@ export const DeviceZReportReceipt = ({
   // Calculate filtered totals
   const filteredTotals = useMemo(() => {
     const totalWeight = filteredTransactions.reduce((sum, tx) => sum + tx.weight, 0);
+    const totalAmount = filteredTransactions.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const uniqueFarmers = new Set(filteredTransactions.map(tx => tx.farmer_id)).size;
     return {
       weight: totalWeight,
+      amount: totalAmount,
       entries: filteredTransactions.length,
       farmers: uniqueFarmers
     };
