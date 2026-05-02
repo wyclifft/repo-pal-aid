@@ -339,8 +339,6 @@ export const DeviceZReportReceipt = ({
     );
   };
 
-  // Has any monetary section?
-  const hasMoneySections = typeGroups.some(g => g.transtype !== 1);
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
