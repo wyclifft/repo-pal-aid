@@ -389,19 +389,44 @@ export const DeviceZReportReceipt = ({
             )}
           </div>
 
-          {/* Grand Total */}
-          <div className="border-t-2 border-double pt-2 mt-2 space-y-1">
-            <div className="flex justify-between font-bold text-sm">
-              <span>TOTAL</span>
-              <span className="tabular-nums">{filteredTotals.weight.toFixed(1)} {weightUnit}</span>
-            </div>
-            {hasMoneySections && (
-              <div className="flex justify-between font-bold text-sm">
-                <span>TOTAL VALUE</span>
-                <span className="tabular-nums">KSh {filteredTotals.amount.toFixed(0)}</span>
+          {/* Grand Totals — split by what each transtype represents:
+              KGS for BUY only, ITEMS+VALUE for SELL/AI only. Suppress zero lines. */}
+          {(() => {
+            const buyGroup = typeGroups.find(g => g.transtype === 1);
+            const buyWeight = buyGroup ? buyGroup.totalWeight : 0;
+            let sellAiItems = 0;
+            let sellAiAmount = 0;
+            for (const g of typeGroups) {
+              if (g.transtype === 1) continue;
+              sellAiAmount += g.totalAmount;
+              for (const t of g.transactions) {
+                sellAiItems += Math.max(0, Math.round(t.weight || 0));
+              }
+            }
+            const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
+            return (
+              <div className="border-t-2 border-double pt-2 mt-2 space-y-1">
+                {buyWeight > 0 && (
+                  <div className="flex justify-between font-bold text-sm">
+                    <span>TOTAL</span>
+                    <span className="tabular-nums">{buyWeight.toFixed(1)} {weightUnit}</span>
+                  </div>
+                )}
+                {sellAiItems > 0 && (
+                  <div className="flex justify-between font-bold text-sm">
+                    <span>TOTAL ITEMS</span>
+                    <span className="tabular-nums">{sellAiItems} {itemsLabel}</span>
+                  </div>
+                )}
+                {sellAiAmount > 0 && (
+                  <div className="flex justify-between font-bold text-sm">
+                    <span>TOTAL VALUE</span>
+                    <span className="tabular-nums">KSh {sellAiAmount.toFixed(0)}</span>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })()}
 
           {/* Entry/Member counts */}
           <div className="flex justify-between text-[11px] text-muted-foreground pt-1">
