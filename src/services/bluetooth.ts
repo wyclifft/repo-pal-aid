@@ -2599,7 +2599,8 @@ export const printZReport = async (data: {
   console.log('[ZREPORT] Data:', {
     transactions: data.transactions.length,
     total: data.totalWeight,
-    totalAmount: grandAmount,
+    totalAmount: sellAiAmount,
+    totalItems: sellAiItems,
     device: data.deviceCode,
     typeGroups: Array.from(typeGroups.keys())
   });
