@@ -2463,6 +2463,18 @@ export const printZReport = async (data: {
   }
   receipt += sep + '\n';
 
+  // Column width helpers — header and every data row use these so columns
+  // align perfectly under their labels. (v2.10.74 alignment fix.)
+  const padL = (s: string, w: number) => (s ?? '').padEnd(w).substring(0, w);
+  const padR = (s: string, w: number) => (s ?? '').padStart(w).substring(0, w);
+
+  // BUY column spec (transtype=1): MNO(9) REF(6) AMOUNT(8 R) TIME(6 R)
+  //   widths 9+1+6+1+8+1+6 = 32 ✓
+  // SELL/AI column spec (transtype=2,3): MNO(8) REF(5) QTY(5 R) KSh(7 R) TIME(5 R)
+  //   widths 8+1+5+1+5+1+7+0+5 = 33 → drop separator before TIME:
+  //   8+1+5+1+5+1+7 +5 = 33 → tighten KSh to 6: 8+1+5+1+5+1+6+1+5 = 33 still
+  //   final widths used below total exactly 32.
+
   // Transaction sections per type
   let typeIdx = 0;
   for (const [transtype, typeGroup] of typeGroups) {
@@ -2471,16 +2483,18 @@ export const printZReport = async (data: {
     }
     const showMoney = transtype !== 1;
 
-    // Section header
-    receipt += centerText(`== ${typeGroup.typeLabel} ==`, W) + '\n';
+    // Section banner — anchored to the left over MNO+REF block (not centered
+    // over the whole row, which left it floating off-axis from the data).
+    receipt += `== ${typeGroup.typeLabel} ==\n`;
 
-    // Column headers — fixed-width
-    // BUY (4 cols): MNO(8) REF(5) QTY(7 R) TIME(6 R) → tot 26 + 3 spaces between = 32-ish
-    // SELL/AI (5 cols): MNO(7) REF(5) QTY(6 R) KSh(6 R) TIME(5 R)
+    // Column headers — generated from the SAME widths as the data rows below.
     if (showMoney) {
-      receipt += 'MNO    REF   QTY   KSh   TIME\n';
+      // SELL/AI: MNO(8) REF(5) QTY(4 R) KSh(7 R) TIME(5 R)
+      // total: 8+1+5+1+4+1+7+1+5 = 33 → tighten REF to 4 → 8+1+4+1+4+1+7+1+5 = 32
+      receipt += `${padL('MNO',8)} ${padL('REF',4)} ${padR('QTY',4)} ${padR('KSh',7)} ${padR('TIME',5)}\n`;
     } else {
-      receipt += 'MNO       REF    QTY    TIME\n';
+      // BUY: MNO(9) REF(6) AMOUNT(8 R) TIME(6 R) = 32
+      receipt += `${padL('MNO',9)} ${padL('REF',6)} ${padR('AMOUNT',8)} ${padR('TIME',6)}\n`;
     }
     receipt += '-'.repeat(W) + '\n';
 
@@ -2489,10 +2503,14 @@ export const printZReport = async (data: {
       (a.product_code || '').localeCompare(b.product_code || '')
     );
 
+    // Suppress single-product divider (only show when section has >1 product).
+    const distinctProducts = new Set(sortedTxs.map(t => t.product_code || '')).size;
+    const showProductDividers = distinctProducts > 1;
+
     let prevProductCode: string | undefined;
+    let sellAiItemCount = 0;
     for (const tx of sortedTxs) {
-      // Add produce name separator when product changes
-      if (prevProductCode !== undefined && prevProductCode !== (tx.product_code || '')) {
+      if (showProductDividers && prevProductCode !== undefined && prevProductCode !== (tx.product_code || '')) {
         const produceName = tx.product_name || tx.product_code || 'OTHER';
         const label = `-- ${produceName} --`;
         receipt += centerText(label, W) + '\n';
@@ -2503,20 +2521,21 @@ export const printZReport = async (data: {
       const time = tx.time.substring(0, 5);
 
       if (showMoney) {
-        // 5 cols: MNO(7) REF(5) QTY(6 R) KSh(6 R) TIME(5 R)
-        const mno = (tx.farmer_id || '').padEnd(7).substring(0, 7);
-        const ref = shortRef.padEnd(5);
-        const qty = tx.weight.toFixed(1).padStart(6);
-        const ksh = Number(tx.amount || 0).toFixed(0).padStart(6);
-        const tim = time.padStart(5);
-        // 7+1+5+1+6+1+6+1+5 = 33 (one over) — drop a space between QTY and KSh:
-        receipt += `${mno} ${ref} ${qty}${ksh} ${tim}\n`;
+        // SELL/AI: QTY rendered as INTEGER ITEMS (never KGS).
+        const qtyInt = Math.max(0, Math.round(tx.weight || 0));
+        sellAiItemCount += qtyInt;
+        const mno = padL(tx.farmer_id || '', 8);
+        const ref = padL(shortRef, 4);
+        const qty = padR(String(qtyInt), 4);
+        const ksh = padR(Number(tx.amount || 0).toFixed(0), 7);
+        const tim = padR(time, 5);
+        receipt += `${mno} ${ref} ${qty} ${ksh} ${tim}\n`;
       } else {
-        // 4 cols: MNO(9) REF(6) QTY(7 R) TIME(6 R) → 9+1+6+1+7+1+6 = 31
-        const mno = (tx.farmer_id || '').padEnd(9).substring(0, 9);
-        const ref = shortRef.padEnd(6);
-        const qty = tx.weight.toFixed(1).padStart(7);
-        const tim = time.padStart(6);
+        // BUY: AMOUNT in KGS (1 decimal).
+        const mno = padL(tx.farmer_id || '', 9);
+        const ref = padL(shortRef, 6);
+        const qty = padR(tx.weight.toFixed(1), 8);
+        const tim = padR(time, 6);
         receipt += `${mno} ${ref} ${qty} ${tim}\n`;
       }
     }
@@ -2525,10 +2544,14 @@ export const printZReport = async (data: {
       receipt += centerText('No transactions', W) + '\n';
     }
 
-    // Subtotal — left/right aligned
-    receipt += lr(`${typeGroup.typeLabel} TOTAL`, `${typeGroup.totalWeight.toFixed(1)} ${weightUnit}`) + '\n';
+    // Subtotal — single consolidated line per section.
     if (showMoney) {
-      receipt += lr(`${typeGroup.typeLabel} VALUE`, `KSh ${typeGroup.totalAmount.toFixed(0)}`) + '\n';
+      // SELL/AI: "<TYPE> TOTAL  <n> items  KSh <amount>"
+      const itemsLabel = sellAiItemCount === 1 ? 'item' : 'items';
+      const right = `${sellAiItemCount} ${itemsLabel}  KSh ${typeGroup.totalAmount.toFixed(0)}`;
+      receipt += lr(`${typeGroup.typeLabel} TOTAL`, right) + '\n';
+    } else {
+      receipt += lr(`${typeGroup.typeLabel} TOTAL`, `${typeGroup.totalWeight.toFixed(1)} ${weightUnit}`) + '\n';
     }
 
     typeIdx++;
@@ -2537,13 +2560,32 @@ export const printZReport = async (data: {
   receipt += '\n';
   receipt += sep + '\n';
 
-  // Grand totals
-  receipt += lr('TOTAL', `${data.totalWeight.toFixed(1)} ${weightUnit}`) + '\n';
-  const grandAmount = (typeof data.totalAmount === 'number')
-    ? data.totalAmount
-    : Array.from(typeGroups.values()).reduce((s, g) => s + g.totalAmount, 0);
-  if (grandAmount > 0) {
-    receipt += lr('TOTAL VALUE', `KSh ${grandAmount.toFixed(0)}`) + '\n';
+  // Grand totals — split by what each transtype represents:
+  //   TOTAL <kg> KGS    → BUY only (weight is meaningful)
+  //   TOTAL ITEMS <n>   → SELL+AI only (units sold)
+  //   TOTAL VALUE KSh n → SELL+AI only (monetary)
+  const buyGroup = typeGroups.get(1);
+  const buyWeight = buyGroup ? buyGroup.totalWeight : 0;
+
+  let sellAiItems = 0;
+  let sellAiAmount = 0;
+  for (const [tt, g] of typeGroups) {
+    if (tt === 1) continue;
+    sellAiAmount += g.totalAmount;
+    for (const tx of g.transactions) {
+      sellAiItems += Math.max(0, Math.round(tx.weight || 0));
+    }
+  }
+
+  if (buyWeight > 0) {
+    receipt += lr('TOTAL', `${buyWeight.toFixed(1)} ${weightUnit}`) + '\n';
+  }
+  if (sellAiItems > 0) {
+    const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
+    receipt += lr('TOTAL ITEMS', `${sellAiItems} ${itemsLabel}`) + '\n';
+  }
+  if (sellAiAmount > 0) {
+    receipt += lr('TOTAL VALUE', `KSh ${sellAiAmount.toFixed(0)}`) + '\n';
   }
   receipt += sep + '\n';
 
@@ -2557,7 +2599,8 @@ export const printZReport = async (data: {
   console.log('[ZREPORT] Data:', {
     transactions: data.transactions.length,
     total: data.totalWeight,
-    totalAmount: grandAmount,
+    totalAmount: sellAiAmount,
+    totalItems: sellAiItems,
     device: data.deviceCode,
     typeGroups: Array.from(typeGroups.keys())
   });

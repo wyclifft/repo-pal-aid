@@ -239,33 +239,58 @@ export const DeviceZReportReceipt = ({
   const getShortRef = (refno: string) => (refno || '').slice(-5);
 
   // Render transactions for a type group.
-  // BUY (transtype=1): MNO | REF | QTY | TIME (4 cols)
-  // SELL/AI (transtype 2/3): MNO | REF | QTY | KSh | TIME (5 cols, with monetary value)
+  // BUY (transtype=1): MNO | REF | AMOUNT | TIME — AMOUNT is weight in KGS.
+  // SELL/AI (transtype 2/3): MNO | REF | QTY | KSh | TIME — QTY is integer ITEMS, never KGS.
+  // Column templates use explicit char widths so the headers sit directly above the data.
   const renderTypeSection = (group: TypeGroup, isFirst: boolean) => {
     const showMoney = group.transtype !== 1;
-    const gridCols = showMoney ? 'grid-cols-5' : 'grid-cols-4';
+    // Same template used for header AND every data row → guaranteed alignment.
+    const gridTemplate = showMoney
+      ? 'grid grid-cols-[6ch_5ch_1fr_1fr_5ch] gap-2'
+      : 'grid grid-cols-[7ch_6ch_1fr_5ch] gap-2';
+
+    // Suppress single-product divider when the section only has one product.
+    const distinctProducts = new Set(group.transactions.map(t => t.product_code || '')).size;
+    const showProductDividers = distinctProducts > 1;
+
+    // Integer item count for SELL/AI subtotal display.
+    const itemCount = showMoney
+      ? group.transactions.reduce((s, t) => s + Math.max(0, Math.round(t.weight || 0)), 0)
+      : 0;
+    const itemsLabel = itemCount === 1 ? 'item' : 'items';
 
     return (
       <div key={group.transtype} className={!isFirst ? 'mt-3' : ''}>
-        {/* Type Header */}
-        <div className="bg-muted py-1 px-2 rounded">
-          <p className="font-bold text-center text-xs">== {group.typeLabel} ==</p>
+        {/* Type Header — left-anchored over the MNO/REF columns, not centered */}
+        <div className="mb-1">
+          <span className="bg-muted px-2 py-0.5 rounded font-bold text-xs">
+            == {group.typeLabel} ==
+          </span>
         </div>
 
-        {/* Column Headers */}
-        <div className={`grid ${gridCols} gap-2 font-bold text-[10px] uppercase border-b border-foreground/30 py-1 mt-1`}>
+        {/* Column Headers — same grid template as data rows */}
+        <div className={`${gridTemplate} font-bold text-[10px] uppercase border-b border-foreground/30 py-1`}>
           <span className="text-left">MNO</span>
           <span className="text-left">REF</span>
-          <span className="text-right">QTY</span>
-          {showMoney && <span className="text-right">KSh</span>}
-          <span className="text-center">TIME</span>
+          {showMoney ? (
+            <>
+              <span className="text-right">QTY</span>
+              <span className="text-right">KSh</span>
+            </>
+          ) : (
+            <span className="text-right">AMOUNT</span>
+          )}
+          <span className="text-right">TIME</span>
         </div>
 
         {/* Transaction list */}
         <div className="py-0.5">
           {group.transactions.map((tx, index) => {
             const prevTx = index > 0 ? group.transactions[index - 1] : null;
-            const showItemSeparator = prevTx && prevTx.product_code !== tx.product_code;
+            const showItemSeparator = showProductDividers && prevTx && prevTx.product_code !== tx.product_code;
+            const qtyDisplay = showMoney
+              ? String(Math.max(0, Math.round(tx.weight || 0)))
+              : tx.weight.toFixed(1);
 
             return (
               <div key={tx.transrefno || index}>
@@ -277,14 +302,14 @@ export const DeviceZReportReceipt = ({
                     </div>
                   </div>
                 )}
-                <div className={`grid ${gridCols} gap-2 text-[11px] border-b border-dotted border-muted-foreground/30 py-1`}>
+                <div className={`${gridTemplate} text-[11px] border-b border-dotted border-muted-foreground/30 py-1`}>
                   <span className="truncate text-left">{tx.farmer_id}</span>
                   <span className="truncate text-left">{getShortRef(tx.refno)}</span>
-                  <span className="text-right tabular-nums">{tx.weight.toFixed(1)}</span>
+                  <span className="text-right tabular-nums">{qtyDisplay}</span>
                   {showMoney && (
                     <span className="text-right tabular-nums">{Number(tx.amount || 0).toFixed(0)}</span>
                   )}
-                  <span className="text-center tabular-nums">{tx.time.substring(0, 5)}</span>
+                  <span className="text-right tabular-nums">{tx.time.substring(0, 5)}</span>
                 </div>
               </div>
             );
@@ -296,13 +321,17 @@ export const DeviceZReportReceipt = ({
           )}
         </div>
 
-        {/* Type subtotal */}
+        {/* Type subtotal — single consolidated line per section */}
         <div className="flex justify-between text-xs font-bold pt-1">
           <span>{group.typeLabel} TOTAL</span>
           <span className="tabular-nums">
-            {group.totalWeight.toFixed(1)} {weightUnit}
-            {showMoney && (
-              <span className="ml-3">| KSh {group.totalAmount.toFixed(0)}</span>
+            {showMoney ? (
+              <>
+                {itemCount} {itemsLabel}
+                <span className="ml-3">KSh {group.totalAmount.toFixed(0)}</span>
+              </>
+            ) : (
+              <>{group.totalWeight.toFixed(1)} {weightUnit}</>
             )}
           </span>
         </div>
@@ -310,8 +339,6 @@ export const DeviceZReportReceipt = ({
     );
   };
 
-  // Has any monetary section?
-  const hasMoneySections = typeGroups.some(g => g.transtype !== 1);
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -360,19 +387,44 @@ export const DeviceZReportReceipt = ({
             )}
           </div>
 
-          {/* Grand Total */}
-          <div className="border-t-2 border-double pt-2 mt-2 space-y-1">
-            <div className="flex justify-between font-bold text-sm">
-              <span>TOTAL</span>
-              <span className="tabular-nums">{filteredTotals.weight.toFixed(1)} {weightUnit}</span>
-            </div>
-            {hasMoneySections && (
-              <div className="flex justify-between font-bold text-sm">
-                <span>TOTAL VALUE</span>
-                <span className="tabular-nums">KSh {filteredTotals.amount.toFixed(0)}</span>
+          {/* Grand Totals — split by what each transtype represents:
+              KGS for BUY only, ITEMS+VALUE for SELL/AI only. Suppress zero lines. */}
+          {(() => {
+            const buyGroup = typeGroups.find(g => g.transtype === 1);
+            const buyWeight = buyGroup ? buyGroup.totalWeight : 0;
+            let sellAiItems = 0;
+            let sellAiAmount = 0;
+            for (const g of typeGroups) {
+              if (g.transtype === 1) continue;
+              sellAiAmount += g.totalAmount;
+              for (const t of g.transactions) {
+                sellAiItems += Math.max(0, Math.round(t.weight || 0));
+              }
+            }
+            const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
+            return (
+              <div className="border-t-2 border-double pt-2 mt-2 space-y-1">
+                {buyWeight > 0 && (
+                  <div className="flex justify-between font-bold text-sm">
+                    <span>TOTAL</span>
+                    <span className="tabular-nums">{buyWeight.toFixed(1)} {weightUnit}</span>
+                  </div>
+                )}
+                {sellAiItems > 0 && (
+                  <div className="flex justify-between font-bold text-sm">
+                    <span>TOTAL ITEMS</span>
+                    <span className="tabular-nums">{sellAiItems} {itemsLabel}</span>
+                  </div>
+                )}
+                {sellAiAmount > 0 && (
+                  <div className="flex justify-between font-bold text-sm">
+                    <span>TOTAL VALUE</span>
+                    <span className="tabular-nums">KSh {sellAiAmount.toFixed(0)}</span>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })()}
 
           {/* Entry/Member counts */}
           <div className="flex justify-between text-[11px] text-muted-foreground pt-1">
