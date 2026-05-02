@@ -345,9 +345,13 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       // Use routeName if provided, otherwise fall back to routeLabel
       const factoryName = routeName || reportData.routeLabel || 'FACTORY';
       
-      // Build monospaced lines matching handwritten layout
+      // Column helpers — header AND every data row use these widths so the
+      // labels sit directly above their numbers (v2.10.74 alignment fix).
+      const padL = (s: string, w: number) => (s ?? '').padEnd(w).substring(0, w);
+      const padR = (s: string, w: number) => (s ?? '').padStart(w).substring(0, w);
+
       const lines: string[] = [];
-      
+
       // Header
       lines.push(reportData.companyName.toUpperCase());
       lines.push('');
@@ -359,32 +363,87 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       lines.push('');
       lines.push(`* PRODUCE: ${reportData.produceName || reportData.produceLabel.toUpperCase()}`);
       lines.push('');
-      
-      // Transaction header
-      lines.push('='.repeat(48));
-      lines.push(padColumns(['MNO', 'REFNO', 'QTY', 'TIME'], [12, 12, 8, 10]));
-      lines.push('='.repeat(48));
-      
-      // Transaction rows
+
+      // Group transactions by transtype (1=BUY, 2=SELL, 3=AI).
+      const typeGroups = new Map<number, { label: string; rows: typeof reportData.transactions; weight: number; amount: number }>();
       for (const tx of reportData.transactions) {
-        lines.push(padColumns([
-          tx.farmer_id.substring(0, 10),
-          tx.refno.substring(0, 10),
-          tx.weight.toFixed(1),
-          tx.time
-        ], [12, 12, 8, 10]));
+        const tt = (tx as any).transtype || 1;
+        const lbl = (tx as any).transTypeLabel || (tt === 2 ? 'SELL' : tt === 3 ? 'AI' : 'BUY');
+        if (!typeGroups.has(tt)) typeGroups.set(tt, { label: lbl, rows: [], weight: 0, amount: 0 });
+        const g = typeGroups.get(tt)!;
+        g.rows.push(tx);
+        g.weight += tx.weight;
+        g.amount += Number((tx as any).amount || 0);
       }
-      
+
+      let buyWeight = 0;
+      let sellAiItems = 0;
+      let sellAiAmount = 0;
+
+      // Render each section with aligned columns.
+      let sectionIdx = 0;
+      for (const [tt, g] of typeGroups) {
+        if (sectionIdx > 0) lines.push('');
+        const showMoney = tt !== 1;
+        lines.push(`== ${g.label} ==`);
+
+        if (showMoney) {
+          // SELL/AI: MNO(10) REF(8) QTY(6 R) KSh(10 R) TIME(8 R) — total 46
+          lines.push(`${padL('MNO',10)} ${padL('REF',8)} ${padR('QTY',6)} ${padR('KSh',10)} ${padR('TIME',8)}`);
+          lines.push('-'.repeat(46));
+          let groupItems = 0;
+          for (const tx of g.rows) {
+            const qtyInt = Math.max(0, Math.round(tx.weight || 0));
+            groupItems += qtyInt;
+            lines.push(
+              `${padL((tx.farmer_id || '').substring(0, 10), 10)} ` +
+              `${padL((tx.refno || '').slice(-8), 8)} ` +
+              `${padR(String(qtyInt), 6)} ` +
+              `${padR(Number((tx as any).amount || 0).toFixed(0), 10)} ` +
+              `${padR((tx.time || '').substring(0, 8), 8)}`
+            );
+          }
+          const itemsLabel = groupItems === 1 ? 'item' : 'items';
+          lines.push(`${g.label} TOTAL    ${groupItems} ${itemsLabel}    KSh ${g.amount.toFixed(0)}`);
+          sellAiItems += groupItems;
+          sellAiAmount += g.amount;
+        } else {
+          // BUY: MNO(10) REF(8) AMOUNT(10 R) TIME(8 R) — total 40
+          lines.push(`${padL('MNO',10)} ${padL('REF',8)} ${padR('AMOUNT',10)} ${padR('TIME',8)}`);
+          lines.push('-'.repeat(40));
+          for (const tx of g.rows) {
+            lines.push(
+              `${padL((tx.farmer_id || '').substring(0, 10), 10)} ` +
+              `${padL((tx.refno || '').slice(-8), 8)} ` +
+              `${padR(tx.weight.toFixed(1), 10)} ` +
+              `${padR((tx.time || '').substring(0, 8), 8)}`
+            );
+          }
+          lines.push(`${g.label} TOTAL    ${g.weight.toFixed(1)} ${weightUnit}`);
+          buyWeight += g.weight;
+        }
+        sectionIdx++;
+      }
+
       if (reportData.transactions.length === 0) {
         lines.push('         No transactions');
       }
-      
-      // Totals
+
+      // Grand totals — split per transtype semantics
       lines.push('');
       lines.push('='.repeat(48));
-      lines.push(`TOTAL                    ${reportData.totals.weight.toFixed(2)} ${weightUnit}`);
+      if (buyWeight > 0) {
+        lines.push(`TOTAL                    ${buyWeight.toFixed(1)} ${weightUnit}`);
+      }
+      if (sellAiItems > 0) {
+        const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
+        lines.push(`TOTAL ITEMS              ${sellAiItems} ${itemsLabel}`);
+      }
+      if (sellAiAmount > 0) {
+        lines.push(`TOTAL VALUE              KSh ${sellAiAmount.toFixed(0)}`);
+      }
       lines.push('');
-      
+
       // Footer
       lines.push(`CLERK:      ${reportData.clerkName}`);
       lines.push(`PRINTED ON: ${formattedDate} - ${formattedTime}`);
