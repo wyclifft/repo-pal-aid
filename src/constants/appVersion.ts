@@ -1,4 +1,24 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.74: Z-REPORT ALIGNMENT + STORE UNIT FIX.
+//   (1) Column headers (QTY, KSh, AMOUNT, TIME) and section banners (== BUY ==,
+//       == SELL ==) are now generated from the SAME width spec as the data rows
+//       via padL/padR helpers — labels sit directly above their numeric columns
+//       on both the thermal print and the on-screen receipt.
+//   (2) SELL (transtype=2) and AI (transtype=3) sections render QTY as INTEGER
+//       ITEMS (e.g. "2 items"), never KGS — store goods are sold by unit.
+//   (3) Per-section subtotal collapsed to ONE line: "<TYPE> TOTAL  <n> items
+//       KSh <amount>" for SELL/AI and "<TYPE> TOTAL  <weight> KGS" for BUY.
+//   (4) Grand total split into three independent lines (suppressed when zero):
+//         TOTAL <kg> KGS         (BUY only)
+//         TOTAL ITEMS <n>        (SELL+AI only)
+//         TOTAL VALUE KSh <n>    (SELL+AI only)
+//       BUY weight no longer includes SELL/AI rows (they're units, not weight).
+//   (5) Single-product divider ("-- NPK FERTILIZER --") suppressed when the
+//       section only has one distinct product.
+//   Files: src/services/bluetooth.ts (printZReport), DeviceZReportReceipt.tsx,
+//   src/utils/pdfExport.ts. No backend, no DB schema, no sync engine, no
+//   reference generator changes — purely presentation. Capacitor-safe.
+//
 // v2.10.73: (1) FACTORY-SCOPED CUMULATIVES — farmer_cumulative IndexedDB
 //           cache key now includes the route/factory:
 //             cacheKey = `${farmerId}__${ROUTE}__${YYYY-MM}`
