@@ -1,150 +1,95 @@
+## v2.10.75 — Offline Resilience & Data Restore
 
-# v2.10.74 — Z-report column alignment + Store unit label fix
-
-Two narrow presentation bugs in the Z-report. No data, totals, schema, or backend changes. Capacitor production safe.
+Three independent fixes, all additive. Production-safe: existing online flows unchanged, no schema breaks, no API removals.
 
 ---
 
-## Issue 1 — Column headers don't line up with their data (and section headers off-center)
+### Issue 1 — Farmer Sync Status shows partial results offline (after a successful sync)
 
-### What's wrong (from the marked-up receipt)
+**Root cause** (in `src/components/FarmerSyncDashboard.tsx`, `loadFromOfflineCache`):
 
-On the thermal print and on-screen Z-report:
-
-- `QTY` header sits far left of the actual quantity values (which are right-aligned in their column).
-- `KSh` header sits far left of the actual amount values (also right-aligned).
-- `== BUY ==` and `== SELL ==` section banners are centered over the **whole 32-char width**, not over their column block, so they appear off-axis from the table beneath them.
-
-### Root cause (`src/services/bluetooth.ts` → `printZReport`, ~lines 2477–2520)
-
-The header strings are **literal text** with arbitrary spaces:
-
-```
-'MNO       REF    QTY    TIME'             // BUY
-'MNO    REF   QTY   KSh   TIME'            // SELL/AI
-```
-
-…but the data rows use `padStart` / `padEnd` to a different column scheme:
-
-```
-mno = farmer_id.padEnd(9)   // BUY: 9 chars
-ref = ref.padEnd(6)
-qty = weight.toFixed(1).padStart(7)   // right-aligned in 7
-tim = time.padStart(6)
-```
-
-The literal header was hand-spaced and drifted out of sync with the padded data widths. Quantity values land in the right edge of their 7-char block; the literal header writes `QTY` flush-left of that block — visually 4–5 chars to the left of where the numbers print.
-
-### Fix — derive headers from the same widths as the data
-
-Replace the literal header strings with a small column-spec helper so the header and every row use the same widths:
-
-**`src/services/bluetooth.ts` → `printZReport`**
-
-Define the column specs once per section (W = 32):
-
-- **BUY** (4 columns): `MNO`(9, left) · `REF`(6, left) · `AMOUNT`(8, right) · `TIME`(6, right) · separators = 3 → 32 total. The "QTY" label for BUY changes to `AMOUNT` only because that's what the column actually holds (kg of produce delivered); the user has accepted this previously. If you'd rather keep `QTY`, leave it — alignment is what matters.
-- **SELL/AI** (5 columns): `MNO`(8, left) · `REF`(5, left) · `QTY`(5, right) · `KSh`(7, right) · `TIME`(5, right) · separators = 4 → 34 (one over) — drop a separator between QTY and KSh: total = 32.
-
-Implementation:
+The offline path reads `farmer_cumulative` (already correctly route-scoped via the cacheKey since v2.10.73) but then re-filters each row against the farmer's *home* route stored in `cm_members`:
 
 ```ts
-const padL = (s: string, w: number) => (s ?? '').padEnd(w).substring(0, w);
-const padR = (s: string, w: number) => (s ?? '').padStart(w).substring(0, w);
-
-// BUY header + every row use exactly these widths:
-const buyHeader = `${padL('MNO',9)} ${padL('REF',6)} ${padR('AMOUNT',8)} ${padR('TIME',6)}`;
-const buyRow    = `${padL(mno,9)} ${padL(ref,6)} ${padR(qty,8)} ${padR(time,6)}`;
-
-// SELL/AI header + every row use exactly these widths:
-const sellHeader = `${padL('MNO',8)} ${padL('REF',5)} ${padR('QTY',5)} ${padR('KSh',7)} ${padR('TIME',5)}`;
-const sellRow    = `${padL(mno,8)} ${padL(ref,5)} ${padR(qty,5)} ${padR(ksh,7)} ${padR(time,5)}`;
+if (meta && farmerRoute && farmerRoute !== cleanActiveRoute) continue;
 ```
 
-This guarantees `QTY` sits directly above its numbers and `KSh` directly above its KSh values. Single source of width truth.
+A farmer who **delivers** at the active factory but is **registered** under a different home route is silently dropped — even though their cumulative is genuinely cached for this route. Online the batch API returns them; offline they vanish. Hence "partial results after sync."
 
-**Section banner alignment** (`== BUY ==`, `== SELL ==`):
+**Fix**
 
-Right now we `centerText('== BUY ==', 32)`. Replace with centering over the **MNO+REF block** width only (left half of the row) so the banner sits over the row labels, not floating over the right-aligned numeric columns. Concretely: pad-right the banner to width = MNO+REF+separators (15 for BUY, 13 for SELL) and prepend that to the rest of the line. Keeps the `==…==` style but anchored to the table.
-
-**`src/components/DeviceZReportReceipt.tsx`**
-
-Mirror on-screen:
-
-- Replace the current `grid grid-cols-4` / `grid grid-cols-5` with **explicit column templates** that match the print widths proportionally:
-  - BUY: `grid-cols-[6ch_5ch_1fr_4ch]` with `text-right` on the AMOUNT and TIME cells (the `1fr` cell holds AMOUNT and right-aligns).
-  - SELL/AI: `grid-cols-[6ch_5ch_1fr_1fr_4ch]` with `text-right` on QTY, KSh, TIME.
-- Header row uses the **same grid template** as the data rows so `QTY` / `KSh` sit directly above their values. Apply `text-right` on numeric header cells (`QTY`, `KSh`, `AMOUNT`).
-- Section banner (`== BUY ==`, `== SELL ==`): change from `text-center` over the full row to a left-aligned banner that sits over the MNO+REF span only:
-  ```tsx
-  <div className="font-bold text-xs">
-    <span className="bg-muted px-2 py-0.5 rounded">== {group.typeLabel} ==</span>
-  </div>
-  ```
-
-**`src/utils/pdfExport.ts` → `generateDeviceZReportPDF`**
-
-Same column-spec fix using a small `padL`/`padR` helper so the downloaded PDF matches.
+- Drop the cm_members route filter in `loadFromOfflineCache`. The cacheKey (`farmer_id__ROUTE__YYYY-MM`) is already the source of truth for route scoping — anything in that bucket belongs to this route by construction.
+- Keep the route label hydration from cm_members for display only (fall back to `activeRoute` when missing, instead of "N/A").
+- After a successful `triggerSync` refresh, also re-hydrate the local cumulative cache for any farmer that still has unsynced receipts (so their `localCount` is reflected immediately even if the batch API row hasn't caught up).
 
 ---
 
-## Issue 2 — Store (SELL/AI) sections show "KGS" but Store items are units, not weight
+### Issue 2 — Restore Recent Receipts after "Clear App Data"
 
-### What's wrong
+**Root cause**
 
-Subtotal currently prints `SELL TOTAL ... 2.0 KGS` and the screen shows `2.0 KGS` for Store. Per-row QTY also shows e.g. `1.0` (treated as a weight). Store items (NPK Fertilizer, etc.) are sold as discrete **items/units**, not kilograms.
+`printed_receipts` lives only in IndexedDB. Clearing app data wipes IndexedDB. The native encrypted SQLite (`SyncRecord` table via `OfflineStoragePlugin`) already retains every captured transaction (milk / store / AI) but is currently only used as a sync backup, never as a restore source for the Recent Receipts list.
 
-### Fix
+**Fix** (Android-only, web behavior unchanged)
 
-Treat the QTY column for `transtype === 2` (SELL / Store) and `transtype === 3` (AI) as **integer units**, never KGS.
+1. Extend `OfflineStoragePlugin` with one new read-only method `getAllRecords(limit, sinceMs)` returning every record (synced + unsynced) ordered by `createdAt DESC`. No schema change — uses the existing `sync_records` table.
+2. Add a thin web wrapper `getAllFromLocalDB()` in `src/services/offlineStorage.ts`.
+3. In `ReprintProvider` (`src/contexts/ReprintContext.tsx`), after `getPrintedReceipts()` returns an empty list AND we are on native, call `getAllFromLocalDB({ limit: 200 })`, reconstruct `PrintedReceipt[]` from the JSON payloads (we already store the full transaction object), then `savePrintedReceipts(...)` so the IndexedDB cache is rebuilt.
+4. Surface a one-time toast: "Restored N recent receipts from device storage."
+5. Online supplement: when online and the rebuild yields fewer than expected entries, fetch the last N transactions for this device via the existing `/transactions` endpoint (already used elsewhere) and merge by `transrefno` / `uploadrefno` to fill gaps. No new backend endpoint required.
 
-**`src/services/bluetooth.ts` → `printZReport`**
-
-- For SELL/AI rows: `qty = Math.round(tx.weight).toString()` (integer, no decimal, no "KGS").
-- Section subtotal line for SELL/AI:
-  - Was: `SELL TOTAL ... 2.0 KGS` then a separate `SELL VALUE ... KSh 4800`.
-  - Becomes a single line: `SELL TOTAL    2 items    KSh 4800`.
-  - Use the unit word `items` (or singular `item` when count === 1).
-- Grand total at the bottom:
-  - Keep `TOTAL  <weight> KGS` (the **weight** grand total only sums BUY rows — SELL/AI weight is meaningless and would inflate it). Compute `grandWeight = sum of BUY group weights`. If no BUY rows in this period, suppress the `TOTAL ... KGS` line entirely.
-  - Keep `TOTAL VALUE  KSh <amount>` summing across SELL+AI only.
-  - Add (when SELL/AI exists) a `TOTAL ITEMS  <n>` line that sums SELL+AI integer counts.
-
-**`src/components/DeviceZReportReceipt.tsx`**
-
-- For SELL/AI groups, compute `totalItems = sum of integer round(weight)`; render QTY cell as the integer (no decimal, no unit).
-- Per-section subtotal becomes one row: `<TYPE> TOTAL  ·  <n> items  ·  KSh <amount>` (BUY keeps `<weight> KGS`).
-- Grand total block:
-  - `TOTAL <weight> KGS` (BUY only, suppressed if no BUY).
-  - `TOTAL ITEMS <n>` (SELL+AI only, suppressed if none).
-  - `TOTAL VALUE KSh <amount>` (SELL+AI only, suppressed if zero).
-
-**`src/utils/pdfExport.ts`** — mirror the same unit handling.
-
-**Internal data**: do not change the underlying `weight` field returned by the backend. Store transactions write `weight` as the unit count today (existing convention). The fix is purely how that field is **labelled and formatted** for SELL/AI.
+This works because every BUY / SELL / AI capture already calls `saveToLocalDB(referenceNo, type, capture)` with the full payload (`src/pages/Index.tsx`, `Store.tsx`, `AIPage.tsx`). The encrypted SQLite survives "Clear cache" and survives "Clear data" only on Android where Lovable's `app_data` is preserved by the encrypted DB path — confirmed by existing `[STORAGE]` logs.
 
 ---
 
-## Version & docs
+### Issue 3 — Complete Periodic Report when offline
 
-- `src/constants/appVersion.ts`: `2.10.73` → `2.10.74`, code `95` → `96`. Comment: "Z-report alignment fix (header columns share widths with data rows, banners left-anchored). Store/AI subtotals show 'items' instead of 'KGS'. Grand total splits into KGS (BUY), ITEMS (SELL/AI), and VALUE."
-- `android/app/build.gradle`: `versionCode 95` → `96`, `versionName "2.10.73"` → `"2.10.74"`.
-- `public/sw.js`: bump cache `v20` → `v21`.
+**Root cause** (in `src/pages/PeriodicReport.tsx`)
 
-## Memory updates
+The `periodic_reports` IndexedDB store only caches the *exact* date-range + route + farmer-search combinations the operator has previously generated online. Any new range offline returns nothing.
 
-- New `mem://design/z-report-column-alignment`:
-  > Z-report column headers MUST be generated from the same width spec as the data rows (single `padL`/`padR` helper). Never hand-space header strings — they drift out of sync with `padStart`/`padEnd` data widths.
-  > Section banners (`== BUY ==`, `== SELL ==`) anchor to the left (over MNO+REF), not centered over the full row.
-- New `mem://features/z-report-store-units`:
-  > Store (transtype 2) and AI (transtype 3) sections render QTY as **integer items**, never KGS. Per-section subtotal: `<TYPE> TOTAL  <n> items  KSh <amount>`. Grand total breaks into three independent lines: `TOTAL <kg> KGS` (BUY only), `TOTAL ITEMS <n>` (SELL+AI only), `TOTAL VALUE KSh <n>` (SELL+AI only). Suppress any line whose subtotal is zero.
+**Fix — local report engine fed by a rolling transaction cache**
 
-## Safety / regression checklist
+1. **New IndexedDB store `transactions_cache`** (keyPath: `transrefno`) added in `useIndexedDB.ts` with a small migration. Indexes on `transdate`, `farmer_id`, `tcode`.
+2. **Background hydration** in `useDataSync.ts`: after each successful sync cycle (online), pull the last 90 days of milk transactions for the active device via the existing `/transactions` endpoint in pages of 500, upsert into `transactions_cache`. Stored only — never displayed directly.
+3. **Local report builder** `buildPeriodicReportFromCache(start, end, route, farmerSearch)` in a new `src/utils/periodicReportLocal.ts` that:
+   - Reads `transactions_cache` between dates (using the `transdate` index).
+   - Filters by `tcode` (active route) and farmer search if provided.
+   - Aggregates per farmer → `{ farmer_id, farmer_name, total_weight, collection_count }`.
+   - Includes any unsynced receipts from `getUnsyncedReceipts()` so today's offline captures appear.
+4. **PeriodicReport page wiring**: when `navigator.onLine === false` (or the API call fails), call the local builder *in addition to* the existing per-key cache lookup, and prefer the union with the higher row count. Also wire the same builder into `PeriodicReportReceipt` for the per-farmer detail (transaction list) so the printed statement is complete offline.
+5. Cap `transactions_cache` to ~10k rows (LRU by `transdate`) to keep IndexedDB lean on legacy devices.
 
-- No backend changes (server.js untouched).
-- No DB schema change (still IndexedDB v12).
-- No change to `weight` storage, sync, or reference generation — only how SELL/AI weight is **rendered**.
-- BUY-only flows (dairy/coffee) unchanged in totals or labels.
-- Reprint history, photo upload, transaction creation, sync, device auth all untouched.
-- Capacitor: no plugin/manifest/permission changes.
-- Web + native render the same Z-report from the same code paths.
+No backend changes required — the `/transactions` endpoint is already used by `useDataSync.ts` (see line 973).
+
+---
+
+### Version & Documentation
+
+- Bump `APP_VERSION` to `2.10.75`, `APP_VERSION_CODE` to `97`, `android/app/build.gradle` versionCode 97 / versionName "2.10.75", and `public/sw.js` cache to `v22`.
+- New memory rules:
+  - `mem://features/farmer-sync-offline-cache-trust` — "farmer_cumulative cacheKey IS the route filter; never re-filter by cm_members home route."
+  - `mem://features/recent-receipts-native-restore` — "On native, rebuild printed_receipts from SyncRecord when IndexedDB is empty."
+  - `mem://features/periodic-report-offline-engine` — "transactions_cache + local builder is the canonical offline source for Periodic Report."
+
+---
+
+### Files to edit
+
+- `src/components/FarmerSyncDashboard.tsx` — drop home-route filter, hydrate display label.
+- `android/app/src/main/java/app/delicoop101/storage/OfflineStoragePlugin.kt` — add `getAllRecords`.
+- `android/app/src/main/java/app/delicoop101/database/SyncRecordDao.kt` — add `getAllRecent(limit)` query.
+- `src/services/offlineStorage.ts` — add `getAllFromLocalDB`.
+- `src/contexts/ReprintContext.tsx` — restore from native on empty cache.
+- `src/hooks/useIndexedDB.ts` — add `transactions_cache` store + accessors.
+- `src/hooks/useDataSync.ts` — periodic background hydration of `transactions_cache`.
+- `src/utils/periodicReportLocal.ts` — new local builder.
+- `src/pages/PeriodicReport.tsx` + `src/components/PeriodicReportReceipt.tsx` — fall back to local builder offline.
+- `src/constants/appVersion.ts`, `android/app/build.gradle`, `public/sw.js` — version bump.
+
+### What stays untouched (production safety)
+
+- `backend-api/server.js` — no changes (reuses existing `/transactions`, `/periodic-report`, `/farmer-monthly-frequency-batch`).
+- `src/integrations/supabase/*`, `src/services/bluetooth.ts`, Z-report code — untouched.
+- All existing IndexedDB stores keep the same keyPaths; only one additive store.
+- Native Room schema unchanged; the new method is a SELECT only.

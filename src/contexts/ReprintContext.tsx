@@ -2,6 +2,8 @@ import { createContext, useContext, useState, useCallback, useEffect, type React
 import type { MilkCollection } from '@/lib/supabase';
 import type { ReprintItem, PrintedReceipt } from '@/components/ReprintModal';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { getAllFromLocalDB, isNativeStorageAvailable, type NativeStoredRecord } from '@/services/offlineStorage';
+import { toast } from 'sonner';
 
 interface StoreAIReceiptInput {
   farmerId: string;
@@ -90,12 +92,106 @@ const matchesStoreAIIdentity = (
   return Math.abs(newTotal - oldTotal) < 0.01;
 };
 
+/**
+ * v2.10.75: Rebuild PrintedReceipt entries from raw native SyncRecord rows.
+ * Each capture stores its full payload via saveToLocalDB(); we reverse it.
+ *   - milk_collection → one PrintedReceipt of type 'milk' per record
+ *   - store_sale      → grouped by uploadrefno into one 'store' receipt
+ *   - ai_sale         → grouped by uploadrefno into one 'ai' receipt
+ * Best-effort — malformed rows are skipped silently.
+ */
+const rebuildPrintedReceiptsFromNative = (records: NativeStoredRecord[]): PrintedReceipt[] => {
+  const out: PrintedReceipt[] = [];
+  const storeGroups = new Map<string, { rows: any[]; createdAt: number }>();
+  const aiGroups = new Map<string, { rows: any[]; createdAt: number }>();
+
+  for (const r of records) {
+    try {
+      const p = r.payload;
+      if (!p || typeof p !== 'object') continue;
+
+      if (r.recordType === 'milk_collection') {
+        const collection: MilkCollection = {
+          ...(p as any),
+          reference_no: p.reference_no || r.referenceNo,
+        };
+        out.push({
+          farmerId: p.farmer_id || '',
+          farmerName: p.farmer_name || p.farmer_id || '',
+          collections: [collection],
+          printedAt: new Date(r.createdAt),
+          type: 'milk',
+          uploadrefno: p.uploadrefno || p.reference_no || r.referenceNo,
+          cumulativeWeight: p.cumulativeWeight,
+          cumulativeByProduct: p.cumulativeByProduct,
+          transactionDate: p.collection_date ? new Date(p.collection_date) : new Date(r.createdAt),
+        });
+      } else if (r.recordType === 'store_sale' || r.recordType === 'ai_sale') {
+        const key = String(p.uploadrefno || r.referenceNo);
+        const map = r.recordType === 'store_sale' ? storeGroups : aiGroups;
+        const existing = map.get(key);
+        if (existing) existing.rows.push({ ...p, _ref: r.referenceNo });
+        else map.set(key, { rows: [{ ...p, _ref: r.referenceNo }], createdAt: r.createdAt });
+      }
+    } catch { /* skip malformed */ }
+  }
+
+  const buildBatch = (
+    type: 'store' | 'ai',
+    groups: Map<string, { rows: any[]; createdAt: number }>
+  ) => {
+    for (const [uploadrefno, { rows, createdAt }] of groups) {
+      const first = rows[0] || {};
+      const items: ReprintItem[] = rows.map(row => {
+        const qty = Number(row.quantity || 0);
+        const price = Number(row.price || 0);
+        return {
+          item_code: row.item_code || '',
+          item_name: row.item_name || row.item_code || '',
+          quantity: qty,
+          price,
+          lineTotal: qty * price,
+        };
+      });
+      const totalAmount = items.reduce((s, i) => s + (i.lineTotal || 0), 0);
+      const itemRefs = rows.map(r => String(r.transrefno || r._ref)).filter(Boolean);
+      const identity = itemRefs.length > 0
+        ? [...itemRefs].sort().join('|')
+        : `${uploadrefno}::${items.map(i => `${i.item_code}#${i.quantity}#${i.price}`).sort().join(',')}`;
+
+      out.push({
+        farmerId: first.farmer_id || '',
+        farmerName: first.farmer_name || first.farmer_id || '',
+        collections: [],
+        printedAt: new Date(createdAt),
+        type,
+        totalAmount,
+        itemCount: items.length,
+        uploadrefno,
+        items,
+        clerkName: first.sold_by || first.clerk || '',
+        memberRoute: first.route || first.route_tcode || '',
+        transactionDate: new Date(createdAt),
+        localReceiptId: identity,
+        itemRefs: itemRefs.length > 0 ? itemRefs : undefined,
+      });
+    }
+  };
+
+  buildBatch('store', storeGroups);
+  buildBatch('ai', aiGroups);
+  out.sort((a, b) => (b.printedAt?.getTime() || 0) - (a.printedAt?.getTime() || 0));
+  return out;
+};
+
 export const ReprintProvider = ({ children }: ReprintProviderProps) => {
   const [printedReceipts, setPrintedReceipts] = useState<PrintedReceipt[]>([]);
   const { savePrintedReceipts, getPrintedReceipts, isReady: dbReady } = useIndexedDB();
   const [isReady, setIsReady] = useState(false);
 
-  // Load receipts from IndexedDB on mount
+  // Load receipts from IndexedDB on mount; if empty AND running on native,
+  // attempt to rebuild from the encrypted SQLite SyncRecord backup so a
+  // "Clear App Data" wipe of IndexedDB does not lose Recent Receipts.
   useEffect(() => {
     if (!dbReady) return;
 
@@ -105,7 +201,26 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
         if (cached && cached.length > 0) {
           setPrintedReceipts(cached);
           console.log(`[REPRINT] Loaded ${cached.length} receipts from cache`);
+          setIsReady(true);
+          return;
         }
+
+        // Empty cache → try native restore (Android only).
+        if (isNativeStorageAvailable()) {
+          try {
+            const native = await getAllFromLocalDB({ limit: 200 });
+            const restored = rebuildPrintedReceiptsFromNative(native);
+            if (restored.length > 0) {
+              setPrintedReceipts(restored);
+              await savePrintedReceipts(restored);
+              console.log(`[REPRINT] Restored ${restored.length} receipts from native SQLite`);
+              toast.success(`Restored ${restored.length} recent receipt${restored.length === 1 ? '' : 's'} from device storage`);
+            }
+          } catch (restoreErr) {
+            console.warn('[REPRINT] Native restore failed (non-fatal):', restoreErr);
+          }
+        }
+
         setIsReady(true);
       } catch (error) {
         console.error('[REPRINT] Failed to load receipts:', error);
@@ -114,7 +229,7 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
     };
 
     loadReceipts();
-  }, [dbReady, getPrintedReceipts]);
+  }, [dbReady, getPrintedReceipts, savePrintedReceipts]);
 
   // Save milk collection receipt
   const addMilkReceipt = useCallback(async (collections: MilkCollection[], cumulativeWeight?: number, cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>): Promise<boolean> => {

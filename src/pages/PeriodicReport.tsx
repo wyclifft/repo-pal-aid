@@ -25,6 +25,7 @@ import { mysqlApi, type PeriodicReportData } from "@/services/mysqlApi";
 import { toast } from "sonner";
 import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 import { useIndexedDB } from "@/hooks/useIndexedDB";
+import { buildPeriodicReportFromCache } from "@/utils/periodicReportLocal";
 import { DeviceAuthStatus } from "@/components/DeviceAuthStatus";
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { PeriodicReportReceipt } from "@/components/PeriodicReportReceipt";
@@ -54,7 +55,7 @@ export default function PeriodicReport() {
   // Receipt modal state
   const [selectedFarmer, setSelectedFarmer] = useState<{ id: string; name: string } | null>(null);
   
-  const { saveFarmers, savePeriodicReport, getPeriodicReport } = useIndexedDB();
+  const { saveFarmers, savePeriodicReport, getPeriodicReport, getCachedTransactions, getUnsyncedReceipts } = useIndexedDB();
 
   useEffect(() => {
     const initDevice = async () => {
@@ -116,6 +117,41 @@ export default function PeriodicReport() {
     
     console.log("Requesting report with dates:", formattedStartDate, formattedEndDate, "route:", routeKey);
     
+    // v2.10.75: Build offline fallback from local transactions cache + unsynced receipts.
+    // This guarantees a complete report when offline for ANY date range, not just
+    // the exact ones previously cached online.
+    const buildLocal = async (): Promise<PeriodicReportData[]> => {
+      try {
+        const cached = await getCachedTransactions(formattedStartDate, formattedEndDate, {
+          route: activeRoute?.tcode,
+          farmerId: undefined,
+        });
+        const unsynced = (await getUnsyncedReceipts()).filter((r: any) => {
+          if ((r as any).type === 'sale') return false;
+          if ((r as any).transtype === 2 || (r as any).transtype === 3) return false;
+          const d = String((r as any).collection_date || '').slice(0, 10);
+          return d >= formattedStartDate && d <= formattedEndDate;
+        }).map((r: any) => ({
+          transrefno: r.reference_no || r.transrefno || `${r.collection_date}-${r.farmer_id}`,
+          farmer_id: String(r.farmer_id || '').replace(/^#/, '').trim(),
+          farmer_name: r.farmer_name || r.farmer_id,
+          tcode: String(r.route || r.tcode || '').trim().toUpperCase(),
+          transdate: r.collection_date,
+          quantity: Number(r.weight || 0),
+          transtype: 1,
+        }));
+        return buildPeriodicReportFromCache([...cached, ...unsynced], {
+          startDate: formattedStartDate,
+          endDate: formattedEndDate,
+          route: activeRoute?.tcode,
+          farmerSearch: farmerSearch.trim() || undefined,
+        });
+      } catch (err) {
+        console.warn('[PeriodicReport] Local builder failed:', err);
+        return [];
+      }
+    };
+
     // 1. ALWAYS load from cache first for instant display
     try {
       const cachedData = await getPeriodicReport(cacheKey);
@@ -141,11 +177,17 @@ export default function PeriodicReport() {
 
         console.log("Report response received:", response);
         
-        // Check for authorization errors — do NOT clear farmer cache
         if (!response.success) {
           if (!reportData || reportData.length === 0) {
-            setReportData([]);
-            toast.error(response.error || 'Device not authorized. Please contact administrator.');
+            // Online API failed — try local builder before giving up
+            const local = await buildLocal();
+            if (local.length > 0) {
+              setReportData(local);
+              toast.info(`Showing ${local.length} farmer(s) from local cache`);
+            } else {
+              setReportData([]);
+              toast.error(response.error || 'Device not authorized. Please contact administrator.');
+            }
           }
           console.error('❌ Device authorization error for periodic report');
           setLoading(false);
@@ -154,29 +196,41 @@ export default function PeriodicReport() {
         
         const data = response.data || [];
         setReportData(data);
-        
-        // Cache the report for offline access
         await savePeriodicReport(cacheKey, data);
         console.log('✅ Periodic report synced and cached');
         
         if (data.length === 0) {
-          toast.warning(`No ${produceLabel.toLowerCase()} collections found for the selected date range`);
+          // Backend returned empty — supplement with local builder (catches offline-captured days)
+          const local = await buildLocal();
+          if (local.length > 0) {
+            setReportData(local);
+            toast.info(`Showing ${local.length} farmer(s) from local cache`);
+          } else {
+            toast.warning(`No ${produceLabel.toLowerCase()} collections found for the selected date range`);
+          }
         } else {
           toast.success(`Found ${data.length} farmer(s) with ${produceLabel.toLowerCase()} collections`);
         }
       } catch (error) {
         console.error("Error syncing report:", error);
-        // Data already loaded from cache if available
         if (!reportData || reportData.length === 0) {
-          toast.error("No data available for this date range");
+          const local = await buildLocal();
+          if (local.length > 0) {
+            setReportData(local);
+            toast.info(`📦 Offline — Showing ${local.length} farmer(s) from local cache`);
+          } else {
+            toast.error("No data available for this date range");
+          }
         }
       }
     } else {
-      // Offline mode - data already loaded from cache
-      if (!reportData || reportData.length === 0) {
+      // Offline — prefer the live local builder over the per-key cache.
+      const local = await buildLocal();
+      if (local.length > 0) {
+        setReportData(local);
+        toast.info(`📦 Offline — Showing ${local.length} farmer(s) from local cache`);
+      } else if (!reportData || reportData.length === 0) {
         toast.info("📡 Offline - No cached data available for this date range");
-      } else {
-        toast.info(`📦 Offline mode - Showing ${reportData.length} cached farmer(s)`);
       }
     }
     
