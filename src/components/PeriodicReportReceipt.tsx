@@ -10,6 +10,8 @@ import {
 } from "@/components/ui/dialog";
 import { mysqlApi, type FarmerDetailReportData } from "@/services/mysqlApi";
 import { printMemberProduceStatement } from "@/services/bluetooth";
+import { useIndexedDB } from "@/hooks/useIndexedDB";
+import { buildFarmerDetailFromCache } from "@/utils/periodicReportLocal";
 import { toast } from "sonner";
 
 interface PeriodicReportReceiptProps {
