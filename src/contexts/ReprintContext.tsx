@@ -97,7 +97,9 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
   const { savePrintedReceipts, getPrintedReceipts, isReady: dbReady } = useIndexedDB();
   const [isReady, setIsReady] = useState(false);
 
-  // Load receipts from IndexedDB on mount
+  // Load receipts from IndexedDB on mount; if empty AND running on native,
+  // attempt to rebuild from the encrypted SQLite SyncRecord backup so a
+  // "Clear App Data" wipe of IndexedDB does not lose Recent Receipts.
   useEffect(() => {
     if (!dbReady) return;
 
@@ -107,7 +109,26 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
         if (cached && cached.length > 0) {
           setPrintedReceipts(cached);
           console.log(`[REPRINT] Loaded ${cached.length} receipts from cache`);
+          setIsReady(true);
+          return;
         }
+
+        // Empty cache → try native restore (Android only).
+        if (isNativeStorageAvailable()) {
+          try {
+            const native = await getAllFromLocalDB({ limit: 200 });
+            const restored = rebuildPrintedReceiptsFromNative(native);
+            if (restored.length > 0) {
+              setPrintedReceipts(restored);
+              await savePrintedReceipts(restored);
+              console.log(`[REPRINT] Restored ${restored.length} receipts from native SQLite`);
+              toast.success(`Restored ${restored.length} recent receipt${restored.length === 1 ? '' : 's'} from device storage`);
+            }
+          } catch (restoreErr) {
+            console.warn('[REPRINT] Native restore failed (non-fatal):', restoreErr);
+          }
+        }
+
         setIsReady(true);
       } catch (error) {
         console.error('[REPRINT] Failed to load receipts:', error);
@@ -116,7 +137,7 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
     };
 
     loadReceipts();
-  }, [dbReady, getPrintedReceipts]);
+  }, [dbReady, getPrintedReceipts, savePrintedReceipts]);
 
   // Save milk collection receipt
   const addMilkReceipt = useCallback(async (collections: MilkCollection[], cumulativeWeight?: number, cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>): Promise<boolean> => {
