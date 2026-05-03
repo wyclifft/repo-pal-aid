@@ -2,6 +2,8 @@ import { createContext, useContext, useState, useCallback, useEffect, type React
 import type { MilkCollection } from '@/lib/supabase';
 import type { ReprintItem, PrintedReceipt } from '@/components/ReprintModal';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { getAllFromLocalDB, isNativeStorageAvailable, type NativeStoredRecord } from '@/services/offlineStorage';
+import { toast } from 'sonner';
 
 interface StoreAIReceiptInput {
   farmerId: string;
