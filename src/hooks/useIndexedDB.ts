@@ -1010,6 +1010,82 @@ export const useIndexedDB = () => {
     });
   }, [db]);
 
+  /**
+   * v2.10.75: Bulk upsert backend transactions into the local mirror used by
+   * the offline Periodic Report engine. Each row keyed by transrefno (unique).
+   */
+  const saveTransactionsToCache = useCallback(async (rows: any[]): Promise<number> => {
+    if (!db || !rows || rows.length === 0) return 0;
+    return new Promise<number>((resolve) => {
+      try {
+        const tx = db.transaction('transactions_cache', 'readwrite');
+        const store = tx.objectStore('transactions_cache');
+        let written = 0;
+        for (const r of rows) {
+          if (!r) continue;
+          const transrefno = String(r.transrefno || r.reference_no || '').trim();
+          if (!transrefno) continue;
+          const normalized = {
+            ...r,
+            transrefno,
+            // Normalize fields used for offline aggregation
+            farmer_id: String(r.farmer_id || '').replace(/^#/, '').trim(),
+            tcode: String(r.tcode || r.route || '').trim().toUpperCase(),
+            transdate: r.transdate || r.collection_date || r.created_at || '',
+            quantity: Number(r.quantity || r.weight || 0),
+            transtype: Number(r.transtype || 1),
+          };
+          try { store.put(normalized); written++; } catch { /* skip bad row */ }
+        }
+        tx.oncomplete = () => resolve(written);
+        tx.onerror = () => resolve(written);
+      } catch (err) {
+        console.warn('[DB] saveTransactionsToCache failed:', err);
+        resolve(0);
+      }
+    });
+  }, [db]);
+
+  /**
+   * v2.10.75: Read cached transactions filtered by date range (inclusive),
+   * optional route (tcode) and farmer_id. Used by the offline Periodic Report builder.
+   */
+  const getCachedTransactions = useCallback(async (
+    startDate: string,
+    endDate: string,
+    opts: { route?: string; farmerId?: string } = {}
+  ): Promise<any[]> => {
+    if (!db) return [];
+    return new Promise<any[]>((resolve) => {
+      try {
+        const tx = db.transaction('transactions_cache', 'readonly');
+        const store = tx.objectStore('transactions_cache');
+        const idx = store.index('transdate');
+        const range = IDBKeyRange.bound(startDate, endDate + '\uffff');
+        const req = idx.openCursor(range);
+        const out: any[] = [];
+        const route = (opts.route || '').trim().toUpperCase();
+        const farmerId = (opts.farmerId || '').replace(/^#/, '').trim();
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (cursor) {
+            const v = cursor.value;
+            const okRoute = !route || (v.tcode || '').toUpperCase() === route;
+            const okFarmer = !farmerId || (v.farmer_id || '') === farmerId;
+            if (okRoute && okFarmer) out.push(v);
+            cursor.continue();
+          } else {
+            resolve(out);
+          }
+        };
+        req.onerror = () => resolve(out);
+      } catch (err) {
+        console.warn('[DB] getCachedTransactions failed:', err);
+        resolve([]);
+      }
+    });
+  }, [db]);
+
   return {
     db,
     isReady,
@@ -1025,6 +1101,28 @@ export const useIndexedDB = () => {
     saveSale,
     getUnsyncedSales,
     deleteSale,
+    saveItems,
+    getItems,
+    saveZReport,
+    getZReport,
+    savePeriodicReport,
+    getPeriodicReport,
+    savePrintedReceipts,
+    getPrintedReceipts,
+    clearUnsyncedReceipts,
+    saveRoutes,
+    getRoutes,
+    saveSessions,
+    getSessions,
+    getFarmerCumulative,
+    updateFarmerCumulative,
+    getFarmerTotalCumulative,
+    getUnsyncedWeightForFarmer,
+    getAllUnsyncedRecords,
+    saveTransactionsToCache,
+    getCachedTransactions,
+  };
+};
     saveItems,
     getItems,
     saveZReport,
