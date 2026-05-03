@@ -60,24 +60,44 @@ export function PeriodicReportReceipt({
     try {
       const formattedStartDate = format(startDate, "yyyy-MM-dd");
       const formattedEndDate = format(endDate, "yyyy-MM-dd");
-      
-      console.log('📄 Fetching farmer detail:', { farmerId, formattedStartDate, formattedEndDate, route });
-      
-      const response = await mysqlApi.periodicReport.getFarmerDetail(
-        formattedStartDate,
-        formattedEndDate,
-        farmerId,
-        deviceFingerprint,
-        route
-      );
 
-      console.log('📄 Farmer detail response:', response);
+      // v2.10.75: local fallback builder (used when offline or API fails)
+      const buildLocal = async (): Promise<FarmerDetailReportData | null> => {
+        try {
+          const rows = await getCachedTransactions(formattedStartDate, formattedEndDate, {
+            route,
+            farmerId,
+          });
+          if (!rows || rows.length === 0) return null;
+          const companyName = localStorage.getItem('device_company_name') || '';
+          return buildFarmerDetailFromCache(rows as any, {
+            startDate: formattedStartDate,
+            endDate: formattedEndDate,
+            farmerId,
+            route,
+            companyName,
+            produceName: rows[0]?.product_name || 'PRODUCE',
+          });
+        } catch { return null; }
+      };
+
+      if (!navigator.onLine) {
+        const local = await buildLocal();
+        if (local) { setData({ ...local, farmer_name: local.farmer_name || farmerName }); return; }
+        setError("No cached data for this date range");
+        return;
+      }
+
+      const response = await mysqlApi.periodicReport.getFarmerDetail(
+        formattedStartDate, formattedEndDate, farmerId, deviceFingerprint, route
+      );
 
       if (response.success && response.data) {
         setData(response.data);
       } else {
-        setError(response.error || "Failed to load farmer details");
-        toast.error(response.error || "Failed to load farmer details");
+        const local = await buildLocal();
+        if (local) { setData({ ...local, farmer_name: local.farmer_name || farmerName }); }
+        else { setError(response.error || "Failed to load farmer details"); toast.error(response.error || "Failed to load farmer details"); }
       }
     } catch (err) {
       console.error("Error loading farmer detail:", err);
