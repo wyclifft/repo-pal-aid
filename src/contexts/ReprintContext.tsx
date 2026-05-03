@@ -184,6 +184,7 @@ const rebuildPrintedReceiptsFromNative = (records: NativeStoredRecord[]): Printe
   return out;
 };
 
+export const ReprintProvider = ({ children }: ReprintProviderProps) => {
   const [printedReceipts, setPrintedReceipts] = useState<PrintedReceipt[]>([]);
   const { savePrintedReceipts, getPrintedReceipts, isReady: dbReady } = useIndexedDB();
   const [isReady, setIsReady] = useState(false);
