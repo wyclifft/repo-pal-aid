@@ -42,6 +42,7 @@ export function PeriodicReportReceipt({
   const [printing, setPrinting] = useState(false);
   const [data, setData] = useState<FarmerDetailReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { getCachedTransactions } = useIndexedDB();
 
   // Load data when dialog opens
   useEffect(() => {
