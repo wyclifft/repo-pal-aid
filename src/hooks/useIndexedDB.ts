@@ -151,6 +151,17 @@ export const useIndexedDB = () => {
           }
         }
       }
+
+      // v2.10.75: transactions_cache — rolling local mirror of recent backend
+      // transactions, used to build the Periodic Report fully offline. Additive
+      // store, never displayed directly. Keyed by transrefno (unique).
+      if (!database.objectStoreNames.contains('transactions_cache')) {
+        const txStore = database.createObjectStore('transactions_cache', { keyPath: 'transrefno' });
+        txStore.createIndex('transdate', 'transdate', { unique: false });
+        txStore.createIndex('farmer_id', 'farmer_id', { unique: false });
+        txStore.createIndex('tcode', 'tcode', { unique: false });
+        console.log('[DB] Created transactions_cache store (v2.10.75)');
+      }
     };
 
     request.onsuccess = (event) => {
