@@ -156,4 +156,51 @@ export const triggerNativeSync = async (): Promise<{ triggered: boolean; pending
   }
 };
 
+/**
+ * v2.10.75: Read ALL records (synced + unsynced) from native encrypted SQLite.
+ * Used by ReprintProvider to rebuild the Recent Receipts list after a
+ * "Clear App Data" wipes IndexedDB. Returns parsed records with payload
+ * already JSON-parsed; never throws.
+ */
+export interface NativeStoredRecord {
+  id: number;
+  referenceNo: string;
+  recordType: 'milk_collection' | 'store_sale' | 'ai_sale' | string;
+  payload: any;
+  createdAt: number;
+  isSynced: boolean;
+  syncedAt: number;
+}
+
+export const getAllFromLocalDB = async (
+  options: { limit?: number; sinceMs?: number } = {}
+): Promise<NativeStoredRecord[]> => {
+  if (!isNativeStorageAvailable()) return [];
+  try {
+    const result = await OfflineStorage.getAllRecords(options);
+    const raw = JSON.parse(result.records || '[]');
+    const out: NativeStoredRecord[] = [];
+    for (const r of raw) {
+      let parsed: any = r.payload;
+      if (typeof parsed === 'string') {
+        try { parsed = JSON.parse(parsed); } catch { /* leave as string */ }
+      }
+      out.push({
+        id: r.id,
+        referenceNo: r.referenceNo,
+        recordType: r.recordType,
+        payload: parsed,
+        createdAt: r.createdAt,
+        isSynced: !!r.isSynced,
+        syncedAt: Number(r.syncedAt || 0),
+      });
+    }
+    console.log(`[STORAGE] Restored ${out.length} records from native DB`);
+    return out;
+  } catch (e) {
+    console.error('[STORAGE] getAllFromLocalDB failed:', e);
+    return [];
+  }
+};
+
 export { OfflineStorage };
