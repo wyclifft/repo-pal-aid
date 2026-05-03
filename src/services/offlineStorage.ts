@@ -16,6 +16,8 @@ export interface OfflineStoragePlugin {
   markSyncFailed(options: { id?: number; referenceNo?: string; error: string }): Promise<{ success: boolean }>;
   triggerSync(): Promise<{ triggered: boolean; pendingCount: number }>;
   getStats(): Promise<{ total: number; synced: number; unsynced: number }>;
+  // v2.10.75: read all records (synced+unsynced) for Recent Receipts restore
+  getAllRecords(options?: { limit?: number; sinceMs?: number }): Promise<{ records: string; count: number }>;
 }
 
 const OfflineStorage = registerPlugin<OfflineStoragePlugin>('OfflineStorage');
