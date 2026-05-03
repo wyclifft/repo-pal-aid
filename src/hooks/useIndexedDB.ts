@@ -1123,23 +1123,3 @@ export const useIndexedDB = () => {
     getCachedTransactions,
   };
 };
-    saveItems,
-    getItems,
-    saveZReport,
-    getZReport,
-    savePeriodicReport,
-    getPeriodicReport,
-    savePrintedReceipts,
-    getPrintedReceipts,
-    clearUnsyncedReceipts,
-    saveRoutes,
-    getRoutes,
-    saveSessions,
-    getSessions,
-    getFarmerCumulative,
-    updateFarmerCumulative,
-    getFarmerTotalCumulative,
-    getUnsyncedWeightForFarmer,
-    getAllUnsyncedRecords,
-  };
-};
