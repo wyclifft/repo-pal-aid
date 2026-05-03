@@ -44,7 +44,7 @@ export function buildPeriodicReportFromCache(
   const routeNorm = (route || '').trim().toUpperCase();
   const search = (farmerSearch || '').trim().toLowerCase();
 
-  type Acc = { farmer_id: string; farmer_name: string; total_weight: number; collection_count: number };
+  type Acc = PeriodicReportData;
   const map = new Map<string, Acc>();
 
   for (const r of rows) {
@@ -63,12 +63,14 @@ export function buildPeriodicReportFromCache(
     const cur = map.get(key) || {
       farmer_id: key,
       farmer_name: r.farmer_name || key,
+      route: r.tcode || route || '',
       total_weight: 0,
       collection_count: 0,
     };
     cur.total_weight += Number(r.quantity || 0);
     cur.collection_count += 1;
     if (!cur.farmer_name && r.farmer_name) cur.farmer_name = r.farmer_name;
+    if (!cur.route && r.tcode) cur.route = r.tcode;
     map.set(key, cur);
   }
 
