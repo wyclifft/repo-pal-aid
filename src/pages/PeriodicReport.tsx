@@ -25,6 +25,7 @@ import { mysqlApi, type PeriodicReportData } from "@/services/mysqlApi";
 import { toast } from "sonner";
 import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 import { useIndexedDB } from "@/hooks/useIndexedDB";
+import { buildPeriodicReportFromCache } from "@/utils/periodicReportLocal";
 import { DeviceAuthStatus } from "@/components/DeviceAuthStatus";
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { PeriodicReportReceipt } from "@/components/PeriodicReportReceipt";
