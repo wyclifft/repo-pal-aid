@@ -63,6 +63,7 @@ export const useDataSync = () => {
     deleteSale,
     getAllUnsyncedRecords,
     updateFarmerCumulative,
+    saveTransactionsToCache,
     isReady 
   } = useIndexedDB();
 
