@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 12; // v2.10.73: farmer_cumulative cache keyed by farmer+route+month for per-factory isolation
+const DB_VERSION = 13; // v2.10.75: add transactions_cache store for offline Periodic Report engine
 
 let dbInstance: IDBDatabase | null = null;
 
