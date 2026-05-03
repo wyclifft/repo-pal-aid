@@ -55,7 +55,7 @@ export default function PeriodicReport() {
   // Receipt modal state
   const [selectedFarmer, setSelectedFarmer] = useState<{ id: string; name: string } | null>(null);
   
-  const { saveFarmers, savePeriodicReport, getPeriodicReport } = useIndexedDB();
+  const { saveFarmers, savePeriodicReport, getPeriodicReport, getCachedTransactions, getUnsyncedReceipts } = useIndexedDB();
 
   useEffect(() => {
     const initDevice = async () => {
