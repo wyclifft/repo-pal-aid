@@ -941,7 +941,7 @@ export const useDataSync = () => {
         console.warn('Items sync skipped:', err);
       }
 
-      // 6. Cache today's Z report
+      // 6. Cache today's Z report + hydrate transactions_cache for offline Periodic Report
       try {
         const today = new Date().toISOString().split('T')[0];
         const zReportData = await mysqlApi.zReport.get(today, deviceFingerprint);
@@ -957,6 +957,25 @@ export const useDataSync = () => {
           };
           await saveZReport(today, safeData);
           syncedCount++;
+
+          // v2.10.75: also mirror today's collections into transactions_cache so
+          // the Periodic Report can be regenerated for any offline date range.
+          try {
+            const rows = (safeData.collections || []).map((c: any) => ({
+              transrefno: c.reference_no || c.transrefno || `${today}-${c.farmer_id}-${Math.random()}`,
+              farmer_id: c.farmer_id,
+              farmer_name: c.farmer_name,
+              tcode: c.route || c.tcode || '',
+              transdate: c.collection_date || today,
+              quantity: Number(c.weight || c.quantity || 0),
+              transtype: 1,
+              time: c.collection_time || '',
+              refno: (c.reference_no || '').slice(-5),
+            }));
+            await saveTransactionsToCache(rows);
+          } catch (cacheErr) {
+            console.warn('[SYNC] transactions_cache hydration skipped:', cacheErr);
+          }
         }
       } catch (err) {
         // Silently log - don't break sync for Z report errors
