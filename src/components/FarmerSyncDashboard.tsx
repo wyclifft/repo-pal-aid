@@ -185,7 +185,13 @@ export const FarmerSyncDashboard = () => {
   const loadFromOfflineCache = useCallback(async (
     nameLookup: Map<string, Farmer>
   ): Promise<FarmerSyncEntry[]> => {
-    // 1. Read every farmer_cumulative key currently cached
+    const cleanActiveRoute = (activeRoute || '').trim().toUpperCase();
+
+    // 1. Read every farmer_cumulative row, filtered by the row's STORED route.
+    //    v2.10.75: each cumulative row carries its own `route` (upper-cased,
+    //    or 'ALL' fallback) — that's the route the transactions actually
+    //    belong to. Filtering by cm_members home route was wrong because a
+    //    farmer's registration route is independent of where they delivered.
     const cumulativeEntries: Array<{ farmer_id: string; baseCount: number; localCount: number }> = [];
     if (db) {
       try {
@@ -198,6 +204,11 @@ export const FarmerSyncDashboard = () => {
             for (const r of all) {
               const fid = String(r.farmer_id || '').replace(/^#/, '').trim();
               if (!fid) continue;
+              const rowRoute = String(r.route || '').trim().toUpperCase() || 'ALL';
+              // Strict per-factory scoping: drop rows for other routes when
+              // an active route is selected. 'ALL' (legacy/no-route) rows are
+              // also dropped to avoid leaking cross-factory totals.
+              if (cleanActiveRoute && rowRoute !== cleanActiveRoute) continue;
               cumulativeEntries.push({
                 farmer_id: fid,
                 baseCount: Number(r.baseCount || 0),
@@ -213,7 +224,8 @@ export const FarmerSyncDashboard = () => {
       }
     }
 
-    // 2. Union with farmer IDs from unsynced receipts (just-captured offline deliveries)
+    // 2. Union with farmer IDs from unsynced receipts (offline captures),
+    //    filtered by the receipt's own route.
     const unsyncedReceipts = await getUnsyncedReceipts();
     const unsyncedByFarmer = new Map<string, number>();
     for (const r of unsyncedReceipts) {
@@ -221,10 +233,14 @@ export const FarmerSyncDashboard = () => {
       if ((r as any).transtype === 2) continue;
       const fid = String((r as any).farmer_id || '').replace(/^#/, '').trim();
       if (!fid) continue;
+      if (cleanActiveRoute) {
+        const rRoute = String((r as any).route || '').trim().toUpperCase();
+        if (rRoute !== cleanActiveRoute) continue;
+      }
       unsyncedByFarmer.set(fid, (unsyncedByFarmer.get(fid) || 0) + Number((r as any).weight || 0));
     }
 
-    // Build union set of farmer IDs
+    // Build union set of farmer IDs (already route-filtered above)
     const farmerIds = new Set<string>();
     cumulativeEntries.forEach(e => farmerIds.add(e.farmer_id));
     unsyncedByFarmer.forEach((_, fid) => farmerIds.add(fid));
@@ -233,9 +249,8 @@ export const FarmerSyncDashboard = () => {
     const cumulativeMap = new Map<string, { baseCount: number; localCount: number }>();
     for (const e of cumulativeEntries) cumulativeMap.set(e.farmer_id, e);
 
-    const cleanActiveRoute = (activeRoute || '').trim();
-
-    // 3. Build entries — drop zero-weight farmers, hydrate from nameLookup, apply route filter
+    // 3. Build entries — drop zero-weight farmers, hydrate display from
+    //    cm_members lookup (name/route are display-only here).
     const built: FarmerSyncEntry[] = [];
     for (const fid of farmerIds) {
       const cum = cumulativeMap.get(fid);
@@ -248,18 +263,13 @@ export const FarmerSyncDashboard = () => {
       if (total <= 0 && unsyncedWeight <= 0) continue;
 
       const meta = nameLookup.get(fid);
-      const farmerRoute = (meta?.route || '').trim();
-
-      // Tighten route filter: prefer cm_members route; if missing entirely, still include with 'N/A'
-      if (cleanActiveRoute) {
-        if (meta && farmerRoute && farmerRoute !== cleanActiveRoute) continue;
-        // If meta missing OR route blank — include (don't silently hide transactions)
-      }
 
       built.push({
         farmer_id: fid,
         name: meta?.name || fid,
-        route: farmerRoute || 'N/A',
+        // Show the active route when filtering — that's the factory these
+        // totals belong to. Fall back to cm_members route for display only.
+        route: cleanActiveRoute || (meta?.route || '').trim() || 'N/A',
         cumulativeTotal: total,
         baseCount,
         localCount: localCount + unsyncedWeight,
