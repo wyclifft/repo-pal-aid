@@ -1,150 +1,75 @@
+# v2.10.75 — Two surgical bug fixes
 
-# v2.10.74 — Z-report column alignment + Store unit label fix
+## Issue 1: Z-Report — first product header missing
 
-Two narrow presentation bugs in the Z-report. No data, totals, schema, or backend changes. Capacitor production safe.
+### Root cause
+In both Z-report renderers, the product divider (`-- RAHA FLOUR --`) is printed **only when transitioning** from one product to a different one. The first product in the section never gets a header because there is no previous product to compare against.
 
----
+- `src/services/bluetooth.ts` lines 2510–2518 — only prints divider when `prevProductCode !== undefined && prevProductCode !== current`.
+- `src/components/DeviceZReportReceipt.tsx` lines 288–304 — same pattern (`prevTx && prevTx.product_code !== tx.product_code`).
 
-## Issue 1 — Column headers don't line up with their data (and section headers off-center)
-
-### What's wrong (from the marked-up receipt)
-
-On the thermal print and on-screen Z-report:
-
-- `QTY` header sits far left of the actual quantity values (which are right-aligned in their column).
-- `KSh` header sits far left of the actual amount values (also right-aligned).
-- `== BUY ==` and `== SELL ==` section banners are centered over the **whole 32-char width**, not over their column block, so they appear off-axis from the table beneath them.
-
-### Root cause (`src/services/bluetooth.ts` → `printZReport`, ~lines 2477–2520)
-
-The header strings are **literal text** with arbitrary spaces:
-
-```
-'MNO       REF    QTY    TIME'             // BUY
-'MNO    REF   QTY   KSh   TIME'            // SELL/AI
-```
-
-…but the data rows use `padStart` / `padEnd` to a different column scheme:
-
-```
-mno = farmer_id.padEnd(9)   // BUY: 9 chars
-ref = ref.padEnd(6)
-qty = weight.toFixed(1).padStart(7)   // right-aligned in 7
-tim = time.padStart(6)
-```
-
-The literal header was hand-spaced and drifted out of sync with the padded data widths. Quantity values land in the right edge of their 7-char block; the literal header writes `QTY` flush-left of that block — visually 4–5 chars to the left of where the numbers print.
-
-### Fix — derive headers from the same widths as the data
-
-Replace the literal header strings with a small column-spec helper so the header and every row use the same widths:
-
-**`src/services/bluetooth.ts` → `printZReport`**
-
-Define the column specs once per section (W = 32):
-
-- **BUY** (4 columns): `MNO`(9, left) · `REF`(6, left) · `AMOUNT`(8, right) · `TIME`(6, right) · separators = 3 → 32 total. The "QTY" label for BUY changes to `AMOUNT` only because that's what the column actually holds (kg of produce delivered); the user has accepted this previously. If you'd rather keep `QTY`, leave it — alignment is what matters.
-- **SELL/AI** (5 columns): `MNO`(8, left) · `REF`(5, left) · `QTY`(5, right) · `KSh`(7, right) · `TIME`(5, right) · separators = 4 → 34 (one over) — drop a separator between QTY and KSh: total = 32.
-
-Implementation:
-
-```ts
-const padL = (s: string, w: number) => (s ?? '').padEnd(w).substring(0, w);
-const padR = (s: string, w: number) => (s ?? '').padStart(w).substring(0, w);
-
-// BUY header + every row use exactly these widths:
-const buyHeader = `${padL('MNO',9)} ${padL('REF',6)} ${padR('AMOUNT',8)} ${padR('TIME',6)}`;
-const buyRow    = `${padL(mno,9)} ${padL(ref,6)} ${padR(qty,8)} ${padR(time,6)}`;
-
-// SELL/AI header + every row use exactly these widths:
-const sellHeader = `${padL('MNO',8)} ${padL('REF',5)} ${padR('QTY',5)} ${padR('KSh',7)} ${padR('TIME',5)}`;
-const sellRow    = `${padL(mno,8)} ${padL(ref,5)} ${padR(qty,5)} ${padR(ksh,7)} ${padR(time,5)}`;
-```
-
-This guarantees `QTY` sits directly above its numbers and `KSh` directly above its KSh values. Single source of width truth.
-
-**Section banner alignment** (`== BUY ==`, `== SELL ==`):
-
-Right now we `centerText('== BUY ==', 32)`. Replace with centering over the **MNO+REF block** width only (left half of the row) so the banner sits over the row labels, not floating over the right-aligned numeric columns. Concretely: pad-right the banner to width = MNO+REF+separators (15 for BUY, 13 for SELL) and prepend that to the rest of the line. Keeps the `==…==` style but anchored to the table.
-
-**`src/components/DeviceZReportReceipt.tsx`**
-
-Mirror on-screen:
-
-- Replace the current `grid grid-cols-4` / `grid grid-cols-5` with **explicit column templates** that match the print widths proportionally:
-  - BUY: `grid-cols-[6ch_5ch_1fr_4ch]` with `text-right` on the AMOUNT and TIME cells (the `1fr` cell holds AMOUNT and right-aligns).
-  - SELL/AI: `grid-cols-[6ch_5ch_1fr_1fr_4ch]` with `text-right` on QTY, KSh, TIME.
-- Header row uses the **same grid template** as the data rows so `QTY` / `KSh` sit directly above their values. Apply `text-right` on numeric header cells (`QTY`, `KSh`, `AMOUNT`).
-- Section banner (`== BUY ==`, `== SELL ==`): change from `text-center` over the full row to a left-aligned banner that sits over the MNO+REF span only:
-  ```tsx
-  <div className="font-bold text-xs">
-    <span className="bg-muted px-2 py-0.5 rounded">== {group.typeLabel} ==</span>
-  </div>
-  ```
-
-**`src/utils/pdfExport.ts` → `generateDeviceZReportPDF`**
-
-Same column-spec fix using a small `padL`/`padR` helper so the downloaded PDF matches.
-
----
-
-## Issue 2 — Store (SELL/AI) sections show "KGS" but Store items are units, not weight
-
-### What's wrong
-
-Subtotal currently prints `SELL TOTAL ... 2.0 KGS` and the screen shows `2.0 KGS` for Store. Per-row QTY also shows e.g. `1.0` (treated as a weight). Store items (NPK Fertilizer, etc.) are sold as discrete **items/units**, not kilograms.
+So when a section has multiple products (e.g. SELL: Raha then Jogoo), only Jogoo gets a header. Raha's transactions sit headerless under the section banner.
 
 ### Fix
+Print the product label **before the first transaction of every product group** (when `showProductDividers === true`), not just on transitions. Logic becomes: "show label whenever the current product differs from the previous product, treating `undefined` previous as different".
 
-Treat the QTY column for `transtype === 2` (SELL / Store) and `transtype === 3` (AI) as **integer units**, never KGS.
+Apply the same one-line change in both files:
+- `src/services/bluetooth.ts` — change `if (showProductDividers && prevProductCode !== undefined && prevProductCode !== ...)` to `if (showProductDividers && prevProductCode !== (tx.product_code || ''))`.
+- `src/components/DeviceZReportReceipt.tsx` — change `showItemSeparator` to `showProductDividers && (!prevTx || prevTx.product_code !== tx.product_code)`. For the very first row of the section, suppress the top dotted border so it doesn't sit awkwardly directly under the column header — only render the centered product label.
 
-**`src/services/bluetooth.ts` → `printZReport`**
+No changes to single-product sections (still suppressed by `distinctProducts > 1`). No changes to subtotals, grand totals, or column widths.
 
-- For SELL/AI rows: `qty = Math.round(tx.weight).toString()` (integer, no decimal, no "KGS").
-- Section subtotal line for SELL/AI:
-  - Was: `SELL TOTAL ... 2.0 KGS` then a separate `SELL VALUE ... KSh 4800`.
-  - Becomes a single line: `SELL TOTAL    2 items    KSh 4800`.
-  - Use the unit word `items` (or singular `item` when count === 1).
-- Grand total at the bottom:
-  - Keep `TOTAL  <weight> KGS` (the **weight** grand total only sums BUY rows — SELL/AI weight is meaningless and would inflate it). Compute `grandWeight = sum of BUY group weights`. If no BUY rows in this period, suppress the `TOTAL ... KGS` line entirely.
-  - Keep `TOTAL VALUE  KSh <amount>` summing across SELL+AI only.
-  - Add (when SELL/AI exists) a `TOTAL ITEMS  <n>` line that sums SELL+AI integer counts.
+## Issue 2: Farmer Sync — offline route filter ignores transaction route
 
-**`src/components/DeviceZReportReceipt.tsx`**
+### Root cause
+`src/components/FarmerSyncDashboard.tsx` `loadFromOfflineCache` (~lines 184–270):
 
-- For SELL/AI groups, compute `totalItems = sum of integer round(weight)`; render QTY cell as the integer (no decimal, no unit).
-- Per-section subtotal becomes one row: `<TYPE> TOTAL  ·  <n> items  ·  KSh <amount>` (BUY keeps `<weight> KGS`).
-- Grand total block:
-  - `TOTAL <weight> KGS` (BUY only, suppressed if no BUY).
-  - `TOTAL ITEMS <n>` (SELL+AI only, suppressed if none).
-  - `TOTAL VALUE KSh <amount>` (SELL+AI only, suppressed if zero).
+1. Reads **every** record from the `farmer_cumulative` IndexedDB store via `store.getAll()` and builds the farmer set from `r.farmer_id` only.
+2. Filters by route using `meta?.route` from the `cm_members` lookup — but that is the farmer's **home/registration route**, not the route they actually delivered to.
 
-**`src/utils/pdfExport.ts`** — mirror the same unit handling.
+Result: when offline and switching routes, farmers from other factories still appear (their cm_members home route happens to match) and per-factory totals are mixed because the cumulative records for ALL routes are loaded.
 
-**Internal data**: do not change the underlying `weight` field returned by the backend. Store transactions write `weight` as the unit count today (existing convention). The fix is purely how that field is **labelled and formatted** for SELL/AI.
+The `farmer_cumulative` store is already correctly keyed by `farmer+route+month` (v2.10.73, see `useIndexedDB.ts` `buildCumulativeKey`), so each record carries its own `route` field. We just aren't using it.
 
----
+### Fix
+In `loadFromOfflineCache`:
 
-## Version & docs
+1. When iterating `farmer_cumulative.getAll()` results, capture each row's `route` (already stored as upper-cased route key, falling back to `'ALL'`).
+2. If `activeRoute` is set, **drop any cumulative row whose `route` does not equal the normalized active route key**. Do not fall back to cm_members route for filtering.
+3. For unsynced receipts, keep the existing route filter on `r.route` (already normalized via `.trim().toUpperCase()` consistently).
+4. Build the union set from the route-filtered cumulative rows + route-filtered unsynced receipts only.
+5. Remove the cm_members-route-based exclusion (`farmerRoute !== cleanActiveRoute`) — it was the wrong source. Keep cm_members lookup only for display name/route label.
+6. When `activeRoute` is empty (no active session), keep current behaviour (show all).
 
-- `src/constants/appVersion.ts`: `2.10.73` → `2.10.74`, code `95` → `96`. Comment: "Z-report alignment fix (header columns share widths with data rows, banners left-anchored). Store/AI subtotals show 'items' instead of 'KGS'. Grand total splits into KGS (BUY), ITEMS (SELL/AI), and VALUE."
-- `android/app/build.gradle`: `versionCode 95` → `96`, `versionName "2.10.73"` → `"2.10.74"`.
-- `public/sw.js`: bump cache `v20` → `v21`.
+Also tighten the dashboard description to clarify the data is scoped to the selected route when offline (already partially in place).
+
+No changes to the online path (`loadFromBatchAPI`) — backend already filters by route.
+
+## Version bump
+
+- `src/constants/appVersion.ts` → `2.10.75`, code `97`.
+- `android/app/build.gradle` → `versionCode 97`, `versionName "2.10.75"`.
+- `public/sw.js` → cache `v22`.
 
 ## Memory updates
 
-- New `mem://design/z-report-column-alignment`:
-  > Z-report column headers MUST be generated from the same width spec as the data rows (single `padL`/`padR` helper). Never hand-space header strings — they drift out of sync with `padStart`/`padEnd` data widths.
-  > Section banners (`== BUY ==`, `== SELL ==`) anchor to the left (over MNO+REF), not centered over the full row.
-- New `mem://features/z-report-store-units`:
-  > Store (transtype 2) and AI (transtype 3) sections render QTY as **integer items**, never KGS. Per-section subtotal: `<TYPE> TOTAL  <n> items  KSh <amount>`. Grand total breaks into three independent lines: `TOTAL <kg> KGS` (BUY only), `TOTAL ITEMS <n>` (SELL+AI only), `TOTAL VALUE KSh <n>` (SELL+AI only). Suppress any line whose subtotal is zero.
+- Update `mem://features/cumulative-route-scoping` to record the offline dashboard fix (filter by stored cumulative `route` key, never by cm_members home route).
+- Add `mem://design/z-report-product-header-rule` — "When section has >1 product, every product group must show its label header, including the first."
 
-## Safety / regression checklist
+## Files to edit
 
-- No backend changes (server.js untouched).
-- No DB schema change (still IndexedDB v12).
-- No change to `weight` storage, sync, or reference generation — only how SELL/AI weight is **rendered**.
-- BUY-only flows (dairy/coffee) unchanged in totals or labels.
-- Reprint history, photo upload, transaction creation, sync, device auth all untouched.
-- Capacitor: no plugin/manifest/permission changes.
-- Web + native render the same Z-report from the same code paths.
+- `src/services/bluetooth.ts`
+- `src/components/DeviceZReportReceipt.tsx`
+- `src/components/FarmerSyncDashboard.tsx`
+- `src/constants/appVersion.ts`
+- `android/app/build.gradle`
+- `public/sw.js`
+- `mem://features/cumulative-route-scoping.md`
+- `mem://design/z-report-product-header-rule.md`
+- `mem://index.md`
+
+## Out of scope (preserved)
+
+- Backend (`server.js`) untouched — production safety.
+- Online sync logic, cumulative cache schema, transaction sync engine — unchanged.
+- Z-report column widths, totals, section banners — unchanged.

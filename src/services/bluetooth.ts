@@ -2510,12 +2510,17 @@ export const printZReport = async (data: {
     let prevProductCode: string | undefined;
     let sellAiItemCount = 0;
     for (const tx of sortedTxs) {
-      if (showProductDividers && prevProductCode !== undefined && prevProductCode !== (tx.product_code || '')) {
+      // v2.10.75: print product label before EVERY group, including the first.
+      // Previously the divider was only printed on transitions, so the first
+      // product (e.g. RAHA) appeared headerless under the section banner while
+      // subsequent products (JOGOO) were correctly labelled.
+      const currentProduct = tx.product_code || '';
+      if (showProductDividers && prevProductCode !== currentProduct) {
         const produceName = tx.product_name || tx.product_code || 'OTHER';
         const label = `-- ${produceName} --`;
         receipt += centerText(label, W) + '\n';
       }
-      prevProductCode = tx.product_code || '';
+      prevProductCode = currentProduct;
 
       const shortRef = (tx.refno || '').slice(-5);
       const time = tx.time.substring(0, 5);

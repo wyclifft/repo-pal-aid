@@ -471,5 +471,26 @@
 //           Real BLE and Classic SPP scales remain unaffected. Printer
 //           connect/print flow is untouched. No backend, no IndexedDB schema,
 //           no sync engine, no reference generator changes.
-export const APP_VERSION = '2.10.74';
-export const APP_VERSION_CODE = 96;
+// v2.10.75: TWO SURGICAL BUG FIXES.
+//   (1) Z-REPORT FIRST-PRODUCT HEADER MISSING — the product divider
+//       (`-- RAHA FLOUR --`) was only printed when transitioning between
+//       products. The first product in a multi-product section therefore had
+//       no header. Both renderers (src/services/bluetooth.ts and
+//       src/components/DeviceZReportReceipt.tsx) now emit the label for every
+//       distinct product group, including the first. Single-product sections
+//       are still suppressed (distinctProducts > 1 gate unchanged). Column
+//       widths, banners, totals and grand totals are untouched.
+//   (2) FARMER SYNC OFFLINE ROUTE FILTER IGNORED TRANSACTION ROUTE —
+//       FarmerSyncDashboard.loadFromOfflineCache read every farmer_cumulative
+//       row via store.getAll() and used cm_members.route (the farmer's HOME
+//       registration route) for filtering. Switching factories offline kept
+//       showing rows from other factories with mixed totals. The cache is
+//       already keyed by farmer+route+month (v2.10.73) and each row carries
+//       its own `route` field, so the dashboard now drops any cumulative row
+//       whose stored `route` does not match the active route key. Unsynced
+//       receipts continue to be filtered by their own r.route. cm_members is
+//       used only for display name/route label lookup, never for filtering.
+//   No backend, no IndexedDB schema, no sync engine, no reference generator,
+//   no auth/login/photo/Z-Report-summary-screen changes. Capacitor-safe.
+export const APP_VERSION = '2.10.75';
+export const APP_VERSION_CODE = 97;
