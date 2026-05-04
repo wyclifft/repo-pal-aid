@@ -38,11 +38,6 @@ interface SyncRecordDao {
     
     @Query("SELECT * FROM sync_records ORDER BY created_at DESC LIMIT :limit")
     suspend fun getRecent(limit: Int = 50): List<SyncRecord>
-
-    // v2.10.75: All records (synced + unsynced) newest first — used by web layer
-    // to rebuild the Recent Receipts list after a "Clear App Data" wipes IndexedDB.
-    @Query("SELECT * FROM sync_records WHERE created_at >= :sinceMs ORDER BY created_at DESC LIMIT :limit")
-    suspend fun getAllRecentSince(sinceMs: Long, limit: Int = 200): List<SyncRecord>
     
     @Query("UPDATE sync_records SET is_synced = 1, synced_at = :syncedAt, backend_id = :backendId WHERE id = :id")
     suspend fun markSynced(id: Long, syncedAt: Long = System.currentTimeMillis(), backendId: Long? = null)

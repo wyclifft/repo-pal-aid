@@ -318,55 +318,6 @@ class OfflineStoragePlugin : Plugin() {
         }
     }
 
-    /**
-     * v2.10.75: Read all records (synced + unsynced) for the web layer to
-     * rebuild the Recent Receipts list after IndexedDB is wiped by a
-     * "Clear App Data". Read-only — no schema change.
-     *
-     * Args:
-     *   limit  (Int, optional) — max rows, default 200
-     *   sinceMs (Long, optional) — only rows created at/after this epoch ms; default = last 60 days
-     */
-    @PluginMethod
-    fun getAllRecords(call: PluginCall) {
-        val limit = call.getInt("limit") ?: 200
-        val sinceMs = call.getLong("sinceMs")
-            ?: (System.currentTimeMillis() - 60L * 24 * 60 * 60 * 1000L)
-
-        scope.launch {
-            try {
-                val db = DelicoopDatabase.getInstance(context)
-                val records = db.syncRecordDao().getAllRecentSince(sinceMs, limit)
-                Log.d(TAG, "[RESTORE] Returning ${records.size} records (since=$sinceMs, limit=$limit)")
-
-                val jsonArray = JSONArray()
-                records.forEach { record ->
-                    val obj = JSONObject()
-                    obj.put("id", record.id)
-                    obj.put("referenceNo", record.referenceNo)
-                    obj.put("recordType", record.recordType)
-                    obj.put("payload", record.payload)
-                    obj.put("createdAt", record.createdAt)
-                    obj.put("isSynced", record.isSynced)
-                    obj.put("syncedAt", record.syncedAt ?: 0L)
-                    jsonArray.put(obj)
-                }
-
-                withContext(Dispatchers.Main) {
-                    val result = JSObject()
-                    result.put("records", jsonArray.toString())
-                    result.put("count", records.size)
-                    call.resolve(result)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "[RESTORE] getAllRecords failed: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    call.reject("Failed to read records: ${e.message}")
-                }
-            }
-        }
-    }
-
     override fun handleOnDestroy() {
         // Flush logs before destroying
         DatabaseLogger.flush()

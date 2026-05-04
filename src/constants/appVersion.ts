@@ -471,21 +471,5 @@
 //           Real BLE and Classic SPP scales remain unaffected. Printer
 //           connect/print flow is untouched. No backend, no IndexedDB schema,
 //           no sync engine, no reference generator changes.
-// v2.10.75: OFFLINE RESILIENCE & DATA RESTORE.
-//   (1) Farmer Sync Status: drop cm_members "home route" re-filter in offline
-//       path — farmer_cumulative cacheKey is already route-scoped, so re-
-//       filtering silently dropped members who deliver here but are
-//       registered at another route. (FarmerSyncDashboard.tsx)
-//   (2) Recent Receipts restore after "Clear App Data": new native plugin
-//       method OfflineStorage.getAllRecords() reads the encrypted SQLite
-//       SyncRecord backup; ReprintProvider rebuilds printed_receipts from it
-//       on first load when IndexedDB is empty. Android-only, web unchanged.
-//   (3) Offline Periodic Report: new transactions_cache IndexedDB store
-//       (DB v13) + buildPeriodicReportFromCache() local builder hydrated
-//       from the device Z-Report each sync. PeriodicReport page and the
-//       per-farmer statement now produce complete reports for any date
-//       range while offline, including unsynced receipts.
-//   No backend changes, no reference generator changes, no Z-Report layout
-//   changes. Capacitor production-safe.
-export const APP_VERSION = '2.10.75';
-export const APP_VERSION_CODE = 97;
+export const APP_VERSION = '2.10.74';
+export const APP_VERSION_CODE = 96;

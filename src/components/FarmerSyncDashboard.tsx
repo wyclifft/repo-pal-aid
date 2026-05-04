@@ -250,18 +250,16 @@ export const FarmerSyncDashboard = () => {
       const meta = nameLookup.get(fid);
       const farmerRoute = (meta?.route || '').trim();
 
-      // v2.10.75: Trust the cacheKey — the farmer_cumulative store is already
-      // route-scoped (key = farmer_id__ROUTE__YYYY-MM since v2.10.73).
-      // Re-filtering by cm_members "home route" silently dropped any farmer
-      // who delivers at this factory but is REGISTERED at a different route,
-      // producing partial results offline even after a successful sync.
-      // No re-filter here — anything in the bucket belongs to this route.
+      // Tighten route filter: prefer cm_members route; if missing entirely, still include with 'N/A'
+      if (cleanActiveRoute) {
+        if (meta && farmerRoute && farmerRoute !== cleanActiveRoute) continue;
+        // If meta missing OR route blank — include (don't silently hide transactions)
+      }
 
       built.push({
         farmer_id: fid,
         name: meta?.name || fid,
-        // Display label: prefer cm_members route, fall back to active route, never 'N/A'
-        route: farmerRoute || cleanActiveRoute || 'N/A',
+        route: farmerRoute || 'N/A',
         cumulativeTotal: total,
         baseCount,
         localCount: localCount + unsyncedWeight,
