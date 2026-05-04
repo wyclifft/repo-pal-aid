@@ -287,7 +287,9 @@ export const DeviceZReportReceipt = ({
         <div className="py-0.5">
           {group.transactions.map((tx, index) => {
             const prevTx = index > 0 ? group.transactions[index - 1] : null;
-            const showItemSeparator = showProductDividers && prevTx && prevTx.product_code !== tx.product_code;
+            // v2.10.75: render product header for every distinct product group,
+            // including the first one (was only shown on transitions).
+            const showItemSeparator = showProductDividers && (!prevTx || prevTx.product_code !== tx.product_code);
             const qtyDisplay = showMoney
               ? String(Math.max(0, Math.round(tx.weight || 0)))
               : tx.weight.toFixed(1);
