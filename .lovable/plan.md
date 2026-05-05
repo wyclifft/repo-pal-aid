@@ -1,75 +1,56 @@
-# v2.10.75 — Two surgical bug fixes
+## Root cause
 
-## Issue 1: Z-Report — first product header missing
+In `src/services/bluetooth.ts` (the thermal-print Z-report formatter), the SELL/AI section truncates the REF column to 4 characters even though the source uses a 5-digit short ref:
 
-### Root cause
-In both Z-report renderers, the product divider (`-- RAHA FLOUR --`) is printed **only when transitioning** from one product to a different one. The first product in the section never gets a header because there is no previous product to compare against.
+```ts
+// line 2525
+const shortRef = (tx.refno || '').slice(-5);   // 5 chars, e.g. "02981"
+...
+// line 2533 (SELL/AI branch)
+const ref = padL(shortRef, 4);                  // padEnd(4).substring(0, 4) → "0298"
+```
 
-- `src/services/bluetooth.ts` lines 2510–2518 — only prints divider when `prevProductCode !== undefined && prevProductCode !== current`.
-- `src/components/DeviceZReportReceipt.tsx` lines 288–304 — same pattern (`prevTx && prevTx.product_code !== tx.product_code`).
+`padL` is defined as `padEnd(w).substring(0, w)`, so any string longer than `w` gets chopped from the right — losing the **last digit**. That's exactly what the receipt photo shows: every SELL row prints `0298` / `0299` instead of `02981`, `02982`, etc., making distinct refs look identical.
 
-So when a section has multiple products (e.g. SELL: Raha then Jogoo), only Jogoo gets a header. Raha's transactions sit headerless under the section banner.
+The BUY branch is fine because it uses `padL(shortRef, 6)` (line 2541), which preserves all 5 chars of the short ref.
 
-### Fix
-Print the product label **before the first transaction of every product group** (when `showProductDividers === true`), not just on transitions. Logic becomes: "show label whenever the current product differs from the previous product, treating `undefined` previous as different".
+The on-screen `DeviceZReportReceipt.tsx` and `pdfExport.ts` already allocate ≥5 chars for REF, so they are not affected. Only the thermal print output is broken.
 
-Apply the same one-line change in both files:
-- `src/services/bluetooth.ts` — change `if (showProductDividers && prevProductCode !== undefined && prevProductCode !== ...)` to `if (showProductDividers && prevProductCode !== (tx.product_code || ''))`.
-- `src/components/DeviceZReportReceipt.tsx` — change `showItemSeparator` to `showProductDividers && (!prevTx || prevTx.product_code !== tx.product_code)`. For the very first row of the section, suppress the top dotted border so it doesn't sit awkwardly directly under the column header — only render the centered product label.
+## Fix
 
-No changes to single-product sections (still suppressed by `distinctProducts > 1`). No changes to subtotals, grand totals, or column widths.
+Widen the SELL/AI REF column from 4 → 5 characters in `src/services/bluetooth.ts`, keeping the total row width at 32 by trimming MNO from 8 → 7 (max real MNO width is 6, e.g. `M00012`, so 7 is still safe).
 
-## Issue 2: Farmer Sync — offline route filter ignores transaction route
+New SELL/AI column spec:
 
-### Root cause
-`src/components/FarmerSyncDashboard.tsx` `loadFromOfflineCache` (~lines 184–270):
+```text
+MNO(7) REF(5) QTY(4 R) KSh(7 R) TIME(5 R)
+total: 7+1+5+1+4+1+7+1+5 = 32 ✓
+```
 
-1. Reads **every** record from the `farmer_cumulative` IndexedDB store via `store.getAll()` and builds the farmer set from `r.farmer_id` only.
-2. Filters by route using `meta?.route` from the `cm_members` lookup — but that is the farmer's **home/registration route**, not the route they actually delivered to.
+Apply the change in both places that reference the old widths:
 
-Result: when offline and switching routes, farmers from other factories still appear (their cm_members home route happens to match) and per-factory totals are mixed because the cumulative records for ALL routes are loaded.
+- Header row (~line 2494): `padL('MNO',7) padL('REF',5) padR('QTY',4) padR('KSh',7) padR('TIME',5)`
+- Data row (~lines 2532–2537): `padL(tx.farmer_id,7) padL(shortRef,5) padR(qty,4) padR(ksh,7) padR(time,5)`
+- Update the inline `// SELL/AI: ...` width comments to match the new spec.
 
-The `farmer_cumulative` store is already correctly keyed by `farmer+route+month` (v2.10.73, see `useIndexedDB.ts` `buildCumulativeKey`), so each record carries its own `route` field. We just aren't using it.
+No changes needed to `DeviceZReportReceipt.tsx` (REF column already 5ch) or `pdfExport.ts` (REF column is 8 wide).
 
-### Fix
-In `loadFromOfflineCache`:
+## Versioning + memory
 
-1. When iterating `farmer_cumulative.getAll()` results, capture each row's `route` (already stored as upper-cased route key, falling back to `'ALL'`).
-2. If `activeRoute` is set, **drop any cumulative row whose `route` does not equal the normalized active route key**. Do not fall back to cm_members route for filtering.
-3. For unsynced receipts, keep the existing route filter on `r.route` (already normalized via `.trim().toUpperCase()` consistently).
-4. Build the union set from the route-filtered cumulative rows + route-filtered unsynced receipts only.
-5. Remove the cm_members-route-based exclusion (`farmerRoute !== cleanActiveRoute`) — it was the wrong source. Keep cm_members lookup only for display name/route label.
-6. When `activeRoute` is empty (no active session), keep current behaviour (show all).
+- Bump `APP_VERSION` to `2.10.76`, `APP_VERSION_CODE` to `98` (in `src/constants/appVersion.ts` and `android/app/build.gradle`), and the service worker cache to `v23` in `public/sw.js` — per workspace versioning rule.
+- Update memory `mem://design/z-report-column-alignment` to record the corrected SELL/AI width spec (REF=5, MNO=7) so a future edit doesn't reintroduce the truncation.
 
-Also tighten the dashboard description to clarify the data is scoped to the selected route when offline (already partially in place).
+## Files to change
 
-No changes to the online path (`loadFromBatchAPI`) — backend already filters by route.
-
-## Version bump
-
-- `src/constants/appVersion.ts` → `2.10.75`, code `97`.
-- `android/app/build.gradle` → `versionCode 97`, `versionName "2.10.75"`.
-- `public/sw.js` → cache `v22`.
-
-## Memory updates
-
-- Update `mem://features/cumulative-route-scoping` to record the offline dashboard fix (filter by stored cumulative `route` key, never by cm_members home route).
-- Add `mem://design/z-report-product-header-rule` — "When section has >1 product, every product group must show its label header, including the first."
-
-## Files to edit
-
-- `src/services/bluetooth.ts`
-- `src/components/DeviceZReportReceipt.tsx`
-- `src/components/FarmerSyncDashboard.tsx`
+- `src/services/bluetooth.ts` (header + data row + comments in the SELL/AI branch only)
 - `src/constants/appVersion.ts`
 - `android/app/build.gradle`
 - `public/sw.js`
-- `mem://features/cumulative-route-scoping.md`
-- `mem://design/z-report-product-header-rule.md`
-- `mem://index.md`
+- `mem://design/z-report-column-alignment.md`
 
-## Out of scope (preserved)
+## What this does NOT change
 
-- Backend (`server.js`) untouched — production safety.
-- Online sync logic, cumulative cache schema, transaction sync engine — unchanged.
-- Z-report column widths, totals, section banners — unchanged.
+- BUY section formatting (already correct).
+- On-screen Z-report (`DeviceZReportReceipt.tsx`) — REF already shows 5 chars.
+- PDF export — REF already shows 5 chars.
+- Reference generator, transaction creation, sync, IndexedDB schema, or any backend API.
