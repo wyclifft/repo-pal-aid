@@ -2489,9 +2489,13 @@ export const printZReport = async (data: {
 
     // Column headers — generated from the SAME widths as the data rows below.
     if (showMoney) {
-      // SELL/AI: MNO(8) REF(5) QTY(4 R) KSh(7 R) TIME(5 R)
-      // total: 8+1+5+1+4+1+7+1+5 = 33 → tighten REF to 4 → 8+1+4+1+4+1+7+1+5 = 32
-      receipt += `${padL('MNO',8)} ${padL('REF',4)} ${padR('QTY',4)} ${padR('KSh',7)} ${padR('TIME',5)}\n`;
+      // SELL/AI: MNO(7) REF(5) QTY(4 R) KSh(7 R) TIME(5 R)
+      // v2.10.76: REF widened 4→5 so the last digit of shortRef (slice(-5)) is
+      // no longer truncated — distinct SELL refs were rendering identical
+      // (e.g. 02981/02982/02983 all printed as "0298"). MNO trimmed 8→7 to
+      // keep the row at 32 chars (real MNO max is 6, e.g. M00012).
+      // total: 7+1+5+1+4+1+7+1+5 = 32 ✓
+      receipt += `${padL('MNO',7)} ${padL('REF',5)} ${padR('QTY',4)} ${padR('KSh',7)} ${padR('TIME',5)}\n`;
     } else {
       // BUY: MNO(9) REF(6) AMOUNT(8 R) TIME(6 R) = 32
       receipt += `${padL('MNO',9)} ${padL('REF',6)} ${padR('AMOUNT',8)} ${padR('TIME',6)}\n`;
@@ -2529,8 +2533,9 @@ export const printZReport = async (data: {
         // SELL/AI: QTY rendered as INTEGER ITEMS (never KGS).
         const qtyInt = Math.max(0, Math.round(tx.weight || 0));
         sellAiItemCount += qtyInt;
-        const mno = padL(tx.farmer_id || '', 8);
-        const ref = padL(shortRef, 4);
+        // v2.10.76: widths must match the SELL/AI header above (MNO=7, REF=5).
+        const mno = padL(tx.farmer_id || '', 7);
+        const ref = padL(shortRef, 5);
         const qty = padR(String(qtyInt), 4);
         const ksh = padR(Number(tx.amount || 0).toFixed(0), 7);
         const tim = padR(time, 5);
