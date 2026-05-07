@@ -492,5 +492,17 @@
 //       used only for display name/route label lookup, never for filtering.
 //   No backend, no IndexedDB schema, no sync engine, no reference generator,
 //   no auth/login/photo/Z-Report-summary-screen changes. Capacitor-safe.
-export const APP_VERSION = '2.10.76';
-export const APP_VERSION_CODE = 98;
+// v2.10.77: PERSISTENT DEBUG CONSOLE — new in-app log viewer at /debug.
+//   Captures console.{log,info,warn,error} + window errors + unhandled
+//   rejections into a SEPARATE IndexedDB database (`delicoopDebugLogs`,
+//   isolated from milkCollectionDB so production data is untouched). Ring
+//   buffer of 5000 entries, batched 1s flushes, secrets redacted (Bearer
+//   tokens, password fields). Survives logout, app restart, force-stop.
+//   Settings → "Open Debug Console" → filter by level/time, copy, export
+//   to Documents/ (Capacitor Filesystem) or browser download. No backend,
+//   no schema change to milkCollectionDB, no sync/reference/receipt
+//   changes. Files: src/utils/persistentLogger.ts (new),
+//   src/pages/DebugConsole.tsx (new), src/main.tsx (install at boot),
+//   src/App.tsx (route), src/pages/Settings.tsx (entry).
+export const APP_VERSION = '2.10.77';
+export const APP_VERSION_CODE = 99;
