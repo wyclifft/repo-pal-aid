@@ -2,7 +2,10 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 12; // v2.10.73: farmer_cumulative cache keyed by farmer+route+month for per-factory isolation
+// v2.10.78: bumped to 14 to recover devices stuck on pre-existing v13 (from
+// stale builds) that triggered VersionError. Schema is unchanged from v12 —
+// onupgradeneeded is fully idempotent so jumping multiple versions is safe.
+const DB_VERSION = 14;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -191,7 +194,26 @@ export const useIndexedDB = () => {
     };
 
     request.onerror = (event) => {
-      console.error('[DB] IndexedDB error:', (event.target as IDBOpenDBRequest).error);
+      const err = (event.target as IDBOpenDBRequest).error;
+      const isVersionError = err?.name === 'VersionError';
+      // v2.10.78: throttle the noisy error and try a single recovery
+      console.error('[DB] IndexedDB open error:', err?.name, err?.message);
+      if (isVersionError) {
+        const recoveredFlag = '__db_recovery_attempted_v2_10_78';
+        let already = false;
+        try { already = sessionStorage.getItem(recoveredFlag) === '1'; } catch { /* ignore */ }
+        if (!already) {
+          try { sessionStorage.setItem(recoveredFlag, '1'); } catch { /* ignore */ }
+          console.warn('[DB][VERSION_ERROR] Existing DB version is ahead — deleting and recreating once');
+          clearDatabase().then(() => {
+            setTimeout(() => openDatabase(), 150);
+          }).catch((dErr) => {
+            console.error('[DB] Recovery delete failed:', dErr);
+            setSchemaError(true);
+          });
+          return;
+        }
+      }
       setSchemaError(true);
     };
 
