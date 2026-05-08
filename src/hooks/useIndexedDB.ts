@@ -1008,10 +1008,19 @@ export const useIndexedDB = () => {
     const cached = await getFarmerCumulative(farmerId, routeFilter);
     const baseCount = cached?.baseCount || 0;
     const baseProd = cached?.byProduct || [];
+    const highWater = Number((cached as any)?.highWaterTotal || 0);
     // Always recalculate from actual unsynced receipts instead of using cached localCount
     const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter);
-    const total = baseCount + unsynced.total;
-    
+    let total = baseCount + unsynced.total;
+
+    // v2.10.78: monotonic guard — never report a total below the high-water mark
+    // (high-water already includes unsynced impact via prior queue stores).
+    let usedHighWater = false;
+    if (total < highWater && highWater > 0) {
+      usedHighWater = true;
+      total = highWater;
+    }
+
     // Merge by-product: base + unsynced (normalize icode keys to prevent fragmentation)
     const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
     for (const p of baseProd) {
@@ -1026,6 +1035,10 @@ export const useIndexedDB = () => {
         merged[key] = { ...p, icode: key };
       }
     }
+    try {
+      const cleanId = String(farmerId).replace(/^#/, '').trim();
+      console.log(`[CUM][VALIDATE] farmer=${cleanId} route=${(routeFilter || '').trim().toUpperCase() || 'ALL'} base=${baseCount} unsynced=${unsynced.total} hwm=${highWater} total=${total}${usedHighWater ? ' (clamped)' : ''}`);
+    } catch { /* ignore */ }
     return { total, byProduct: Object.values(merged) };
   }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
 
