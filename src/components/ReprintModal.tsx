@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import type { MilkCollection } from '@/lib/supabase';
@@ -544,6 +544,7 @@ export const ReprintModal = ({
               </button>
             </div>
           </DialogTitle>
+          <DialogDescription className="sr-only">Browse and reprint recent receipts.</DialogDescription>
         </DialogHeader>
 
         {/* Tabs for Recent / Search */}

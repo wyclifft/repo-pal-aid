@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Printer, RefreshCw, Signal, Check, Loader2, WifiOff, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { 
@@ -214,6 +214,7 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
             <Printer className="h-5 w-5" />
             Select Bluetooth Printer
           </DialogTitle>
+          <DialogDescription className="sr-only">Scan and pair a Bluetooth thermal printer.</DialogDescription>
         </DialogHeader>
         
         <div className="space-y-4">

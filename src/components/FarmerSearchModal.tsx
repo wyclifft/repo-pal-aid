@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Search } from 'lucide-react';
 import { type Farmer } from '@/lib/supabase';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 
 interface FarmerSearchModalProps {
   isOpen: boolean;
@@ -77,6 +77,7 @@ export const FarmerSearchModal = ({
       <DialogContent className="max-w-md max-h-[80vh] flex flex-col p-0 gap-0">
         <DialogHeader className="p-4 pb-2 border-b">
           <DialogTitle className="text-lg font-semibold">Select Farmer</DialogTitle>
+          <DialogDescription className="sr-only">Search and select a farmer by ID or name.</DialogDescription>
         </DialogHeader>
         
         {/* Search Input */}

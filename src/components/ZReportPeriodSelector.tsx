@@ -8,7 +8,7 @@
  */
 
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
@@ -83,6 +83,7 @@ export const ZReportPeriodSelector = ({
             <Printer className="h-5 w-5" />
             Select Z Report Period
           </DialogTitle>
+          <DialogDescription className="sr-only">Choose which session's Z report to print.</DialogDescription>
         </DialogHeader>
 
         <div className="py-4">
