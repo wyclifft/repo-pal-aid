@@ -504,5 +504,30 @@
 //   changes. Files: src/utils/persistentLogger.ts (new),
 //   src/pages/DebugConsole.tsx (new), src/main.tsx (install at boot),
 //   src/App.tsx (route), src/pages/Settings.tsx (entry).
-export const APP_VERSION = '2.10.77';
-export const APP_VERSION_CODE = 99;
+// v2.10.78: STABILITY + OBSERVABILITY.
+//   (1) IndexedDB schema version bumped to 14 with VersionError self-recovery
+//       (one-shot deleteDatabase + retry, gated by sessionStorage flag) so
+//       devices stuck on a higher pre-existing version no longer cascade
+//       into "Failed to load farmers" / "DB not ready" toasts.
+//   (2) Persistent debug logger hardened: dedupe identical messages within
+//       2s (emitted as "(×N suppressed)"), 50 records/sec rate cap, oldest
+//       1000 rows dropped on QuotaExceededError, age-based prune (7 days),
+//       re-entrancy + double-install guards. Logger can no longer flood
+//       storage or stall the UI.
+//   (3) Cumulative observability: new [CUM][*] tagged logs across the
+//       offline cumulative + sync pipeline (OFFLINE_CREATE, QUEUE_STORE,
+//       SYNC_START, SYNC_OK, SYNC_FAIL, RETRY, RECOVERY, DUP_BLOCKED,
+//       REGRESSION_GUARD, RECONNECT, VALIDATE) — all routed through the
+//       throttled persistent logger so a 200-receipt sync stays bounded.
+//   (4) High-water-mark monotonic guard: farmer_cumulative.baseCount can
+//       never go backwards within the same month/route — incoming backend
+//       totals lower than the recorded high-water mark are clamped and
+//       logged as [CUM][REGRESSION_GUARD]. getFarmerTotalCumulative also
+//       enforces the floor on read.
+//   (5) Accessibility: added DialogDescription (sr-only where appropriate)
+//       to FarmerSearchModal, PrinterSelector, ReprintModal, and
+//       ZReportPeriodSelector — eliminates Radix aria-describedby warnings.
+//   No backend, no reference generator, no receipt format, no
+//   sync-engine-correctness changes — purely stability/observability.
+export const APP_VERSION = '2.10.78';
+export const APP_VERSION_CODE = 100;

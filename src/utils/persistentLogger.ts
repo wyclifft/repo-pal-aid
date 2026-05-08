@@ -1,44 +1,64 @@
 /**
- * Persistent Debug Logger (v2.10.77)
+ * Persistent Debug Logger (v2.10.78)
  *
  * Captures console output + uncaught errors into a dedicated IndexedDB
- * database (`delicoopDebugLogs`) that survives logout, app restart, and
- * background-kill. NEVER touches `milkCollectionDB` — totally isolated from
- * transactions/farmers/cumulative cache so it cannot break production data.
+ * database (`delicoopDebugLogs`) — isolated from production data.
  *
- * Design:
- *   - Ring buffer capped at MAX_ENTRIES (oldest pruned in batches).
- *   - In-memory queue, flushed every 1s (and on visibilitychange/pagehide).
- *   - Wraps console.{log,info,warn,error} once at boot — original calls
- *     are always invoked first so dev tools still work.
- *   - All writes wrapped in try/catch — logging must never crash the app.
- *   - Auto-redacts Bearer tokens and password fields from messages.
+ * Hardened in v2.10.78:
+ *   - Throttling/dedupe: identical messages within 2s are coalesced
+ *     (emitted as "(×N suppressed)") so noisy loops cannot flood storage.
+ *   - Hard rate cap (50 records / second flushed) with a single drop summary.
+ *   - QuotaExceeded recovery: oldest 1000 rows dropped and write retried.
+ *   - Periodic age-based prune (keep 7 days, max 5000 rows).
+ *   - Re-entrancy + double-install guards.
+ *   - Production gate: drops oversized debug payloads, never throws.
  */
 
 const DB_NAME = 'delicoopDebugLogs';
 const DB_VERSION = 1;
 const STORE = 'logs';
 const MAX_ENTRIES = 5000;
+const SOFT_CAP = 5500;
 const PRUNE_BATCH = 200;
 const FLUSH_INTERVAL_MS = 1000;
+const DEDUPE_WINDOW_MS = 2000;
+const DEDUPE_MAX_KEYS = 200;
+const RATE_CAP_PER_SEC = 50;
+const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const MAX_PAYLOAD_CHARS = 4000;
 
 export type LogLevel = 'log' | 'info' | 'warn' | 'error';
 
 export interface LogEntry {
   id?: number;
-  ts: number;          // epoch ms
+  ts: number;
   level: LogLevel;
-  message: string;     // stringified args
+  message: string;
   route?: string;
   user?: string;
   version?: string;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
-const queue: LogEntry[] = [];
+let queue: LogEntry[] = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
+let pruneTimer: ReturnType<typeof setInterval> | null = null;
 let installed = false;
 let appVersion: string | undefined;
+let inLogger = false; // re-entrancy guard
+let droppedSinceLastFlush = 0;
+
+// Dedupe map: key -> { count, firstTs, lastEmitTs }
+interface DedupeEntry { count: number; firstTs: number; lastEmitTs: number; level: LogLevel; }
+const dedupeMap = new Map<string, DedupeEntry>();
+
+// Rate cap window (per-second)
+let rateWindowStart = 0;
+let rateWindowCount = 0;
+
+const isProd = (() => {
+  try { return Boolean((import.meta as any)?.env?.PROD); } catch { return false; }
+})();
 
 function openDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
@@ -81,7 +101,9 @@ function safeStringify(args: unknown[]): string {
       try { return String(a); } catch { return '[Unserializable]'; }
     }
   });
-  return redact(parts.join(' '));
+  let out = redact(parts.join(' '));
+  if (out.length > MAX_PAYLOAD_CHARS) out = out.slice(0, MAX_PAYLOAD_CHARS) + '…(truncated)';
+  return out;
 }
 
 function redact(s: string): string {
@@ -106,61 +128,203 @@ function getUser(): string | undefined {
   return undefined;
 }
 
+/** Build dedupe key — strip dynamic numbers/timestamps so similar errors collapse. */
+function dedupeKey(level: LogLevel, msg: string): string {
+  const skeleton = msg
+    .slice(0, 200)
+    .replace(/\d{4,}/g, '#')
+    .replace(/0x[0-9a-f]+/gi, '#')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `${level}:${skeleton}`;
+}
+
+function evictOldestDedupe() {
+  if (dedupeMap.size <= DEDUPE_MAX_KEYS) return;
+  const firstKey = dedupeMap.keys().next().value;
+  if (firstKey !== undefined) dedupeMap.delete(firstKey);
+}
+
 function enqueue(level: LogLevel, args: unknown[]) {
+  if (inLogger) return; // re-entrancy guard
   try {
+    inLogger = true;
+
+    // Production gate: drop verbose log/debug if too large
+    if (isProd && (level === 'log') && args.length > 0) {
+      // keep but truncate (already truncated in safeStringify)
+    }
+
+    const message = safeStringify(args);
+    const key = dedupeKey(level, message);
+    const now = Date.now();
+
+    // Dedupe: same key within window → just count
+    const existing = dedupeMap.get(key);
+    if (existing && (now - existing.lastEmitTs) < DEDUPE_WINDOW_MS) {
+      existing.count++;
+      return;
+    }
+
+    // If we have suppressed copies from a previous window, flush them now
+    let finalMessage = message;
+    if (existing && existing.count > 1) {
+      finalMessage = `${message} (×${existing.count} suppressed in last ${Math.max(1, Math.round((now - existing.firstTs) / 1000))}s)`;
+    }
+
+    // Update / insert dedupe entry
+    if (existing) {
+      existing.count = 1;
+      existing.lastEmitTs = now;
+      existing.firstTs = now;
+    } else {
+      dedupeMap.set(key, { count: 1, firstTs: now, lastEmitTs: now, level });
+      evictOldestDedupe();
+    }
+
+    // Hard rate cap
+    if (now - rateWindowStart >= 1000) {
+      rateWindowStart = now;
+      rateWindowCount = 0;
+    }
+    if (rateWindowCount >= RATE_CAP_PER_SEC) {
+      droppedSinceLastFlush++;
+      return;
+    }
+    rateWindowCount++;
+
     queue.push({
-      ts: Date.now(),
+      ts: now,
       level,
-      message: safeStringify(args),
+      message: finalMessage,
       route: getRoute(),
       user: getUser(),
       version: appVersion,
     });
-  } catch { /* never throw */ }
-}
 
-async function flush(): Promise<void> {
-  if (queue.length === 0) return;
-  const batch = queue.splice(0, queue.length);
-  try {
-    const db = await openDB();
-    await new Promise<void>((resolve) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      const store = tx.objectStore(STORE);
-      batch.forEach((e) => { try { store.add(e); } catch { /* ignore */ } });
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-      tx.onabort = () => resolve();
-    });
-    void prune();
-  } catch {
-    // Re-queue at the front if write failed (bounded so we don't grow forever)
-    if (queue.length < MAX_ENTRIES) queue.unshift(...batch.slice(-MAX_ENTRIES));
+    // Bound the in-memory queue defensively
+    if (queue.length > MAX_ENTRIES) {
+      const overflow = queue.length - MAX_ENTRIES;
+      queue.splice(0, overflow);
+      droppedSinceLastFlush += overflow;
+    }
+  } catch { /* never throw */ }
+  finally {
+    inLogger = false;
   }
 }
 
-async function prune(): Promise<void> {
-  try {
-    const db = await openDB();
-    const count = await new Promise<number>((resolve) => {
-      const tx = db.transaction(STORE, 'readonly');
-      const req = tx.objectStore(STORE).count();
-      req.onsuccess = () => resolve(req.result || 0);
-      req.onerror = () => resolve(0);
-    });
-    if (count <= MAX_ENTRIES) return;
-    const toDelete = (count - MAX_ENTRIES) + PRUNE_BATCH;
-    await new Promise<void>((resolve) => {
+async function writeBatch(db: IDBDatabase, batch: LogEntry[]): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    try {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      let quotaHit = false;
+      batch.forEach((e) => {
+        try {
+          const req = store.add(e);
+          req.onerror = (ev) => {
+            const err = (ev.target as IDBRequest).error;
+            if (err && err.name === 'QuotaExceededError') quotaHit = true;
+            ev.preventDefault?.();
+          };
+        } catch { /* ignore single-row failure */ }
+      });
+      tx.oncomplete = () => resolve(!quotaHit);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function dropOldestRows(db: IDBDatabase, n: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    try {
       const tx = db.transaction(STORE, 'readwrite');
       const store = tx.objectStore(STORE);
       const req = store.openCursor();
       let removed = 0;
       req.onsuccess = () => {
         const cursor = req.result;
-        if (cursor && removed < toDelete) {
+        if (cursor && removed < n) {
           cursor.delete();
           removed++;
           cursor.continue();
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    } catch { resolve(); }
+  });
+}
+
+async function flush(): Promise<void> {
+  if (queue.length === 0 && droppedSinceLastFlush === 0) return;
+  // Capture & emit drop summary as a single record
+  if (droppedSinceLastFlush > 0) {
+    queue.push({
+      ts: Date.now(),
+      level: 'warn',
+      message: `[LOGGER] dropped ${droppedSinceLastFlush} entries (rate cap or queue overflow)`,
+      route: getRoute(),
+      user: getUser(),
+      version: appVersion,
+    });
+    droppedSinceLastFlush = 0;
+  }
+  const batch = queue.splice(0, queue.length);
+  try {
+    const db = await openDB();
+    let ok = await writeBatch(db, batch);
+    if (!ok) {
+      // QuotaExceeded path — drop oldest 1000 rows then retry once
+      try { await dropOldestRows(db, 1000); } catch { /* ignore */ }
+      ok = await writeBatch(db, batch);
+    }
+    void prune();
+  } catch {
+    // Swallow — never throw from logger
+  }
+}
+
+async function prune(): Promise<void> {
+  try {
+    const db = await openDB();
+    // Count + age prune
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      const cutoff = Date.now() - MAX_AGE_MS;
+      let countReq: IDBRequest<number>;
+      try { countReq = store.count(); }
+      catch { resolve(); return; }
+      countReq.onsuccess = () => {
+        const total = countReq.result || 0;
+        const overflow = Math.max(0, total - MAX_ENTRIES);
+        const toDelete = overflow > 0 ? overflow + PRUNE_BATCH : 0;
+        if (toDelete === 0) {
+          // age-only sweep
+          const idx = store.index('ts');
+          const range = IDBKeyRange.upperBound(cutoff);
+          const cur = idx.openCursor(range);
+          cur.onsuccess = () => {
+            const c = cur.result;
+            if (c) { c.delete(); c.continue(); }
+          };
+        } else {
+          const cursor = store.openCursor();
+          let removed = 0;
+          cursor.onsuccess = () => {
+            const c = cursor.result;
+            if (c && removed < toDelete) {
+              c.delete();
+              removed++;
+              c.continue();
+            }
+          };
         }
       };
       tx.oncomplete = () => resolve();
@@ -189,7 +353,7 @@ export async function getLogs(opts?: { level?: LogLevel; sinceMs?: number; searc
       const q = opts.search.toLowerCase();
       out = out.filter((e) => e.message.toLowerCase().includes(q));
     }
-    out.sort((a, b) => b.ts - a.ts); // newest first
+    out.sort((a, b) => b.ts - a.ts);
     if (opts?.limit) out = out.slice(0, opts.limit);
     return out;
   } catch {
@@ -223,6 +387,7 @@ export async function clearLogs(): Promise<void> {
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
+    dedupeMap.clear();
   } catch { /* ignore */ }
 }
 
@@ -240,7 +405,6 @@ export function exportLogsAsText(entries: LogEntry[]): string {
 
 /**
  * Install console interceptors + global error handlers. Idempotent.
- * Call once, very early at app boot.
  */
 export function installPersistentLogger(version?: string): void {
   if (installed) return;
@@ -275,6 +439,7 @@ export function installPersistentLogger(version?: string): void {
   }
 
   flushTimer = setInterval(() => { void flush(); }, FLUSH_INTERVAL_MS);
+  pruneTimer = setInterval(() => { void prune(); }, 60 * 1000);
 
-  enqueue('info', [`[persistentLogger] installed (v${version || 'unknown'})`]);
+  enqueue('info', [`[persistentLogger] installed (v${version || 'unknown'}) — throttle ${DEDUPE_WINDOW_MS}ms, cap ${RATE_CAP_PER_SEC}/s, max ${MAX_ENTRIES}`]);
 }

@@ -14,6 +14,7 @@ const initOnlineListener = () => {
   if (typeof window !== 'undefined' && !onlineListenerAttached) {
     const handleOnline = () => {
       console.log('[ONLINE] App back online - triggering sync handlers');
+      console.log(`[CUM][RECONNECT] online=true handlers=${onlineHandlers.size}`);
       // Small delay to ensure network is stable
       setTimeout(() => {
         onlineHandlers.forEach(handler => {
