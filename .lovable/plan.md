@@ -1,120 +1,93 @@
-## Goal
+## v2.10.78 — Stability fixes + cumulative sync observability
 
-Give the operator/support a built-in **debug console** inside the Capacitor app that:
-- Captures every `console.log / warn / error` plus app-emitted events.
-- **Persists across logout, app restart, and reinstall-resistant cache clears** (uses IndexedDB primary + native SQLCipher backup, mirroring the existing dual-write pattern used for transactions).
-- Can be viewed, filtered, and exported from a hidden Settings page.
-- Has bounded size so it never bloats the device.
+### 1. IndexedDB version conflict (root cause of all "DB not ready" + farmer load failures)
 
-## Why this is needed
+`src/hooks/useIndexedDB.ts` declares `DB_VERSION = 12`. Some installed clients already hold version 13 (from a stale build), so `indexedDB.open(DB_NAME, 12)` throws `VersionError: requested 12 < existing 13`. That single failure cascades into "Failed to load farmers", "DB not ready", and many other "[DB] IndexedDB error" lines.
 
-Today the only way to see what went wrong on a production tablet is to attach a USB cable and read `adb logcat`, which loses everything once the app is killed. Operators report bugs hours after they happen — by then the in-memory `console` history is gone and they've already logged out.
+Fix:
+- Bump `DB_VERSION` to **14** in `src/hooks/useIndexedDB.ts` (always one step ahead of any value seen in the wild). Update the comment.
+- Make `onupgradeneeded` idempotent: re‑check `objectStoreNames.contains(...)` for **every** store before creating, so jumping multiple versions never throws.
+- In the `request.onerror` path, detect `VersionError` specifically and:
+  - Log once with `[DB][VERSION_ERROR]` (throttled — see §3).
+  - Call `indexedDB.deleteDatabase(DB_NAME)` only as a last resort after a single retry (gated behind a `__db_recovery_attempted` flag in sessionStorage so we never loop).
+  - Reject with a typed `DBNotReadyError` so callers can show a friendly retry instead of console‑spamming.
 
-There is a Kotlin-side `DatabaseLogger` (encrypted SQLite, table `app_logs`) used only by native code. We will add a parallel **JS-side persistent log buffer** that operators can view, and bridge it to the existing native logger so a single export contains both worlds.
+### 2. Dialog accessibility warnings
 
-## Design
+Radix logs `Missing Description or aria-describedby={undefined} for {DialogContent}` whenever a `<DialogContent>` has no `<DialogDescription>` and no explicit `aria-describedby`.
 
-### 1. Persistent log store (`src/utils/persistentLogger.ts` — new)
+Fix — add a `<DialogDescription>` (or `aria-describedby={undefined}` suppression with a visually‑hidden description) to each offender:
+- `src/components/BluetoothConnectionDialog.tsx`
+- `src/components/FarmerSearchModal.tsx`
+- `src/components/CowDetailsModal.tsx`
+- `src/components/SessionExpiredDialog.tsx`
+- `src/components/AddMemberModal.tsx`
+- `src/components/PrinterSelector.tsx`
+- `src/components/DuplicateDeliveryDialog.tsx`
+- `src/components/ReprintModal.tsx`
+- `src/components/PhotoCapture.tsx` (skip camera logic per request, just add the description)
+- `src/components/PhotoAuditViewer.tsx`
+- `src/components/ZReportPeriodSelector.tsx`
+- `src/pages/AIPage.tsx`, `src/pages/Store.tsx`
 
-- New IndexedDB object store `app_logs` (added to existing `milkCollectionDB`, schema v12 → v13). Key: auto-increment. Indexed by `timestamp` and `level`.
-- Ring buffer: **max 5000 entries** (≈1–2 MB). On insert, if count > 5000, oldest 100 are pruned in one transaction.
-- Record shape:
-  ```ts
-  { id, timestamp, level: 'log'|'info'|'warn'|'error', tag?, message, data?, user?, route?, version }
-  ```
-- Writes are **batched** (queued in memory, flushed every 1 s or on `beforeunload` / `pagehide` / `visibilitychange:hidden` / `pause` Capacitor event) so logging never blocks the UI thread (workspace performance rule).
-- Survives logout because `clear()` is never called on logout — only the `app_users` and session caches are touched. Survives app restart because IndexedDB is persistent.
+Use a short, descriptive sentence per dialog; keep them visible where it makes sense, otherwise use the `sr-only` class.
 
-### 2. Console interception (one-time, on app boot)
+### 3. Logging system hardening (`src/utils/persistentLogger.ts`)
 
-In `src/main.tsx` (very early), wrap `console.log/info/warn/error` so each call:
-1. Calls the original (so dev tools still see it).
-2. Pushes a record onto the persistentLogger queue with the current `level`, the call's args (JSON-stringified safely with circular handling), and metadata: appVersion, current route, current `userId` from localStorage (if any).
+Today every `console.*` call writes to IndexedDB. A noisy loop (e.g. the VersionError above firing 12× at boot) floods storage and stalls the UI. Hardening:
 
-Also capture:
-- `window.addEventListener('error', …)` — uncaught errors with stack.
-- `window.addEventListener('unhandledrejection', …)` — promise rejections.
+- **Throttling / dedupe**: keep a small `Map<key, {count, lastWrittenAt}>` where `key = level + ':' + truncatedMessage`. If the same key fires within 2 s, increment `count` and write nothing. On the next allowed write, append `(×N suppressed)` to the message. Cap key map at 200 entries (LRU).
+- **Hard rate cap**: max 50 records flushed per second; excess is dropped with a single `[LOGGER] dropped N entries` summary.
+- **Ring buffer**: enforce `MAX_LOGS = 5000` with periodic `pruneLogs()` every 60 s and on each flush when over 5500. Also trim by age (keep last 7 days).
+- **Quota safety**: wrap every `IDBObjectStore.add/put` in `try/catch`; on `QuotaExceededError`, drop the oldest 1000 rows and retry once. Never throw out of the logger.
+- **Production gate**: in production builds (`import.meta.env.PROD`), only persist `info | warn | error` and drop verbose `debug`/`log` payloads larger than 4 KB (truncate with `…(truncated)`).
+- **Boot guard**: if `installPersistentLogger` is called twice (HMR / StrictMode double‑invoke), no‑op the second call.
+- **Re‑entrancy guard**: when the logger itself logs, bypass the interceptor so we can't recurse.
 
-### 3. Native bridge (Capacitor only — optional but recommended)
+### 4. Detailed cumulative / offline sync observability
 
-Extend the existing `OfflineStoragePlugin` (Kotlin) with one new method `appendLog({level, tag, message})` that writes through `DatabaseLogger.log(...)` into the encrypted `app_logs` SQLite table. The JS persistentLogger calls this in addition to its IndexedDB write, mirroring the dual-write pattern memorialised in `mem://architecture/native-sqlite-dual-write-backup`. This way logs survive even if the user clears Chrome WebView storage from Android settings.
+Add a single tagged channel `[CUM]` (subtags in brackets) emitted via `logger.info/warn/error` so they land in the persistent debug console. No business logic changes — pure instrumentation, plus the existing high‑water guard already shipped in v2.10.77.
 
-### 4. Log Viewer UI (`src/pages/DebugConsole.tsx` — new, route `/debug`)
+Touch points and tags:
 
-- Hidden route — reachable from Settings → "Debug Console" (already a tappable area we can wire up). No public link.
-- Table view: timestamp · level (colored badge) · tag · message. Click a row to expand `data` JSON.
-- **Filters**: level (multi-select), text search, time range (last 5 min / 1 h / 24 h / all), tag.
-- **Toolbar**: Pause/Resume tail mode, Clear (with confirm), Copy to clipboard, **Export .txt** (writes to `/storage/emulated/0/Download/delicoop-logs-YYYYMMDD-HHMM.txt` on Capacitor via existing file-export utility, or browser download on web), Share (Capacitor Share API).
-- Shows count + storage size at the bottom; a "compact" button drops everything older than X.
-- Auto-scroll-to-bottom unless the user has scrolled up (tail mode).
+| File | Where | Tag |
+|------|-------|-----|
+| `src/hooks/useIndexedDB.ts` `addReceipt` (offline save) | after insert | `[CUM][OFFLINE_CREATE]` farmerId, route, weight, icode, transrefno |
+| `src/hooks/useIndexedDB.ts` `updateFarmerCumulative(false,…)` | local increment | `[CUM][QUEUE_STORE]` farmerId, route, localCount, baseCount |
+| `src/hooks/useDataSync.ts` start of upload loop | per receipt | `[CUM][SYNC_START]` transrefno, attempt# |
+| `src/hooks/useDataSync.ts` after POST 2xx | success branch | `[CUM][SYNC_OK]` transrefno, serverRef |
+| `src/hooks/useDataSync.ts` POST non‑2xx / network fail | catch | `[CUM][SYNC_FAIL]` transrefno, status, attempt#, willRetry |
+| backoff scheduler | each retry | `[CUM][RETRY]` transrefno, nextDelayMs |
+| failed sync recovery (start of next online cycle) | rehydrate queue | `[CUM][RECOVERY]` pendingCount |
+| backend duplicate (REFERENCE_COLLISION) | catch | `[CUM][DUP_BLOCKED]` transrefno, serverMsg |
+| `useIndexedDB.updateFarmerCumulative(true,…)` regression guard | when clamping | `[CUM][REGRESSION_GUARD]` farmerId, incoming, highWater (already memorised rule) |
+| online listener | on `online` event | `[CUM][RECONNECT]` queueSize → triggers sync |
+| post‑sync verification (`getFarmerTotalCumulative`) | after each batch | `[CUM][VALIDATE]` farmerId, base, local, total, highWater |
 
-### 5. Settings entry
+Rules to keep production safe:
+- All logs go through the throttled logger from §3, so a 200‑receipt sync won't blow the buffer.
+- Never `JSON.stringify` full receipt objects — log only the small field set above.
+- Wrap every emit in `try/catch`.
 
-In `src/pages/Settings.tsx`, add a "Debug & Diagnostics" card with:
-- "View console logs" → routes to `/debug`.
-- "Export last 24h logs" → one-tap export.
-- A small badge showing error count in the last hour (so support can ask "do you have any red badges?").
+### 5. Version bump
 
-### 6. What gets logged automatically
+- `src/constants/appVersion.ts` → `2.10.78`
+- `android/app/build.gradle` → versionCode `100`, versionName `2.10.78`
+- `public/sw.js` → cache `v25`
 
-Beyond raw `console.*`:
-- App boot: version, deviceFingerprint, devcode, ccode (no secrets).
-- Login success/failure (no password).
-- Sync engine start/stop + per-batch outcome (counts only).
-- Reference collisions (already logged via `console.warn`, will now persist).
-- Cumulative regression-guard hits (if/when you add the monotonic guard).
-- Bluetooth print attempts and results.
-- Any `[ERROR]` or `[WARN]` tagged scoped-logger output.
+### 6. Memory updates
 
-### 7. Privacy & size guards
+- New: `mem://features/cumulative-sync-observability` — list of `[CUM][*]` tags and where they fire.
+- New: `mem://architecture/persistent-logger-throttling` — dedupe + rate cap + quota recovery rules.
+- Update `mem://index.md` references.
 
-- Never log: passwords, SHA-256 hashes, full JWT, PII beyond farmer ID + member number.
-- Auto-redact: any string matching `/Bearer\s+[A-Za-z0-9._-]+/`, `/password["':\s]+[^,}\s]+/i`.
-- Hard cap: 5000 entries OR 2 MB, whichever first.
-- On `mem-low` Capacitor event (Android), trigger an extra prune.
+### Out of scope (per user)
+- Camera-related warnings/errors are intentionally left untouched.
+- No change to receipt creation, reference generator, printing, or backend endpoints.
 
-### 8. Backward compatibility & safety
-
-- IndexedDB schema bump v12 → v13 only **adds** the `app_logs` store (no destructive migration). Existing receipts, farmer_cumulative, members are untouched.
-- The console interceptor only runs on the client; SSR/build are unaffected.
-- If IndexedDB is not ready yet, the queue holds records in memory until flush.
-- All persistent writes are wrapped in try/catch — logging must never crash the app.
-- Web build behaves identically minus the native SQLite mirror.
-
-### 9. Versioning + memory
-
-- Bump `APP_VERSION` to `2.10.77`, `APP_VERSION_CODE` to `99`, SW cache `v24` per workspace rule.
-- New memory `mem://features/persistent-debug-console` capturing: store name, ring-buffer size, redaction rules, dual-write requirement.
-- Update `mem://index.md` to reference it.
-
-## Files to add / change
-
-**New:**
-- `src/utils/persistentLogger.ts` — IndexedDB-backed buffered logger + console interceptor wiring.
-- `src/pages/DebugConsole.tsx` — viewer UI (filters, export, share).
-- `mem://features/persistent-debug-console.md`
-
-**Modified:**
-- `src/hooks/useIndexedDB.ts` — add `app_logs` object store at version 13; expose `appendLog`, `getLogs`, `clearLogs`, `pruneLogs`.
-- `src/main.tsx` — install console interceptor + global error/unhandledrejection listeners as the very first import.
-- `src/pages/Settings.tsx` — add Debug & Diagnostics card linking to `/debug`.
-- `src/App.tsx` — register `/debug` route.
-- `android/app/src/main/java/app/delicoop101/storage/OfflineStoragePlugin.kt` — add `appendLog` Capacitor method that delegates to `DatabaseLogger.log(...)`.
-- `src/services/offlineStorage.ts` — typed wrapper for the new native method.
-- `src/constants/appVersion.ts`, `android/app/build.gradle`, `public/sw.js` — version bumps.
-- `mem://index.md` — add reference.
-
-## What this does NOT change
-
-- Reference generator, sync engine, transaction creation, Z-Report, photo upload, RLS, backend API, login flow — all untouched.
-- No change to existing `farmer_cumulative` schema or behaviour.
-- Android `app.delicoop101` ID, Capacitor build, Bluetooth pipeline — untouched.
-- Existing `src/utils/logger.ts` keeps working unchanged; the new persistent layer wraps `console.*` underneath it.
-
-## Acceptance check
-
-1. Trigger a few captures, sync errors, and a forced exception. Logout, restart the app, log back in, open `/debug` → all events are still there with timestamps.
-2. Export → a `.txt` file lands in Downloads on the Android tablet.
-3. Force-stop the app, reopen → logs still present.
-4. Fill past 5000 entries → oldest pruned, newest preserved, no crash.
-5. Verify no password or token strings appear in any exported log.
+### Acceptance
+- Reload app → no `VersionError`, farmers load, no `DB not ready` toast.
+- Trigger a known noisy warning 50× → only the first appears, followed by a `(×N suppressed)` summary; storage row count stays bounded.
+- Open every modified dialog → no Radix `aria-describedby` warning in console.
+- Go offline, capture 3 receipts, go online → debug console shows full `[CUM][OFFLINE_CREATE] → [QUEUE_STORE] → [RECONNECT] → [SYNC_START] → [SYNC_OK] → [VALIDATE]` chain per receipt.
+- Force a backend 500 → `[CUM][SYNC_FAIL]` then `[CUM][RETRY]` then eventual `[CUM][SYNC_OK]`; final cumulative never lower than highWater.
