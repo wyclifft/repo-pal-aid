@@ -302,6 +302,10 @@ export const useIndexedDB = () => {
         
         request.onsuccess = () => {
           console.log(`[DB] Receipt saved: ${receipt.reference_no} (orderId: ${orderId})`);
+          // v2.10.78: cumulative observability
+          try {
+            console.log(`[CUM][OFFLINE_CREATE] farmer=${String(receipt.farmer_id || '').replace(/^#/, '').trim()} route=${String(receipt.route || '').trim()} icode=${String((receipt as any).product_code || '').trim().toUpperCase()} weight=${receipt.weight} ref=${receipt.reference_no} transtype=${(receipt as any).transtype}`);
+          } catch { /* ignore */ }
           resolve({ success: true, orderId });
         };
         
@@ -879,35 +883,63 @@ export const useIndexedDB = () => {
         const getRequest = store.get(cacheKey);
         getRequest.onsuccess = () => {
           const existing = getRequest.result;
-          let newRecord;
+          let newRecord: any;
 
           if (fromBackend) {
+            // v2.10.78: high-water-mark regression guard. The backend monthly
+            // total may transiently dip below what we last saw (route flip,
+            // partial batch refresh, slow read replica). Never let baseCount
+            // go backwards within the same month/route.
+            const incoming = Math.max(0, count);
+            const prevHigh = Math.max(
+              Number(existing?.highWaterTotal || 0),
+              Number(existing?.baseCount || 0)
+            );
+            let acceptedBase = incoming;
+            let acceptedByProduct = byProduct || [];
+            if (incoming < prevHigh && prevHigh > 0) {
+              console.warn(`[CUM][REGRESSION_GUARD] farmer=${cleanId} route=${routeKey} month=${month} clamped incoming=${incoming} → highWater=${prevHigh}`);
+              acceptedBase = prevHigh;
+              // keep previous breakdown if the new one is empty/lower
+              if (!byProduct || byProduct.length === 0) {
+                acceptedByProduct = existing?.byProduct || existing?.highWaterByProduct || [];
+              }
+            }
+            const newHigh = Math.max(prevHigh, incoming, acceptedBase);
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
               month,
-              baseCount: count,
+              baseCount: acceptedBase,
               localCount: 0,
-              byProduct: byProduct || [],
+              byProduct: acceptedByProduct,
+              highWaterTotal: newHigh,
+              highWaterByProduct: acceptedByProduct,
+              highWaterAt: new Date().toISOString(),
               lastUpdated: new Date().toISOString()
             };
           } else {
+            const newLocal = (existing?.localCount || 0) + count;
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
               month,
               baseCount: existing?.baseCount || 0,
-              localCount: (existing?.localCount || 0) + count,
+              localCount: newLocal,
               byProduct: byProduct || existing?.byProduct || [],
+              highWaterTotal: existing?.highWaterTotal || existing?.baseCount || 0,
+              highWaterByProduct: existing?.highWaterByProduct || existing?.byProduct || [],
+              highWaterAt: existing?.highWaterAt,
               lastUpdated: new Date().toISOString()
             };
+            console.log(`[CUM][QUEUE_STORE] farmer=${cleanId} route=${routeKey} +${count} → local=${newLocal} base=${newRecord.baseCount}`);
           }
 
           const putRequest = store.put(newRecord);
           putRequest.onsuccess = () => {
-            console.log(`✅ Updated farmer cumulative: ${cleanId} route=${routeKey}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
+            console.log(`✅ Updated farmer cumulative: ${cleanId} route=${routeKey}, base=${newRecord.baseCount}, local=${newRecord.localCount}, hwm=${newRecord.highWaterTotal}`);
             resolve();
           };
           putRequest.onerror = () => reject(putRequest.error);
