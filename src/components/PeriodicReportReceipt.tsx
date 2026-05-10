@@ -204,6 +204,20 @@ export function PeriodicReportReceipt({
               </div>
               <div className="border-t border-dashed border-muted-foreground/40" />
               
+              {/* Member Info */}
+              <div className="space-y-1">
+                <div className="flex justify-between">
+                  <span>MEMBER NO:</span>
+                  <span>{data.farmer_id}</span>
+                </div>
+                <div className="border-b border-dotted border-muted-foreground/30" />
+                <div className="flex justify-between">
+                  <span>MEMBER NAME:</span>
+                  <span className="text-right max-w-[50%] truncate">{data.farmer_name}</span>
+                </div>
+                <div className="border-b border-dotted border-muted-foreground/30" />
+              </div>
+              
               {/* v2.10.77: group transactions by icode and render each as a
                   clearly-labeled section. Falls back to a single section
                   (using produce_name) for legacy cached data without icode. */}
