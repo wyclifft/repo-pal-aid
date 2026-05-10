@@ -613,13 +613,13 @@ export const TransactionReceipt = ({
             {/* ID NO and SIGN fields for Store/AI receipts */}
             {(transtype === 2 || transtype === 3) && (
               <>
-                <div className="mt-3">
-                  <span className="text-muted-foreground text-sm">ID NO:</span>
-                  <div className="border-b border-dashed border-foreground/40 w-full min-h-[2rem] mt-1"></div>
+                <div className="mt-3 flex items-end gap-2">
+                  <span className="text-muted-foreground text-sm whitespace-nowrap">ID NO:</span>
+                  <span className="border-b border-dashed border-foreground/40 w-28 min-h-[1.2rem] inline-block"></span>
                 </div>
-                <div className="mt-3">
-                  <span className="text-muted-foreground text-sm">SIGN:</span>
-                  <div className="border-b border-dashed border-foreground/40 w-full min-h-[2rem] mt-1"></div>
+                <div className="mt-2 flex items-end gap-2">
+                  <span className="text-muted-foreground text-sm whitespace-nowrap">SIGN:</span>
+                  <span className="border-b border-dashed border-foreground/40 w-28 min-h-[1.2rem] inline-block"></span>
                 </div>
               </>
             )}
