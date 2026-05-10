@@ -2639,6 +2639,9 @@ export const printMemberProduceStatement = async (data: {
     date: string;           // YYYY-MM-DD
     rec_no: string;         // Reference number (last 5 chars)
     quantity: number;       // Weight in Kgs
+    // v2.10.77: optional product grouping
+    icode?: string;
+    productName?: string;
   }>;
   totalWeight: number;
   centerName?: string;      // v2.10.55: route/center descript shown under company header
