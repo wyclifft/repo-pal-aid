@@ -492,5 +492,5 @@
 //       used only for display name/route label lookup, never for filtering.
 //   No backend, no IndexedDB schema, no sync engine, no reference generator,
 //   no auth/login/photo/Z-Report-summary-screen changes. Capacitor-safe.
-export const APP_VERSION = '2.10.76';
-export const APP_VERSION_CODE = 98;
+export const APP_VERSION = '2.10.77';
+export const APP_VERSION_CODE = 99;

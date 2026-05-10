@@ -1294,13 +1294,18 @@ const server = http.createServer(async (req, res) => {
       
       const produceName = produceRows.length > 0 && produceRows[0].produce_name ? produceRows[0].produce_name : 'PRODUCE';
 
-      const txParams = [farmerId, startDate, endDate, ccode];
+      // v2.10.77: include icode + product_name per transaction so the receipt
+      // can group rows by produce. Additive — old clients ignore extra fields.
+      const txParams = [ccode, farmerId, startDate, endDate, ccode];
       let txSql = `SELECT 
           t.transdate as date,
           t.transrefno as rec_no,
           t.weight as quantity,
-          t.transtime as time
+          t.transtime as time,
+          UPPER(TRIM(t.icode)) as icode,
+          i.descript as product_name
         FROM transactions t
+        LEFT JOIN fm_items i ON UPPER(TRIM(i.icode)) = UPPER(TRIM(t.icode)) AND i.ccode = ?
         WHERE t.memberno = ? 
           AND t.Transtype = 1 
           AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
@@ -1309,7 +1314,7 @@ const server = http.createServer(async (req, res) => {
         txSql += ` AND TRIM(t.route) = TRIM(?)`;
         txParams.push(routeFilter);
       }
-      txSql += ` ORDER BY t.transdate ASC, t.transtime ASC`;
+      txSql += ` ORDER BY UPPER(TRIM(t.icode)) ASC, t.transdate ASC, t.transtime ASC`;
       const [transactions] = await pool.query(txSql, txParams);
 
       // Calculate total weight
