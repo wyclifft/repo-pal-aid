@@ -500,5 +500,14 @@
 //         SIGN:  _________________________
 //       Purely visual — no data, no backend, no sync, no reference generator changes.
 //       Capacitor-safe.
-export const APP_VERSION = '2.10.78';
-export const APP_VERSION_CODE = 100;
+// v2.10.79: Periodic Report printed receipt — header now uses ESC/POS native
+//           ALIGN_CENTER (printer-aligned, not 32-col space padding) so company
+//           name and CENTER line sit truly centered on any paper width.
+//           Removed redundant blank lines between header/title/member/total
+//           sections and tightened multi-product group separators (dotted
+//           divider in place of blank line). On-screen preview untouched.
+//           Files: src/services/bluetooth.ts (printMemberProduceStatement only).
+//           No backend, no IndexedDB, no sync engine, no reference generator,
+//           no Z-Report or photo changes.
+export const APP_VERSION = '2.10.79';
+export const APP_VERSION_CODE = 101;
