@@ -2725,11 +2725,10 @@ export const printMemberProduceStatement = async (data: {
     receipt += dashLine + '\n';
   } else {
     groupArr.forEach(([icode, g], idx) => {
-      if (idx > 0) receipt += '\n';
+      if (idx > 0) receipt += dotLine + '\n';
       const codeSuffix = showCode && icode !== g.label ? ` (${icode})` : '';
       const sectionLabel = `${g.label}${codeSuffix} RECORD`;
       receipt += centerText(sectionLabel, W) + '\n';
-      receipt += dashLine + '\n';
       receipt += 'DATE'.padEnd(dateColW) + 'REC NO'.padEnd(recColW) + 'QUANTITY'.padStart(qtyColW) + '\n';
       receipt += dotLine + '\n';
       g.rows.forEach(tx => {
@@ -2745,14 +2744,12 @@ export const printMemberProduceStatement = async (data: {
     });
     receipt += dashLine + '\n';
   }
-  receipt += '\n';
-  
+
   // Total
   const totalLabel = 'TOTAL:';
   const totalVal = `${data.totalWeight.toFixed(2)} Kgs`;
   receipt += totalLabel + totalVal.padStart(W - totalLabel.length) + '\n';
   receipt += dashLine + '\n';
-  receipt += '\n';
   
   // Footer
   receipt += `Report printed on ${printedOn}\n`;
