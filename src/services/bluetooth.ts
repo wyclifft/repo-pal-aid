@@ -2332,10 +2332,8 @@ export const printStoreAIReceipt = async (data: {
   if (data.deliveredBy && data.deliveredBy !== 'owner') {
     receipt += formatLine('Del.By    ', data.deliveredBy, W) + '\n';
   }
-  receipt += 'ID NO:\n';
-  receipt += '________________________________\n';
-  receipt += 'SIGN:\n';
-  receipt += '________________________________\n';
+  receipt += 'ID NO: _________________________\n';
+  receipt += 'SIGN:  _________________________\n';
 
   // Add reprint timestamp if this is a reprint
   if (data.reprintedAt) {
