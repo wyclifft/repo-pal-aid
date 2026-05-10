@@ -1,45 +1,59 @@
 ## Goal
 
-Clean up the printed Member Produce Statement (Periodic Report) so the header is properly centered on the thermal printer and the vertical spacing between sections is compact and consistent.
+Make the **ID NO** and **SIGN** writing lines on the printed Store/AI purchase receipt longer and roomier so users can comfortably hand-write an ID number and signature.
 
-Scope: print output only (`printMemberProduceStatement` in `src/services/bluetooth.ts`). The on-screen preview (`PeriodicReportReceipt.tsx`) is already tight and will not be touched. No backend, no business logic, no new versions/SW bumps required.
+Scope: print output only — `printStoreAIReceipt` in `src/services/bluetooth.ts`, lines 2335–2336. No backend, no on-screen UI changes, no business logic.
 
-## Problems observed on the printout
+## Current state
 
-1. **Header drifts right** — `DEMO COFFEE FCS LTD` and `CENTER: KK FACTORY` are centered using space-padding to `W=32`. On printers whose actual column width is 48, the space-padded text shifts visually to the right. Switching to ESC/POS `ALIGN_CENTER` (already defined as `[ESC, 0x61, 0x01]`) makes the printer center the trimmed text natively, regardless of column width.
-2. **Big gaps between sections** — blank `'\n'` lines exist after the header dash, after the title block, after member info, before TOTAL, and after TOTAL (5 blank lines plus internal padding). This produces the "very big spacing between 1st, 2nd and 3rd section" the user is seeing.
-3. **Member info block** has a `dotLine` separator between every field plus a trailing blank line, adding 3 extra lines that aren't needed.
+```
+ID NO: _________________________   (label + 25 underscores)
+SIGN:  _________________________
+```
 
-## Changes (single function, `printMemberProduceStatement`)
+Only ~25 underscore characters for handwriting — too cramped, and the two fields sit back-to-back with no vertical breathing room.
 
-Inside `src/services/bluetooth.ts`, lines ~2667–2755:
+## Change
 
-1. **Use native ESC/POS centering for the header block** instead of `centerText(...)` space padding:
-   - Emit `ALIGN_CENTER` bytes, write company name, optional `CENTER: <name>`, the title `MEMBER PRODUCE STATEMENT`, and the date range, then emit `ALIGN_LEFT` before the body.
-   - Use the existing `ESC_POS.ALIGN_CENTER` / `ALIGN_LEFT` constants already defined around line 1918.
-2. **Remove redundant blank lines**:
-   - Drop the `'\n'` between header dashLine and title (line 2682).
-   - Drop the `'\n'` between title dashLine and member info (line 2688).
-   - Drop the `'\n'` after member info (line 2695).
-   - Drop the `'\n'` before TOTAL (line 2744).
-   - Drop the `'\n'` after TOTAL dashLine (line 2751).
-   - Keep one feed before the footer and the final 3-line feed for paper tear.
-3. **Compact member info**:
-   - Print `MEMBER NO` and `MEMBER NAME` on consecutive lines with a single `dotLine` separator after the pair, instead of one between each.
-4. **Reduce inter-group spacing** in the multi-product loop:
-   - Replace the `if (idx > 0) receipt += '\n'` (line 2724) with no extra blank line; the dashLine under each section header already provides visual separation.
-5. **Top feed**: keep the existing `'\n\n'` at the top so the company name doesn't print on the tear edge.
+Restructure each field as **label on its own line followed by a single full-width underscore line**, with a blank line between the two fields for vertical writing room:
 
-No changes to grouping logic, totals, hydration, or fallbacks — only formatting/whitespace.
+```
+ID NO:
+________________________________
+                                 <- blank line for writing height
+SIGN:
+________________________________
+```
+
+Implementation:
+- Replace lines 2335–2336 with a small block emitting, for each field:
+  - the label line (`ID NO:` / `SIGN:`)
+  - one underscore line spanning the full printer column width using `'_'.repeat(W)` (W = 32) so it scales with the existing width constant.
+- Insert a single blank `'\n'` between the ID block and the SIGN block to leave breathing room for handwriting.
+
+Result on a 32-col printer:
+- ID NO: ~32 underscores of writing space (vs 25 today).
+- SIGN: ~32 underscores of writing space, with a clear blank gap above it for the ID number to be written into.
+
+## Versioning
+
+Per workspace rule, bump:
+- `src/constants/appVersion.ts` → `2.10.80` (version code 102)
+- `android/app/build.gradle` → matching versionName / versionCode
+- `public/sw.js` cache → `v27`
 
 ## Verification
 
-- Re-open the Periodic Report dialog and click Print on a member with multiple `icode` rows; confirm:
-  - Company name and CENTER line are visually centered on the paper.
-  - Sections (header / title / member / first product table / total / footer) sit close together with at most one blank line between them.
-  - Multi-product receipts still show one labeled section per `icode` with subtotals, followed by a single TOTAL.
-- Re-test with a single-product member to confirm the legacy single-section layout is still clean.
+- Reprint a Store/AI receipt and confirm:
+  - `ID NO:` label sits on its own line with a long underscore line beneath it.
+  - A blank line separates ID NO from SIGN.
+  - `SIGN:` label sits on its own line with one long underscore line beneath it.
+  - Layout above (header, items, TOTAL, Region, Clerk) is unchanged.
+- Reprint a milk Periodic/standard receipt to confirm it is unaffected (no ID/SIGN block there).
 
 ## Files touched
 
-- `src/services/bluetooth.ts` (only the `printMemberProduceStatement` function body)
+- `src/services/bluetooth.ts` (only `printStoreAIReceipt`, lines ~2335–2336)
+- `src/constants/appVersion.ts`
+- `android/app/build.gradle`
+- `public/sw.js`
