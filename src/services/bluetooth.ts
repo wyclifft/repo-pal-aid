@@ -2689,40 +2689,60 @@ export const printMemberProduceStatement = async (data: {
   receipt += dashLine + '\n';
   receipt += '\n';
   
-  // Produce Type (e.g., CHERRY RECORD)
-  // v2.10.55: trim trailing whitespace so centerText padding stays symmetric
-  const produceLabel = `${data.produceName.toUpperCase().trim()} RECORD`;
-  receipt += centerText(produceLabel, W) + '\n';
-  receipt += dashLine + '\n';
-  receipt += '\n';
-  
   // Member Info
   receipt += `MEMBER NO: ${data.farmerId}\n`;
   receipt += dotLine + '\n';
   receipt += `MEMBER NAME: ${data.farmerName.substring(0, W - 13)}\n`;
   receipt += dotLine + '\n';
   receipt += '\n';
-  
-  // Transaction Header
-  // v2.10.55: widen DATE column to 12 so a 10-char date has a clear gutter
-  // before the REC NO column (was 10 → "28/02/202600308" with no gap).
+
+  // v2.10.77: Group transactions by icode so each product gets its own
+  // labeled section and subtotal. Falls back to a single section using
+  // the legacy produceName when no per-row icode is present.
   const dateColW = 12;
   const recColW = 7;
   const qtyColW = W - dateColW - recColW;
-  receipt += 'DATE'.padEnd(dateColW) + 'REC NO'.padEnd(recColW) + 'QUANTITY'.padStart(qtyColW) + '\n';
-  receipt += dashLine + '\n';
-  
-  // Transaction Rows
-  data.transactions.forEach(tx => {
-    const dateStr = formatDate(tx.date);
-    // Get last 5 characters of ref number
-    const refNo = tx.rec_no ? tx.rec_no.slice(-5) : '-----';
-    const qty = tx.quantity.toFixed(1);
-    
-    receipt += dateStr.padEnd(dateColW) + refNo.padEnd(recColW) + qty.padStart(qtyColW) + '\n';
-  });
-  
-  receipt += dashLine + '\n';
+
+  type Group = { label: string; rows: typeof data.transactions; subtotal: number };
+  const groups = new Map<string, Group>();
+  for (const tx of data.transactions) {
+    const key = (tx.icode || data.produceName || 'PRODUCE').toString().trim().toUpperCase() || 'PRODUCE';
+    const label = (tx.productName || tx.icode || data.produceName || 'PRODUCE').toString().trim().toUpperCase();
+    if (!groups.has(key)) groups.set(key, { label, rows: [], subtotal: 0 });
+    const g = groups.get(key)!;
+    g.rows.push(tx);
+    g.subtotal += Number(tx.quantity) || 0;
+  }
+  const groupArr = Array.from(groups.entries());
+  const showCode = groupArr.length > 1;
+
+  if (groupArr.length === 0) {
+    // No transactions — keep the original layout for empty case
+    const produceLabel = `${data.produceName.toUpperCase().trim()} RECORD`;
+    receipt += centerText(produceLabel, W) + '\n';
+    receipt += dashLine + '\n';
+  } else {
+    groupArr.forEach(([icode, g], idx) => {
+      if (idx > 0) receipt += '\n';
+      const codeSuffix = showCode && icode !== g.label ? ` (${icode})` : '';
+      const sectionLabel = `${g.label}${codeSuffix} RECORD`;
+      receipt += centerText(sectionLabel, W) + '\n';
+      receipt += dashLine + '\n';
+      receipt += 'DATE'.padEnd(dateColW) + 'REC NO'.padEnd(recColW) + 'QUANTITY'.padStart(qtyColW) + '\n';
+      receipt += dotLine + '\n';
+      g.rows.forEach(tx => {
+        const dateStr = formatDate(tx.date);
+        const refNo = tx.rec_no ? tx.rec_no.slice(-5) : '-----';
+        const qty = (Number(tx.quantity) || 0).toFixed(1);
+        receipt += dateStr.padEnd(dateColW) + refNo.padEnd(recColW) + qty.padStart(qtyColW) + '\n';
+      });
+      receipt += dotLine + '\n';
+      const subLabel = 'SUBTOTAL:';
+      const subVal = `${g.subtotal.toFixed(2)} Kgs`;
+      receipt += subLabel + subVal.padStart(W - subLabel.length) + '\n';
+    });
+    receipt += dashLine + '\n';
+  }
   receipt += '\n';
   
   // Total
