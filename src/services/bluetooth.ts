@@ -2332,8 +2332,14 @@ export const printStoreAIReceipt = async (data: {
   if (data.deliveredBy && data.deliveredBy !== 'owner') {
     receipt += formatLine('Del.By    ', data.deliveredBy, W) + '\n';
   }
-  receipt += 'ID NO: _________________________\n';
-  receipt += 'SIGN:  _________________________\n';
+  // v2.10.80: Wider, roomier ID NO / SIGN write areas — label on its own line,
+  // full-width underscore beneath, blank line between for handwriting space.
+  const writeLine = '_'.repeat(W);
+  receipt += 'ID NO:\n';
+  receipt += writeLine + '\n';
+  receipt += '\n';
+  receipt += 'SIGN:\n';
+  receipt += writeLine + '\n';
 
   // Add reprint timestamp if this is a reprint
   if (data.reprintedAt) {
