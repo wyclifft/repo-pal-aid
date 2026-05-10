@@ -492,5 +492,13 @@
 //       used only for display name/route label lookup, never for filtering.
 //   No backend, no IndexedDB schema, no sync engine, no reference generator,
 //   no auth/login/photo/Z-Report-summary-screen changes. Capacitor-safe.
-export const APP_VERSION = '2.10.77';
-export const APP_VERSION_CODE = 99;
+// v2.10.78: ID NO and SIGN fields on Store/AI receipts moved from centered full-width
+//       blocks to left-aligned inline label+line pairs. Both the on-screen receipt
+//       (TransactionReceipt.tsx) and the 32-character thermal print output
+//       (bluetooth.ts printStoreAIReceipt) now render:
+//         ID NO: _________________________
+//         SIGN:  _________________________
+//       Purely visual — no data, no backend, no sync, no reference generator changes.
+//       Capacitor-safe.
+export const APP_VERSION = '2.10.78';
+export const APP_VERSION_CODE = 100;
