@@ -899,6 +899,9 @@ export interface FarmerDetailReportData {
     rec_no: string;
     quantity: number;
     time: string;
+    // v2.10.77: optional product grouping (additive)
+    icode?: string;
+    product_name?: string;
   }>;
 }
 
