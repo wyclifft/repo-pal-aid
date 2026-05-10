@@ -133,6 +133,9 @@ export function PeriodicReportReceipt({
           date: tx.date,
           rec_no: tx.rec_no,
           quantity: tx.quantity,
+          // v2.10.77: pass per-row product so printer can group by icode
+          icode: tx.icode,
+          productName: tx.product_name,
         })),
         totalWeight: data.total_weight,
         centerName,
