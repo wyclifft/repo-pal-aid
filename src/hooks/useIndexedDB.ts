@@ -2,10 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
 const DB_NAME = 'milkCollectionDB';
-// v2.10.78: bumped to 14 to recover devices stuck on pre-existing v13 (from
-// stale builds) that triggered VersionError. Schema is unchanged from v12 —
-// onupgradeneeded is fully idempotent so jumping multiple versions is safe.
-const DB_VERSION = 14;
+const DB_VERSION = 12; // v2.10.73: farmer_cumulative cache keyed by farmer+route+month for per-factory isolation
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -194,26 +191,7 @@ export const useIndexedDB = () => {
     };
 
     request.onerror = (event) => {
-      const err = (event.target as IDBOpenDBRequest).error;
-      const isVersionError = err?.name === 'VersionError';
-      // v2.10.78: throttle the noisy error and try a single recovery
-      console.error('[DB] IndexedDB open error:', err?.name, err?.message);
-      if (isVersionError) {
-        const recoveredFlag = '__db_recovery_attempted_v2_10_78';
-        let already = false;
-        try { already = sessionStorage.getItem(recoveredFlag) === '1'; } catch { /* ignore */ }
-        if (!already) {
-          try { sessionStorage.setItem(recoveredFlag, '1'); } catch { /* ignore */ }
-          console.warn('[DB][VERSION_ERROR] Existing DB version is ahead — deleting and recreating once');
-          clearDatabase().then(() => {
-            setTimeout(() => openDatabase(), 150);
-          }).catch((dErr) => {
-            console.error('[DB] Recovery delete failed:', dErr);
-            setSchemaError(true);
-          });
-          return;
-        }
-      }
+      console.error('[DB] IndexedDB error:', (event.target as IDBOpenDBRequest).error);
       setSchemaError(true);
     };
 
@@ -302,10 +280,6 @@ export const useIndexedDB = () => {
         
         request.onsuccess = () => {
           console.log(`[DB] Receipt saved: ${receipt.reference_no} (orderId: ${orderId})`);
-          // v2.10.78: cumulative observability
-          try {
-            console.log(`[CUM][OFFLINE_CREATE] farmer=${String(receipt.farmer_id || '').replace(/^#/, '').trim()} route=${String(receipt.route || '').trim()} icode=${String((receipt as any).product_code || '').trim().toUpperCase()} weight=${receipt.weight} ref=${receipt.reference_no} transtype=${(receipt as any).transtype}`);
-          } catch { /* ignore */ }
           resolve({ success: true, orderId });
         };
         
@@ -883,63 +857,35 @@ export const useIndexedDB = () => {
         const getRequest = store.get(cacheKey);
         getRequest.onsuccess = () => {
           const existing = getRequest.result;
-          let newRecord: any;
+          let newRecord;
 
           if (fromBackend) {
-            // v2.10.78: high-water-mark regression guard. The backend monthly
-            // total may transiently dip below what we last saw (route flip,
-            // partial batch refresh, slow read replica). Never let baseCount
-            // go backwards within the same month/route.
-            const incoming = Math.max(0, count);
-            const prevHigh = Math.max(
-              Number(existing?.highWaterTotal || 0),
-              Number(existing?.baseCount || 0)
-            );
-            let acceptedBase = incoming;
-            let acceptedByProduct = byProduct || [];
-            if (incoming < prevHigh && prevHigh > 0) {
-              console.warn(`[CUM][REGRESSION_GUARD] farmer=${cleanId} route=${routeKey} month=${month} clamped incoming=${incoming} → highWater=${prevHigh}`);
-              acceptedBase = prevHigh;
-              // keep previous breakdown if the new one is empty/lower
-              if (!byProduct || byProduct.length === 0) {
-                acceptedByProduct = existing?.byProduct || existing?.highWaterByProduct || [];
-              }
-            }
-            const newHigh = Math.max(prevHigh, incoming, acceptedBase);
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
               month,
-              baseCount: acceptedBase,
+              baseCount: count,
               localCount: 0,
-              byProduct: acceptedByProduct,
-              highWaterTotal: newHigh,
-              highWaterByProduct: acceptedByProduct,
-              highWaterAt: new Date().toISOString(),
+              byProduct: byProduct || [],
               lastUpdated: new Date().toISOString()
             };
           } else {
-            const newLocal = (existing?.localCount || 0) + count;
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
               month,
               baseCount: existing?.baseCount || 0,
-              localCount: newLocal,
+              localCount: (existing?.localCount || 0) + count,
               byProduct: byProduct || existing?.byProduct || [],
-              highWaterTotal: existing?.highWaterTotal || existing?.baseCount || 0,
-              highWaterByProduct: existing?.highWaterByProduct || existing?.byProduct || [],
-              highWaterAt: existing?.highWaterAt,
               lastUpdated: new Date().toISOString()
             };
-            console.log(`[CUM][QUEUE_STORE] farmer=${cleanId} route=${routeKey} +${count} → local=${newLocal} base=${newRecord.baseCount}`);
           }
 
           const putRequest = store.put(newRecord);
           putRequest.onsuccess = () => {
-            console.log(`✅ Updated farmer cumulative: ${cleanId} route=${routeKey}, base=${newRecord.baseCount}, local=${newRecord.localCount}, hwm=${newRecord.highWaterTotal}`);
+            console.log(`✅ Updated farmer cumulative: ${cleanId} route=${routeKey}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
             resolve();
           };
           putRequest.onerror = () => reject(putRequest.error);
@@ -1008,19 +954,10 @@ export const useIndexedDB = () => {
     const cached = await getFarmerCumulative(farmerId, routeFilter);
     const baseCount = cached?.baseCount || 0;
     const baseProd = cached?.byProduct || [];
-    const highWater = Number((cached as any)?.highWaterTotal || 0);
     // Always recalculate from actual unsynced receipts instead of using cached localCount
     const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter);
-    let total = baseCount + unsynced.total;
-
-    // v2.10.78: monotonic guard — never report a total below the high-water mark
-    // (high-water already includes unsynced impact via prior queue stores).
-    let usedHighWater = false;
-    if (total < highWater && highWater > 0) {
-      usedHighWater = true;
-      total = highWater;
-    }
-
+    const total = baseCount + unsynced.total;
+    
     // Merge by-product: base + unsynced (normalize icode keys to prevent fragmentation)
     const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
     for (const p of baseProd) {
@@ -1035,10 +972,6 @@ export const useIndexedDB = () => {
         merged[key] = { ...p, icode: key };
       }
     }
-    try {
-      const cleanId = String(farmerId).replace(/^#/, '').trim();
-      console.log(`[CUM][VALIDATE] farmer=${cleanId} route=${(routeFilter || '').trim().toUpperCase() || 'ALL'} base=${baseCount} unsynced=${unsynced.total} hwm=${highWater} total=${total}${usedHighWater ? ' (clamped)' : ''}`);
-    } catch { /* ignore */ }
     return { total, byProduct: Object.values(merged) };
   }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
 

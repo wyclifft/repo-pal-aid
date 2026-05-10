@@ -162,7 +162,6 @@ export const useDataSync = () => {
       }
 
       console.log(`[SYNC] Starting sync of ${unsyncedReceipts.length} offline receipts (batch size: ${SYNC_BATCH_SIZE})...`);
-      console.log(`[CUM][RECOVERY] pendingCount=${unsyncedReceipts.length} online=${navigator.onLine}`);
       
       // Dispatch sync start event
       window.dispatchEvent(new CustomEvent('syncStart'));
@@ -199,7 +198,6 @@ export const useDataSync = () => {
           }
 
           console.log(`[SYNC] Processing ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
-          console.log(`[CUM][SYNC_START] ref=${receipt.reference_no} farmer=${String(receipt.farmer_id || '').replace(/^#/, '').trim()} route=${String(receipt.route || '').trim()} weight=${receipt.weight}`);
 
           // v2.10.60: hoist normalizedSession so the catch block can reference it
           let normalizedSession: string = 'AM';
@@ -495,7 +493,6 @@ export const useDataSync = () => {
                 }
                 synced++;
                 console.log(`[SUCCESS] Synced ${globalIndex + 1}/${unsyncedReceipts.length}: ${receipt.reference_no}`);
-                console.log(`[CUM][SYNC_OK] ref=${receipt.reference_no} farmer=${String(receipt.farmer_id || '').replace(/^#/, '').trim()}`);
               } else {
                 // Verification failed after all retries — keep local, count as failed for retry
                 failed++;
@@ -513,7 +510,6 @@ export const useDataSync = () => {
                 errorMsg.includes('session delivery');
 
               if (isSessionDuplicate) {
-                console.warn(`[CUM][DUP_BLOCKED] ref=${receipt.reference_no} reason=DUPLICATE_SESSION_DELIVERY`);
                 // v2.10.60: backend rejected with DUPLICATE_SESSION_DELIVERY (multOpt=0).
                 // KEEP local row, surface toast, count for UI badge. NEVER delete.
                 const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
@@ -576,7 +572,6 @@ export const useDataSync = () => {
                   await markNativeRecordFailed(receipt.reference_no, result.error || result.message || 'Unknown error');
                 }
                 console.warn(`[WARN] Sync failed for ${receipt.reference_no}: ${result.error || result.message || 'Unknown error'}`);
-                console.warn(`[CUM][SYNC_FAIL] ref=${receipt.reference_no} reason=${result.error || result.message || 'unknown'} willRetry=true`);
               }
             }
           } catch (err: any) {

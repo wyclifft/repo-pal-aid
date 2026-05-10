@@ -5,11 +5,6 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { initializeNativePlatform } from "./utils/nativeInit";
 import "./index.css";
 import "./utils/errorHandler";
-import { installPersistentLogger } from "./utils/persistentLogger";
-import { APP_VERSION } from "./constants/appVersion";
-
-// Install persistent debug logger BEFORE anything else so we capture early boot
-installPersistentLogger(APP_VERSION);
 
 // Initialize native platform features FIRST (critical for device registration)
 initializeNativePlatform().catch(console.error);

@@ -698,23 +698,6 @@ Date: ${new Date().toLocaleString()}
         {/* Farmer Sync Status Dashboard */}
         <FarmerSyncDashboard />
 
-        {/* Persistent Debug Console */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Bug className="h-4 w-4" /> Debug & Diagnostics
-            </CardTitle>
-            <CardDescription className="text-xs">
-              View persistent app logs that survive logout & restart. Use for bug reports.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="outline" className="w-full" onClick={() => navigate('/debug')}>
-              Open Debug Console
-            </Button>
-          </CardContent>
-        </Card>
-
         {/* Bluetooth Debug Panel */}
         <BluetoothDebugPanel />
 

@@ -492,42 +492,5 @@
 //       used only for display name/route label lookup, never for filtering.
 //   No backend, no IndexedDB schema, no sync engine, no reference generator,
 //   no auth/login/photo/Z-Report-summary-screen changes. Capacitor-safe.
-// v2.10.77: PERSISTENT DEBUG CONSOLE — new in-app log viewer at /debug.
-//   Captures console.{log,info,warn,error} + window errors + unhandled
-//   rejections into a SEPARATE IndexedDB database (`delicoopDebugLogs`,
-//   isolated from milkCollectionDB so production data is untouched). Ring
-//   buffer of 5000 entries, batched 1s flushes, secrets redacted (Bearer
-//   tokens, password fields). Survives logout, app restart, force-stop.
-//   Settings → "Open Debug Console" → filter by level/time, copy, export
-//   to Documents/ (Capacitor Filesystem) or browser download. No backend,
-//   no schema change to milkCollectionDB, no sync/reference/receipt
-//   changes. Files: src/utils/persistentLogger.ts (new),
-//   src/pages/DebugConsole.tsx (new), src/main.tsx (install at boot),
-//   src/App.tsx (route), src/pages/Settings.tsx (entry).
-// v2.10.78: STABILITY + OBSERVABILITY.
-//   (1) IndexedDB schema version bumped to 14 with VersionError self-recovery
-//       (one-shot deleteDatabase + retry, gated by sessionStorage flag) so
-//       devices stuck on a higher pre-existing version no longer cascade
-//       into "Failed to load farmers" / "DB not ready" toasts.
-//   (2) Persistent debug logger hardened: dedupe identical messages within
-//       2s (emitted as "(×N suppressed)"), 50 records/sec rate cap, oldest
-//       1000 rows dropped on QuotaExceededError, age-based prune (7 days),
-//       re-entrancy + double-install guards. Logger can no longer flood
-//       storage or stall the UI.
-//   (3) Cumulative observability: new [CUM][*] tagged logs across the
-//       offline cumulative + sync pipeline (OFFLINE_CREATE, QUEUE_STORE,
-//       SYNC_START, SYNC_OK, SYNC_FAIL, RETRY, RECOVERY, DUP_BLOCKED,
-//       REGRESSION_GUARD, RECONNECT, VALIDATE) — all routed through the
-//       throttled persistent logger so a 200-receipt sync stays bounded.
-//   (4) High-water-mark monotonic guard: farmer_cumulative.baseCount can
-//       never go backwards within the same month/route — incoming backend
-//       totals lower than the recorded high-water mark are clamped and
-//       logged as [CUM][REGRESSION_GUARD]. getFarmerTotalCumulative also
-//       enforces the floor on read.
-//   (5) Accessibility: added DialogDescription (sr-only where appropriate)
-//       to FarmerSearchModal, PrinterSelector, ReprintModal, and
-//       ZReportPeriodSelector — eliminates Radix aria-describedby warnings.
-//   No backend, no reference generator, no receipt format, no
-//   sync-engine-correctness changes — purely stability/observability.
-export const APP_VERSION = '2.10.78';
-export const APP_VERSION_CODE = 100;
+export const APP_VERSION = '2.10.76';
+export const APP_VERSION_CODE = 98;

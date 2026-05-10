@@ -1,93 +1,56 @@
-## v2.10.78 — Stability fixes + cumulative sync observability
+## Root cause
 
-### 1. IndexedDB version conflict (root cause of all "DB not ready" + farmer load failures)
+In `src/services/bluetooth.ts` (the thermal-print Z-report formatter), the SELL/AI section truncates the REF column to 4 characters even though the source uses a 5-digit short ref:
 
-`src/hooks/useIndexedDB.ts` declares `DB_VERSION = 12`. Some installed clients already hold version 13 (from a stale build), so `indexedDB.open(DB_NAME, 12)` throws `VersionError: requested 12 < existing 13`. That single failure cascades into "Failed to load farmers", "DB not ready", and many other "[DB] IndexedDB error" lines.
+```ts
+// line 2525
+const shortRef = (tx.refno || '').slice(-5);   // 5 chars, e.g. "02981"
+...
+// line 2533 (SELL/AI branch)
+const ref = padL(shortRef, 4);                  // padEnd(4).substring(0, 4) → "0298"
+```
 
-Fix:
-- Bump `DB_VERSION` to **14** in `src/hooks/useIndexedDB.ts` (always one step ahead of any value seen in the wild). Update the comment.
-- Make `onupgradeneeded` idempotent: re‑check `objectStoreNames.contains(...)` for **every** store before creating, so jumping multiple versions never throws.
-- In the `request.onerror` path, detect `VersionError` specifically and:
-  - Log once with `[DB][VERSION_ERROR]` (throttled — see §3).
-  - Call `indexedDB.deleteDatabase(DB_NAME)` only as a last resort after a single retry (gated behind a `__db_recovery_attempted` flag in sessionStorage so we never loop).
-  - Reject with a typed `DBNotReadyError` so callers can show a friendly retry instead of console‑spamming.
+`padL` is defined as `padEnd(w).substring(0, w)`, so any string longer than `w` gets chopped from the right — losing the **last digit**. That's exactly what the receipt photo shows: every SELL row prints `0298` / `0299` instead of `02981`, `02982`, etc., making distinct refs look identical.
 
-### 2. Dialog accessibility warnings
+The BUY branch is fine because it uses `padL(shortRef, 6)` (line 2541), which preserves all 5 chars of the short ref.
 
-Radix logs `Missing Description or aria-describedby={undefined} for {DialogContent}` whenever a `<DialogContent>` has no `<DialogDescription>` and no explicit `aria-describedby`.
+The on-screen `DeviceZReportReceipt.tsx` and `pdfExport.ts` already allocate ≥5 chars for REF, so they are not affected. Only the thermal print output is broken.
 
-Fix — add a `<DialogDescription>` (or `aria-describedby={undefined}` suppression with a visually‑hidden description) to each offender:
-- `src/components/BluetoothConnectionDialog.tsx`
-- `src/components/FarmerSearchModal.tsx`
-- `src/components/CowDetailsModal.tsx`
-- `src/components/SessionExpiredDialog.tsx`
-- `src/components/AddMemberModal.tsx`
-- `src/components/PrinterSelector.tsx`
-- `src/components/DuplicateDeliveryDialog.tsx`
-- `src/components/ReprintModal.tsx`
-- `src/components/PhotoCapture.tsx` (skip camera logic per request, just add the description)
-- `src/components/PhotoAuditViewer.tsx`
-- `src/components/ZReportPeriodSelector.tsx`
-- `src/pages/AIPage.tsx`, `src/pages/Store.tsx`
+## Fix
 
-Use a short, descriptive sentence per dialog; keep them visible where it makes sense, otherwise use the `sr-only` class.
+Widen the SELL/AI REF column from 4 → 5 characters in `src/services/bluetooth.ts`, keeping the total row width at 32 by trimming MNO from 8 → 7 (max real MNO width is 6, e.g. `M00012`, so 7 is still safe).
 
-### 3. Logging system hardening (`src/utils/persistentLogger.ts`)
+New SELL/AI column spec:
 
-Today every `console.*` call writes to IndexedDB. A noisy loop (e.g. the VersionError above firing 12× at boot) floods storage and stalls the UI. Hardening:
+```text
+MNO(7) REF(5) QTY(4 R) KSh(7 R) TIME(5 R)
+total: 7+1+5+1+4+1+7+1+5 = 32 ✓
+```
 
-- **Throttling / dedupe**: keep a small `Map<key, {count, lastWrittenAt}>` where `key = level + ':' + truncatedMessage`. If the same key fires within 2 s, increment `count` and write nothing. On the next allowed write, append `(×N suppressed)` to the message. Cap key map at 200 entries (LRU).
-- **Hard rate cap**: max 50 records flushed per second; excess is dropped with a single `[LOGGER] dropped N entries` summary.
-- **Ring buffer**: enforce `MAX_LOGS = 5000` with periodic `pruneLogs()` every 60 s and on each flush when over 5500. Also trim by age (keep last 7 days).
-- **Quota safety**: wrap every `IDBObjectStore.add/put` in `try/catch`; on `QuotaExceededError`, drop the oldest 1000 rows and retry once. Never throw out of the logger.
-- **Production gate**: in production builds (`import.meta.env.PROD`), only persist `info | warn | error` and drop verbose `debug`/`log` payloads larger than 4 KB (truncate with `…(truncated)`).
-- **Boot guard**: if `installPersistentLogger` is called twice (HMR / StrictMode double‑invoke), no‑op the second call.
-- **Re‑entrancy guard**: when the logger itself logs, bypass the interceptor so we can't recurse.
+Apply the change in both places that reference the old widths:
 
-### 4. Detailed cumulative / offline sync observability
+- Header row (~line 2494): `padL('MNO',7) padL('REF',5) padR('QTY',4) padR('KSh',7) padR('TIME',5)`
+- Data row (~lines 2532–2537): `padL(tx.farmer_id,7) padL(shortRef,5) padR(qty,4) padR(ksh,7) padR(time,5)`
+- Update the inline `// SELL/AI: ...` width comments to match the new spec.
 
-Add a single tagged channel `[CUM]` (subtags in brackets) emitted via `logger.info/warn/error` so they land in the persistent debug console. No business logic changes — pure instrumentation, plus the existing high‑water guard already shipped in v2.10.77.
+No changes needed to `DeviceZReportReceipt.tsx` (REF column already 5ch) or `pdfExport.ts` (REF column is 8 wide).
 
-Touch points and tags:
+## Versioning + memory
 
-| File | Where | Tag |
-|------|-------|-----|
-| `src/hooks/useIndexedDB.ts` `addReceipt` (offline save) | after insert | `[CUM][OFFLINE_CREATE]` farmerId, route, weight, icode, transrefno |
-| `src/hooks/useIndexedDB.ts` `updateFarmerCumulative(false,…)` | local increment | `[CUM][QUEUE_STORE]` farmerId, route, localCount, baseCount |
-| `src/hooks/useDataSync.ts` start of upload loop | per receipt | `[CUM][SYNC_START]` transrefno, attempt# |
-| `src/hooks/useDataSync.ts` after POST 2xx | success branch | `[CUM][SYNC_OK]` transrefno, serverRef |
-| `src/hooks/useDataSync.ts` POST non‑2xx / network fail | catch | `[CUM][SYNC_FAIL]` transrefno, status, attempt#, willRetry |
-| backoff scheduler | each retry | `[CUM][RETRY]` transrefno, nextDelayMs |
-| failed sync recovery (start of next online cycle) | rehydrate queue | `[CUM][RECOVERY]` pendingCount |
-| backend duplicate (REFERENCE_COLLISION) | catch | `[CUM][DUP_BLOCKED]` transrefno, serverMsg |
-| `useIndexedDB.updateFarmerCumulative(true,…)` regression guard | when clamping | `[CUM][REGRESSION_GUARD]` farmerId, incoming, highWater (already memorised rule) |
-| online listener | on `online` event | `[CUM][RECONNECT]` queueSize → triggers sync |
-| post‑sync verification (`getFarmerTotalCumulative`) | after each batch | `[CUM][VALIDATE]` farmerId, base, local, total, highWater |
+- Bump `APP_VERSION` to `2.10.76`, `APP_VERSION_CODE` to `98` (in `src/constants/appVersion.ts` and `android/app/build.gradle`), and the service worker cache to `v23` in `public/sw.js` — per workspace versioning rule.
+- Update memory `mem://design/z-report-column-alignment` to record the corrected SELL/AI width spec (REF=5, MNO=7) so a future edit doesn't reintroduce the truncation.
 
-Rules to keep production safe:
-- All logs go through the throttled logger from §3, so a 200‑receipt sync won't blow the buffer.
-- Never `JSON.stringify` full receipt objects — log only the small field set above.
-- Wrap every emit in `try/catch`.
+## Files to change
 
-### 5. Version bump
+- `src/services/bluetooth.ts` (header + data row + comments in the SELL/AI branch only)
+- `src/constants/appVersion.ts`
+- `android/app/build.gradle`
+- `public/sw.js`
+- `mem://design/z-report-column-alignment.md`
 
-- `src/constants/appVersion.ts` → `2.10.78`
-- `android/app/build.gradle` → versionCode `100`, versionName `2.10.78`
-- `public/sw.js` → cache `v25`
+## What this does NOT change
 
-### 6. Memory updates
-
-- New: `mem://features/cumulative-sync-observability` — list of `[CUM][*]` tags and where they fire.
-- New: `mem://architecture/persistent-logger-throttling` — dedupe + rate cap + quota recovery rules.
-- Update `mem://index.md` references.
-
-### Out of scope (per user)
-- Camera-related warnings/errors are intentionally left untouched.
-- No change to receipt creation, reference generator, printing, or backend endpoints.
-
-### Acceptance
-- Reload app → no `VersionError`, farmers load, no `DB not ready` toast.
-- Trigger a known noisy warning 50× → only the first appears, followed by a `(×N suppressed)` summary; storage row count stays bounded.
-- Open every modified dialog → no Radix `aria-describedby` warning in console.
-- Go offline, capture 3 receipts, go online → debug console shows full `[CUM][OFFLINE_CREATE] → [QUEUE_STORE] → [RECONNECT] → [SYNC_START] → [SYNC_OK] → [VALIDATE]` chain per receipt.
-- Force a backend 500 → `[CUM][SYNC_FAIL]` then `[CUM][RETRY]` then eventual `[CUM][SYNC_OK]`; final cumulative never lower than highWater.
+- BUY section formatting (already correct).
+- On-screen Z-report (`DeviceZReportReceipt.tsx`) — REF already shows 5 chars.
+- PDF export — REF already shows 5 chars.
+- Reference generator, transaction creation, sync, IndexedDB schema, or any backend API.
