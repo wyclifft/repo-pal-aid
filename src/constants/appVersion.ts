@@ -509,5 +509,13 @@
 //           Files: src/services/bluetooth.ts (printMemberProduceStatement only).
 //           No backend, no IndexedDB, no sync engine, no reference generator,
 //           no Z-Report or photo changes.
-export const APP_VERSION = '2.10.79';
-export const APP_VERSION_CODE = 101;
+// v2.10.80: STORE/AI RECEIPT — wider ID NO / SIGN handwriting areas.
+//   Each field now prints its label on its own line, followed by a full
+//   printer-width underscore line, with a blank line separating ID NO from
+//   SIGN. Gives operators ~32 underscores of writing space (vs 25 before)
+//   and proper vertical room to comfortably hand-write an ID number and
+//   signature on the thermal receipt. Print output only —
+//   printStoreAIReceipt in src/services/bluetooth.ts. No backend, no UI,
+//   no business logic, no sync/reference changes.
+export const APP_VERSION = '2.10.80';
+export const APP_VERSION_CODE = 102;
