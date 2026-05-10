@@ -204,53 +204,66 @@ export function PeriodicReportReceipt({
               </div>
               <div className="border-t border-dashed border-muted-foreground/40" />
               
-              {/* Produce Type — v2.10.55: enforce centered flex layout */}
-              <div className="flex justify-center font-bold">
-                <span>{data.produce_name.toUpperCase().trim()} RECORD</span>
-              </div>
-              <div className="border-t border-dashed border-muted-foreground/40" />
-              
-              {/* Member Info */}
-              <div className="space-y-1">
-                <div className="flex justify-between">
-                  <span>MEMBER NO:</span>
-                  <span>{data.farmer_id}</span>
-                </div>
-                <div className="border-b border-dotted border-muted-foreground/30" />
-                <div className="flex justify-between">
-                  <span>MEMBER NAME:</span>
-                  <span className="text-right max-w-[50%] truncate">{data.farmer_name}</span>
-                </div>
-                <div className="border-b border-dotted border-muted-foreground/30" />
-              </div>
-              
-              {/* Transaction Header — v2.10.55: explicit columns to mirror print spacing */}
-              <div className="grid font-bold text-[10px] pt-2" style={{ gridTemplateColumns: '12ch 7ch 1fr' }}>
-                <span>DATE</span>
-                <span>REC NO</span>
-                <span className="text-right">QUANTITY</span>
-              </div>
-              <div className="border-t border-dashed border-muted-foreground/40" />
-              
-              {/* Transactions */}
-              <div className="space-y-1 max-h-[200px] overflow-y-auto">
-                {data.transactions.length > 0 ? (
-                  data.transactions.map((tx, idx) => (
-                    <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '12ch 7ch 1fr' }}>
-                      <span>{formatDisplayDate(tx.date)}</span>
-                      <span>{tx.rec_no?.slice(-5) || '-----'}</span>
-                      <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center text-muted-foreground py-2">
-                    No transactions found
+              {/* v2.10.77: group transactions by icode and render each as a
+                  clearly-labeled section. Falls back to a single section
+                  (using produce_name) for legacy cached data without icode. */}
+              {(() => {
+                const groups = new Map<string, { label: string; rows: typeof data.transactions; subtotal: number }>();
+                for (const tx of data.transactions) {
+                  const key = (tx.icode || data.produce_name || 'PRODUCE').toString().trim().toUpperCase() || 'PRODUCE';
+                  const label = (tx.product_name || tx.icode || data.produce_name || 'PRODUCE').toString().trim().toUpperCase();
+                  if (!groups.has(key)) groups.set(key, { label, rows: [], subtotal: 0 });
+                  const g = groups.get(key)!;
+                  g.rows.push(tx);
+                  g.subtotal += Number(tx.quantity) || 0;
+                }
+                const groupArr = Array.from(groups.entries());
+                if (groupArr.length === 0) {
+                  return (
+                    <>
+                      <div className="flex justify-center font-bold">
+                        <span>{data.produce_name.toUpperCase().trim()} RECORD</span>
+                      </div>
+                      <div className="border-t border-dashed border-muted-foreground/40" />
+                      <div className="text-center text-muted-foreground py-2">
+                        No transactions found
+                      </div>
+                    </>
+                  );
+                }
+                const showCode = groupArr.length > 1;
+                return (
+                  <div className="space-y-3 max-h-[260px] overflow-y-auto">
+                    {groupArr.map(([icode, g]) => (
+                      <div key={icode} className="space-y-1">
+                        <div className="flex justify-center font-bold pt-1">
+                          <span>{g.label}{showCode && icode !== g.label ? ` (${icode})` : ''} RECORD</span>
+                        </div>
+                        <div className="border-t border-dashed border-muted-foreground/40" />
+                        <div className="grid font-bold text-[10px]" style={{ gridTemplateColumns: '12ch 7ch 1fr' }}>
+                          <span>DATE</span>
+                          <span>REC NO</span>
+                          <span className="text-right">QUANTITY</span>
+                        </div>
+                        <div className="border-t border-dotted border-muted-foreground/30" />
+                        {g.rows.map((tx, idx) => (
+                          <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '12ch 7ch 1fr' }}>
+                            <span>{formatDisplayDate(tx.date)}</span>
+                            <span>{tx.rec_no?.slice(-5) || '-----'}</span>
+                            <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
+                          </div>
+                        ))}
+                        <div className="border-t border-dotted border-muted-foreground/30" />
+                        <div className="flex justify-between text-[11px] font-semibold">
+                          <span>SUBTOTAL:</span>
+                          <span>{g.subtotal.toFixed(2)} {weightUnit}</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                )}
-              </div>
+                );
+              })()}
               <div className="border-t border-dashed border-muted-foreground/40" />
-              
-              {/* Total */}
               <div className="flex justify-between font-bold pt-1">
                 <span>TOTAL:</span>
                 <span>{data.total_weight.toFixed(2)} {weightUnit}</span>
