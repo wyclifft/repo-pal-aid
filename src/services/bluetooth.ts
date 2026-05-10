@@ -2332,13 +2332,14 @@ export const printStoreAIReceipt = async (data: {
   if (data.deliveredBy && data.deliveredBy !== 'owner') {
     receipt += formatLine('Del.By    ', data.deliveredBy, W) + '\n';
   }
-  // v2.10.80: Wider, roomier ID NO / SIGN write areas — label on its own line,
-  // full-width underscore beneath, blank line between for handwriting space.
+  // v2.10.81: Force ID NO / SIGN labels flush-left (column 0). Pad each label
+  // line to the full printer width so prior right-aligned values cannot bleed
+  // and visually center the label. Underscore lines and spacing unchanged.
   const writeLine = '_'.repeat(W);
-  receipt += 'ID NO:\n';
+  receipt += 'ID NO:'.padEnd(W) + '\n';
   receipt += writeLine + '\n';
   receipt += '\n';
-  receipt += 'SIGN:\n';
+  receipt += 'SIGN:'.padEnd(W) + '\n';
   receipt += writeLine + '\n';
 
   // Add reprint timestamp if this is a reprint
