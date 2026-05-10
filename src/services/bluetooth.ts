@@ -2666,33 +2666,37 @@ export const printMemberProduceStatement = async (data: {
 
   let receipt = '';
 
-  // v2.10.55: Top paper feed so the company name doesn't print on the tear edge
+  // v2.10.79: Use ESC/POS native alignment so the header is centered relative
+  // to the printer's actual paper width (not our 32-col space padding) and
+  // tighten inter-section spacing.
+  const ESC_CENTER = String.fromCharCode(0x1B, 0x61, 0x01);
+  const ESC_LEFT = String.fromCharCode(0x1B, 0x61, 0x00);
+
+  // Top paper feed so the company name doesn't print on the tear edge
   receipt += '\n\n';
 
-  // Company Header
-  receipt += centerText(data.companyName.toUpperCase(), W) + '\n';
+  // Company Header — printer-centered
+  receipt += ESC_CENTER;
+  receipt += data.companyName.toUpperCase().trim() + '\n';
 
-  // v2.10.55: Optional CENTER line (route/center descript)
   const centerNameClean = (data.centerName || '').trim();
   if (centerNameClean) {
-    receipt += centerText(`CENTER: ${centerNameClean.toUpperCase()}`, W) + '\n';
+    receipt += `CENTER: ${centerNameClean.toUpperCase()}\n`;
   }
+  receipt += ESC_LEFT;
+  receipt += dashLine + '\n';
 
+  // Title — also printer-centered
+  receipt += ESC_CENTER;
+  receipt += 'MEMBER PRODUCE STATEMENT\n';
+  receipt += `From ${formatDate(data.startDate)} - To ${formatDate(data.endDate)}\n`;
+  receipt += ESC_LEFT;
   receipt += dashLine + '\n';
-  receipt += '\n';
-  
-  // Title
-  receipt += centerText('MEMBER PRODUCE STATEMENT', W) + '\n';
-  receipt += centerText(`From ${formatDate(data.startDate)} - To ${formatDate(data.endDate)}`, W) + '\n';
-  receipt += dashLine + '\n';
-  receipt += '\n';
-  
-  // Member Info
+
+  // Member Info — compact: single dotted separator after the pair
   receipt += `MEMBER NO: ${data.farmerId}\n`;
-  receipt += dotLine + '\n';
   receipt += `MEMBER NAME: ${data.farmerName.substring(0, W - 13)}\n`;
   receipt += dotLine + '\n';
-  receipt += '\n';
 
   // v2.10.77: Group transactions by icode so each product gets its own
   // labeled section and subtotal. Falls back to a single section using
@@ -2721,11 +2725,10 @@ export const printMemberProduceStatement = async (data: {
     receipt += dashLine + '\n';
   } else {
     groupArr.forEach(([icode, g], idx) => {
-      if (idx > 0) receipt += '\n';
+      if (idx > 0) receipt += dotLine + '\n';
       const codeSuffix = showCode && icode !== g.label ? ` (${icode})` : '';
       const sectionLabel = `${g.label}${codeSuffix} RECORD`;
       receipt += centerText(sectionLabel, W) + '\n';
-      receipt += dashLine + '\n';
       receipt += 'DATE'.padEnd(dateColW) + 'REC NO'.padEnd(recColW) + 'QUANTITY'.padStart(qtyColW) + '\n';
       receipt += dotLine + '\n';
       g.rows.forEach(tx => {
@@ -2741,14 +2744,12 @@ export const printMemberProduceStatement = async (data: {
     });
     receipt += dashLine + '\n';
   }
-  receipt += '\n';
-  
+
   // Total
   const totalLabel = 'TOTAL:';
   const totalVal = `${data.totalWeight.toFixed(2)} Kgs`;
   receipt += totalLabel + totalVal.padStart(W - totalLabel.length) + '\n';
   receipt += dashLine + '\n';
-  receipt += '\n';
   
   // Footer
   receipt += `Report printed on ${printedOn}\n`;
