@@ -254,19 +254,26 @@ export function PeriodicReportReceipt({
                           <span>{g.label}{showCode && icode !== g.label ? ` (${icode})` : ''} RECORD</span>
                         </div>
                         <div className="border-t border-dashed border-muted-foreground/40" />
-                        <div className="grid font-bold text-[10px]" style={{ gridTemplateColumns: '12ch 7ch 1fr' }}>
+                        <div className="grid font-bold text-[10px]" style={{ gridTemplateColumns: '11ch 11ch 1fr' }}>
                           <span>DATE</span>
                           <span>REC NO</span>
                           <span className="text-right">QUANTITY</span>
                         </div>
                         <div className="border-t border-dotted border-muted-foreground/30" />
-                        {g.rows.map((tx, idx) => (
-                          <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '12ch 7ch 1fr' }}>
-                            <span>{formatDisplayDate(tx.date)}</span>
-                            <span>{tx.rec_no?.slice(-5) || '-----'}</span>
-                            <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
-                          </div>
-                        ))}
+                        {g.rows.map((tx, idx) => {
+                          // v2.10.82: REC NO = devcode-LAST5 (e.g. BB01-00002)
+                          const ref = tx.rec_no;
+                          const recDisplay = (ref && ref.length >= 9)
+                            ? `${ref.slice(0, 4)}-${ref.slice(-5)}`
+                            : '----------';
+                          return (
+                            <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '11ch 11ch 1fr' }}>
+                              <span>{formatDisplayDate(tx.date)}</span>
+                              <span>{recDisplay}</span>
+                              <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
+                            </div>
+                          );
+                        })}
                         <div className="border-t border-dotted border-muted-foreground/30" />
                         <div className="flex justify-between text-[11px] font-semibold">
                           <span>SUBTOTAL:</span>

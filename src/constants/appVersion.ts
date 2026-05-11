@@ -517,5 +517,5 @@
 //   signature on the thermal receipt. Print output only —
 //   printStoreAIReceipt in src/services/bluetooth.ts. No backend, no UI,
 //   no business logic, no sync/reference changes.
-export const APP_VERSION = '2.10.81';
-export const APP_VERSION_CODE = 103;
+export const APP_VERSION = '2.10.82';
+export const APP_VERSION_CODE = 104;
