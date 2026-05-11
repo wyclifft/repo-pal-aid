@@ -2708,9 +2708,15 @@ export const printMemberProduceStatement = async (data: {
   // v2.10.77: Group transactions by icode so each product gets its own
   // labeled section and subtotal. Falls back to a single section using
   // the legacy produceName when no per-row icode is present.
-  const dateColW = 12;
-  const recColW = 7;
+  // v2.10.82: REC NO now shows DEVCODE-LAST5 (e.g. BB01-00002) instead of just last 5.
+  // Widen REC NO column from 7 → 11; date stays 11 (DD/MM/YYYY + space); QUANTITY = 10.
+  const dateColW = 11;
+  const recColW = 11;
   const qtyColW = W - dateColW - recColW;
+  const formatRecNo = (ref?: string) => {
+    if (!ref || ref.length < 9) return '----------';
+    return `${ref.slice(0, 4)}-${ref.slice(-5)}`;
+  };
 
   type Group = { label: string; rows: typeof data.transactions; subtotal: number };
   const groups = new Map<string, Group>();
@@ -2740,7 +2746,7 @@ export const printMemberProduceStatement = async (data: {
       receipt += dotLine + '\n';
       g.rows.forEach(tx => {
         const dateStr = formatDate(tx.date);
-        const refNo = tx.rec_no ? tx.rec_no.slice(-5) : '-----';
+        const refNo = formatRecNo(tx.rec_no);
         const qty = (Number(tx.quantity) || 0).toFixed(1);
         receipt += dateStr.padEnd(dateColW) + refNo.padEnd(recColW) + qty.padStart(qtyColW) + '\n';
       });
