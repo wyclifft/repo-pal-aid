@@ -1,61 +1,57 @@
 ## Goal
 
-Keep the current ID NO / SIGN spacing exactly as it is on the printed Store/AI receipt, but **move the `ID NO:` and `SIGN:` labels to the far left** (flush against the left edge of the paper), matching the handwritten labels in the photo. The underscore lines and blank-line spacing stay unchanged.
+In the Periodic Report (Member Produce Statement), include the device code with the receipt number so each row reads like `BB01-00002` instead of just `00002`. Apply to both the on-screen preview and the printed thermal receipt.
 
-## Why the labels look centered today
+## Changes
 
-In `src/services/bluetooth.ts` (line 2338, 2341), the labels are emitted as plain `'ID NO:\n'` and `'SIGN:\n'` immediately after a `formatLine(...)` call for `Clerk` / `Del.By`. `formatLine` right-pads its value, and on some printers/firmwares the previous line's trailing spaces wrap onto the start of the next short line, pushing `ID NO:` and `SIGN:` toward the middle.
+### 1. REC NO formatting (10 chars: `DEVCODE-LAST5`)
 
-## Change
+The stored `rec_no` is the full `transrefno` (devcode[4] + clientFetch[1] + padded_trnid[8] = 13 chars). Format as:
+- `devcode = rec_no.slice(0, 4)` (e.g. `BB01`)
+- `last5 = rec_no.slice(-5)` (last 5 of trnid)
+- Display = `${devcode}-${last5}` (e.g. `BB01-00002`)
+- Fallback when `rec_no` missing: `----------`
 
-In `src/services/bluetooth.ts`, lines 2335–2342 of `printStoreAIReceipt`, force each label line to be exactly the printer width by left-padding the label with spaces only at the END (so the label text itself sits on column 0). Keep the underscore lines and the single blank line between blocks exactly as they are today.
+### 2. Column widths (thermal printer, 32-col)
 
-Replace:
+`src/services/bluetooth.ts` — `printMemberProduceStatement`, lines 2711–2745:
+- `dateColW`: 12 → 9 (date already prints as `DD/MM/YY`-style 8 chars + 1 space)
+- `recColW`: 7 → 11 (fits `BB01-00002` + 1 space)
+- `qtyColW`: `W - dateColW - recColW` (= 12, unchanged net effect after rebalancing)
+- Header row updates `'DATE'` / `'REC NO'` paddings to the new widths.
+- Data row uses the new `formatRecNo(tx.rec_no)` helper.
 
+### 3. On-screen preview
+
+`src/components/PeriodicReportReceipt.tsx`, lines 257–268:
+- Update grid template: `'9ch 11ch 1fr'`.
+- Replace `tx.rec_no?.slice(-5) || '-----'` with `formatRecNo(tx.rec_no)`.
+- Header label `REC NO` stays the same.
+
+### 4. Helper
+
+Add a tiny shared helper (inline in both files, no new module needed):
 ```ts
-const writeLine = '_'.repeat(W);
-receipt += 'ID NO:\n';
-receipt += writeLine + '\n';
-receipt += '\n';
-receipt += 'SIGN:\n';
-receipt += writeLine + '\n';
+const formatRecNo = (ref?: string) => {
+  if (!ref || ref.length < 9) return '----------';
+  return `${ref.slice(0, 4)}-${ref.slice(-5)}`;
+};
 ```
 
-with:
+### 5. Versioning
 
-```ts
-// v2.10.81: Force ID NO / SIGN labels to print flush-left (column 0).
-// Pad each label line to the full printer width so prior right-aligned
-// values cannot bleed/wrap and visually center the label.
-const writeLine = '_'.repeat(W);
-receipt += 'ID NO:'.padEnd(W) + '\n';
-receipt += writeLine + '\n';
-receipt += '\n';
-receipt += 'SIGN:'.padEnd(W) + '\n';
-receipt += writeLine + '\n';
-```
+- `src/constants/appVersion.ts`: `APP_VERSION` → `2.10.82`, `APP_VERSION_CODE` → `104`.
+- `android/app/build.gradle`: `versionCode` → `104`, `versionName` → `'2.10.82'`.
+- `public/sw.js`: `CACHE_VERSION` → `'v29'`.
 
-Result: `ID NO:` and `SIGN:` print at the left edge, the long underscore line stays directly beneath each, and the existing blank line between the two blocks is preserved — exactly as the photo shows. No other section of the receipt is modified.
+## Out of scope
 
-## Versioning
-
-Per workspace rule, bump:
-- `src/constants/appVersion.ts` → `2.10.81` (version code 103)
-- `android/app/build.gradle` → `versionName 2.10.81`, `versionCode 103`
-- `public/sw.js` cache → `v28`
+- No backend / SQL changes (`backend-api/server.js` already returns `transrefno as rec_no`).
+- No change to the underlying `rec_no` value stored — only display formatting.
+- No change to other receipts (milk, store/AI) or to date format.
 
 ## Verification
 
-- Reprint a Store/AI receipt and confirm:
-  - `ID NO:` sits flush-left directly under `Clerk`.
-  - The full-width underscore line remains directly beneath it.
-  - One blank line separates ID NO from SIGN.
-  - `SIGN:` sits flush-left, with the underscore line directly beneath.
-- Reprint a milk Periodic/standard receipt to confirm it is unaffected.
-
-## Files touched
-
-- `src/services/bluetooth.ts` (only `printStoreAIReceipt`, lines ~2335–2342)
-- `src/constants/appVersion.ts`
-- `android/app/build.gradle`
-- `public/sw.js`
+1. Open Periodic Report for any member with transactions — preview shows `BB01-00002` style under REC NO.
+2. Print the statement on the thermal printer — REC NO column aligns, QUANTITY still right-aligned, no wrapping.
+3. Reprint a normal milk receipt and a Store/AI receipt to confirm they are unaffected.
