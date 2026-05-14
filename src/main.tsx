@@ -7,11 +7,16 @@ import "./index.css";
 import "./utils/errorHandler";
 import { installPersistentLogger, _setLoggerAppVersion } from "./utils/persistentLogger";
 import { APP_VERSION } from "./constants/appVersion";
+import { installAutoReconnect as installBtAutoReconnect } from "./services/btConnectionManager";
 
 // Install persistent debug logger BEFORE anything else so we capture early errors
 _setLoggerAppVersion(APP_VERSION);
 installPersistentLogger();
 initializeNativePlatform().catch(console.error);
+
+// v2.10.85: Resilient Bluetooth connection manager — auto-reconnects scale &
+// printer on app boot/resume/online/adapter-on; survives logout & reloads.
+installBtAutoReconnect();
 
 // Prevent zoom on double tap for native feel
 document.addEventListener('touchstart', (e) => {

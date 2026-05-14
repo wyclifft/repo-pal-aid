@@ -1,4 +1,17 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.85: RESILIENT BLUETOOTH CONNECTION MANAGER — both scale and printer
+//   now share a single connection manager (src/services/btConnectionManager.ts)
+//   that owns: per-role state machine (idle/connecting/connected/reconnecting/
+//   disconnected/failed), per-role mutex (no duplicate connect attempts),
+//   exponential backoff retry (2/4/8/15/30s), 15s health monitor (paused when
+//   document hidden), auto-reconnect on app resume / online / adapter on,
+//   persistent last-paired memory (survives logout & reload). New shared hook
+//   useBtStatus(role) drives PrinterSelector status chip in real time. Logout
+//   no longer disconnects Bluetooth — devices stay paired across re-login.
+//   All transitions tagged "[BT][role]" so the persistent /debug console
+//   captures every connect/disconnect/retry/health-check. No backend, schema,
+//   sync, reference generator, receipt, or auth flow changes.
+//
 // v2.10.84: PERSISTENT DEBUG CONSOLE — restored at /debug, isolated IndexedDB,
 //   survives logout/restart/reboot. Global capture of console.error/warn,
 //   window error, unhandled rejections, online/offline. Hard guards: 1s
@@ -544,5 +557,5 @@
 //   signature on the thermal receipt. Print output only —
 //   printStoreAIReceipt in src/services/bluetooth.ts. No backend, no UI,
 //   no business logic, no sync/reference changes.
-export const APP_VERSION = '2.10.84';
-export const APP_VERSION_CODE = 106;
+export const APP_VERSION = '2.10.85';
+export const APP_VERSION_CODE = 107;
