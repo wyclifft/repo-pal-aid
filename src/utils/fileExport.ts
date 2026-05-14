@@ -1,4 +1,5 @@
 import type { MilkCollection } from '@/lib/supabase';
+import { saveExportedFile } from './nativeFileExport';
 
 // Helper to get produce label from localStorage settings (for non-React contexts)
 const getProduceLabelFromCache = (): string => {
