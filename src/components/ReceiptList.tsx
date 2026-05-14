@@ -49,21 +49,21 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
     await loadPendingReceipts();
   };
 
-  const handleExportText = () => {
+  const handleExportText = async () => {
     if (unsyncedReceipts.length === 0) {
       toast.error('No receipts to export');
       return;
     }
-    generateTextReport(unsyncedReceipts);
+    await generateTextReport(unsyncedReceipts);
     toast.success('Text file exported');
   };
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     if (unsyncedReceipts.length === 0) {
       toast.error('No receipts to export');
       return;
     }
-    generateCSVReport(unsyncedReceipts);
+    await generateCSVReport(unsyncedReceipts);
     toast.success('CSV file exported');
   };
 

@@ -557,5 +557,13 @@
 //   signature on the thermal receipt. Print output only —
 //   printStoreAIReceipt in src/services/bluetooth.ts. No backend, no UI,
 //   no business logic, no sync/reference changes.
-export const APP_VERSION = '2.10.85';
-export const APP_VERSION_CODE = 107;
+// v2.10.86: NATIVE FILE EXPORT FIX — debug logs and report exports now use
+//   Capacitor Filesystem + Share on native Android/iOS instead of the broken
+//   anchor-download approach that silently fails inside Capacitor WebViews.
+//   New utility src/utils/nativeFileExport.ts handles cross-platform save:
+//   web = anchor download, native = write to Documents then open Share sheet.
+//   @capacitor/filesystem and @capacitor/share registered in Android build.
+//   ReceiptList export handlers updated to async/await. No backend, schema,
+//   sync, receipt, Bluetooth, or auth changes.
+export const APP_VERSION = '2.10.86';
+export const APP_VERSION_CODE = 108;
