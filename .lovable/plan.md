@@ -1,94 +1,107 @@
-# Persistent Console Logger v2.10.84
+## Goal
 
-Restore the dedicated persistent debug console (per memory v2.10.77/78) that survives logout, app restarts, and reboots. Remove the Bluetooth debug panel entirely and route Bluetooth/device errors into the same logger.
+Make the Bluetooth scale and printer connections **survive app lifecycle events** (background, logout, lock screen, device power-cycle) and self-heal automatically, with accurate real-time status in the UI and full integration into the persistent debug console.
+
+Target release: **v2.10.85 (Version Code 107)**.
 
 ## Scope
 
-### 1. New persistent logger (`src/utils/persistentLogger.ts`)
-Dedicated IndexedDB database **separate from app data** so it cannot be wiped by data clears or schema migrations.
+- Scale and printer (BLE + Classic SPP).
+- Native Capacitor Android (production) is the priority. Web/PWA path keeps current best-effort behavior — Web Bluetooth cannot persist across reloads.
+- No backend, schema, transaction, reference generator, or sync changes.
 
-- **Database**: `delicoop-debug-logs` (own DB, single store `logs`, autoIncrement key, indexes on `ts`, `level`, `tag`)
-- **Schema per entry**: `{ id, ts, level, tag, message, data?, route?, version, ccode? }`
-- **API**: `plog.debug/info/warn/error(tag, msg, data?)`, `plog.list({level, tag, search, since, limit})`, `plog.clear()`, `plog.export()` (returns NDJSON blob)
-- **Survives**: logout (no clear on auth events), app restart (IDB), device reboot (IDB).
+## What changes
 
-### 2. Performance & safety guardrails
-- **Batch writes**: queue in memory, flush every 1s or at 25 entries (whichever first); flush on `visibilitychange=hidden` and `beforeunload`.
-- **Dedupe window**: identical `level+tag+message` within 2s collapses to a single row with `count++` (matches existing memory rule).
-- **Rate cap**: hard cap 50 writes/sec; excess logs dropped with a single `[LOGGER] dropped N` summary entry.
-- **Size cap**: max **5,000 entries** OR **5 MB** estimated payload; prune oldest 20% when exceeded.
-- **Age prune**: drop entries older than **7 days** on each app start and every hour.
-- **Quota recovery**: on `QuotaExceededError`, prune to 50% and retry once; if still failing, disable persistence for the session and keep console logging.
-- **Payload trimming**: stringify `data` with depth limit and 2 KB cap per entry.
-- **Lightweight**: all writes async, never block UI thread; no work when tab hidden beyond final flush.
+### 1. New connection manager (`src/services/btConnectionManager.ts`)
 
-### 3. Global capture (install once in `src/main.tsx`, before app render)
-Hook into:
-- `console.error` / `console.warn` (wrap, still call originals)
-- `window.onerror`
-- `window.onunhandledrejection`
-- `window.addEventListener('online'|'offline', ...)`
-- Existing `errorHandler.ts` already routes — pipe it into `plog.error`
-- Tags: `GLOBAL`, `UNHANDLED`, `NET`, `IDB`, `SYNC`, `BT`, `API`, `CUM`
+A single source of truth that wraps the existing `services/bluetooth.ts` and `services/bluetoothClassic.ts` calls. Existing functions stay; the manager only **orchestrates**.
 
-### 4. Wire existing subsystems
-Replace the most relevant `console.*` / `logger.*` calls with `plog.*` in:
-- `src/utils/resilientFetch.ts` (API failures, XHR fallback events) → tag `API`
-- `src/hooks/useIndexedDB.ts` (the `VersionError` spam shown in console) → tag `IDB`
-- `src/services/bluetooth.ts`, `src/services/bluetoothClassic.ts`, `src/services/bluetoothClassicWeb.ts` → tag `BT`
-- `src/utils/salesSyncEngine.ts` and `src/hooks/useSyncManager.ts` → tag `SYNC`
-- Cumulative paths already using `[CUM][*]` taxonomy → tag `CUM`
-- `src/contexts/AuthContext.tsx` online/offline transitions → tag `NET`
+State machine per role (`scale`, `printer`):
 
-`src/utils/logger.ts` keeps its current API; we add an internal hook so every `logger.warn/error` also forwards to `plog`. No call sites need to change for those.
+```text
+idle → connecting → connected
+                 ↘ failed → reconnecting → connected
+connected → disconnected (auto) → reconnecting → connected | failed
+```
 
-### 5. Debug Console UI
-- Restore `src/pages/DebugConsole.tsx` at route `/debug` (lazy-loaded in `src/App.tsx`).
-- Features: live tail (refresh every 2s while visible), filters (level, tag, free-text search), clear button, export-as-file button, copy-to-clipboard, entry count + storage estimate.
-- Add a small "Open Debug Console" link in `src/pages/Settings.tsx` (replaces the removed Bluetooth panel slot).
+Public API:
+- `getStatus(role)` → `'connected' | 'connecting' | 'reconnecting' | 'disconnected' | 'failed'`
+- `subscribe(role, cb)` → unsubscribe fn
+- `ensureConnected(role)` — idempotent, dedup-locked
+- `forget(role)` — user-initiated unpair
 
-### 6. Remove Bluetooth Debug Panel
-- Delete `src/components/BluetoothDebugPanel.tsx`.
-- Remove the import and `<BluetoothDebugPanel />` usage from `src/pages/Settings.tsx` (line 4 and 702).
-- All diagnostics previously surfaced there now flow into `/debug` under tag `BT`.
+Internals:
+- Per-role mutex so two callers can never start parallel connect attempts (eliminates duplicate connections / frozen states).
+- Exponential backoff retry: 2s, 4s, 8s, 15s, 30s, then steady 30s. Cap at 30s. Stop after the user calls `forget()`.
+- Health monitor: every 15s while `connected`, run the existing `verifyScaleConnection()` / `verifyPrinterConnection()` ping. On failure → transition to `reconnecting` and trigger backoff loop.
+- Reacts to `online`/`offline`, Capacitor `App` `appStateChange` (resume), and Bluetooth adapter state events. On resume from background → immediate reconnect attempt (resets backoff).
+- All transitions emit existing `scaleConnectionChange` / `printerConnectionChange` events **plus** a new `btStatusChange` event with `{ role, status, deviceName, error? }` for the new UI.
+- Every transition is logged via `plog('BT', …)` so it lands in the persistent debug console.
+
+### 2. Background survival on Android
+
+Add a lightweight foreground service so the OS does not kill the BT socket when the app is backgrounded or the user logs out (the web layer logs out, but the native process stays alive).
+
+- New Kotlin file `android/app/src/main/java/app/delicoop101/bluetooth/BluetoothKeepAliveService.kt` — `Service` with a low-priority persistent notification ("Connected to scale/printer"). Started/stopped by `BluetoothClassicPlugin` via two new `@PluginMethod`s `startKeepAlive` / `stopKeepAlive`.
+- `AndroidManifest.xml` — declare the service and `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_CONNECTED_DEVICE` (Android 14) permissions.
+- The connection manager calls `startKeepAlive` on first successful connect of either role, `stopKeepAlive` when both are forgotten.
+- BLE side: keep the existing `BleClient.connect` callback registered; the connection manager owns the "auto-reconnect on disconnect" loop instead of one-shot logs.
+
+Logout behavior: `AuthContext.logout` is updated to **not** call `disconnect()` — Bluetooth survives logout. Only `forget()` from a settings action drops the saved device.
+
+### 3. Persistent last-paired memory
+
+Already partially present (`getStoredPrinterInfo`, `getStoredScaleInfo`). Consolidate into one helper inside the manager:
+
+- `localStorage` keys `bt.lastScale` and `bt.lastPrinter` → `{ deviceId, name, type: 'ble'|'classic', savedAt }`.
+- On app boot (`main.tsx` after login restore), the manager auto-calls `ensureConnected('scale')` and `ensureConnected('printer')` if entries exist. Auto-reconnect happens before the user reaches the dashboard.
+- Stale-state guard: when `BleClient`/Classic reports `isConnected=false` but local cache says connected, the manager corrects local cache and emits the event — fixes "frozen Bluetooth states".
+
+### 4. UI status — real-time, accurate
+
+A single new shared hook `src/hooks/useBtStatus.ts`:
+
+```ts
+useBtStatus('scale'|'printer') → { status, deviceName, lastError, retryIn }
+```
+
+Replaces ad-hoc state in:
+- `src/components/PrinterSelector.tsx` — button label/icon driven by status (Connected / Connecting / Reconnecting in N s / Disconnected / Failed).
+- `src/hooks/useScaleConnection.ts` — keeps existing scale value reading; status badge driven by manager.
+- `src/components/Dashboard.tsx` — small scale + printer chips already present; now bound to the hook.
+- `src/components/BluetoothConnectionDialog.tsx` — same status vocabulary.
+
+Status colors use existing semantic tokens (`text-green-600`, `text-amber-500`, `text-destructive`, `text-muted-foreground`) — no new design tokens.
+
+### 5. Performance & safety
+
+- Health-check interval 15s, paused while `document.hidden` and resumed on `visibilitychange` → no battery drain when phone is asleep.
+- Backoff is `setTimeout`-based (no busy loops). Cleared on success / forget / unmount.
+- Per-role mutex prevents the duplicate-connect path that currently locks the BLE adapter.
+- All listeners registered once at module load and torn down via `beforeunload` to prevent leaks during hot reload.
+
+### 6. Logging integration
+
+Every state transition, retry, health-check failure, adapter state change, and Kotlin-side service start/stop is forwarded to `plog('BT', message, data)` so the existing **/debug** console captures it. Native `Log.d/Log.e` lines from the plugin already include the `[BT]` prefix; we add a new `notifyListeners('btLog', …)` event the manager subscribes to and forwards into `plog`.
 
 ### 7. Versioning
-- `APP_VERSION` → `2.10.84`
-- `APP_VERSION_CODE` → `106`
-- `CACHE_VERSION` → `v31`
-- Bump `android/app/build.gradle` versionCode/versionName accordingly.
 
-## Files
+- `src/constants/appVersion.ts` → `2.10.85`
+- `android/app/build.gradle` → `versionCode 107`, `versionName "2.10.85"`
+- `public/sw.js` → `CACHE_VERSION = 'v32'`
 
-**New**
-- `src/utils/persistentLogger.ts`
-- `src/pages/DebugConsole.tsx`
+## Out of scope
 
-**Edited**
-- `src/main.tsx` (global handlers + console wrap, install before render)
-- `src/utils/logger.ts` (forward to plog)
-- `src/utils/errorHandler.ts` (forward to plog)
-- `src/utils/resilientFetch.ts` (API tag)
-- `src/hooks/useIndexedDB.ts` (IDB tag)
-- `src/services/bluetooth.ts`, `bluetoothClassic.ts`, `bluetoothClassicWeb.ts` (BT tag)
-- `src/utils/salesSyncEngine.ts`, `src/hooks/useSyncManager.ts` (SYNC tag)
-- `src/App.tsx` (add `/debug` route)
-- `src/pages/Settings.tsx` (remove BluetoothDebugPanel, add link)
-- `src/constants/appVersion.ts`, `public/sw.js`, `android/app/build.gradle`
-
-**Deleted**
-- `src/components/BluetoothDebugPanel.tsx`
-
-## Out of scope / safety
-- No backend changes. No schema changes to existing app IndexedDB (separate DB used).
-- No changes to transaction creation, reference generator, sync payload shape, receipts, or auth flows.
-- Existing `logger.ts` API preserved so no risk to call sites.
+- Reference generator, sync engine, IndexedDB schemas, receipts, auth flow.
+- iOS (project is Android-only Capacitor).
+- Replacing `services/bluetooth.ts`/`bluetoothClassic.ts` — they remain the low-level drivers.
 
 ## Verification checklist
-- App boots, login still required on restart.
-- `/debug` shows live entries, survives logout and app reload.
-- Forced error (throw in console) appears under `UNHANDLED`.
-- IDB `VersionError` spam appears under `IDB` and is deduped.
-- Rapid 1000-log loop does not freeze UI; entries capped & throttled.
-- Bluetooth connect/disconnect events appear under `BT`.
-- Settings page loads without the removed panel.
+
+1. Connect scale + printer → kill the app from recents → reopen: both reconnect within 5 s without user input.
+2. Power off scale → UI flips to **Reconnecting** within 15 s; power on → flips to **Connected** automatically.
+3. Logout from app → re-login: devices already connected, no manual pairing.
+4. Open `/debug`: BT events visible under the `BT` tag with timestamps.
+5. Background the app for 5 min → resume: connections still alive (foreground service notification visible).
+6. Tap Reconnect twice rapidly → only one connect attempt runs (mutex).
+7. Build succeeds; transactions, receipts, sync, and photo upload paths untouched.
