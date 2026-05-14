@@ -6,6 +6,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
 import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName } from '@/utils/deviceFingerprint';
 import { storeDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
+import { hashPassword, hashesEqual } from '@/utils/passwordHash';
 import loginBg from '@/assets/login-bg.jpg';
 
 interface LoginProps {
