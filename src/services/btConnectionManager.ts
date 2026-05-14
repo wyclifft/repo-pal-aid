@@ -174,7 +174,7 @@ function isLowLevelConnected(role: BtRole): boolean {
 
 // ─── connect attempts ──────────────────────────────────────────────────────────
 
-async function tryConnectOnce(role: BtRole, saved: SavedDevice): Promise<boolean> {
+async function tryConnectOnce(role: BtRole, saved: SavedDevice): Promise<{ ok: boolean; requiresGesture?: boolean }> {
   try {
     if (role === "scale") {
       if (saved.type === "classic") {
@@ -193,11 +193,17 @@ async function tryConnectOnce(role: BtRole, saved: SavedDevice): Promise<boolean
         if (!r.success) throw new Error(r.error || "BLE printer reconnect failed");
       }
     }
-    return true;
+    return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const name = e instanceof Error ? e.name : "";
+    // Web Bluetooth requires a user gesture for requestDevice — looping
+    // is pointless and floods the log. Pause until next gesture instead.
+    const requiresGesture =
+      name === "NotAllowedError" ||
+      /user gesture|requestDevice/i.test(msg);
     btlog("warn", role, `connect attempt failed: ${msg}`);
-    return false;
+    return { ok: false, requiresGesture };
   }
 }
 
