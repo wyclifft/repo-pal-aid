@@ -69,16 +69,27 @@ export default function DebugConsole() {
     toast.success("Debug logs cleared");
   };
 
-  const onExport = async () => {
-    const blob = await plog.exportNDJSON();
+  const downloadBlob = (blob: Blob, ext: string) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.ndjson`;
+    a.download = `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  };
+
+  const onExportNDJSON = async () => {
+    const blob = await plog.exportNDJSON();
+    downloadBlob(blob, "ndjson");
+    toast.success("NDJSON exported");
+  };
+
+  const onExportCSV = async () => {
+    const blob = await plog.exportCSV();
+    downloadBlob(blob, "csv");
+    toast.success("CSV exported");
   };
 
   const onCopy = async () => {
