@@ -1,8 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 
-const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 12; // v2.10.73: farmer_cumulative cache keyed by farmer+route+month for per-factory isolation
+// v2.10.87: DB_NAME and DB_VERSION are exported so other modules
+// (e.g. referenceGenerator) open the SAME version and never trigger
+// VersionError. Single source of truth — bump here only.
+export const DB_NAME = 'milkCollectionDB';
+export const DB_VERSION = 12; // v2.10.73: farmer_cumulative cache keyed by farmer+route+month for per-factory isolation
 
 let dbInstance: IDBDatabase | null = null;
 

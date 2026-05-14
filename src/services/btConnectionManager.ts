@@ -64,6 +64,7 @@ interface RoleState {
   retryAt: number | null; // ms timestamp
   attempt: number;
   forgotten: boolean;
+  pausedForGesture: boolean; // v2.10.87: Web BT requires user gesture
   inFlight: Promise<void> | null;
   retryTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -75,6 +76,7 @@ const initialState = (): RoleState => ({
   retryAt: null,
   attempt: 0,
   forgotten: false,
+  pausedForGesture: false,
   inFlight: null,
   retryTimer: null,
 });
@@ -174,7 +176,7 @@ function isLowLevelConnected(role: BtRole): boolean {
 
 // ─── connect attempts ──────────────────────────────────────────────────────────
 
-async function tryConnectOnce(role: BtRole, saved: SavedDevice): Promise<boolean> {
+async function tryConnectOnce(role: BtRole, saved: SavedDevice): Promise<{ ok: boolean; requiresGesture?: boolean }> {
   try {
     if (role === "scale") {
       if (saved.type === "classic") {
@@ -193,11 +195,17 @@ async function tryConnectOnce(role: BtRole, saved: SavedDevice): Promise<boolean
         if (!r.success) throw new Error(r.error || "BLE printer reconnect failed");
       }
     }
-    return true;
+    return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const name = e instanceof Error ? e.name : "";
+    // Web Bluetooth requires a user gesture for requestDevice — looping
+    // is pointless and floods the log. Pause until next gesture instead.
+    const requiresGesture =
+      name === "NotAllowedError" ||
+      /user gesture|requestDevice/i.test(msg);
     btlog("warn", role, `connect attempt failed: ${msg}`);
-    return false;
+    return { ok: false, requiresGesture };
   }
 }
 
@@ -219,6 +227,7 @@ async function ensureConnected(role: BtRole): Promise<void> {
   const s = state[role];
   if (s.inFlight) return s.inFlight;
   if (s.forgotten) return;
+  if (s.pausedForGesture) return; // wait for next user gesture / manual pair
 
   const saved = getSavedDevice(role);
   if (!saved) {
@@ -238,9 +247,17 @@ async function ensureConnected(role: BtRole): Promise<void> {
   });
 
   const op = (async () => {
-    const ok = await tryConnectOnce(role, saved);
-    if (ok) {
+    const result = await tryConnectOnce(role, saved);
+    if (result.ok) {
       setStatus(role, "connected", { lastError: null, retryAt: null, attempt: 0 });
+    } else if (result.requiresGesture) {
+      // Cancel any pending retry — looping cannot succeed without a gesture.
+      if (s.retryTimer) { clearTimeout(s.retryTimer); s.retryTimer = null; }
+      s.pausedForGesture = true;
+      s.attempt = 0;
+      s.lastError = "needs manual reconnect";
+      setStatus(role, "failed", { retryAt: null });
+      btlog("warn", role, "paused — needs user gesture to reconnect");
     } else {
       s.attempt += 1;
       s.lastError = "connect failed";
@@ -256,6 +273,21 @@ async function ensureConnected(role: BtRole): Promise<void> {
 
   s.inFlight = op;
   return op;
+}
+
+// v2.10.87: clear gesture-pause flags when a real user input arrives.
+function resumeFromGesture() {
+  let resumed = false;
+  for (const role of ["scale", "printer"] as const) {
+    if (state[role].pausedForGesture) {
+      state[role].pausedForGesture = false;
+      state[role].attempt = 0;
+      resumed = true;
+      btlog("info", role, "user gesture detected → resuming auto-reconnect");
+      void ensureConnected(role);
+    }
+  }
+  return resumed;
 }
 
 // ─── health monitor ────────────────────────────────────────────────────────────
@@ -305,6 +337,7 @@ export function installAutoReconnect() {
     if (!detail) return;
     if (detail.connected) {
       const saved = getSavedDevice(role);
+      state[role].pausedForGesture = false; // manual pair clears the pause
       setStatus(role, "connected", {
         deviceName: saved?.deviceName ?? state[role].deviceName,
         lastError: null,
@@ -357,6 +390,14 @@ export function installAutoReconnect() {
     void ensureConnected("printer");
   });
 
+  // v2.10.87: Web Bluetooth requires a user gesture for requestDevice. If
+  // a previous attempt was paused with `pausedForGesture`, the next real
+  // pointer/key/touch event triggers a fresh attempt inside the gesture window.
+  const onUserGesture = () => { resumeFromGesture(); };
+  window.addEventListener("pointerdown", onUserGesture, { passive: true });
+  window.addEventListener("keydown", onUserGesture, { passive: true });
+  window.addEventListener("touchstart", onUserGesture, { passive: true });
+
   startHealthMonitor();
 
   // Initial sweep — auto-reconnect anything we already know about.
@@ -386,6 +427,7 @@ export const bt = {
   },
   async forget(role: BtRole): Promise<void> {
     state[role].forgotten = true;
+    state[role].pausedForGesture = false;
     if (state[role].retryTimer) {
       clearTimeout(state[role].retryTimer);
       state[role].retryTimer = null;
