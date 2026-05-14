@@ -1,20 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Printer, RefreshCw, Signal, Check, Loader2, WifiOff, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { 
-  scanForPrinters, 
-  connectToSpecificPrinter, 
-  getStoredPrinterInfo,
-  quickReconnectPrinter,
-  isPrinterConnected as checkPrinterConnected,
-  isScaleConnected,
-  getLastScaleConnectedAt,
-  verifyPrinterConnection,
-  DiscoveredPrinter 
+import {
+  scanForPrinters,
+  connectToSpecificPrinter,
+  type DiscoveredPrinter,
 } from '@/services/bluetooth';
 import { Capacitor } from '@capacitor/core';
+import { useBtStatus } from '@/hooks/useBtStatus';
 
 interface PrinterSelectorProps {
   onPrinterConnected?: (name: string) => void;
@@ -26,6 +21,20 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
   const [scanning, setScanning] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [printers, setPrinters] = useState<DiscoveredPrinter[]>([]);
+
+  // v2.10.85: Real-time status from the central BT connection manager.
+  const printerBt = useBtStatus('printer');
+  const lastConnected = printerBt.deviceName;
+  const autoReconnecting = printerBt.status === 'connecting' || printerBt.status === 'reconnecting';
+  const connectionError = printerBt.status === 'failed' ? (printerBt.lastError || 'Connection failed') : null;
+
+  // Notify parent on transition to connected.
+  useEffect(() => {
+    if (printerBt.status === 'connected' && lastConnected) {
+      onPrinterConnected?.(lastConnected);
+    }
+  }, [printerBt.status, lastConnected, onPrinterConnected]);
+
   const [lastConnected, setLastConnected] = useState<string | null>(null);
   const [autoReconnecting, setAutoReconnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
