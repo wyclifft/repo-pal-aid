@@ -337,6 +337,7 @@ export function installAutoReconnect() {
     if (!detail) return;
     if (detail.connected) {
       const saved = getSavedDevice(role);
+      state[role].pausedForGesture = false; // manual pair clears the pause
       setStatus(role, "connected", {
         deviceName: saved?.deviceName ?? state[role].deviceName,
         lastError: null,
