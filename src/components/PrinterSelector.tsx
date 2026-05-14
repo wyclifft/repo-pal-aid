@@ -105,13 +105,24 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
           {autoReconnecting ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-xs">Reconnecting...</span>
+              <span className="text-xs">
+                {printerBt.status === 'reconnecting'
+                  ? printerBt.retryInMs && printerBt.retryInMs > 0
+                    ? `Retry in ${Math.ceil(printerBt.retryInMs / 1000)}s`
+                    : 'Reconnecting…'
+                  : 'Connecting…'}
+              </span>
             </>
           ) : (
             <>
               <Printer className="h-4 w-4" />
-              {isPrinterConnected ? (
+              {isPrinterConnected || printerBt.status === 'connected' ? (
                 <span className="text-green-600 text-xs">Connected</span>
+              ) : printerBt.status === 'failed' ? (
+                <span className="text-destructive text-xs flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  Failed
+                </span>
               ) : lastConnected ? (
                 <span className="text-orange-600 text-xs flex items-center gap-1">
                   <WifiOff className="h-3 w-3" />
