@@ -120,9 +120,17 @@ export default function DebugConsole() {
           <Button variant="ghost" size="icon" onClick={onCopy} title="Copy visible">
             <Copy className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" onClick={onExport} title="Export NDJSON">
-            <Download className="h-4 w-4" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" title="Export logs">
+                <Download className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={onExportNDJSON}>Export as NDJSON</DropdownMenuItem>
+              <DropdownMenuItem onClick={onExportCSV}>Export as CSV</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="ghost" size="icon" onClick={onClear} title="Clear all">
             <Trash2 className="h-4 w-4 text-red-600" />
           </Button>
