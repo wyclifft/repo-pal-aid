@@ -23,8 +23,10 @@ interface DeviceConfig {
   aiId: number;           // Last used AI transaction ID for uploadrefno
 }
 
-const DB_NAME = 'milkCollectionDB';
-const DB_VERSION = 11; // Must match useIndexedDB.ts version (bumped from 10 → 11 to fix VersionError)
+// v2.10.87: import shared DB_NAME/DB_VERSION from useIndexedDB to guarantee
+// we never request a stale version against the same database (was causing
+// repeated `VersionError: requested version 11 < existing 12` floods).
+import { DB_NAME, DB_VERSION } from '@/hooks/useIndexedDB';
 const STORE_NAME = 'device_config';
 const LOCALSTORAGE_KEY = 'device_config_backup';
 

@@ -565,5 +565,13 @@
 //   @capacitor/filesystem and @capacitor/share registered in Android build.
 //   ReceiptList export handlers updated to async/await. No backend, schema,
 //   sync, receipt, Bluetooth, or auth changes.
-export const APP_VERSION = '2.10.86';
-export const APP_VERSION_CODE = 108;
+// v2.10.87: bug fixes from /debug logs —
+//   (1) referenceGenerator no longer requests stale IndexedDB version 11
+//       against the v12 schema (eliminates the VersionError flood and the
+//       cascading "DB not ready" farmer-load errors).
+//   (2) Bluetooth manager: detect Web-Bluetooth NotAllowedError /
+//       "Must be handling a user gesture" and PAUSE the retry loop instead
+//       of looping forever. Auto-resume on next user gesture, app resume,
+//       or successful manual re-pair. Native Capacitor path unchanged.
+export const APP_VERSION = '2.10.87';
+export const APP_VERSION_CODE = 109;
