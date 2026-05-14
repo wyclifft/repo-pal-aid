@@ -389,6 +389,14 @@ export function installAutoReconnect() {
     void ensureConnected("printer");
   });
 
+  // v2.10.87: Web Bluetooth requires a user gesture for requestDevice. If
+  // a previous attempt was paused with `pausedForGesture`, the next real
+  // pointer/key/touch event triggers a fresh attempt inside the gesture window.
+  const onUserGesture = () => { resumeFromGesture(); };
+  window.addEventListener("pointerdown", onUserGesture, { passive: true });
+  window.addEventListener("keydown", onUserGesture, { passive: true });
+  window.addEventListener("touchstart", onUserGesture, { passive: true });
+
   startHealthMonitor();
 
   // Initial sweep — auto-reconnect anything we already know about.
