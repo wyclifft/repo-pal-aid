@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { type AppUser } from '@/lib/supabase';
 import { toast } from 'sonner';
+import { hashPassword } from '@/utils/passwordHash';
 
 interface AuthContextType {
   currentUser: AppUser | null;
@@ -48,42 +49,49 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
-  const login = (user: AppUser, offline: boolean, password?: string) => {
+  const login = async (user: AppUser, offline: boolean, password?: string) => {
     try {
       setCurrentUser(user);
       setIsOffline(offline);
-      
+
       console.log('[AUTH] Login called - offline:', offline, 'password provided:', !!password);
-      
+
       // Cache credentials for offline login (only when password is provided during ONLINE login)
-      // CRITICAL: Always store credentials on online login for offline use
+      // SECURITY (v2.10.83): store ONLY a SHA-256 hash + per-user salt — never the plaintext password.
       if (password && !offline) {
-        const cachedCreds = {
-          user_id: user.user_id,
-          password: password,
-          role: user.role || (user.admin ? 'admin' : 'user'),
-          username: user.username || user.user_id, // Fallback to user_id if username is empty
-          email: user.email || '',
-          ccode: user.ccode || '',
-          admin: user.admin ?? false,
-          supervisor: user.supervisor ?? 0,
-          dcode: user.dcode || '',
-          groupid: user.groupid || '',
-          depart: user.depart || '',
-          timestamp: Date.now()
-        };
-        localStorage.setItem(CACHED_CREDENTIALS_KEY, JSON.stringify(cachedCreds));
-        console.log('[AUTH] Credentials cached for offline use:', user.user_id);
-        
-        // Also store device approval for offline fallback
-        localStorage.setItem('device_approved', 'true');
-        localStorage.setItem('device_user_id', user.user_id);
-        console.log('[AUTH] Device approval cached for offline fallback');
+        const passwordHash = await hashPassword(user.user_id, password);
+        if (!passwordHash) {
+          console.warn('[AUTH] Could not hash password — skipping offline credential cache');
+        } else {
+          const cachedCreds = {
+            user_id: user.user_id,
+            passwordHash, // hashed only — plaintext is never persisted
+            hashVersion: 1,
+            role: user.role || (user.admin ? 'admin' : 'user'),
+            username: user.username || user.user_id,
+            email: user.email || '',
+            ccode: user.ccode || '',
+            admin: user.admin ?? false,
+            supervisor: user.supervisor ?? 0,
+            dcode: user.dcode || '',
+            groupid: user.groupid || '',
+            depart: user.depart || '',
+            timestamp: Date.now(),
+          };
+          localStorage.setItem(CACHED_CREDENTIALS_KEY, JSON.stringify(cachedCreds));
+          console.log('[AUTH] Hashed credentials cached for offline use:', user.user_id);
+
+          // Also store device approval for offline fallback
+          localStorage.setItem('device_approved', 'true');
+          localStorage.setItem('device_user_id', user.user_id);
+          console.log('[AUTH] Device approval cached for offline fallback');
+        }
       } else if (password) {
         console.log('[AUTH] Skipping credential cache - already offline login');
       } else {
         console.log('[AUTH] No password provided - cannot cache credentials');
       }
+
       
       console.log('✅ User logged in:', user.user_id);
       

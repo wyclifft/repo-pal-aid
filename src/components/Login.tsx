@@ -6,6 +6,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
 import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName } from '@/utils/deviceFingerprint';
 import { storeDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
+import { hashPassword, hashesEqual } from '@/utils/passwordHash';
 import loginBg from '@/assets/login-bg.jpg';
 
 interface LoginProps {
@@ -210,19 +211,37 @@ export const Login = memo(({ onLogin }: LoginProps) => {
       try {
         const cachedCreds = JSON.parse(cachedCredsStr);
         console.log('[OFFLINE] Cached user_id:', cachedCreds.user_id, 'Input user_id:', userId);
-        console.log('[OFFLINE] Password match:', cachedCreds.password === password);
-        
-        // Verify credentials match (case-insensitive user ID, exact password)
+
         const userIdMatch = cachedCreds.user_id?.toLowerCase().trim() === userId.toLowerCase().trim();
-        const passwordMatch = cachedCreds.password === password;
-        
+
+        // SECURITY (v2.10.83): preferred path validates the SHA-256 hash; the legacy
+        // plaintext-password field is accepted ONCE so devices upgraded from earlier
+        // builds can still log in offline, then transparently rewritten as a hash.
+        let passwordMatch = false;
+        if (cachedCreds.passwordHash) {
+          const inputHash = await hashPassword(cachedCreds.user_id, password);
+          passwordMatch = hashesEqual(inputHash, cachedCreds.passwordHash);
+        } else if (typeof cachedCreds.password === 'string') {
+          // Legacy cache — verify against plaintext, then upgrade in place.
+          passwordMatch = cachedCreds.password === password;
+          if (passwordMatch) {
+            const upgradedHash = await hashPassword(cachedCreds.user_id, password);
+            if (upgradedHash) {
+              const upgraded = { ...cachedCreds, passwordHash: upgradedHash, hashVersion: 1 };
+              delete upgraded.password;
+              localStorage.setItem('cachedCredentials', JSON.stringify(upgraded));
+              console.log('[OFFLINE] Upgraded legacy plaintext credential cache to hashed form');
+            }
+          }
+        }
+
         if (!userIdMatch || !passwordMatch) {
           console.log('[OFFLINE] Credential mismatch - userIdMatch:', userIdMatch, 'passwordMatch:', passwordMatch);
           toast.error('Invalid credentials (offline)');
           setLoading(false);
           return;
         }
-        
+
         // Recreate user object from cached credentials (includes all fields for full offline support)
         const user: AppUser = {
           user_id: cachedCreds.user_id,

@@ -7,11 +7,19 @@ const mysql = require('mysql2/promise');
 const http = require('http');
 const url = require('url');
 
+// SECURITY (v2.10.83): require DB credentials from environment.
+// Hardcoded fallback values were removed — they leaked production credentials
+// into source control. Apache/Passenger sets MYSQL_USER & MYSQL_PASSWORD via
+// the cPanel environment (see backend-api/.htaccess).
+if (!process.env.MYSQL_USER || !process.env.MYSQL_PASSWORD) {
+  throw new Error('FATAL: MYSQL_USER and MYSQL_PASSWORD environment variables must be set');
+}
+
 // Database connection pool (minimal)
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'localhost',
-  user: process.env.MYSQL_USER || 'maddasys_wycliff',
-  password: process.env.MYSQL_PASSWORD || '0741899183Mutee',
+  user: process.env.MYSQL_USER,
+  password: process.env.MYSQL_PASSWORD,
   database: process.env.MYSQL_DATABASE || 'maddasys_milk_collection_pwa',
   port: Number(process.env.MYSQL_PORT || 3306),
   connectionLimit: 2,
@@ -1077,11 +1085,12 @@ const server = http.createServer(async (req, res) => {
           uploadrefno: result.uploadrefno
         }, 201);
       } catch (error) {
+        // SECURITY (v2.10.83): log SQL details server-side; return generic message to client.
         console.error('❌ BACKEND INSERT ERROR:', error.message);
         console.error('Error code:', error.code);
-        return sendJSON(res, { 
-          success: false, 
-          error: `Insert failed: ${error.message}` 
+        return sendJSON(res, {
+          success: false,
+          error: 'Insert failed'
         }, 500);
       }
     }
@@ -2895,11 +2904,11 @@ const server = http.createServer(async (req, res) => {
         });
         
       } catch (error) {
+        // SECURITY (v2.10.83): suppress upstream error details from client response.
         console.error('SMS Error:', error);
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Failed to send SMS',
-          details: error.message 
+        return sendJSON(res, {
+          success: false,
+          error: 'Failed to send SMS'
         }, 500);
       }
     }
@@ -3486,8 +3495,9 @@ const server = http.createServer(async (req, res) => {
           }
         });
       } catch (err) {
+        // SECURITY (v2.10.83): hide internal error details from client.
         console.error('[ERROR] /api/members/next-id GET failed:', err?.message);
-        return sendJSON(res, { success: false, error: 'Failed to compute next member id: ' + (err?.message || 'unknown') }, 500);
+        return sendJSON(res, { success: false, error: 'Failed to compute next member id' }, 500);
       }
     }
 
@@ -3594,8 +3604,9 @@ const server = http.createServer(async (req, res) => {
           throw dupErr;
         }
       } catch (err) {
+        // SECURITY (v2.10.83): hide internal error details from client.
         console.error('[ERROR] /api/members POST failed:', err?.message);
-        return sendJSON(res, { success: false, error: 'Failed to add member: ' + (err?.message || 'unknown') }, 500);
+        return sendJSON(res, { success: false, error: 'Failed to add member' }, 500);
       }
     }
 
