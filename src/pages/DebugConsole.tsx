@@ -70,26 +70,25 @@ export default function DebugConsole() {
     toast.success("Debug logs cleared");
   };
 
-  const downloadBlob = (blob: Blob, ext: string) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${ext}`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  };
-
   const onExportNDJSON = async () => {
     const blob = await plog.exportNDJSON();
-    downloadBlob(blob, "ndjson");
+    const text = await blob.text();
+    await saveExportedFile(
+      `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.ndjson`,
+      text,
+      "application/x-ndjson"
+    );
     toast.success("NDJSON exported");
   };
 
   const onExportCSV = async () => {
     const blob = await plog.exportCSV();
-    downloadBlob(blob, "csv");
+    const text = await blob.text();
+    await saveExportedFile(
+      `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`,
+      text,
+      "text/csv;charset=utf-8"
+    );
     toast.success("CSV exported");
   };
 
