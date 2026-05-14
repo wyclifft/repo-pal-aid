@@ -78,7 +78,7 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
     
     if (result.success) {
       toast.success(`Connected to ${printer.name}`);
-      setLastConnected(printer.name);
+      // Manager picks up the new connection via printerConnectionChange.
       onPrinterConnected?.(printer.name);
       setOpen(false);
     } else {
