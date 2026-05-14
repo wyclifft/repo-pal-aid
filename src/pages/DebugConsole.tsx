@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { saveExportedFile } from "@/utils/nativeFileExport";
+import { plog, type LogLevel, type PLogEntry } from "@/utils/persistentLogger";
 
 const LEVELS: (LogLevel | "all")[] = ["all", "error", "warn", "info", "debug"];
 
