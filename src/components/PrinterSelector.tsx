@@ -35,105 +35,12 @@ export const PrinterSelector = ({ onPrinterConnected, isPrinterConnected }: Prin
     }
   }, [printerBt.status, lastConnected, onPrinterConnected]);
 
-  const [lastConnected, setLastConnected] = useState<string | null>(null);
-  const [autoReconnecting, setAutoReconnecting] = useState(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const reconnectAttemptedRef = useRef(false);
-
-  // Auto-reconnect to last printer on native platform with improved error handling
-  const attemptAutoReconnect = useCallback(async (showToast: boolean = true) => {
-    const stored = getStoredPrinterInfo();
-    if (!stored) {
-      console.log('📱 No stored printer info found');
-      return;
-    }
-    
-    if (!Capacitor.isNativePlatform()) {
-      console.log('📱 Not a native platform, skipping auto-reconnect');
-      setLastConnected(stored.deviceName);
-      return;
-    }
-
-    // Check if already connected
-    if (checkPrinterConnected()) {
-      console.log('✅ Printer already connected');
-      setLastConnected(stored.deviceName);
-      onPrinterConnected?.(stored.deviceName);
-      return;
-    }
-
-    setAutoReconnecting(true);
-    setConnectionError(null);
-    console.log(`🔄 Auto-reconnecting to printer: ${stored.deviceName} (${stored.deviceId})`);
-    
-    try {
-      const result = await quickReconnectPrinter(stored.deviceId, 3);
-      
-      if (result.success) {
-        console.log(`✅ Auto-reconnected to printer: ${stored.deviceName}`);
-        setLastConnected(stored.deviceName);
-        setConnectionError(null);
-        onPrinterConnected?.(stored.deviceName);
-        if (showToast) {
-          toast.success(`Connected to ${stored.deviceName}`);
-        }
-      } else {
-        console.warn(`⚠️ Auto-reconnect failed: ${result.error}`);
-        setLastConnected(stored.deviceName);
-        setConnectionError(result.error || 'Connection failed');
-        // Don't show error toast on initial load - printer might just be off
-      }
-    } catch (error: any) {
-      console.error('Auto-reconnect error:', error);
-      setConnectionError(error.message || 'Connection error');
-    } finally {
-      setAutoReconnecting(false);
-    }
-  }, [onPrinterConnected]);
-
-  // Initial connection attempt on mount (only once)
-  useEffect(() => {
-    if (reconnectAttemptedRef.current) return;
-    reconnectAttemptedRef.current = true;
-    
-    const stored = getStoredPrinterInfo();
-    if (stored) {
-      setLastConnected(stored.deviceName);
-      
-      // On native platform, attempt actual reconnection
-      if (Capacitor.isNativePlatform() && !isPrinterConnected) {
-        // v2.10.54: Defer if a scale was just connected (within last 5s) to avoid
-        // racing the printer auto-reconnect against an in-progress scale connect.
-        const sinceScale = Date.now() - getLastScaleConnectedAt();
-        const scaleWarmingUp = isScaleConnected() && sinceScale < 5000;
-        const baseDelay = scaleWarmingUp ? 5500 - sinceScale : 1500;
-        if (scaleWarmingUp) {
-          console.log(`⏳ [PrinterSelector] Deferring auto-reconnect ${baseDelay}ms — scale just connected`);
-        }
-        const timer = setTimeout(() => {
-          attemptAutoReconnect(false);
-        }, baseDelay);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, []);
-
-  // v2.10.54: Verify before flipping the badge to "disconnected" — guards against
-  // spurious disconnect callbacks during the other device's connect handshake.
-  useEffect(() => {
-    const handler = async (e: Event) => {
-      const detail = (e as CustomEvent<{ connected: boolean }>).detail;
-      if (detail?.connected === false) {
-        const reallyConnected = await verifyPrinterConnection();
-        if (reallyConnected) {
-          console.log('🛡️ [PrinterSelector] Ignored spurious disconnect — printer still connected');
-          return;
-        }
-      }
-    };
-    window.addEventListener('printerConnectionChange', handler);
-    return () => window.removeEventListener('printerConnectionChange', handler);
-  }, []);
+  // v2.10.85: Auto-reconnect, health monitoring, and stale-state recovery are
+  // now handled centrally by btConnectionManager — no per-component logic needed.
+  const attemptAutoReconnect = (showToast: boolean = true) => {
+    printerBt.reconnect();
+    if (showToast && lastConnected) toast.info(`Reconnecting to ${lastConnected}…`);
+  };
 
   const handleScan = async () => {
     if (!Capacitor.isNativePlatform()) {
