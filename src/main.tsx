@@ -5,8 +5,12 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { initializeNativePlatform } from "./utils/nativeInit";
 import "./index.css";
 import "./utils/errorHandler";
+import { installPersistentLogger, _setLoggerAppVersion } from "./utils/persistentLogger";
+import { APP_VERSION } from "./constants/appVersion";
 
-// Initialize native platform features FIRST (critical for device registration)
+// Install persistent debug logger BEFORE anything else so we capture early errors
+_setLoggerAppVersion(APP_VERSION);
+installPersistentLogger();
 initializeNativePlatform().catch(console.error);
 
 // Prevent zoom on double tap for native feel
