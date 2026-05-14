@@ -64,6 +64,7 @@ interface RoleState {
   retryAt: number | null; // ms timestamp
   attempt: number;
   forgotten: boolean;
+  pausedForGesture: boolean; // v2.10.87: Web BT requires user gesture
   inFlight: Promise<void> | null;
   retryTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -75,6 +76,7 @@ const initialState = (): RoleState => ({
   retryAt: null,
   attempt: 0,
   forgotten: false,
+  pausedForGesture: false,
   inFlight: null,
   retryTimer: null,
 });
@@ -225,6 +227,7 @@ async function ensureConnected(role: BtRole): Promise<void> {
   const s = state[role];
   if (s.inFlight) return s.inFlight;
   if (s.forgotten) return;
+  if (s.pausedForGesture) return; // wait for next user gesture / manual pair
 
   const saved = getSavedDevice(role);
   if (!saved) {
@@ -244,9 +247,17 @@ async function ensureConnected(role: BtRole): Promise<void> {
   });
 
   const op = (async () => {
-    const ok = await tryConnectOnce(role, saved);
-    if (ok) {
+    const result = await tryConnectOnce(role, saved);
+    if (result.ok) {
       setStatus(role, "connected", { lastError: null, retryAt: null, attempt: 0 });
+    } else if (result.requiresGesture) {
+      // Cancel any pending retry — looping cannot succeed without a gesture.
+      if (s.retryTimer) { clearTimeout(s.retryTimer); s.retryTimer = null; }
+      s.pausedForGesture = true;
+      s.attempt = 0;
+      s.lastError = "needs manual reconnect";
+      setStatus(role, "failed", { retryAt: null });
+      btlog("warn", role, "paused — needs user gesture to reconnect");
     } else {
       s.attempt += 1;
       s.lastError = "connect failed";
@@ -262,6 +273,21 @@ async function ensureConnected(role: BtRole): Promise<void> {
 
   s.inFlight = op;
   return op;
+}
+
+// v2.10.87: clear gesture-pause flags when a real user input arrives.
+function resumeFromGesture() {
+  let resumed = false;
+  for (const role of ["scale", "printer"] as const) {
+    if (state[role].pausedForGesture) {
+      state[role].pausedForGesture = false;
+      state[role].attempt = 0;
+      resumed = true;
+      btlog("info", role, "user gesture detected → resuming auto-reconnect");
+      void ensureConnected(role);
+    }
+  }
+  return resumed;
 }
 
 // ─── health monitor ────────────────────────────────────────────────────────────
