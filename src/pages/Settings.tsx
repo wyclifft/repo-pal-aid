@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
-import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2 } from "lucide-react";
-import { BluetoothDebugPanel } from "@/components/BluetoothDebugPanel";
+import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2, Terminal } from "lucide-react";
 import { BluetoothConnectionDialog } from "@/components/BluetoothConnectionDialog";
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { useNavigate } from "react-router-dom";
@@ -698,8 +697,24 @@ Date: ${new Date().toLocaleString()}
         {/* Farmer Sync Status Dashboard */}
         <FarmerSyncDashboard />
 
-        {/* Bluetooth Debug Panel */}
-        <BluetoothDebugPanel />
+        {/* Debug Console (replaces removed Bluetooth Debug Panel) */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Terminal className="h-4 w-4" />
+              Debug Console
+            </CardTitle>
+            <CardDescription>
+              View persistent app logs (errors, sync, Bluetooth, IndexedDB). Survives logout & restarts.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" className="w-full" onClick={() => navigate('/debug')}>
+              <Terminal className="h-4 w-4 mr-2" />
+              Open Debug Console
+            </Button>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
