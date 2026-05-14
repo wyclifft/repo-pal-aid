@@ -426,6 +426,7 @@ export const bt = {
   },
   async forget(role: BtRole): Promise<void> {
     state[role].forgotten = true;
+    state[role].pausedForGesture = false;
     if (state[role].retryTimer) {
       clearTimeout(state[role].retryTimer);
       state[role].retryTimer = null;
