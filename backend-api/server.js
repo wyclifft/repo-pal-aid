@@ -3604,8 +3604,9 @@ const server = http.createServer(async (req, res) => {
           throw dupErr;
         }
       } catch (err) {
+        // SECURITY (v2.10.83): hide internal error details from client.
         console.error('[ERROR] /api/members POST failed:', err?.message);
-        return sendJSON(res, { success: false, error: 'Failed to add member: ' + (err?.message || 'unknown') }, 500);
+        return sendJSON(res, { success: false, error: 'Failed to add member' }, 500);
       }
     }
 
