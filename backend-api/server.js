@@ -2904,11 +2904,11 @@ const server = http.createServer(async (req, res) => {
         });
         
       } catch (error) {
+        // SECURITY (v2.10.83): suppress upstream error details from client response.
         console.error('SMS Error:', error);
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Failed to send SMS',
-          details: error.message 
+        return sendJSON(res, {
+          success: false,
+          error: 'Failed to send SMS'
         }, 500);
       }
     }
