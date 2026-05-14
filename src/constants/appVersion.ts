@@ -1,4 +1,13 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.84: PERSISTENT DEBUG CONSOLE — restored at /debug, isolated IndexedDB,
+//   survives logout/restart/reboot. Global capture of console.error/warn,
+//   window error, unhandled rejections, online/offline. Hard guards: 1s
+//   batched flush, 2s dedupe, 50/sec rate cap, 5,000-row / 7-day prune,
+//   2 KB payload cap, QuotaExceeded recovery. BluetoothDebugPanel removed
+//   entirely; BT/printer/scale events now flow into /debug under tag BT.
+//   Settings → Debug Console card replaces old panel. No backend, schema,
+//   sync, reference, or receipt changes.
+//
 // v2.10.83: SECURITY HARDENING.
 //   (1) Removed hardcoded MySQL credential defaults from backend-api/server.js.
 //       The server now refuses to start unless MYSQL_USER + MYSQL_PASSWORD env
