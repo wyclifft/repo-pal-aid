@@ -435,6 +435,33 @@ export const plog = {
     const lines = rows.map((r) => JSON.stringify(r)).join("\n");
     return new Blob([lines], { type: "application/x-ndjson" });
   },
+
+  async exportCSV(): Promise<Blob> {
+    const rows = await plog.list({ limit: 10000 });
+    const esc = (v: unknown): string => {
+      if (v === undefined || v === null) return "";
+      const s = String(v).replace(/\r?\n/g, " ").replace(/\r/g, " ");
+      // Always quote, escape internal quotes
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const header = "timestamp,level,tag,message,data,count,route,version";
+    const body = rows
+      .map((r) =>
+        [
+          esc(new Date(r.ts).toISOString()),
+          esc(r.level),
+          esc(r.tag),
+          esc(r.message),
+          esc(r.data ?? ""),
+          esc(r.count ?? 1),
+          esc(r.route ?? ""),
+          esc(r.version ?? ""),
+        ].join(",")
+      )
+      .join("\n");
+    // Prepend BOM for Excel UTF-8 compatibility
+    return new Blob(["\uFEFF" + header + "\n" + body], { type: "text/csv;charset=utf-8" });
+  },
 };
 
 // ---- global capture ---------------------------------------------------------
