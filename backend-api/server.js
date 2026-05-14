@@ -1085,11 +1085,12 @@ const server = http.createServer(async (req, res) => {
           uploadrefno: result.uploadrefno
         }, 201);
       } catch (error) {
+        // SECURITY (v2.10.83): log SQL details server-side; return generic message to client.
         console.error('❌ BACKEND INSERT ERROR:', error.message);
         console.error('Error code:', error.code);
-        return sendJSON(res, { 
-          success: false, 
-          error: `Insert failed: ${error.message}` 
+        return sendJSON(res, {
+          success: false,
+          error: 'Insert failed'
         }, 500);
       }
     }
