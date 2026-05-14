@@ -15,7 +15,7 @@ const getProduceLabelFromCache = (): string => {
   return 'milk'; // Default to dairy
 };
 
-export const generateTextReport = (receipts: MilkCollection[], filename?: string) => {
+export const generateTextReport = async (receipts: MilkCollection[], filename?: string) => {
   const produceLabel = getProduceLabelFromCache();
   const text = receipts
     .map(
@@ -24,13 +24,11 @@ export const generateTextReport = (receipts: MilkCollection[], filename?: string
     )
     .join('\n\n');
 
-  const blob = new Blob([text], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || `${produceLabel}-collection-${Date.now()}.txt`;
-  a.click();
-  URL.revokeObjectURL(url);
+  await saveExportedFile(
+    filename || `${produceLabel}-collection-${Date.now()}.txt`,
+    text,
+    'text/plain'
+  );
 };
 
 export const generateCSVReport = (receipts: MilkCollection[], filename?: string) => {
