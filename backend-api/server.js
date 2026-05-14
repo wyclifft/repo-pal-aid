@@ -7,11 +7,19 @@ const mysql = require('mysql2/promise');
 const http = require('http');
 const url = require('url');
 
+// SECURITY (v2.10.83): require DB credentials from environment.
+// Hardcoded fallback values were removed — they leaked production credentials
+// into source control. Apache/Passenger sets MYSQL_USER & MYSQL_PASSWORD via
+// the cPanel environment (see backend-api/.htaccess).
+if (!process.env.MYSQL_USER || !process.env.MYSQL_PASSWORD) {
+  throw new Error('FATAL: MYSQL_USER and MYSQL_PASSWORD environment variables must be set');
+}
+
 // Database connection pool (minimal)
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'localhost',
-  user: process.env.MYSQL_USER || 'maddasys_wycliff',
-  password: process.env.MYSQL_PASSWORD || '0741899183Mutee',
+  user: process.env.MYSQL_USER,
+  password: process.env.MYSQL_PASSWORD,
   database: process.env.MYSQL_DATABASE || 'maddasys_milk_collection_pwa',
   port: Number(process.env.MYSQL_PORT || 3306),
   connectionLimit: 2,
