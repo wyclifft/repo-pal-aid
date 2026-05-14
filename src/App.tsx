@@ -39,6 +39,7 @@ const AIPage = lazy(() => import("./pages/AIPage"));
 const PeriodicReport = lazy(() => import("./pages/PeriodicReport"));
 const Settings = lazy(() => import("./pages/Settings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const DebugConsole = lazy(() => import("./pages/DebugConsole"));
 
 // Configure QueryClient with aggressive caching and better error handling
 const queryClient = new QueryClient({
@@ -180,6 +181,7 @@ const AppContent = () => {
           <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
           <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
           <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
+          <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
           <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
         </Routes>
       </Suspense>

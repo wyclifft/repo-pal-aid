@@ -1,5 +1,5 @@
-// ============= NATIVE-LIKE PWA SERVICE WORKER v27 =============
-const CACHE_VERSION = 'v30';
+// ============= NATIVE-LIKE PWA SERVICE WORKER v31 =============
+const CACHE_VERSION = 'v31';
 const CACHE_NAMES = {
   STATIC: `milk-collection-static-${CACHE_VERSION}`,
   DYNAMIC: `milk-collection-dynamic-${CACHE_VERSION}`,
