@@ -3495,8 +3495,9 @@ const server = http.createServer(async (req, res) => {
           }
         });
       } catch (err) {
+        // SECURITY (v2.10.83): hide internal error details from client.
         console.error('[ERROR] /api/members/next-id GET failed:', err?.message);
-        return sendJSON(res, { success: false, error: 'Failed to compute next member id: ' + (err?.message || 'unknown') }, 500);
+        return sendJSON(res, { success: false, error: 'Failed to compute next member id' }, 500);
       }
     }
 
