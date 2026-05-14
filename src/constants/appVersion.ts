@@ -1,4 +1,22 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.83: SECURITY HARDENING.
+//   (1) Removed hardcoded MySQL credential defaults from backend-api/server.js.
+//       The server now refuses to start unless MYSQL_USER + MYSQL_PASSWORD env
+//       vars are set (already provided by .htaccess on the production host).
+//       NOTE: the previously committed credentials must be ROTATED at the host.
+//   (2) Offline credential cache no longer stores plaintext passwords. Login
+//       writes a per-user-salted SHA-256 hash to localStorage (passwordHash),
+//       and offline login compares hash-to-hash. Existing devices upgraded
+//       from earlier builds verify against the legacy plaintext field once,
+//       then transparently rewrite the cache as hashed form. New util:
+//       src/utils/passwordHash.ts.
+//   (3) Sanitised four backend error responses that previously leaked SQL
+//       error messages (lines 1084, 2902, 3490, 3598). Full details remain
+//       in cPanel/Passenger stderr logs; client now sees generic messages.
+//   No CORS / rate-limiting changes — those need explicit allow-list +
+//   lockout policy and are deferred to avoid bricking deployed devices.
+//   No reference generator, sync engine, IndexedDB schema or receipt change.
+//
 // v2.10.74: Z-REPORT ALIGNMENT + STORE UNIT FIX.
 //   (1) Column headers (QTY, KSh, AMOUNT, TIME) and section banners (== BUY ==,
 //       == SELL ==) are now generated from the SAME width spec as the data rows
