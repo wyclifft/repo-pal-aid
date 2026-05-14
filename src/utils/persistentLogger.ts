@@ -129,15 +129,12 @@ function scheduleFlush() {
   }, FLUSH_EVERY_MS);
 }
 
+let cachedVersion: string | undefined;
+export function _setLoggerAppVersion(v: string) {
+  cachedVersion = v;
+}
 function appVersion(): string | undefined {
-  try {
-    // Lazy import avoids cycles
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { APP_VERSION } = require("@/constants/appVersion");
-    return APP_VERSION;
-  } catch {
-    return undefined;
-  }
+  return cachedVersion;
 }
 
 function currentRoute(): string | undefined {
