@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { type AppUser } from '@/lib/supabase';
 import { toast } from 'sonner';
+import { hashPassword } from '@/utils/passwordHash';
 
 interface AuthContextType {
   currentUser: AppUser | null;
