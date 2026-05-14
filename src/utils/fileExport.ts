@@ -31,7 +31,7 @@ export const generateTextReport = async (receipts: MilkCollection[], filename?: 
   );
 };
 
-export const generateCSVReport = (receipts: MilkCollection[], filename?: string) => {
+export const generateCSVReport = async (receipts: MilkCollection[], filename?: string) => {
   const produceLabel = getProduceLabelFromCache();
   const headers = ['Farmer ID', 'Farmer Name', 'Session', 'Weight (Kg)', 'Collector', 'Date'];
   const rows = receipts.map((r) => [
@@ -45,11 +45,9 @@ export const generateCSVReport = (receipts: MilkCollection[], filename?: string)
 
   const csv = [headers, ...rows].map((row) => row.join(',')).join('\n');
 
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || `${produceLabel}-collection-${Date.now()}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  await saveExportedFile(
+    filename || `${produceLabel}-collection-${Date.now()}.csv`,
+    csv,
+    'text/csv'
+  );
 };
