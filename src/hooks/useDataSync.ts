@@ -636,8 +636,9 @@ export const useDataSync = () => {
         }
       }
       
-      // Dispatch sync complete event
-      window.dispatchEvent(new CustomEvent('syncComplete'));
+      // Dispatch sync complete event (v2.10.89: include synced count so the
+      // cumulative refresh listener can skip when nothing actually synced).
+      window.dispatchEvent(new CustomEvent('syncComplete', { detail: { synced } }));
 
       if (mountedRef.current) {
         setPendingCount(failed);
@@ -649,7 +650,7 @@ export const useDataSync = () => {
       return { synced, failed };
     } catch (err) {
       console.error('[SYNC] Fatal sync error:', err);
-      window.dispatchEvent(new CustomEvent('syncComplete'));
+      window.dispatchEvent(new CustomEvent('syncComplete', { detail: { synced } }));
       return { synced, failed };
     } finally {
       // Always clear the sync in progress flag
@@ -862,7 +863,7 @@ export const useDataSync = () => {
             }
             // Immediately refresh pending counter after cleanup
             await updatePendingCount();
-            window.dispatchEvent(new CustomEvent('syncComplete'));
+            window.dispatchEvent(new CustomEvent('syncComplete', { detail: { synced: cleaned } }));
           }
         }
       } catch (cleanupErr) {

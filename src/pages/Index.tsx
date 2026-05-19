@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Login } from '@/components/Login';
 import { Dashboard } from '@/components/Dashboard';
@@ -34,6 +34,15 @@ const filterCumulativeByProduct = (
     ? { total: match.weight, byProduct: [match] }
     : { total: 0, byProduct: [] };
 };
+
+// v2.10.89: Shared throttle gate for cumulative batch refresh.
+// Coalesces the many trigger sources (post-sync, visibility, periodic, prefetch)
+// into one full-batch refresh per minute. Set whenever a refresh completes.
+let lastCumulativeRefreshAt = 0;
+const MIN_REFRESH_GAP_MS = 60_000; // 60 s
+const VISIBILITY_STALE_MS = 2 * 60_000; // 2 min
+const PERIODIC_REFRESH_MS = 10 * 60_000; // 10 min (was 3 min)
+const SYNC_DEBOUNCE_MS = 5_000; // trailing-edge debounce for syncComplete bursts
 
 const Index = () => {
   const navigate = useNavigate();
@@ -256,18 +265,43 @@ const Index = () => {
     }
   }, [activeSession?.descript, clearBlacklist]);
 
+  // v2.10.89: Stable refs so this effect never re-mounts on farmer/product change.
+  // Previously this effect re-installed all listeners + reset the 3-min interval
+  // every time the user picked a different farmer/product → repeated full-batch
+  // refreshes for no good reason.
+  const selectedFarmerRef = useRef(selectedFarmer);
+  const selectedProductRef = useRef(selectedProduct);
+  const getFarmerCumulativeRef = useRef(getFarmerCumulative);
+  const getUnsyncedWeightForFarmerRef = useRef(getUnsyncedWeightForFarmer);
+  useEffect(() => { selectedFarmerRef.current = selectedFarmer; }, [selectedFarmer]);
+  useEffect(() => { selectedProductRef.current = selectedProduct; }, [selectedProduct]);
+  useEffect(() => { getFarmerCumulativeRef.current = getFarmerCumulative; }, [getFarmerCumulative]);
+  useEffect(() => { getUnsyncedWeightForFarmerRef.current = getUnsyncedWeightForFarmer; }, [getUnsyncedWeightForFarmer]);
+
   // Refresh cumulative cache after sync completes OR periodically to detect external DB changes
-  // Uses a concurrency guard to prevent overlapping refreshes that cause partial updates
+  // v2.10.89: Throttled (60 s gap), debounced sync bursts (5 s), visibility only
+  // when stale (>2 min), periodic 10 min. Effect re-mounts only on route /
+  // device / showCumulative change — NOT on farmer/product selection.
   useEffect(() => {
     if (!deviceFingerprint || !showCumulative) return;
 
     let refreshInProgress = false;
     let pendingRefresh: string | null = null;
+    let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const refreshCumulativesBatch = async (reason: string) => {
       if (!navigator.onLine) return;
 
-      // If a refresh is already running, queue this one (only keep latest)
+      // v2.10.89: Throttle gate — coalesce noisy callers. Post-sync / manual
+      // always pass through (they imply data we just wrote), but they still
+      // ride the in-flight queue below.
+      const sinceLast = Date.now() - lastCumulativeRefreshAt;
+      const isForced = reason === 'post-sync' || reason === 'manual';
+      if (!isForced && sinceLast < MIN_REFRESH_GAP_MS) {
+        console.log(`🚦 Cumulative refresh (${reason}): throttled (last ran ${Math.round(sinceLast / 1000)}s ago)`);
+        return;
+      }
+
       if (refreshInProgress) {
         console.log(`🔄 Cumulative refresh (${reason}): queued (another refresh in progress)`);
         pendingRefresh = reason;
@@ -286,9 +320,6 @@ const Index = () => {
             batchMap.set(f.farmer_id.trim(), f.cumulative_weight);
           }
 
-          // Fetch qualifying farmers
-          // v2.10.40: gating now driven by psettings.cumulative_frequency_status (or legacy printcumm)
-          // instead of per-member cm_members.currqty. When ON, ALL members under the device's ccode qualify.
           const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
           if (response.success && response.data) {
             saveFarmers(response.data);
@@ -298,7 +329,6 @@ const Index = () => {
               ? (deviceCcode ? response.data.filter(f => f.ccode === deviceCcode) : response.data)
               : [];
 
-            // Write ALL updated cumulatives atomically in batches — do not abort early
             const WRITE_BATCH = 50;
             let written = 0;
             for (let i = 0; i < qualifying.length; i += WRITE_BATCH) {
@@ -318,14 +348,15 @@ const Index = () => {
           }
         }
 
-        // Update currently selected farmer's display immediately with FLOOR GUARD
-        if (selectedFarmer) {
-          const cleanId = selectedFarmer.farmer_id.replace(/^#/, '').trim();
-          const cached = await getFarmerCumulative(cleanId, selectedRouteCode || undefined);
+        // Update currently selected farmer's display immediately with FLOOR GUARD (read from refs)
+        const currentFarmer = selectedFarmerRef.current;
+        const currentProduct = selectedProductRef.current;
+        if (currentFarmer) {
+          const cleanId = currentFarmer.farmer_id.replace(/^#/, '').trim();
+          const cached = await getFarmerCumulativeRef.current(cleanId, selectedRouteCode || undefined);
           const baseCount = cached?.baseCount || 0;
           const baseProd = cached?.byProduct || [];
-          const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
-          // Merge by-product (normalized keys)
+          const unsynced = await getUnsyncedWeightForFarmerRef.current(cleanId, selectedRouteCode || undefined);
           const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
           for (const p of baseProd) {
             const key = (p.icode || '').trim().toUpperCase();
@@ -336,10 +367,8 @@ const Index = () => {
             if (merged[key]) merged[key].weight += p.weight;
             else merged[key] = { ...p, icode: key };
           }
-          const newCumulative = filterCumulativeByProduct({ total: baseCount + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
-          
-          // FLOOR GUARD: After sync, cumulative should never regress below previously displayed value
-          // This prevents temporary drops caused by backend read lag or stale snapshots
+          const newCumulative = filterCumulativeByProduct({ total: baseCount + unsynced.total, byProduct: Object.values(merged) }, currentProduct?.icode);
+
           setCumulativeFrequency(prev => {
             if (prev && newCumulative && reason === 'post-sync') {
               if (newCumulative.total < prev.total) {
@@ -350,62 +379,80 @@ const Index = () => {
             return newCumulative;
           });
         }
+
+        lastCumulativeRefreshAt = Date.now();
       } catch (err) {
         console.warn(`Cumulative refresh (${reason}) failed:`, err);
       } finally {
         refreshInProgress = false;
-        // If another refresh was queued while we were running, execute it now
         if (pendingRefresh) {
           const nextReason = pendingRefresh;
           pendingRefresh = null;
-          // Small delay to avoid rapid-fire API calls
           setTimeout(() => refreshCumulativesBatch(nextReason), 500);
         }
       }
     };
 
-    // On syncComplete: refresh with a delay to let server commit all records
-    const handleSyncComplete = () => {
-      setTimeout(() => refreshCumulativesBatch('post-sync'), 3000);
+    // v2.10.89: syncComplete — trailing-edge debounce (5 s). Bursts of
+    // per-record syncComplete events collapse into ONE refresh. If the
+    // dispatch passes detail.synced === 0 we skip entirely (nothing changed).
+    const handleSyncComplete = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { synced?: number } | undefined;
+      if (detail && typeof detail.synced === 'number' && detail.synced === 0) {
+        return;
+      }
+      if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+      syncDebounceTimer = setTimeout(() => {
+        syncDebounceTimer = null;
+        refreshCumulativesBatch('post-sync');
+      }, SYNC_DEBOUNCE_MS);
     };
     window.addEventListener('syncComplete', handleSyncComplete);
 
-    // On syncStart: no longer refresh pre-sync (wasteful + can conflict with post-sync)
-
-    // Refresh when app returns to foreground (catches external transactions)
+    // v2.10.89: Visibility refresh — only when last refresh is stale (>2 min)
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && navigator.onLine && !(window as any).__cumulativeSyncRunning) {
-        refreshCumulativesBatch('visibility');
-      }
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+      if ((window as any).__cumulativeSyncRunning) return;
+      if (Date.now() - lastCumulativeRefreshAt < VISIBILITY_STALE_MS) return;
+      refreshCumulativesBatch('visibility');
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
-    // Periodic refresh every 3 minutes to detect external DB changes
+    // v2.10.89: Periodic refresh — 10 min (was 3 min)
     const intervalId = setInterval(() => {
       if (navigator.onLine && !(window as any).__cumulativeSyncRunning) {
         refreshCumulativesBatch('periodic');
       }
-    }, 3 * 60 * 1000);
+    }, PERIODIC_REFRESH_MS);
 
     return () => {
       window.removeEventListener('syncComplete', handleSyncComplete);
       document.removeEventListener('visibilitychange', handleVisibility);
       clearInterval(intervalId);
+      if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
     };
-  }, [selectedFarmer, selectedProduct, selectedRouteCode, deviceFingerprint, showCumulative, updateFarmerCumulative, getUnsyncedWeightForFarmer, getFarmers, saveFarmers, getFarmerCumulative]);
+  }, [selectedRouteCode, deviceFingerprint, showCumulative, updateFarmerCumulative, saveFarmers, settings.cumulative_frequency_status, settings.printcumm]);
 
   // ========== FAST CUMULATIVE PRE-FETCH (BATCH API) ==========
   // Uses single batch endpoint instead of 3558 individual API calls
   // Falls back to individual calls only if batch endpoint is unavailable
   useEffect(() => {
     if (!showCumulative || !deviceFingerprint || !navigator.onLine || !isReady) return;
-    
+
     // Module-level guard: prevent duplicate sync across re-renders
     if ((window as any).__cumulativeSyncRunning) {
       console.log('📦 Pre-fetch: already in progress (skipping duplicate)');
       return;
     }
-    
+
+    // v2.10.89: Skip pre-fetch if a full batch refresh completed in the last 60 s.
+    // Route switches no longer trigger a redundant 3k-farmer refetch when the
+    // refresh effect just covered the same ground.
+    if (Date.now() - lastCumulativeRefreshAt < MIN_REFRESH_GAP_MS) {
+      console.log('📦 Pre-fetch: skipped (cumulative refreshed <60s ago)');
+      return;
+    }
+
     (window as any).__cumulativeSyncRunning = true;
     
     const prefetchCumulatives = async () => {
@@ -572,7 +619,11 @@ const Index = () => {
         window.dispatchEvent(new CustomEvent('cumulative-sync-progress', {
           detail: { current: farmersToCache.length, total: farmersToCache.length, pass: 0 }
         }));
-        
+
+        // v2.10.89: stamp the throttle gate so the refresh effect doesn't
+        // immediately re-fetch what we just loaded.
+        lastCumulativeRefreshAt = Date.now();
+
       } catch (err) {
         console.warn('Pre-fetch cumulative failed:', err);
       } finally {

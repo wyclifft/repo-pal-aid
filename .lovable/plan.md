@@ -1,97 +1,73 @@
-# Cumulative Monitoring in Debug Console
+# Cumulative refresh is firing far too often — throttle & coalesce
 
-Add a focused "Cumulative" view inside `/debug` plus a thin helper layer so every cumulative-related event (recalc, edit, manual insert, sync change, regression) is captured durably without bloating storage or slowing sync.
+## What's happening today (root cause)
 
-## What the user will see
+`src/pages/Index.tsx` has two effects driving cumulative sync against the backend batch API:
 
-In `/debug`, a new tab/filter **Cumulative** sits beside the existing log list:
+1. **Pre-fetch effect (lines 400–590)** — runs on mount and **re-runs whenever `selectedRouteCode` changes**, refetching all ~3,000+ farmers.
+2. **Refresh effect (lines 261–395)** — registers four triggers:
+   - `syncComplete` window event → full batch refresh (3s delay)
+   - `visibilitychange` → full batch refresh on every tab focus (no debounce)
+   - `setInterval` every **3 minutes** → full batch refresh
+   - Its `useEffect` dependency array includes **`selectedFarmer` and `selectedProduct`**, so picking a different farmer or product **tears down and re-installs all four listeners + the 3-min interval restarts from zero**.
 
-- **Top summary strip**
-  - Last sync: `3455/3455 synced · 0 errors · 12s` (per route/factory)
-  - Pending regressions: `2 farmers showed backward totals in last 24h`
-  - Storage used by CUM logs, total CUM rows
-- **Regressions panel (highest priority, never auto-pruned)**
-  - Each row: farmer id, route, product, `before → after (Δ)`, suspected cause tag (`ccode-reassigned`, `date-shifted`, `route-changed`, `transtype-changed`, `manual-insert`, `duplicate-sync`, `out-of-order`, `offline-stale`), timestamp, expandable raw before/after JSON.
-- **Events list** (filterable by level + sub-tag)
-  - Sub-tags: `CUM:RECALC`, `CUM:EDIT`, `CUM:INSERT`, `CUM:SYNC`, `CUM:REGRESSION`, `CUM:DUPLICATE`, `CUM:ORDER`, `CUM:OFFLINE`.
-- **Actions**: Copy / Export NDJSON / Export CSV (already wired) scoped to current filter.
+On top of that, `syncComplete` is dispatched from **many** places (`useDataSync.ts` lines 640, 652, 865; `Index.tsx` lines 1206, 1338, 1359; `FarmerSyncDashboard.tsx`). Every single saved/synced receipt currently triggers a 3,000-farmer batch refresh. That's the real noise source.
 
-## Detection rules (what triggers a log)
+Net effect when a user is online and working:
+- Save a receipt → batch refresh
+- Background sync flushes 5 records → 5× batch refreshes (queued)
+- Switch farmer → effect re-mounts, interval resets, often an immediate refresh
+- Tab loses/regains focus → another full refresh
+- Plus the 3-min metronome
 
-The helper wraps `updateFarmerCumulative` and the cumulative refresh path. For each `(farmer, route, product)` it compares the incoming backend total vs the last cached `baseCount`:
+## The fix (frontend only, no business-logic change)
 
-| Condition | Sub-tag | Level |
+All changes confined to `src/pages/Index.tsx` + small helper. Math, IndexedDB writes, monitor logging, and floor guard stay exactly as-is.
+
+### 1. Add a single shared throttle gate
+Module-level `lastCumulativeRefreshAt: number` and `MIN_REFRESH_GAP_MS = 60_000`. `refreshCumulativesBatch(reason)` skips (logs `CUM:THROTTLED reason=…`) when called within 60 s of the previous successful run — **except** `reason === 'post-sync'` and `reason === 'manual'`, which are allowed but still coalesced through the existing in-flight queue.
+
+### 2. Stop re-mounting the effect on farmer/product changes
+Remove `selectedFarmer`, `selectedProduct`, `getUnsyncedWeightForFarmer`, `getFarmerCumulative` from the refresh effect's dependency array. Read them through `useRef` mirrors that the effect's inner closure consults. Effect now only re-installs when `deviceFingerprint`, `selectedRouteCode`, or `showCumulative` changes.
+
+### 3. Coalesce `syncComplete` storms
+Replace the bare `setTimeout(... , 3000)` with a **trailing-edge debounce of 5 s**: rapid syncComplete bursts (record-by-record flushes) collapse into one refresh after the burst ends. The existing in-flight/pending guard stays as a second line of defense.
+
+### 4. Visibility refresh — only when stale
+Only run on `visibilitychange` if `Date.now() - lastCumulativeRefreshAt > 2 * 60_000`. Otherwise skip silently.
+
+### 5. Periodic interval: 3 min → 10 min
+Detecting external DB edits doesn't need 3-min resolution; 10 min matches the regression-monitor cadence and cuts background API load by ~70 %.
+
+### 6. Pre-fetch effect: don't re-run on route change alone
+Keep the route in the dependency array (we still need a route-scoped refresh), but skip the pre-fetch body if a successful refresh ran in the last 60 s (`lastCumulativeRefreshAt` gate). The selected-farmer refresh path already handles the route switch.
+
+### 7. Optional `syncComplete` payload respect
+Where dispatch sites already know the synced count (`useDataSync.ts`), pass `{ detail: { synced: n } }`. The listener skips the refresh entirely when `synced === 0`. Non-breaking — undefined `detail` keeps current behaviour.
+
+## Expected outcome
+
+| Scenario | Before | After |
 |---|---|---|
-| `newBase < oldBase` | `CUM:REGRESSION` | error |
-| `newBase === oldBase` and incoming sync replaced it anyway | `CUM:RECALC` (debug, sampled) | debug |
-| Local insert recorded but transrefno matches an already-synced ref | `CUM:DUPLICATE` | warn |
-| Local row transdate < newest server transdate for same farmer | `CUM:ORDER` | warn |
-| Offline buffer flushed > 1h after capture | `CUM:OFFLINE` | info |
-| Backend row appeared with `ccode`, `route`, `transdate`, or `Transtype` different from previously observed for the same `transrefno` | `CUM:EDIT` (cause auto-classified) | warn |
-| Backend row with no matching local transrefno appears mid-month | `CUM:INSERT` | warn |
-| Any thrown error in cumulative path | `CUM:ERROR` | error |
+| Save 1 receipt | 1 full batch refresh | 0 (waits for debounce) |
+| Background sync flushes 8 records | 8 batch refreshes queued | 1 batch refresh |
+| User switches farmer 10× | 10 effect re-mounts + possible refreshes | 0 extra refreshes |
+| Tab focus 5× in 10 min | 5 full refreshes | 1 |
+| Idle 1 hr online | 20 periodic refreshes | 6 |
 
-Each regression entry stores: `{ farmer, route, icode, beforeBase, afterBase, delta, lastTransrefno, suspectedCause, evidence }` where `evidence` lists the small set of rows that changed since last refresh (capped to 5).
-
-## Optimization rules
-
-- **Per-farmer success during bulk sync is NEVER persisted.** A new `plog.summary(tag, totals)` accumulates `{ok, fail, total}` in memory and writes a single row when the batch closes:
-  `CUM:SYNC route=R1 · 3455/3455 ok · 0 err · 12.4s`.
-- Reuse existing `persistentLogger` infra (dedupe 2s, 50/s rate cap, 5k rows, 7d age, quota recovery).
-- **Two-tier retention**: keep generic CUM logs under the global 5k cap, but pin `CUM:REGRESSION` and `CUM:ERROR` rows so the age/row prune never deletes them until a separate higher cap is hit (default 500 pinned rows, 30 d age). Implemented by skipping pinned rows in `pruneOld`/`pruneToHalf` cursors.
-- **Sampling for noisy debug**: `CUM:RECALC` debug rows are sampled 1-in-50 to avoid flooding during bulk refreshes.
-- All comparisons happen synchronously against the existing IndexedDB cache; no extra network calls.
-
-## Files to add / change
-
-- `src/utils/cumulativeMonitor.ts` (new) — pure helper with:
-  - `observeBaseChange(prev, next, ctx)` → emits the right `CUM:*` row
-  - `startBatch(label)` / `endBatch(label, totals)` for summarized sync
-  - `recordRowFingerprint(transrefno, {ccode, route, transdate, transtype, weight})` (in-memory map, capped at 5k entries, LRU) used to detect edits
-- `src/utils/persistentLogger.ts` — add:
-  - optional `pinned: 1` flag on entries
-  - `pruneOld` / `pruneToHalf` skip rows with `pinned=1`
-  - `plog.pinned(level, tag, msg, data)` convenience
-  - bump store `DB_VERSION` to 2 with an `onupgradeneeded` adding a `pinned` index (preserves existing rows)
-- `src/hooks/useIndexedDB.ts` — call `observeBaseChange` inside `updateFarmerCumulative` (backend path only) before writing, and `startBatch/endBatch` around the bulk refresh loop. No behavior change to cumulative math.
-- The farmer-cumulative sync caller (the loop that iterates farmers) — replace per-farmer `console.log` success lines with `summary.ok++`; keep individual `console.error` only for actual failures.
-- `src/pages/DebugConsole.tsx` — add a **Cumulative** tab:
-  - filter rows whose `tag` starts with `CUM:`
-  - render top summary strip from the latest `CUM:SYNC` row + count of `CUM:REGRESSION` rows in last 24h
-  - regression panel renders pinned regression rows first, expandable
-  - reuses existing Copy/Export buttons (scoped to current filter)
-- `src/constants/appVersion.ts` — bump to `2.10.88` / version code `110`; `public/sw.js` CACHE_VERSION → `v35`.
-
-## Technical details
-
-```text
-flow on every cumulative refresh
-────────────────────────────────
-backend SUM ──▶ observeBaseChange(prev=cached.baseCount, next=newSum, ctx)
-                │
-                ├─ next < prev   → plog.pinned('error','CUM:REGRESSION',…)
-                ├─ next == prev  → sampled debug
-                └─ next > prev   → silent (normal growth)
-                │
-                ▼
-        updateFarmerCumulative (unchanged math)
-```
-
-Edit/insert detection uses a small in-memory `Map<transrefno, fingerprint>` rebuilt lazily from the latest backend rows; when a fingerprint differs from the stored one we classify the cause:
-
-```text
-ccode      differs → 'ccode-reassigned'
-route      differs → 'route-changed'
-transdate  differs → 'date-shifted'
-Transtype  differs → 'transtype-changed'
-no prior fingerprint, transdate < today → 'manual-insert'
-```
-
-Backwards-compatible: the helper is a no-op if `persistentLogger` is not yet initialized; existing cumulative math, sync, and reference generation are untouched.
+API hits to `getMonthlyFrequencyBatch` drop by ~80–90 % during active use. Cumulative numbers stay correct because the post-sync path still fires (just debounced), and the 10-min periodic + visibility-when-stale paths still catch external edits within minutes.
 
 ## Verification
 
-- Confirm `/debug` Cumulative tab renders, regressions persist across logout / app restart.
-- Force a regression by editing a row's `ccode` in the test DB → next refresh emits one `CUM:REGRESSION` with cause `ccode-reassigned`, pinned and not pruned.
-- Run a 3,000-farmer bulk refresh → exactly one `CUM:SYNC … 3000/3000 ok` row written, no per-farmer rows.
-- Verify storage stays under the 5k generic cap with regressions preserved.
+- `/debug` → Cumulative tab: look for new `CUM:THROTTLED` entries and confirm `CUM:SYNC` row count drops dramatically during a save-heavy session.
+- Save 5 receipts back-to-back → exactly one `CUM:SYNC` row written ~5 s after the last save.
+- Switch selected farmer 20 times → no `CUM:SYNC` row written.
+- Toggle airplane mode off → one pre-fetch `CUM:SYNC` row, no duplicate within the next 60 s.
+
+## Files touched
+
+- `src/pages/Index.tsx` — both effects (refresh + pre-fetch), no logic change to `updateFarmerCumulative` or `getFarmerCumulative`.
+- `src/hooks/useDataSync.ts` — optional: add `{ detail: { synced } }` to the 3 `syncComplete` dispatches.
+- `src/constants/appVersion.ts`, `android/app/build.gradle`, `public/sw.js` — bump to **v2.10.89 / versionCode 111 / SW v36**.
+
+No backend, IndexedDB schema, or RLS changes. No new tables. Production-safe: every change is a throttle/debounce; correctness paths are unchanged.
