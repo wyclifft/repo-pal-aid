@@ -650,7 +650,7 @@ export const useDataSync = () => {
       return { synced, failed };
     } catch (err) {
       console.error('[SYNC] Fatal sync error:', err);
-      window.dispatchEvent(new CustomEvent('syncComplete'));
+      window.dispatchEvent(new CustomEvent('syncComplete', { detail: { synced } }));
       return { synced, failed };
     } finally {
       // Always clear the sync in progress flag
