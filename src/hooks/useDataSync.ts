@@ -636,8 +636,9 @@ export const useDataSync = () => {
         }
       }
       
-      // Dispatch sync complete event
-      window.dispatchEvent(new CustomEvent('syncComplete'));
+      // Dispatch sync complete event (v2.10.89: include synced count so the
+      // cumulative refresh listener can skip when nothing actually synced).
+      window.dispatchEvent(new CustomEvent('syncComplete', { detail: { synced } }));
 
       if (mountedRef.current) {
         setPendingCount(failed);
