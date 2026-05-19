@@ -619,7 +619,11 @@ const Index = () => {
         window.dispatchEvent(new CustomEvent('cumulative-sync-progress', {
           detail: { current: farmersToCache.length, total: farmersToCache.length, pass: 0 }
         }));
-        
+
+        // v2.10.89: stamp the throttle gate so the refresh effect doesn't
+        // immediately re-fetch what we just loaded.
+        lastCumulativeRefreshAt = Date.now();
+
       } catch (err) {
         console.warn('Pre-fetch cumulative failed:', err);
       } finally {
