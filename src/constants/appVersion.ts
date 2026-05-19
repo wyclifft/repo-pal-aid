@@ -1,4 +1,17 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.89: CUMULATIVE REFRESH THROTTLED & COALESCED — the full-batch
+//   cumulative refresh used to fire after every receipt save, every tab
+//   focus, every farmer/product selection, and on a 3-min metronome,
+//   hammering the backend with 3k-farmer refetches. Now: 60 s throttle
+//   gate on all reasons except 'post-sync'/'manual'; trailing-edge 5 s
+//   debounce so bursts of syncComplete collapse to one refresh;
+//   visibility refresh only when last refresh is >2 min stale; periodic
+//   interval relaxed 3 min → 10 min; refresh effect re-mounts only on
+//   route/device/showCumulative change (selectedFarmer/selectedProduct
+//   moved to refs); pre-fetch skips when refresh ran <60 s ago;
+//   syncComplete dispatches now carry detail.synced so refreshes are
+//   skipped when nothing synced. No backend, IndexedDB schema, sync
+//   engine, reference generator, receipt, or auth changes.
 // v2.10.85: RESILIENT BLUETOOTH CONNECTION MANAGER — both scale and printer
 //   now share a single connection manager (src/services/btConnectionManager.ts)
 //   that owns: per-role state machine (idle/connecting/connected/reconnecting/
