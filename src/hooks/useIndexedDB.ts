@@ -864,6 +864,12 @@ export const useIndexedDB = () => {
           let newRecord;
 
           if (fromBackend) {
+            // v2.10.88: observe regression / recalc before overwriting baseCount
+            observeBaseChange(existing?.baseCount, count, {
+              farmerId: cleanId,
+              route: routeKey,
+              source: 'backend',
+            });
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
@@ -889,7 +895,8 @@ export const useIndexedDB = () => {
 
           const putRequest = store.put(newRecord);
           putRequest.onsuccess = () => {
-            console.log(`✅ Updated farmer cumulative: ${cleanId} route=${routeKey}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
+            // v2.10.88: per-farmer cumulative writes are NO LONGER persistently logged
+            // during bulk sync — see cumulativeMonitor.startBatch/endBatch summary instead.
             resolve();
           };
           putRequest.onerror = () => reject(putRequest.error);
