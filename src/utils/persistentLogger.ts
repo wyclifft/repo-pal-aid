@@ -275,6 +275,11 @@ async function pruneToHalf(): Promise<void> {
       cursorReq.onsuccess = () => {
         const cur = cursorReq.result;
         if (!cur || removed >= toDelete) return resolve();
+        const v = cur.value as PLogEntry;
+        if (v.pinned === 1) {
+          cur.continue();
+          return;
+        }
         cur.delete();
         removed++;
         cur.continue();
@@ -289,6 +294,7 @@ async function pruneOld(): Promise<void> {
   const db = await openDb();
   if (!db) return;
   const cutoff = Date.now() - MAX_AGE_MS;
+  // 1) age prune — skip pinned rows
   await new Promise<void>((resolve) => {
     const tx = db.transaction(STORE, "readwrite");
     const idx = tx.objectStore(STORE).index("ts");
@@ -297,13 +303,14 @@ async function pruneOld(): Promise<void> {
     cursorReq.onsuccess = () => {
       const cur = cursorReq.result;
       if (!cur) return resolve();
-      cur.delete();
+      const v = cur.value as PLogEntry;
+      if (v.pinned !== 1) cur.delete();
       cur.continue();
     };
     cursorReq.onerror = () => resolve();
   });
 
-  // Also enforce max-row cap
+  // 2) row-cap prune on non-pinned rows
   await new Promise<void>((resolve) => {
     const tx = db.transaction(STORE, "readwrite");
     const os = tx.objectStore(STORE);
@@ -318,6 +325,11 @@ async function pruneOld(): Promise<void> {
       cursorReq.onsuccess = () => {
         const cur = cursorReq.result;
         if (!cur || removed >= excess) return resolve();
+        const v = cur.value as PLogEntry;
+        if (v.pinned === 1) {
+          cur.continue();
+          return;
+        }
         cur.delete();
         removed++;
         cur.continue();
@@ -325,6 +337,42 @@ async function pruneOld(): Promise<void> {
       cursorReq.onerror = () => resolve();
     };
     countReq.onerror = () => resolve();
+  });
+
+  // 3) pinned-only retention: enforce separate cap (oldest-first) + 30d age
+  const pinnedCutoff = Date.now() - PINNED_MAX_AGE_MS;
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const os = tx.objectStore(STORE);
+    const idx = os.index("ts");
+    const cursorReq = idx.openCursor();
+    const pinnedRows: { id: number; ts: number }[] = [];
+    cursorReq.onsuccess = () => {
+      const cur = cursorReq.result;
+      if (!cur) {
+        // Age prune
+        for (const r of pinnedRows) {
+          if (r.ts < pinnedCutoff) {
+            try { os.delete(r.id); } catch { /* noop */ }
+          }
+        }
+        // Row cap (oldest first)
+        const live = pinnedRows.filter(r => r.ts >= pinnedCutoff).sort((a, b) => a.ts - b.ts);
+        const excess = live.length - PINNED_MAX_ROWS;
+        if (excess > 0) {
+          for (let i = 0; i < excess; i++) {
+            try { os.delete(live[i].id); } catch { /* noop */ }
+          }
+        }
+        return resolve();
+      }
+      const v = cur.value as PLogEntry;
+      if (v.pinned === 1 && typeof v.id === "number") {
+        pinnedRows.push({ id: v.id, ts: v.ts });
+      }
+      cur.continue();
+    };
+    cursorReq.onerror = () => resolve();
   });
 }
 
