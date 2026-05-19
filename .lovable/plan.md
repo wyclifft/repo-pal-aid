@@ -1,89 +1,97 @@
+# Cumulative Monitoring in Debug Console
 
-## What the logs show
+Add a focused "Cumulative" view inside `/debug` plus a thin helper layer so every cumulative-related event (recalc, edit, manual insert, sync change, regression) is captured durably without bloating storage or slowing sync.
 
-Three distinct issues, in order of severity:
+## What the user will see
 
-### 1. IndexedDB `VersionError` on every login (CRITICAL)
+In `/debug`, a new tab/filter **Cumulative** sits beside the existing log list:
+
+- **Top summary strip**
+  - Last sync: `3455/3455 synced · 0 errors · 12s` (per route/factory)
+  - Pending regressions: `2 farmers showed backward totals in last 24h`
+  - Storage used by CUM logs, total CUM rows
+- **Regressions panel (highest priority, never auto-pruned)**
+  - Each row: farmer id, route, product, `before → after (Δ)`, suspected cause tag (`ccode-reassigned`, `date-shifted`, `route-changed`, `transtype-changed`, `manual-insert`, `duplicate-sync`, `out-of-order`, `offline-stale`), timestamp, expandable raw before/after JSON.
+- **Events list** (filterable by level + sub-tag)
+  - Sub-tags: `CUM:RECALC`, `CUM:EDIT`, `CUM:INSERT`, `CUM:SYNC`, `CUM:REGRESSION`, `CUM:DUPLICATE`, `CUM:ORDER`, `CUM:OFFLINE`.
+- **Actions**: Copy / Export NDJSON / Export CSV (already wired) scoped to current filter.
+
+## Detection rules (what triggers a log)
+
+The helper wraps `updateFarmerCumulative` and the cumulative refresh path. For each `(farmer, route, product)` it compares the incoming backend total vs the last cached `baseCount`:
+
+| Condition | Sub-tag | Level |
+|---|---|---|
+| `newBase < oldBase` | `CUM:REGRESSION` | error |
+| `newBase === oldBase` and incoming sync replaced it anyway | `CUM:RECALC` (debug, sampled) | debug |
+| Local insert recorded but transrefno matches an already-synced ref | `CUM:DUPLICATE` | warn |
+| Local row transdate < newest server transdate for same farmer | `CUM:ORDER` | warn |
+| Offline buffer flushed > 1h after capture | `CUM:OFFLINE` | info |
+| Backend row appeared with `ccode`, `route`, `transdate`, or `Transtype` different from previously observed for the same `transrefno` | `CUM:EDIT` (cause auto-classified) | warn |
+| Backend row with no matching local transrefno appears mid-month | `CUM:INSERT` | warn |
+| Any thrown error in cumulative path | `CUM:ERROR` | error |
+
+Each regression entry stores: `{ farmer, route, icode, beforeBase, afterBase, delta, lastTransrefno, suspectedCause, evidence }` where `evidence` lists the small set of rows that changed since last refresh (capped to 5).
+
+## Optimization rules
+
+- **Per-farmer success during bulk sync is NEVER persisted.** A new `plog.summary(tag, totals)` accumulates `{ok, fail, total}` in memory and writes a single row when the batch closes:
+  `CUM:SYNC route=R1 · 3455/3455 ok · 0 err · 12.4s`.
+- Reuse existing `persistentLogger` infra (dedupe 2s, 50/s rate cap, 5k rows, 7d age, quota recovery).
+- **Two-tier retention**: keep generic CUM logs under the global 5k cap, but pin `CUM:REGRESSION` and `CUM:ERROR` rows so the age/row prune never deletes them until a separate higher cap is hit (default 500 pinned rows, 30 d age). Implemented by skipping pinned rows in `pruneOld`/`pruneToHalf` cursors.
+- **Sampling for noisy debug**: `CUM:RECALC` debug rows are sampled 1-in-50 to avoid flooding during bulk refreshes.
+- All comparisons happen synchronously against the existing IndexedDB cache; no extra network calls.
+
+## Files to add / change
+
+- `src/utils/cumulativeMonitor.ts` (new) — pure helper with:
+  - `observeBaseChange(prev, next, ctx)` → emits the right `CUM:*` row
+  - `startBatch(label)` / `endBatch(label, totals)` for summarized sync
+  - `recordRowFingerprint(transrefno, {ccode, route, transdate, transtype, weight})` (in-memory map, capped at 5k entries, LRU) used to detect edits
+- `src/utils/persistentLogger.ts` — add:
+  - optional `pinned: 1` flag on entries
+  - `pruneOld` / `pruneToHalf` skip rows with `pinned=1`
+  - `plog.pinned(level, tag, msg, data)` convenience
+  - bump store `DB_VERSION` to 2 with an `onupgradeneeded` adding a `pinned` index (preserves existing rows)
+- `src/hooks/useIndexedDB.ts` — call `observeBaseChange` inside `updateFarmerCumulative` (backend path only) before writing, and `startBatch/endBatch` around the bulk refresh loop. No behavior change to cumulative math.
+- The farmer-cumulative sync caller (the loop that iterates farmers) — replace per-farmer `console.log` success lines with `summary.ok++`; keep individual `console.error` only for actual failures.
+- `src/pages/DebugConsole.tsx` — add a **Cumulative** tab:
+  - filter rows whose `tag` starts with `CUM:`
+  - render top summary strip from the latest `CUM:SYNC` row + count of `CUM:REGRESSION` rows in last 24h
+  - regression panel renders pinned regression rows first, expandable
+  - reuses existing Copy/Export buttons (scoped to current filter)
+- `src/constants/appVersion.ts` — bump to `2.10.88` / version code `110`; `public/sw.js` CACHE_VERSION → `v35`.
+
+## Technical details
+
+```text
+flow on every cumulative refresh
+────────────────────────────────
+backend SUM ──▶ observeBaseChange(prev=cached.baseCount, next=newSum, ctx)
+                │
+                ├─ next < prev   → plog.pinned('error','CUM:REGRESSION',…)
+                ├─ next == prev  → sampled debug
+                └─ next > prev   → silent (normal growth)
+                │
+                ▼
+        updateFarmerCumulative (unchanged math)
 ```
-❌ IndexedDB open error: VersionError: The requested version (11)
-   is less than the existing version (12).
-```
-Repeated 8+ times per login. Cascades into:
-```
-❌ Failed to load farmers: DB not ready
-```
 
-**Root cause:** Two files open the same DB (`milkCollectionDB`) with different versions:
-- `src/hooks/useIndexedDB.ts` → `DB_VERSION = 12` (current, correct)
-- `src/utils/referenceGenerator.ts` → `DB_VERSION = 11` (stale)
+Edit/insert detection uses a small in-memory `Map<transrefno, fingerprint>` rebuilt lazily from the latest backend rows; when a fingerprint differs from the stored one we classify the cause:
 
-Once the main hook upgrades the DB to v12, `referenceGenerator.getDB()` keeps requesting v11 and IndexedDB rejects every open call. This breaks reference generation reads/writes and contributes to the "DB not ready" cascade because the rejected open requests race with the legitimate ones.
-
-### 2. Infinite printer reconnect loop on web (HIGH)
-Hundreds of repeating entries:
-```
-[BT][printer] connect attempt failed:
-  Failed to execute 'requestDevice' on 'Bluetooth':
-  Must be handling a user gesture to show a permission request.
-[BT][printer] retry in 2000ms (attempt 1)
-[BT][printer] retry in 4000ms (attempt 2)
-... forever ...
+```text
+ccode      differs → 'ccode-reassigned'
+route      differs → 'route-changed'
+transdate  differs → 'date-shifted'
+Transtype  differs → 'transtype-changed'
+no prior fingerprint, transdate < today → 'manual-insert'
 ```
 
-**Root cause:** `btConnectionManager.installAutoReconnect()` runs on both web and native. On web, the low-level `quickReconnect*` path eventually calls `navigator.bluetooth.requestDevice()`, which the browser rejects outside a user gesture (`NotAllowedError` / "Must be handling a user gesture"). The manager treats it like any transient failure and re-arms the backoff timer, producing an unbounded retry loop that floods the persistent log, drains battery on background tabs, and never succeeds without a click.
+Backwards-compatible: the helper is a no-op if `persistentLogger` is not yet initialized; existing cumulative math, sync, and reference generation are untouched.
 
-### 3. "Failed to load farmers: DB not ready" (downstream)
-A direct symptom of #1. Once #1 is fixed and the DB opens cleanly on first try, this error stops on its own. No separate fix needed beyond #1, plus a small guard in the farmer-load path so it logs once at `warn` instead of `error` if the DB really isn't ready yet.
+## Verification
 
----
-
-## Plan (v2.10.87 — Version Code 109)
-
-### Fix 1 — Single source of truth for DB version
-Edit `src/utils/referenceGenerator.ts`:
-- Remove the local `const DB_VERSION = 11`.
-- Import `DB_VERSION` (and `DB_NAME`) from `src/hooks/useIndexedDB.ts` (export them from there if not already exported).
-- The `device_config` object store is already created in the main `onupgradeneeded` of `useIndexedDB.ts`; keep the same `onupgradeneeded` fallback in `referenceGenerator` as a safety net (idempotent — only creates the store if missing).
-
-This eliminates the version race forever — there is exactly one place to bump on future schema changes.
-
-### Fix 2 — Stop the infinite Web-Bluetooth retry loop
-Edit `src/services/btConnectionManager.ts`:
-- In `tryConnectOnce`, classify the caught error. If it matches **either** of:
-  - `NotAllowedError`, or
-  - message contains `"user gesture"` / `"requestDevice"`,
-
-  return a tagged result `{ ok: false, requiresGesture: true }`.
-- In `ensureConnected`, when `requiresGesture` is true:
-  - Set status to `failed` with `lastError = "needs manual reconnect"`.
-  - **Do not** call `scheduleRetry`. Cancel any pending retry timer.
-  - Log once at `warn`: `[BT][role] paused — needs user gesture to reconnect`.
-- Reset this paused state and resume auto-reconnect when:
-  - The user explicitly re-pairs from `PrinterSelector`/scale UI (existing flows already call `ensureConnected` after a successful pair), OR
-  - The app transitions from background→foreground via a real user interaction (we already listen to `appStateChange`/`visibilitychange`; on web we additionally clear the paused flag on the next `pointerdown`/`keydown` so the next retry runs inside a gesture).
-- Native (Capacitor) path is unaffected — classic SPP and native BLE don't throw `NotAllowedError`, so behavior on the production Android app stays identical.
-
-### Fix 3 — Soften the cascading farmer-load error
-In the farmer-load path that emits `Failed to load farmers: DB not ready` (search reveals it lives in the dashboard data hook), change the single `console.error` to `console.warn` and add a one-shot retry after 500 ms. Once Fix 1 lands this path stops triggering, but the soft-fail prevents future schema upgrades from looking like crashes in the debug console.
-
-### Versioning & cache (workspace rule)
-- `src/constants/appVersion.ts`: `2.10.86 → 2.10.87`, code `108 → 109`.
-- `android/app/build.gradle`: `versionCode 108 → 109`, `versionName "2.10.87"`.
-- `public/sw.js`: `CACHE_VERSION v33 → v34`.
-
-### Out of scope
-Receipt printing, transaction creation, sync engine, IndexedDB schema, reference-number format, Android native plugins, server.js — none are touched.
-
-### Verification
-1. Hard reload → log in → confirm **zero** `VersionError` lines and no `DB not ready` errors in the Debug Console.
-2. On web preview: disconnect printer power → confirm BT manager logs `paused — needs user gesture` once and stops retrying (no flood). Click "Connect Printer" → reconnects normally.
-3. On native build (smoke): scale + printer auto-reconnect on app resume still works (unchanged code path).
-4. Create one milk receipt → confirm `transrefno` still generates with correct `devcode + clientFetch + padded_trnid` format and increments.
-5. App version banner shows `v2.10.87`.
-
-### Files touched
-- `src/utils/referenceGenerator.ts` (use shared DB_VERSION)
-- `src/hooks/useIndexedDB.ts` (export DB_NAME + DB_VERSION constants)
-- `src/services/btConnectionManager.ts` (gesture-aware retry pause)
-- the farmer-load hook emitting "DB not ready" (downgrade to warn + retry)
-- `src/constants/appVersion.ts`, `android/app/build.gradle`, `public/sw.js` (version bump)
+- Confirm `/debug` Cumulative tab renders, regressions persist across logout / app restart.
+- Force a regression by editing a row's `ccode` in the test DB → next refresh emits one `CUM:REGRESSION` with cause `ccode-reassigned`, pinned and not pruned.
+- Run a 3,000-farmer bulk refresh → exactly one `CUM:SYNC … 3000/3000 ok` row written, no per-farmer rows.
+- Verify storage stays under the 5k generic cap with regressions preserved.
