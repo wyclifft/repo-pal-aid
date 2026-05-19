@@ -443,6 +443,8 @@ const Index = () => {
         
         // Step 2: Try batch endpoint first (1 request instead of 3558)
         let batchSuccess = false;
+        const batchLabel = `cumulative-prefetch route=${selectedRouteCode || 'ALL'}`;
+        cumulativeMonitor.startBatch(batchLabel, farmersToCache.length, { source: 'prefetch' });
         try {
           const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
           if (batchResult.success && batchResult.data && batchResult.data.farmers) {
@@ -453,9 +455,7 @@ const Index = () => {
               batchMap.set(key, f.cumulative_weight);
               batchByProductMap.set(key, f.by_product || []);
             }
-            
-            console.log(`📦 Batch API returned ${batchMap.size} farmer cumulative records`);
-            
+
             // Write all cumulative data to IndexedDB in batches
             const WRITE_BATCH = 50;
             let written = 0;
@@ -464,27 +464,32 @@ const Index = () => {
               await Promise.all(batch.map(async (farmer) => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
-                await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined);
+                try {
+                  await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined);
+                  cumulativeMonitor.batchOk(batchLabel);
+                } catch {
+                  cumulativeMonitor.batchFail(batchLabel);
+                }
               }));
               written += batch.length;
-              
+
               // Dispatch progress
               window.dispatchEvent(new CustomEvent('cumulative-sync-progress', {
                 detail: { current: written, total: farmersToCache.length, pass: 1 }
               }));
-              
+
               // Yield to main thread
               if (i + WRITE_BATCH < farmersToCache.length) {
                 await new Promise(r => setTimeout(r, 0));
               }
             }
-            
-            console.log(`✅ Batch pre-fetch complete: ${written}/${farmersToCache.length} farmers cached (100% coverage)`);
+
             batchSuccess = true;
           }
         } catch (batchErr) {
           console.warn('📦 Batch endpoint unavailable, falling back to individual calls:', batchErr);
         }
+        if (batchSuccess) cumulativeMonitor.endBatch(batchLabel);
         
         // Step 3: Fallback — individual calls with multi-pass retry (only if batch failed)
         if (!batchSuccess) {
