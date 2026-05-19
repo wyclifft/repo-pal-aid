@@ -404,6 +404,9 @@ export const plog = {
   info: (tag: string, message: string, data?: unknown) => enqueue("info", tag, message, data),
   warn: (tag: string, message: string, data?: unknown) => enqueue("warn", tag, message, data),
   error: (tag: string, message: string, data?: unknown) => enqueue("error", tag, message, data),
+  /** Pinned entry — bypasses rate cap + dedupe, never deleted by age/row prune. */
+  pinned: (level: LogLevel, tag: string, message: string, data?: unknown) =>
+    enqueue(level, tag, message, data, 1),
 
   flush,
 
