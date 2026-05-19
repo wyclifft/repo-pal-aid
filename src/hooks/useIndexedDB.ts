@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
+import { observeBaseChange } from '@/utils/cumulativeMonitor';
 
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
 // (e.g. referenceGenerator) open the SAME version and never trigger
