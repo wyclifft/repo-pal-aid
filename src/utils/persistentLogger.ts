@@ -44,7 +44,12 @@ export interface PLogEntry {
   count?: number;
   route?: string;
   version?: string;
+  pinned?: 0 | 1; // v2.10.88: pinned rows survive age/row-cap pruning
 }
+
+// v2.10.88: two-tier retention for pinned rows (CUM:REGRESSION etc.)
+const PINNED_MAX_ROWS = 500;
+const PINNED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 let persistenceDisabled = false;
