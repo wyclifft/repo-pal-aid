@@ -25,9 +25,13 @@ const levelClass: Record<LogLevel, string> = {
   debug: "text-muted-foreground",
 };
 
+type ViewMode = "all" | "cumulative";
+
 export default function DebugConsole() {
   const navigate = useNavigate();
+  const [view, setView] = useState<ViewMode>("all");
   const [rows, setRows] = useState<PLogEntry[]>([]);
+  const [cumRows, setCumRows] = useState<PLogEntry[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [level, setLevel] = useState<LogLevel | "all">("all");
   const [tag, setTag] = useState<string>("");
@@ -37,7 +41,7 @@ export default function DebugConsole() {
 
   const reload = useCallback(async () => {
     await plog.flush();
-    const [list, allTags, s] = await Promise.all([
+    const [list, allTags, s, cum] = await Promise.all([
       plog.list({
         level: level === "all" ? undefined : level,
         tag: tag || undefined,
@@ -46,10 +50,13 @@ export default function DebugConsole() {
       }),
       plog.tags(),
       plog.stats(),
+      // Pull all CUM:* entries (separate query, so non-CUM filters don't hide them)
+      plog.list({ limit: 2000 }).then(rs => rs.filter(r => r.tag.startsWith("CUM"))),
     ]);
     setRows(list);
     setTags(allTags);
     setStats(s);
+    setCumRows(cum);
   }, [level, tag, search]);
 
   useEffect(() => {
