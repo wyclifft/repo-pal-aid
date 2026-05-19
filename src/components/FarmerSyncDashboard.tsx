@@ -304,14 +304,21 @@ export const FarmerSyncDashboard = () => {
             const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, activeRoute || undefined);
             if (batchResult.success && batchResult.data?.farmers) {
               const batchFarmers = batchResult.data.farmers;
-              console.log(`[SyncDash] Batch API returned ${batchFarmers.length} cumulative records for cache refresh`);
+              const batchLabel = `cumulative-refresh route=${activeRoute || 'ALL'}`;
+              cumulativeMonitor.startBatch(batchLabel, batchFarmers.length, { source: 'SyncDash' });
               const WRITE_BATCH = 50;
               for (let i = 0; i < batchFarmers.length; i += WRITE_BATCH) {
                 const wb = batchFarmers.slice(i, i + WRITE_BATCH);
                 await Promise.all(wb.map(async (f) => {
-                  await updateFarmerCumulative(f.farmer_id.trim(), f.cumulative_weight, true, f.by_product || [], activeRoute || undefined);
+                  try {
+                    await updateFarmerCumulative(f.farmer_id.trim(), f.cumulative_weight, true, f.by_product || [], activeRoute || undefined);
+                    cumulativeMonitor.batchOk(batchLabel);
+                  } catch {
+                    cumulativeMonitor.batchFail(batchLabel);
+                  }
                 }));
               }
+              cumulativeMonitor.endBatch(batchLabel);
             }
           } catch (err) {
             console.warn('[SyncDash] Batch cumulative refresh failed:', err);
