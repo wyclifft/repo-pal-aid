@@ -44,7 +44,12 @@ export interface PLogEntry {
   count?: number;
   route?: string;
   version?: string;
+  pinned?: 0 | 1; // v2.10.88: pinned rows survive age/row-cap pruning
 }
+
+// v2.10.88: two-tier retention for pinned rows (CUM:REGRESSION etc.)
+const PINNED_MAX_ROWS = 500;
+const PINNED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 let persistenceDisabled = false;
@@ -145,24 +150,27 @@ function currentRoute(): string | undefined {
   }
 }
 
-function enqueue(level: LogLevel, tag: string, message: string, data?: unknown) {
+function enqueue(level: LogLevel, tag: string, message: string, data?: unknown, pinned: 0 | 1 = 0) {
   const now = Date.now();
 
-  // Rate cap: 50/sec
-  if (now - rateWindowStart >= 1000) {
-    rateWindowStart = now;
-    rateWindowCount = 0;
-  }
-  rateWindowCount++;
-  if (rateWindowCount > RATE_CAP_PER_SEC) {
-    droppedSinceLastFlush++;
-    return;
+  // Rate cap: 50/sec — pinned entries bypass to ensure critical evidence is kept
+  if (!pinned) {
+    if (now - rateWindowStart >= 1000) {
+      rateWindowStart = now;
+      rateWindowCount = 0;
+    }
+    rateWindowCount++;
+    if (rateWindowCount > RATE_CAP_PER_SEC) {
+      droppedSinceLastFlush++;
+      return;
+    }
   }
 
   const dataStr = safeStringify(data);
 
   // Dedupe window: identical (level, tag, message, data) within 2s collapses
   if (
+    !pinned &&
     lastEntry &&
     now - lastEntryAt <= DEDUPE_WINDOW_MS &&
     lastEntry.level === level &&
@@ -185,6 +193,7 @@ function enqueue(level: LogLevel, tag: string, message: string, data?: unknown) 
     count: 1,
     route: currentRoute(),
     version: appVersion(),
+    pinned: pinned ? 1 : 0,
   };
   queue.push(entry);
   lastEntry = entry;
@@ -266,6 +275,11 @@ async function pruneToHalf(): Promise<void> {
       cursorReq.onsuccess = () => {
         const cur = cursorReq.result;
         if (!cur || removed >= toDelete) return resolve();
+        const v = cur.value as PLogEntry;
+        if (v.pinned === 1) {
+          cur.continue();
+          return;
+        }
         cur.delete();
         removed++;
         cur.continue();
@@ -280,6 +294,7 @@ async function pruneOld(): Promise<void> {
   const db = await openDb();
   if (!db) return;
   const cutoff = Date.now() - MAX_AGE_MS;
+  // 1) age prune — skip pinned rows
   await new Promise<void>((resolve) => {
     const tx = db.transaction(STORE, "readwrite");
     const idx = tx.objectStore(STORE).index("ts");
@@ -288,13 +303,14 @@ async function pruneOld(): Promise<void> {
     cursorReq.onsuccess = () => {
       const cur = cursorReq.result;
       if (!cur) return resolve();
-      cur.delete();
+      const v = cur.value as PLogEntry;
+      if (v.pinned !== 1) cur.delete();
       cur.continue();
     };
     cursorReq.onerror = () => resolve();
   });
 
-  // Also enforce max-row cap
+  // 2) row-cap prune on non-pinned rows
   await new Promise<void>((resolve) => {
     const tx = db.transaction(STORE, "readwrite");
     const os = tx.objectStore(STORE);
@@ -309,6 +325,11 @@ async function pruneOld(): Promise<void> {
       cursorReq.onsuccess = () => {
         const cur = cursorReq.result;
         if (!cur || removed >= excess) return resolve();
+        const v = cur.value as PLogEntry;
+        if (v.pinned === 1) {
+          cur.continue();
+          return;
+        }
         cur.delete();
         removed++;
         cur.continue();
@@ -316,6 +337,42 @@ async function pruneOld(): Promise<void> {
       cursorReq.onerror = () => resolve();
     };
     countReq.onerror = () => resolve();
+  });
+
+  // 3) pinned-only retention: enforce separate cap (oldest-first) + 30d age
+  const pinnedCutoff = Date.now() - PINNED_MAX_AGE_MS;
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const os = tx.objectStore(STORE);
+    const idx = os.index("ts");
+    const cursorReq = idx.openCursor();
+    const pinnedRows: { id: number; ts: number }[] = [];
+    cursorReq.onsuccess = () => {
+      const cur = cursorReq.result;
+      if (!cur) {
+        // Age prune
+        for (const r of pinnedRows) {
+          if (r.ts < pinnedCutoff) {
+            try { os.delete(r.id); } catch { /* noop */ }
+          }
+        }
+        // Row cap (oldest first)
+        const live = pinnedRows.filter(r => r.ts >= pinnedCutoff).sort((a, b) => a.ts - b.ts);
+        const excess = live.length - PINNED_MAX_ROWS;
+        if (excess > 0) {
+          for (let i = 0; i < excess; i++) {
+            try { os.delete(live[i].id); } catch { /* noop */ }
+          }
+        }
+        return resolve();
+      }
+      const v = cur.value as PLogEntry;
+      if (v.pinned === 1 && typeof v.id === "number") {
+        pinnedRows.push({ id: v.id, ts: v.ts });
+      }
+      cur.continue();
+    };
+    cursorReq.onerror = () => resolve();
   });
 }
 
@@ -347,6 +404,9 @@ export const plog = {
   info: (tag: string, message: string, data?: unknown) => enqueue("info", tag, message, data),
   warn: (tag: string, message: string, data?: unknown) => enqueue("warn", tag, message, data),
   error: (tag: string, message: string, data?: unknown) => enqueue("error", tag, message, data),
+  /** Pinned entry — bypasses rate cap + dedupe, never deleted by age/row prune. */
+  pinned: (level: LogLevel, tag: string, message: string, data?: unknown) =>
+    enqueue(level, tag, message, data, 1),
 
   flush,
 

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
+import { observeBaseChange } from '@/utils/cumulativeMonitor';
 
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
 // (e.g. referenceGenerator) open the SAME version and never trigger
@@ -863,6 +864,12 @@ export const useIndexedDB = () => {
           let newRecord;
 
           if (fromBackend) {
+            // v2.10.88: observe regression / recalc before overwriting baseCount
+            observeBaseChange(existing?.baseCount, count, {
+              farmerId: cleanId,
+              route: routeKey,
+              source: 'backend',
+            });
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
@@ -888,7 +895,8 @@ export const useIndexedDB = () => {
 
           const putRequest = store.put(newRecord);
           putRequest.onsuccess = () => {
-            console.log(`✅ Updated farmer cumulative: ${cleanId} route=${routeKey}, base=${newRecord.baseCount}, local=${newRecord.localCount}`);
+            // v2.10.88: per-farmer cumulative writes are NO LONGER persistently logged
+            // during bulk sync — see cumulativeMonitor.startBatch/endBatch summary instead.
             resolve();
           };
           putRequest.onerror = () => reject(putRequest.error);

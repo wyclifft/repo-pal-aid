@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, RefreshCw, Trash2, Download, Copy, Search } from "lucide-react";
+import { ArrowLeft, RefreshCw, Trash2, Download, Copy, Search, AlertTriangle, TrendingDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,9 +25,13 @@ const levelClass: Record<LogLevel, string> = {
   debug: "text-muted-foreground",
 };
 
+type ViewMode = "all" | "cumulative";
+
 export default function DebugConsole() {
   const navigate = useNavigate();
+  const [view, setView] = useState<ViewMode>("all");
   const [rows, setRows] = useState<PLogEntry[]>([]);
+  const [cumRows, setCumRows] = useState<PLogEntry[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [level, setLevel] = useState<LogLevel | "all">("all");
   const [tag, setTag] = useState<string>("");
@@ -36,7 +41,7 @@ export default function DebugConsole() {
 
   const reload = useCallback(async () => {
     await plog.flush();
-    const [list, allTags, s] = await Promise.all([
+    const [list, allTags, s, cum] = await Promise.all([
       plog.list({
         level: level === "all" ? undefined : level,
         tag: tag || undefined,
@@ -45,10 +50,13 @@ export default function DebugConsole() {
       }),
       plog.tags(),
       plog.stats(),
+      // Pull all CUM:* entries (separate query, so non-CUM filters don't hide them)
+      plog.list({ limit: 2000 }).then(rs => rs.filter(r => r.tag.startsWith("CUM"))),
     ]);
     setRows(list);
     setTags(allTags);
     setStats(s);
+    setCumRows(cum);
   }, [level, tag, search]);
 
   useEffect(() => {
@@ -106,6 +114,18 @@ export default function DebugConsole() {
 
   const sizeKb = useMemo(() => Math.round(stats.estBytes / 102.4) / 10, [stats.estBytes]);
 
+  // Cumulative summary
+  const cumSummary = useMemo(() => {
+    const now = Date.now();
+    const dayAgo = now - 24 * 60 * 60 * 1000;
+    const regressions = cumRows.filter(r => r.tag === "CUM:REGRESSION");
+    const regressions24h = regressions.filter(r => r.ts >= dayAgo);
+    const edits24h = cumRows.filter(r => (r.tag === "CUM:EDIT" || r.tag === "CUM:INSERT") && r.ts >= dayAgo);
+    const lastSync = cumRows.find(r => r.tag === "CUM:SYNC");
+    const errors = cumRows.filter(r => r.level === "error").length;
+    return { regressions, regressions24h, edits24h, lastSync, errors, total: cumRows.length };
+  }, [cumRows]);
+
   return (
     <div className="min-h-screen bg-background">
       <div className="sticky top-0 z-10 bg-background border-b">
@@ -136,97 +156,187 @@ export default function DebugConsole() {
           </Button>
         </div>
 
-        <div className="px-3 pb-3 space-y-2">
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              className="pl-8"
-              placeholder="Search messages, tags, data..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {LEVELS.map((l) => (
-              <Badge
-                key={l}
-                variant={level === l ? "default" : "outline"}
-                className="cursor-pointer"
-                onClick={() => setLevel(l)}
-              >
-                {l}
-              </Badge>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-1">
-            <Badge
-              variant={tag === "" ? "default" : "outline"}
-              className="cursor-pointer"
-              onClick={() => setTag("")}
-            >
-              all tags
-            </Badge>
-            {tags.map((t) => (
-              <Badge
-                key={t}
-                variant={tag === t ? "default" : "outline"}
-                className="cursor-pointer"
-                onClick={() => setTag(t)}
-              >
-                {t}
-              </Badge>
-            ))}
-          </div>
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              {rows.length} shown · {stats.count} total · ~{sizeKb} KB
-            </span>
-            <label className="flex items-center gap-1 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
-              />
-              Auto-refresh
-            </label>
-          </div>
+        <div className="px-3 pb-3">
+          <Tabs value={view} onValueChange={(v) => setView(v as ViewMode)}>
+            <TabsList className="w-full grid grid-cols-2">
+              <TabsTrigger value="all">All Logs</TabsTrigger>
+              <TabsTrigger value="cumulative" className="gap-1">
+                Cumulative
+                {cumSummary.regressions24h.length > 0 && (
+                  <Badge variant="destructive" className="ml-1 h-4 px-1 text-[10px]">
+                    {cumSummary.regressions24h.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
+
+        {view === "all" && (
+          <div className="px-3 pb-3 space-y-2">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="Search messages, tags, data..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {LEVELS.map((l) => (
+                <Badge
+                  key={l}
+                  variant={level === l ? "default" : "outline"}
+                  className="cursor-pointer"
+                  onClick={() => setLevel(l)}
+                >
+                  {l}
+                </Badge>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              <Badge
+                variant={tag === "" ? "default" : "outline"}
+                className="cursor-pointer"
+                onClick={() => setTag("")}
+              >
+                all tags
+              </Badge>
+              {tags.map((t) => (
+                <Badge
+                  key={t}
+                  variant={tag === t ? "default" : "outline"}
+                  className="cursor-pointer"
+                  onClick={() => setTag(t)}
+                >
+                  {t}
+                </Badge>
+              ))}
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                {rows.length} shown · {stats.count} total · ~{sizeKb} KB
+              </span>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoRefresh}
+                  onChange={(e) => setAutoRefresh(e.target.checked)}
+                />
+                Auto-refresh
+              </label>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="p-3 space-y-1 font-mono text-xs">
-        {rows.length === 0 && (
+      {view === "all" && (
+        <div className="p-3 space-y-1 font-mono text-xs">
+          {rows.length === 0 && (
+            <Card>
+              <CardContent className="p-6 text-center text-muted-foreground">
+                No log entries match the current filters.
+              </CardContent>
+            </Card>
+          )}
+          {rows.map((r) => (
+            <LogRow key={r.id} r={r} />
+          ))}
+        </div>
+      )}
+
+      {view === "cumulative" && (
+        <div className="p-3 space-y-3">
+          {/* Summary strip */}
           <Card>
-            <CardContent className="p-6 text-center text-muted-foreground">
-              No log entries match the current filters.
+            <CardContent className="p-3 space-y-2">
+              <div className="text-xs text-muted-foreground uppercase tracking-wider">Last sync</div>
+              <div className="font-mono text-sm">
+                {cumSummary.lastSync
+                  ? cumSummary.lastSync.message
+                  : <span className="text-muted-foreground">no sync recorded yet</span>}
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Badge variant={cumSummary.regressions24h.length > 0 ? "destructive" : "outline"}>
+                  <TrendingDown className="h-3 w-3 mr-1" />
+                  {cumSummary.regressions24h.length} regressions / 24h
+                </Badge>
+                <Badge variant={cumSummary.edits24h.length > 0 ? "secondary" : "outline"}>
+                  <AlertTriangle className="h-3 w-3 mr-1" />
+                  {cumSummary.edits24h.length} edits/inserts / 24h
+                </Badge>
+                <Badge variant="outline">{cumSummary.total} CUM entries</Badge>
+              </div>
             </CardContent>
           </Card>
-        )}
-        {rows.map((r) => (
-          <div key={r.id} className="border-b border-border/50 py-1.5">
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="text-muted-foreground">
-                {new Date(r.ts).toLocaleTimeString([], { hour12: false })}
-              </span>
-              <span className={`font-bold ${levelClass[r.level]}`}>
-                {r.level.toUpperCase()}
-              </span>
-              <span className="text-primary">[{r.tag}]</span>
-              {r.count && r.count > 1 && (
-                <span className="text-amber-600">x{r.count}</span>
-              )}
-              <span className="break-all">{r.message}</span>
-            </div>
-            {r.data && (
-              <div className="text-muted-foreground break-all pl-2">{r.data}</div>
-            )}
-            {r.route && (
-              <div className="text-[10px] text-muted-foreground/60 pl-2">
-                {r.route} · v{r.version}
+
+          {/* Regressions panel (pinned, highest priority) */}
+          {cumSummary.regressions.length > 0 && (
+            <Card className="border-red-300">
+              <CardContent className="p-3 space-y-2">
+                <div className="text-xs font-semibold text-red-600 uppercase tracking-wider">
+                  Cumulative regressions ({cumSummary.regressions.length})
+                </div>
+                <div className="space-y-1 font-mono text-xs">
+                  {cumSummary.regressions.slice(0, 50).map(r => (
+                    <LogRow key={r.id} r={r} />
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* All CUM events */}
+          <Card>
+            <CardContent className="p-3 space-y-1 font-mono text-xs">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 font-sans">
+                Cumulative events ({cumRows.length})
               </div>
-            )}
-          </div>
-        ))}
-      </div>
+              {cumRows.length === 0 && (
+                <div className="text-muted-foreground text-center py-4 font-sans">
+                  No cumulative events recorded yet.
+                </div>
+              )}
+              {cumRows.slice(0, 500).map(r => (
+                <LogRow key={r.id} r={r} />
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
+
+function LogRow({ r }: { r: PLogEntry }) {
+  return (
+    <div className="border-b border-border/50 py-1.5">
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <span className="text-muted-foreground">
+          {new Date(r.ts).toLocaleTimeString([], { hour12: false })}
+        </span>
+        <span className={`font-bold ${levelClass[r.level]}`}>
+          {r.level.toUpperCase()}
+        </span>
+        <span className="text-primary">[{r.tag}]</span>
+        {r.count && r.count > 1 && (
+          <span className="text-amber-600">x{r.count}</span>
+        )}
+        {r.pinned === 1 && (
+          <span className="text-[10px] bg-red-100 text-red-700 px-1 rounded">PIN</span>
+        )}
+        <span className="break-all">{r.message}</span>
+      </div>
+      {r.data && (
+        <div className="text-muted-foreground break-all pl-2">{r.data}</div>
+      )}
+      {r.route && (
+        <div className="text-[10px] text-muted-foreground/60 pl-2">
+          {r.route} · v{r.version}
+        </div>
+      )}
+    </div>
+  );
+}
+

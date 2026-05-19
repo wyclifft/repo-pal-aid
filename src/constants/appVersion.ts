@@ -573,5 +573,5 @@
 //       "Must be handling a user gesture" and PAUSE the retry loop instead
 //       of looping forever. Auto-resume on next user gesture, app resume,
 //       or successful manual re-pair. Native Capacitor path unchanged.
-export const APP_VERSION = '2.10.87';
-export const APP_VERSION_CODE = 109;
+export const APP_VERSION = '2.10.88';
+export const APP_VERSION_CODE = 110;
