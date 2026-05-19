@@ -438,13 +438,21 @@ const Index = () => {
   // Falls back to individual calls only if batch endpoint is unavailable
   useEffect(() => {
     if (!showCumulative || !deviceFingerprint || !navigator.onLine || !isReady) return;
-    
+
     // Module-level guard: prevent duplicate sync across re-renders
     if ((window as any).__cumulativeSyncRunning) {
       console.log('📦 Pre-fetch: already in progress (skipping duplicate)');
       return;
     }
-    
+
+    // v2.10.89: Skip pre-fetch if a full batch refresh completed in the last 60 s.
+    // Route switches no longer trigger a redundant 3k-farmer refetch when the
+    // refresh effect just covered the same ground.
+    if (Date.now() - lastCumulativeRefreshAt < MIN_REFRESH_GAP_MS) {
+      console.log('📦 Pre-fetch: skipped (cumulative refreshed <60s ago)');
+      return;
+    }
+
     (window as any).__cumulativeSyncRunning = true;
     
     const prefetchCumulatives = async () => {
