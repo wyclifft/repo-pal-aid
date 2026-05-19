@@ -11,6 +11,7 @@ import { Separator } from '@/components/ui/separator';
 import { CheckCircle2, AlertCircle, RefreshCw, Users, Database, Loader2, Search } from 'lucide-react';
 import type { Farmer } from '@/lib/supabase';
 import { generateDeviceFingerprint, getStoredDeviceId } from '@/utils/deviceFingerprint';
+import { cumulativeMonitor } from '@/utils/cumulativeMonitor';
 
 // Resolve fingerprint via canonical 'device_id' key (legacy 'device_fingerprint' key was wrong).
 const resolveFingerprint = async (): Promise<string> => {
