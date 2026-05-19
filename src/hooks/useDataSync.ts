@@ -863,7 +863,7 @@ export const useDataSync = () => {
             }
             // Immediately refresh pending counter after cleanup
             await updatePendingCount();
-            window.dispatchEvent(new CustomEvent('syncComplete'));
+            window.dispatchEvent(new CustomEvent('syncComplete', { detail: { synced: cleaned } }));
           }
         }
       } catch (cleanupErr) {
