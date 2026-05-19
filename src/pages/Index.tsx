@@ -17,6 +17,7 @@ import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionBlacklist } from '@/hooks/useSessionBlacklist';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { cumulativeMonitor } from '@/utils/cumulativeMonitor';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
 import { saveToLocalDB } from '@/services/offlineStorage';
