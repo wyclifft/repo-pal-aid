@@ -35,6 +35,15 @@ const filterCumulativeByProduct = (
     : { total: 0, byProduct: [] };
 };
 
+// v2.10.89: Shared throttle gate for cumulative batch refresh.
+// Coalesces the many trigger sources (post-sync, visibility, periodic, prefetch)
+// into one full-batch refresh per minute. Set whenever a refresh completes.
+let lastCumulativeRefreshAt = 0;
+const MIN_REFRESH_GAP_MS = 60_000; // 60 s
+const VISIBILITY_STALE_MS = 2 * 60_000; // 2 min
+const PERIODIC_REFRESH_MS = 10 * 60_000; // 10 min (was 3 min)
+const SYNC_DEBOUNCE_MS = 5_000; // trailing-edge debounce for syncComplete bursts
+
 const Index = () => {
   const navigate = useNavigate();
   const { currentUser, isOffline, login, logout, isAuthenticated } = useAuth();
