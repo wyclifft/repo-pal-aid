@@ -150,24 +150,27 @@ function currentRoute(): string | undefined {
   }
 }
 
-function enqueue(level: LogLevel, tag: string, message: string, data?: unknown) {
+function enqueue(level: LogLevel, tag: string, message: string, data?: unknown, pinned: 0 | 1 = 0) {
   const now = Date.now();
 
-  // Rate cap: 50/sec
-  if (now - rateWindowStart >= 1000) {
-    rateWindowStart = now;
-    rateWindowCount = 0;
-  }
-  rateWindowCount++;
-  if (rateWindowCount > RATE_CAP_PER_SEC) {
-    droppedSinceLastFlush++;
-    return;
+  // Rate cap: 50/sec — pinned entries bypass to ensure critical evidence is kept
+  if (!pinned) {
+    if (now - rateWindowStart >= 1000) {
+      rateWindowStart = now;
+      rateWindowCount = 0;
+    }
+    rateWindowCount++;
+    if (rateWindowCount > RATE_CAP_PER_SEC) {
+      droppedSinceLastFlush++;
+      return;
+    }
   }
 
   const dataStr = safeStringify(data);
 
   // Dedupe window: identical (level, tag, message, data) within 2s collapses
   if (
+    !pinned &&
     lastEntry &&
     now - lastEntryAt <= DEDUPE_WINDOW_MS &&
     lastEntry.level === level &&
@@ -190,6 +193,7 @@ function enqueue(level: LogLevel, tag: string, message: string, data?: unknown) 
     count: 1,
     route: currentRoute(),
     version: appVersion(),
+    pinned: pinned ? 1 : 0,
   };
   queue.push(entry);
   lastEntry = entry;
