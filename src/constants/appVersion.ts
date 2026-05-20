@@ -591,5 +591,15 @@
 //   no longer false-flags route-total drops caused by per-icode re-bucketing
 //   (new CUM:RECONTEXT info tag; pinned CUM:REGRESSION reserved for true same-icode drops).
 //   No backend, IndexedDB schema, sync engine, reference generator, receipt, or auth changes.
-export const APP_VERSION = '2.10.90';
-export const APP_VERSION_CODE = 112;
+// v2.10.91: TWO-READ CONFIRMATION GUARD for cumulative regressions. A single transient
+//   stale backend read (e.g. paginated response mid-write, stale proxy, racy GET right
+//   after a POST) used to be enough to fire a pinned CUM:REGRESSION even when the DB
+//   was correct and the next refresh recovered the value. Now observeBaseChange stashes
+//   the candidate drop for up to 8s and only emits CUM:REGRESSION / CUM:RECONTEXT after
+//   a second read confirms. Recovered candidates are silently suppressed and counted as
+//   CUM:TRANSIENT (sampled 1-in-10 debug row, visible in /debug Cumulative tab as
+//   "transient suppressed / 24h"). Noise floor of |Δ| ≥ 0.05 kg AND ≥ 0.1% filters
+//   float-precision wobble. No backend, IndexedDB schema, sync engine, reference
+//   generator, receipt, photo, Bluetooth, or auth changes.
+export const APP_VERSION = '2.10.91';
+export const APP_VERSION_CODE = 113;

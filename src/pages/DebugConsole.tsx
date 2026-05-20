@@ -155,9 +155,10 @@ export default function DebugConsole() {
     const regressions24h = regressions.filter(r => r.ts >= dayAgo);
     const edits24h = cumRows.filter(r => (r.tag === "CUM:EDIT" || r.tag === "CUM:INSERT") && r.ts >= dayAgo);
     const recontext24h = cumRows.filter(r => r.tag === "CUM:RECONTEXT" && r.ts >= dayAgo);
+    const transient24h = cumRows.filter(r => r.tag === "CUM:TRANSIENT" && r.ts >= dayAgo);
     const lastSync = cumRows.find(r => r.tag === "CUM:SYNC");
     const errors = cumRows.filter(r => r.level === "error").length;
-    return { regressions, regressions24h, edits24h, recontext24h, lastSync, errors, total: cumRows.length };
+    return { regressions, regressions24h, edits24h, recontext24h, transient24h, lastSync, errors, total: cumRows.length };
   }, [cumRows]);
 
   return (
@@ -319,6 +320,9 @@ export default function DebugConsole() {
                 <Badge variant="outline">
                   <Shuffle className="h-3 w-3 mr-1" />
                   {cumSummary.recontext24h.length} re-bucketed / 24h
+                </Badge>
+                <Badge variant="outline" title="Transient backend reads suppressed by the two-read confirmation guard (v2.10.91)">
+                  {cumSummary.transient24h.length} transient suppressed / 24h
                 </Badge>
                 <Badge variant="outline">{cumSummary.total} CUM entries</Badge>
               </div>

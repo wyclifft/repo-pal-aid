@@ -58,6 +58,83 @@ function toIcodeMap(arr?: ByProductEntry[]): Map<string, number> {
  * distinguish true regressions from per-icode re-bucketing (e.g. an admin
  * reassigned a transaction's ccode/icode, dropping it from this bucket).
  */
+// v2.10.91: Two-read confirmation guard. A single transient/stale backend read
+// can momentarily show a lower total (e.g. mid-write, paginated response, stale
+// cache layer) and recover on the next refresh. We now stash the candidate
+// regression and only emit CUM:REGRESSION / CUM:RECONTEXT after a second read
+// confirms the drop is real. Recovered candidates emit a sampled CUM:TRANSIENT
+// debug row so we can still see them in /debug.
+
+interface PendingCandidate {
+  before: number;
+  after: number;
+  prevByProduct?: ByProductEntry[];
+  nextByProduct?: ByProductEntry[];
+  ts: number;
+}
+
+const PENDING_TTL_MS = 8000;
+const PENDING_MAX = 500;
+const NOISE_ABS = 0.05;     // ignore drops smaller than 50 g
+const NOISE_REL = 0.001;    // ignore drops smaller than 0.1%
+const pending = new Map<string, PendingCandidate>();
+let transientCounter = 0;
+const TRANSIENT_SAMPLE_RATE = 10;
+
+function pendingKey(ctx: CumulativeContext): string {
+  return `${(ctx.farmerId || "").trim().toUpperCase()}|${(ctx.route || "").trim().toUpperCase()}`;
+}
+
+function emitClassified(
+  before: number,
+  after: number,
+  prevByProduct: ByProductEntry[] | undefined,
+  nextByProduct: ByProductEntry[] | undefined,
+  ctx: CumulativeContext
+): void {
+  const delta = +(after - before).toFixed(3);
+  const prevMap = toIcodeMap(prevByProduct);
+  const nextMap = toIcodeMap(nextByProduct);
+  const haveBreakdown = prevMap.size > 0 && nextMap.size > 0;
+
+  if (haveBreakdown) {
+    const dropped: string[] = [];
+    const added: string[] = [];
+    const commonIcodes: string[] = [];
+    let commonDelta = 0;
+    for (const k of prevMap.keys()) {
+      if (nextMap.has(k)) { commonIcodes.push(k); commonDelta += (nextMap.get(k)! - prevMap.get(k)!); }
+      else dropped.push(k);
+    }
+    for (const k of nextMap.keys()) if (!prevMap.has(k)) added.push(k);
+
+    const icodeSetDiffers = dropped.length > 0 || added.length > 0;
+    if (icodeSetDiffers && commonDelta >= -0.001) {
+      plog.info("CUM:RECONTEXT",
+        `${ctx.farmerId} route=${ctx.route || "?"} re-bucketed ${before}→${after} (Δ${delta}) dropped=[${dropped.join(",")}] added=[${added.join(",")}]`,
+        { ...ctx, before, after, delta, dropped, added, commonDelta, cause: dropped.length && !added.length ? "icode-removed" : added.length && !dropped.length ? "icode-added" : "icode-reshuffled" }
+      );
+      return;
+    }
+
+    const diff: Record<string, number> = {};
+    for (const k of commonIcodes) {
+      const d = +(nextMap.get(k)! - prevMap.get(k)!).toFixed(3);
+      if (d !== 0) diff[k] = d;
+    }
+    plog.pinned("error", "CUM:REGRESSION",
+      `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta}) [confirmed]`,
+      { ...ctx, before, after, delta, perIcodeDiff: diff, dropped, added, suspectedCause: classifyRegression(diff, dropped, added), confirmed: true }
+    );
+    return;
+  }
+
+  plog.warn("CUM:REGRESSION?",
+    `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta}) [confirmed, no breakdown]`,
+    { ...ctx, before, after, delta, confirmed: true, note: "byProduct unavailable; cannot distinguish regression from re-bucketing" }
+  );
+}
+
 export function observeBaseChange(
   prev: number | undefined,
   next: number,
@@ -68,7 +145,22 @@ export function observeBaseChange(
     const after = typeof next === "number" ? next : 0;
     if (!isFinite(before) || !isFinite(after)) return;
 
+    const key = pendingKey(ctx);
+    const now = Date.now();
+
     if (after >= before) {
+      // Recovery path: if we had stashed a candidate, this read confirms it was transient.
+      const p = pending.get(key);
+      if (p && now - p.ts <= PENDING_TTL_MS && after >= p.before - 0.001) {
+        pending.delete(key);
+        transientCounter++;
+        if (transientCounter % TRANSIENT_SAMPLE_RATE === 0) {
+          plog.debug("CUM:TRANSIENT",
+            `${ctx.farmerId} route=${ctx.route || "?"} transient drop suppressed ${p.before}→${p.after}→${after}`,
+            { ...ctx, before: p.before, transient: p.after, recovered: after }
+          );
+        }
+      }
       if (after === before && before > 0) {
         recalcCounter++;
         if (recalcCounter % RECALC_SAMPLE_RATE === 0) {
@@ -78,51 +170,43 @@ export function observeBaseChange(
       return;
     }
 
-    // after < before — classify before alerting
-    const delta = +(after - before).toFixed(3);
-    const prevMap = toIcodeMap(ctx.prevByProduct);
-    const nextMap = toIcodeMap(ctx.nextByProduct);
-    const haveBreakdown = prevMap.size > 0 && nextMap.size > 0;
+    // after < before — apply noise floor first
+    const delta = after - before;
+    const relDelta = before > 0 ? Math.abs(delta) / before : 1;
+    if (Math.abs(delta) < NOISE_ABS || relDelta < NOISE_REL) return;
 
-    if (haveBreakdown) {
-      const dropped: string[] = [];
-      const added: string[] = [];
-      const commonIcodes: string[] = [];
-      let commonDelta = 0;
-      for (const k of prevMap.keys()) {
-        if (nextMap.has(k)) { commonIcodes.push(k); commonDelta += (nextMap.get(k)! - prevMap.get(k)!); }
-        else dropped.push(k);
+    const p = pending.get(key);
+    if (!p || now - p.ts > PENDING_TTL_MS) {
+      // First sighting (or expired prior) — stash and wait for confirmation.
+      if (pending.size >= PENDING_MAX) {
+        const oldest = pending.keys().next().value;
+        if (oldest) pending.delete(oldest);
       }
-      for (const k of nextMap.keys()) if (!prevMap.has(k)) added.push(k);
-
-      const icodeSetDiffers = dropped.length > 0 || added.length > 0;
-      if (icodeSetDiffers && commonDelta >= -0.001) {
-        // legitimate re-bucketing: a product moved in/out, common buckets are stable
-        plog.info("CUM:RECONTEXT",
-          `${ctx.farmerId} route=${ctx.route || "?"} re-bucketed ${before}→${after} (Δ${delta}) dropped=[${dropped.join(",")}] added=[${added.join(",")}]`,
-          { ...ctx, before, after, delta, dropped, added, commonDelta, cause: dropped.length && !added.length ? "icode-removed" : added.length && !dropped.length ? "icode-added" : "icode-reshuffled" }
-        );
-        return;
-      }
-
-      // same icode set (or common buckets shrank) → real regression
-      const diff: Record<string, number> = {};
-      for (const k of commonIcodes) {
-        const d = +(nextMap.get(k)! - prevMap.get(k)!).toFixed(3);
-        if (d !== 0) diff[k] = d;
-      }
-      plog.pinned("error", "CUM:REGRESSION",
-        `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta})`,
-        { ...ctx, before, after, delta, perIcodeDiff: diff, dropped, added, suspectedCause: classifyRegression(diff, dropped, added) }
-      );
+      pending.set(key, {
+        before,
+        after,
+        prevByProduct: ctx.prevByProduct,
+        nextByProduct: ctx.nextByProduct,
+        ts: now,
+      });
       return;
     }
 
-    // No breakdown available on one or both sides — downgrade to non-pinned warn
-    plog.warn("CUM:REGRESSION?",
-      `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta}) [no breakdown]`,
-      { ...ctx, before, after, delta, note: "byProduct unavailable; cannot distinguish regression from re-bucketing" }
-    );
+    // Second read within TTL — confirm against the original `before`.
+    pending.delete(key);
+    if (after >= p.before - 0.001) {
+      transientCounter++;
+      if (transientCounter % TRANSIENT_SAMPLE_RATE === 0) {
+        plog.debug("CUM:TRANSIENT",
+          `${ctx.farmerId} route=${ctx.route || "?"} transient drop suppressed ${p.before}→${p.after}→${after}`,
+          { ...ctx, before: p.before, transient: p.after, recovered: after }
+        );
+      }
+      return;
+    }
+
+    // Still regressed → classify using the ORIGINAL prevByProduct vs the current nextByProduct.
+    emitClassified(p.before, after, p.prevByProduct, ctx.nextByProduct, ctx);
   } catch {
     /* never throw from monitor */
   }
