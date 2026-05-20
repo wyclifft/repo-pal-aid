@@ -467,6 +467,54 @@ export const plog = {
     });
   },
 
+  /**
+   * v2.10.92: Delete only rows matching the given filter (mirrors plog.list).
+   * Pinned rows (CUM:REGRESSION evidence, etc.) are preserved unless
+   * `includePinned` is true. Returns the number of rows removed.
+   */
+  async deleteFiltered(filter: {
+    level?: LogLevel;
+    tag?: string;
+    search?: string;
+    tagPrefix?: string;
+    includePinned?: boolean;
+  } = {}): Promise<number> {
+    const db = await openDb();
+    if (!db) return 0;
+    const search = filter.search?.toLowerCase();
+    return new Promise((resolve) => {
+      let removed = 0;
+      try {
+        const tx = db.transaction(STORE, "readwrite");
+        const cursorReq = tx.objectStore(STORE).index("ts").openCursor();
+        cursorReq.onsuccess = () => {
+          const cur = cursorReq.result;
+          if (!cur) return; // resolve on tx.oncomplete
+          const v = cur.value as PLogEntry;
+          const okPinned = filter.includePinned || v.pinned !== 1;
+          const okLevel = !filter.level || v.level === filter.level;
+          const okTag = !filter.tag || v.tag === filter.tag;
+          const okPrefix = !filter.tagPrefix || v.tag.startsWith(filter.tagPrefix);
+          const okSearch =
+            !search ||
+            v.message.toLowerCase().includes(search) ||
+            (v.data && v.data.toLowerCase().includes(search)) ||
+            v.tag.toLowerCase().includes(search);
+          if (okPinned && okLevel && okTag && okPrefix && okSearch) {
+            try { cur.delete(); removed++; } catch { /* noop */ }
+          }
+          cur.continue();
+        };
+        cursorReq.onerror = () => resolve(removed);
+        tx.oncomplete = () => resolve(removed);
+        tx.onerror = () => resolve(removed);
+        tx.onabort = () => resolve(removed);
+      } catch {
+        resolve(removed);
+      }
+    });
+  },
+
   async stats(): Promise<{ count: number; estBytes: number }> {
     const db = await openDb();
     if (!db) return { count: 0, estBytes: 0 };
