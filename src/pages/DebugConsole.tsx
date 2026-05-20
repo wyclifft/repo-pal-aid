@@ -71,10 +71,39 @@ export default function DebugConsole() {
   }, [autoRefresh, reload]);
 
   const onClear = async () => {
-    if (!confirm("Clear all debug logs? This cannot be undone.")) return;
-    await plog.clear();
+    const filtersActive =
+      view === "cumulative" || level !== "all" || !!tag || !!search;
+    if (!filtersActive) {
+      if (!confirm("Clear ALL debug logs? This cannot be undone.")) return;
+      await plog.clear();
+      await reload();
+      toast.success("All debug logs cleared");
+      return;
+    }
+    const visible = view === "cumulative" ? cumRows.length : rows.length;
+    if (
+      !confirm(
+        `Delete the ${visible} filtered ${visible === 1 ? "entry" : "entries"}? Pinned rows are preserved.`
+      )
+    )
+      return;
+    const f =
+      view === "cumulative"
+        ? {
+            level: level === "all" ? undefined : level,
+            search: search || undefined,
+            tagPrefix: "CUM",
+            includePinned: false,
+          }
+        : {
+            level: level === "all" ? undefined : level,
+            tag: tag || undefined,
+            search: search || undefined,
+            includePinned: false,
+          };
+    const removed = await plog.deleteFiltered(f);
     await reload();
-    toast.success("Debug logs cleared");
+    toast.success(`Deleted ${removed} filtered ${removed === 1 ? "entry" : "entries"}`);
   };
 
   /**
