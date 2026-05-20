@@ -490,18 +490,19 @@ export const plog = {
     });
   },
 
-  async exportNDJSON(): Promise<Blob> {
-    const rows = await plog.list({ limit: 10000 });
+  async exportNDJSON(filter?: { level?: LogLevel; tag?: string; search?: string; limit?: number; tagPrefix?: string }): Promise<Blob> {
+    let rows = await plog.list({ level: filter?.level, tag: filter?.tag, search: filter?.search, limit: filter?.limit ?? 10000 });
+    if (filter?.tagPrefix) rows = rows.filter(r => r.tag.startsWith(filter.tagPrefix!));
     const lines = rows.map((r) => JSON.stringify(r)).join("\n");
     return new Blob([lines], { type: "application/x-ndjson" });
   },
 
-  async exportCSV(): Promise<Blob> {
-    const rows = await plog.list({ limit: 10000 });
+  async exportCSV(filter?: { level?: LogLevel; tag?: string; search?: string; limit?: number; tagPrefix?: string }): Promise<Blob> {
+    let rows = await plog.list({ level: filter?.level, tag: filter?.tag, search: filter?.search, limit: filter?.limit ?? 10000 });
+    if (filter?.tagPrefix) rows = rows.filter(r => r.tag.startsWith(filter.tagPrefix!));
     const esc = (v: unknown): string => {
       if (v === undefined || v === null) return "";
       const s = String(v).replace(/\r?\n/g, " ").replace(/\r/g, " ");
-      // Always quote, escape internal quotes
       return `"${s.replace(/"/g, '""')}"`;
     };
     const header = "timestamp,level,tag,message,data,count,route,version";
@@ -519,7 +520,6 @@ export const plog = {
         ].join(",")
       )
       .join("\n");
-    // Prepend BOM for Excel UTF-8 compatibility
     return new Blob(["\uFEFF" + header + "\n" + body], { type: "text/csv;charset=utf-8" });
   },
 };
