@@ -95,7 +95,7 @@ export const BuyProduceScreen = ({
   } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
-  const { getFarmers } = useIndexedDB();
+  const { getFarmers, isReady } = useIndexedDB();
   
   // For coffee, always default to 1 kg regardless of allowSackEdit
   const effectiveTareWeight = sackTareWeight > 0 ? sackTareWeight : 1;
@@ -132,6 +132,8 @@ export const BuyProduceScreen = ({
   // Load cached farmers with chkroute logic
   // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
   useEffect(() => {
+    // v2.10.93: gate on isReady to avoid "DB not ready" boot race
+    if (!isReady) return;
     const loadFarmers = async () => {
       try {
         const farmers = await getFarmers();
@@ -159,7 +161,7 @@ export const BuyProduceScreen = ({
       }
     };
     loadFarmers();
-  }, [getFarmers, route?.tcode, route?.mprefix, onFarmersLoaded, useRouteFilter]);
+  }, [isReady, getFarmers, route?.tcode, route?.mprefix, onFarmersLoaded, useRouteFilter]);
 
   // Filter out blacklisted farmers for display
   // IMPORTANT: blacklist applies only to multOpt=0 farmers; do not hide multOpt=1 farmers.

@@ -89,7 +89,7 @@ export const SellProduceScreen = ({
   const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
   const inputRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
-  const { getFarmers } = useIndexedDB();
+  const { getFarmers, isReady } = useIndexedDB();
   
   // Track current effective tare weight (starts from psettings, can be edited by user)
   const [currentTareWeight, setCurrentTareWeight] = useState(sackTareWeight);
@@ -119,6 +119,8 @@ export const SellProduceScreen = ({
   // chkroute=1: filter by exact route match, chkroute=0: filter by mprefix from fm_tanks
   // NOTE: Debtors (D prefix) typically have empty route values, so route filtering is skipped for them
   useEffect(() => {
+    // v2.10.93: gate on isReady to avoid "DB not ready" boot race
+    if (!isReady) return;
     const loadFarmers = async () => {
       try {
         const farmers = await getFarmers();
@@ -150,7 +152,7 @@ export const SellProduceScreen = ({
       }
     };
     loadFarmers();
-  }, [getFarmers, route?.tcode, route?.mprefix, useRouteFilter, isMemberMode]);
+  }, [isReady, getFarmers, route?.tcode, route?.mprefix, useRouteFilter, isMemberMode]);
 
   // Derive session type (AM/PM) from session time_from
   const getSessionType = (): 'AM' | 'PM' => {
