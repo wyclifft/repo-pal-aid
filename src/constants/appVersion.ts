@@ -586,5 +586,10 @@
 //       "Must be handling a user gesture" and PAUSE the retry loop instead
 //       of looping forever. Auto-resume on next user gesture, app resume,
 //       or successful manual re-pair. Native Capacitor path unchanged.
-export const APP_VERSION = '2.10.89';
-export const APP_VERSION_CODE = 111;
+// v2.10.90: Debug Console UX fixes — safe-area-aware responsive header, filter-aware
+//   Share Logs export (NDJSON/CSV honor level/tag/search/view), and cumulative monitor
+//   no longer false-flags route-total drops caused by per-icode re-bucketing
+//   (new CUM:RECONTEXT info tag; pinned CUM:REGRESSION reserved for true same-icode drops).
+//   No backend, IndexedDB schema, sync engine, reference generator, receipt, or auth changes.
+export const APP_VERSION = '2.10.90';
+export const APP_VERSION_CODE = 112;

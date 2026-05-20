@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, RefreshCw, Trash2, Download, Copy, Search, AlertTriangle, TrendingDown } from "lucide-react";
+import { ArrowLeft, RefreshCw, Trash2, Share2, Copy, Search, AlertTriangle, TrendingDown, Shuffle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,7 +50,6 @@ export default function DebugConsole() {
       }),
       plog.tags(),
       plog.stats(),
-      // Pull all CUM:* entries (separate query, so non-CUM filters don't hide them)
       plog.list({ limit: 2000 }).then(rs => rs.filter(r => r.tag.startsWith("CUM"))),
     ]);
     setRows(list);
@@ -78,26 +77,60 @@ export default function DebugConsole() {
     toast.success("Debug logs cleared");
   };
 
-  const onExportNDJSON = async () => {
-    const blob = await plog.exportNDJSON();
+  /**
+   * Build a filter that mirrors what's currently visible on screen so that
+   * Share Logs exports ONLY the rows the user is looking at.
+   */
+  const buildActiveFilter = () => {
+    if (view === "cumulative") {
+      return {
+        level: level === "all" ? undefined : level,
+        search: search || undefined,
+        tagPrefix: "CUM",
+        limit: 10000,
+      };
+    }
+    return {
+      level: level === "all" ? undefined : level,
+      tag: tag || undefined,
+      search: search || undefined,
+      limit: 10000,
+    };
+  };
+
+  const filterSuffix = () => {
+    const parts: string[] = [];
+    if (view === "cumulative") parts.push("CUM");
+    if (level !== "all") parts.push(level);
+    if (tag) parts.push(tag.replace(/[^A-Z0-9]+/gi, "_"));
+    if (search) parts.push("q-" + search.replace(/[^A-Z0-9]+/gi, "_").slice(0, 20));
+    return parts.length ? "-" + parts.join("-") : "";
+  };
+
+  const onShareNDJSON = async () => {
+    const filter = buildActiveFilter();
+    const blob = await plog.exportNDJSON(filter);
     const text = await blob.text();
+    const lineCount = text ? text.split("\n").length : 0;
     await saveExportedFile(
-      `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.ndjson`,
+      `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}${filterSuffix()}.ndjson`,
       text,
       "application/x-ndjson"
     );
-    toast.success("NDJSON exported");
+    toast.success(`Shared ${lineCount} filtered entries`);
   };
 
-  const onExportCSV = async () => {
-    const blob = await plog.exportCSV();
+  const onShareCSV = async () => {
+    const filter = buildActiveFilter();
+    const blob = await plog.exportCSV(filter);
     const text = await blob.text();
+    const lineCount = Math.max(0, (text.match(/\n/g)?.length || 1) - 1);
     await saveExportedFile(
-      `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.csv`,
+      `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}${filterSuffix()}.csv`,
       text,
       "text/csv;charset=utf-8"
     );
-    toast.success("CSV exported");
+    toast.success(`Shared ${lineCount} filtered entries`);
   };
 
   const onCopy = async () => {
@@ -121,42 +154,59 @@ export default function DebugConsole() {
     const regressions = cumRows.filter(r => r.tag === "CUM:REGRESSION");
     const regressions24h = regressions.filter(r => r.ts >= dayAgo);
     const edits24h = cumRows.filter(r => (r.tag === "CUM:EDIT" || r.tag === "CUM:INSERT") && r.ts >= dayAgo);
+    const recontext24h = cumRows.filter(r => r.tag === "CUM:RECONTEXT" && r.ts >= dayAgo);
     const lastSync = cumRows.find(r => r.tag === "CUM:SYNC");
     const errors = cumRows.filter(r => r.level === "error").length;
-    return { regressions, regressions24h, edits24h, lastSync, errors, total: cumRows.length };
+    return { regressions, regressions24h, edits24h, recontext24h, lastSync, errors, total: cumRows.length };
   }, [cumRows]);
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="sticky top-0 z-10 bg-background border-b">
-        <div className="flex items-center gap-2 p-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+      <div
+        className="sticky top-0 z-10 bg-background border-b"
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          paddingLeft: "env(safe-area-inset-left)",
+          paddingRight: "env(safe-area-inset-right)",
+        }}
+      >
+        {/* Row 1: back + title */}
+        <div className="flex items-center gap-2 px-3 pt-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="h-11 w-11 shrink-0">
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-lg font-semibold flex-1">Debug Console</h1>
-          <Button variant="ghost" size="icon" onClick={() => void reload()} title="Refresh">
+          <h1 className="text-lg font-semibold flex-1 truncate">Debug Console</h1>
+        </div>
+
+        {/* Row 2: actions — responsive, wrap on small screens, real tap targets */}
+        <div className="flex flex-wrap items-center gap-2 px-3 pt-2">
+          <Button variant="outline" size="sm" onClick={() => void reload()} className="h-10 gap-1.5">
             <RefreshCw className="h-4 w-4" />
+            <span className="hidden xs:inline sm:inline">Refresh</span>
           </Button>
-          <Button variant="ghost" size="icon" onClick={onCopy} title="Copy visible">
+          <Button variant="outline" size="sm" onClick={onCopy} className="h-10 gap-1.5">
             <Copy className="h-4 w-4" />
+            <span className="hidden xs:inline sm:inline">Copy</span>
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" title="Export logs">
-                <Download className="h-4 w-4" />
+              <Button variant="outline" size="sm" className="h-10 gap-1.5">
+                <Share2 className="h-4 w-4" />
+                <span>Share Logs</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={onExportNDJSON}>Export as NDJSON</DropdownMenuItem>
-              <DropdownMenuItem onClick={onExportCSV}>Export as CSV</DropdownMenuItem>
+              <DropdownMenuItem onClick={onShareNDJSON}>Share filtered (NDJSON)</DropdownMenuItem>
+              <DropdownMenuItem onClick={onShareCSV}>Share filtered (CSV)</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="icon" onClick={onClear} title="Clear all">
-            <Trash2 className="h-4 w-4 text-red-600" />
+          <Button variant="outline" size="sm" onClick={onClear} className="h-10 gap-1.5 text-red-600 hover:text-red-700 ml-auto">
+            <Trash2 className="h-4 w-4" />
+            <span className="hidden xs:inline sm:inline">Clear</span>
           </Button>
         </div>
 
-        <div className="px-3 pb-3">
+        <div className="px-3 pt-3 pb-3">
           <Tabs value={view} onValueChange={(v) => setView(v as ViewMode)}>
             <TabsList className="w-full grid grid-cols-2">
               <TabsTrigger value="all">All Logs</TabsTrigger>
@@ -252,7 +302,7 @@ export default function DebugConsole() {
           <Card>
             <CardContent className="p-3 space-y-2">
               <div className="text-xs text-muted-foreground uppercase tracking-wider">Last sync</div>
-              <div className="font-mono text-sm">
+              <div className="font-mono text-sm break-all">
                 {cumSummary.lastSync
                   ? cumSummary.lastSync.message
                   : <span className="text-muted-foreground">no sync recorded yet</span>}
@@ -265,6 +315,10 @@ export default function DebugConsole() {
                 <Badge variant={cumSummary.edits24h.length > 0 ? "secondary" : "outline"}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   {cumSummary.edits24h.length} edits/inserts / 24h
+                </Badge>
+                <Badge variant="outline">
+                  <Shuffle className="h-3 w-3 mr-1" />
+                  {cumSummary.recontext24h.length} re-bucketed / 24h
                 </Badge>
                 <Badge variant="outline">{cumSummary.total} CUM entries</Badge>
               </div>
@@ -339,4 +393,3 @@ function LogRow({ r }: { r: PLogEntry }) {
     </div>
   );
 }
-

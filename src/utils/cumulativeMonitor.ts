@@ -25,17 +25,38 @@ const RECALC_SAMPLE_RATE = 50; // emit 1-in-50
 
 let recalcCounter = 0;
 
+export interface ByProductEntry {
+  icode: string;
+  product_name?: string;
+  weight: number;
+}
+
 export interface CumulativeContext {
   farmerId: string;
   route?: string;
   icode?: string;
   source?: string; // "batch" | "individual" | "post-sync" | "print" | ...
+  prevByProduct?: ByProductEntry[];
+  nextByProduct?: ByProductEntry[];
+}
+
+function toIcodeMap(arr?: ByProductEntry[]): Map<string, number> {
+  const m = new Map<string, number>();
+  if (!Array.isArray(arr)) return m;
+  for (const e of arr) {
+    if (!e || !e.icode) continue;
+    const key = String(e.icode).trim().toUpperCase();
+    const w = Number(e.weight) || 0;
+    m.set(key, (m.get(key) || 0) + w);
+  }
+  return m;
 }
 
 /**
  * Compare the previous (cached) baseCount with the new backend baseCount and
- * emit the right CUM:* row. Should be called immediately BEFORE the IndexedDB
- * write inside updateFarmerCumulative (backend path only).
+ * emit the right CUM:* row. Uses byProduct breakdown when available to
+ * distinguish true regressions from per-icode re-bucketing (e.g. an admin
+ * reassigned a transaction's ccode/icode, dropping it from this bucket).
  */
 export function observeBaseChange(
   prev: number | undefined,
@@ -47,28 +68,72 @@ export function observeBaseChange(
     const after = typeof next === "number" ? next : 0;
     if (!isFinite(before) || !isFinite(after)) return;
 
-    if (after < before) {
-      const delta = +(after - before).toFixed(3);
+    if (after >= before) {
+      if (after === before && before > 0) {
+        recalcCounter++;
+        if (recalcCounter % RECALC_SAMPLE_RATE === 0) {
+          plog.debug("CUM:RECALC", `${ctx.farmerId} unchanged @ ${after}`, { farmerId: ctx.farmerId, route: ctx.route });
+        }
+      }
+      return;
+    }
+
+    // after < before — classify before alerting
+    const delta = +(after - before).toFixed(3);
+    const prevMap = toIcodeMap(ctx.prevByProduct);
+    const nextMap = toIcodeMap(ctx.nextByProduct);
+    const haveBreakdown = prevMap.size > 0 && nextMap.size > 0;
+
+    if (haveBreakdown) {
+      const dropped: string[] = [];
+      const added: string[] = [];
+      const commonIcodes: string[] = [];
+      let commonDelta = 0;
+      for (const k of prevMap.keys()) {
+        if (nextMap.has(k)) { commonIcodes.push(k); commonDelta += (nextMap.get(k)! - prevMap.get(k)!); }
+        else dropped.push(k);
+      }
+      for (const k of nextMap.keys()) if (!prevMap.has(k)) added.push(k);
+
+      const icodeSetDiffers = dropped.length > 0 || added.length > 0;
+      if (icodeSetDiffers && commonDelta >= -0.001) {
+        // legitimate re-bucketing: a product moved in/out, common buckets are stable
+        plog.info("CUM:RECONTEXT",
+          `${ctx.farmerId} route=${ctx.route || "?"} re-bucketed ${before}→${after} (Δ${delta}) dropped=[${dropped.join(",")}] added=[${added.join(",")}]`,
+          { ...ctx, before, after, delta, dropped, added, commonDelta, cause: dropped.length && !added.length ? "icode-removed" : added.length && !dropped.length ? "icode-added" : "icode-reshuffled" }
+        );
+        return;
+      }
+
+      // same icode set (or common buckets shrank) → real regression
+      const diff: Record<string, number> = {};
+      for (const k of commonIcodes) {
+        const d = +(nextMap.get(k)! - prevMap.get(k)!).toFixed(3);
+        if (d !== 0) diff[k] = d;
+      }
       plog.pinned("error", "CUM:REGRESSION",
         `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta})`,
-        { ...ctx, before, after, delta, suspectedCause: classifyRegression(before, after, ctx) }
+        { ...ctx, before, after, delta, perIcodeDiff: diff, dropped, added, suspectedCause: classifyRegression(diff, dropped, added) }
       );
       return;
     }
-    if (after === before && before > 0) {
-      recalcCounter++;
-      if (recalcCounter % RECALC_SAMPLE_RATE === 0) {
-        plog.debug("CUM:RECALC", `${ctx.farmerId} unchanged @ ${after}`, ctx);
-      }
-    }
-    // growth: silent (normal)
+
+    // No breakdown available on one or both sides — downgrade to non-pinned warn
+    plog.warn("CUM:REGRESSION?",
+      `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta}) [no breakdown]`,
+      { ...ctx, before, after, delta, note: "byProduct unavailable; cannot distinguish regression from re-bucketing" }
+    );
   } catch {
     /* never throw from monitor */
   }
 }
 
-function classifyRegression(_before: number, _after: number, _ctx: CumulativeContext): string {
-  // Heuristic only — full classification needs fingerprint diff (see recordRowFingerprint)
+function classifyRegression(perIcodeDiff: Record<string, number>, dropped: string[], added: string[]): string {
+  if (dropped.length && !added.length) return "icode-removed-from-bucket";
+  if (added.length && !dropped.length) return "icode-added-to-bucket";
+  const negs = Object.entries(perIcodeDiff).filter(([, v]) => v < 0);
+  if (negs.length === 1) return `weight-decreased:${negs[0][0]}`;
+  if (negs.length > 1) return "multiple-icode-decrease";
   return "unknown";
 }
 
