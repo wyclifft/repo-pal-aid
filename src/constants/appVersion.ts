@@ -601,5 +601,5 @@
 //   "transient suppressed / 24h"). Noise floor of |Δ| ≥ 0.05 kg AND ≥ 0.1% filters
 //   float-precision wobble. No backend, IndexedDB schema, sync engine, reference
 //   generator, receipt, photo, Bluetooth, or auth changes.
-export const APP_VERSION = '2.10.91';
-export const APP_VERSION_CODE = 113;
+export const APP_VERSION = '2.10.92';
+export const APP_VERSION_CODE = 114;

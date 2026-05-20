@@ -1,83 +1,61 @@
-## Goal
+# Fix: Debug Console Delete deletes all logs instead of filtered logs
 
-Eliminate false `CUM:REGRESSION` rows caused by transient/stale backend reads (confirmed today: monitor saw 31.9 → 30.9, but the DB and receipt both show 31.9). Ship as **v2.10.91 / Version Code 113 / cache v38**.
+## Root cause
+`src/pages/DebugConsole.tsx` → `onClear()` calls `plog.clear()` unconditionally. `plog.clear()` in `src/utils/persistentLogger.ts` truncates the entire `logs` object store, ignoring the level / tag / search / view (CUM) filters shown on screen. So filtering by `ERROR` + `CUM:RECALC` then pressing Delete wipes everything — same root cause family as the earlier Download-all bug.
 
-No backend, schema, sync, or business-logic changes.
+## Fix
 
----
+### 1. `src/utils/persistentLogger.ts` — add filtered delete
+Add a new method on the `plog` API:
 
-## 1. Two-read confirmation guard — `src/utils/cumulativeMonitor.ts`
-
-Add a pending-regression buffer keyed by `farmerId|route`. When `after < before`:
-
-- Compute `delta` and `relDelta = |delta| / before`.
-- **Noise floor:** if `|delta| < 0.05` OR `relDelta < 0.001` → ignore silently (float noise).
-- Look up `pending[key]`:
-  - **No pending entry** → stash `{ before, after, prevByProduct, nextByProduct, ts: now, ttlMs: 8000 }`. Do NOT emit anything yet. Schedule no timer — TTL is checked lazily on the next observation.
-  - **Pending entry exists and not expired:**
-    - If `next >= pending.before` → transient confirmed false positive. Discard silently. Emit a sampled `CUM:TRANSIENT` debug row (1-in-10) so we can still see it in `/debug` if needed.
-    - If `next < pending.before` AND the same icode(s) still show the same drop → **confirmed regression**. Run the existing icode-aware classifier (RECONTEXT vs REGRESSION vs REGRESSION?) using the *original* `pending.prevByProduct` vs the *current* `nextByProduct`, and emit accordingly. Clear the pending entry.
-  - **Pending entry expired (now - ts > ttlMs)** → treat as no pending entry: stash the new candidate, do not emit.
-
-Public API stays the same; the buffer is module-private.
-
-Cleanup: cap the pending map at 500 entries; on overflow drop oldest.
-
-## 2. Tag additions
-
-- `CUM:TRANSIENT` (debug, sampled 1-in-10) — emitted when a stashed candidate is cleared because the next read recovered.
-- Existing `CUM:REGRESSION`, `CUM:RECONTEXT`, `CUM:REGRESSION?` semantics unchanged — they only fire after the second read confirms.
-
-## 3. Debug Console — `src/pages/DebugConsole.tsx`
-
-In the Cumulative tab, add a small "Transient suppressed (24h): N" counter alongside the existing recontext / regression counters so operators can see the guard is working. No layout changes beyond that.
-
-## 4. Versioning
-
-- `APP_VERSION` → `2.10.91`
-- `APP_VERSION_CODE` → `113`
-- `CACHE_VERSION` → `v38` (service worker)
-
-## Files touched
-
-- `src/utils/cumulativeMonitor.ts` — pending buffer, two-read guard, `CUM:TRANSIENT` tag, noise floor
-- `src/pages/DebugConsole.tsx` — transient counter in Cumulative tab
-- `src/constants/appVersion.ts`, `android/app/build.gradle`, `public/sw.js` — version bumps
-
-## Technical details
-
-```text
-observeBaseChange(prev, next, ctx):
-  if next >= prev: existing RECALC sampling, return
-  delta = next - prev
-  if |delta| < 0.05 or |delta|/prev < 0.001: return   # noise floor
-
-  key = farmerId + "|" + (route||"")
-  p   = pending.get(key)
-  now = Date.now()
-
-  if !p or now - p.ts > 8000:
-      pending.set(key, { before: prev, after: next,
-                         prevByProduct: ctx.prevByProduct,
-                         nextByProduct: ctx.nextByProduct,
-                         ts: now })
-      return                                          # wait for confirmation
-
-  # second read available
-  pending.delete(key)
-  if next >= p.before:
-      sampledDebug("CUM:TRANSIENT", ...)              # recovered → silent
-      return
-
-  # still regressed → classify using p.prevByProduct vs ctx.nextByProduct
-  runExistingClassifier(p.before, next, p.prevByProduct, ctx.nextByProduct, ctx)
+```ts
+async deleteFiltered(filter?: {
+  level?: LogLevel;
+  tag?: string;
+  search?: string;
+  tagPrefix?: string;
+  includePinned?: boolean; // default false — pinned rows survive unless explicit
+}): Promise<number>
 ```
 
-The classifier (RECONTEXT / REGRESSION / REGRESSION?) logic from v2.10.90 is reused verbatim — only the gating changes.
+Behavior:
+- Open a `readwrite` cursor on the `ts` index.
+- For each row, apply the same matching logic used by `plog.list` (level, tag exact, search substring against message/data/tag) plus optional `tagPrefix` (matches the Cumulative tab's `tag.startsWith("CUM")`).
+- Skip rows with `pinned === 1` unless `includePinned` is true.
+- `cur.delete()` matched rows, count removed, return count.
+- Never throw — swallow errors and return count so far (consistent with the rest of the logger).
+- If `filter` is undefined / empty AND `includePinned` is true → fall through to existing `plog.clear()` for speed.
+
+Keep the existing `plog.clear()` untouched so any other caller is unaffected.
+
+### 2. `src/pages/DebugConsole.tsx` — wire Delete to active filters
+- Reuse `buildActiveFilter()` (already used by Share) to derive the filter — guarantees Delete and Download stay in sync.
+- Detect "no filters" = `level === "all" && !tag && !search && view !== "cumulative"`.
+- New `onClear` flow:
+  - If no filters active → confirm "Clear ALL debug logs? This cannot be undone." → `plog.clear()` → toast "All debug logs cleared".
+  - If filters active → confirm `Delete the N filtered entries? Pinned rows are preserved.` (N = `rows.length` for normal view, `cumRows.length` for Cumulative view) → `plog.deleteFiltered({ ...buildActiveFilter(), includePinned: false })` → toast `Deleted X filtered entries`.
+- Always `await reload()` after.
+- No change to button placement / styling.
+
+### 3. Version bump (workspace rule)
+- `src/constants/appVersion.ts`: `APP_VERSION` → `2.10.92`, `APP_VERSION_CODE` → `114`.
+- `android/app/build.gradle`: `versionCode 114`, `versionName "2.10.92"`.
+- `public/sw.js`: bump `CACHE_VERSION` → `v39` and the version string banner.
+
+## Files touched
+- `src/utils/persistentLogger.ts` (additive)
+- `src/pages/DebugConsole.tsx` (onClear only)
+- `src/constants/appVersion.ts`
+- `android/app/build.gradle`
+- `public/sw.js`
+
+## Out of scope (not requested)
+- Pinned-row UX toggle ("also delete pinned"). Default behavior preserves pinned `CUM:REGRESSION` evidence, matching v2.10.88 retention policy.
+- No backend, sync, IndexedDB schema, or cumulative-logic changes.
 
 ## Verification
-
-- Trigger the scenario from today's log: simulate one observation 31.9 → 30.9 followed within 8s by 30.9 → 31.9 (or 31.9). Confirm **no** `CUM:REGRESSION` row is emitted; a `CUM:TRANSIENT` row may appear (sampled).
-- Trigger a sustained drop: 31.9 → 30.9 twice in a row (>8s apart counts as new candidate; back-to-back within 8s counts as confirmation). Confirm `CUM:REGRESSION` fires after the second read.
-- Trigger a tiny float drop (e.g. 31.9 → 31.89): confirm nothing fires.
-- Confirm `/debug` Cumulative tab shows the new "Transient suppressed" counter and the existing Pinned Regressions panel is unchanged.
+1. Set Type=ERROR + Category(tag)=CUM:RECALC → press Delete → only those rows disappear; other levels/tags intact; pinned regressions intact.
+2. Cumulative tab → Delete → only CUM:* rows removed.
+3. Clear all filters + All tab → Delete → confirm wording says "ALL"; full clear works.
+4. Toast counts match what was visible.
+5. App build OK, no console errors, transactions/sync/receipts unaffected (no touched code paths).
