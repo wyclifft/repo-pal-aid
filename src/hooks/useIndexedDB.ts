@@ -864,11 +864,14 @@ export const useIndexedDB = () => {
           let newRecord;
 
           if (fromBackend) {
-            // v2.10.88: observe regression / recalc before overwriting baseCount
+            // v2.10.90: pass byProduct breakdowns so monitor can distinguish
+            // a true regression from a per-icode re-bucketing (e.g. ccode change).
             observeBaseChange(existing?.baseCount, count, {
               farmerId: cleanId,
               route: routeKey,
               source: 'backend',
+              prevByProduct: existing?.byProduct,
+              nextByProduct: byProduct,
             });
             newRecord = {
               cacheKey,
