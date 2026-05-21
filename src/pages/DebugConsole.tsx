@@ -166,13 +166,6 @@ export default function DebugConsole() {
     );
     toast.success(`Shared ${lineCount} filtered entries`);
   };
-    await saveExportedFile(
-      `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}${filterSuffix()}.ndjson`,
-      text,
-      "application/x-ndjson"
-    );
-    toast.success(`Shared ${lineCount} filtered entries`);
-  };
 
   const onShareCSV = async () => {
     const filter = buildActiveFilter();
@@ -180,7 +173,7 @@ export default function DebugConsole() {
     const text = await blob.text();
     const lineCount = Math.max(0, (text.match(/\n/g)?.length || 1) - 1);
     await saveExportedFile(
-      `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}${filterSuffix()}.csv`,
+      buildLogFilename("csv"),
       text,
       "text/csv;charset=utf-8"
     );
