@@ -137,11 +137,35 @@ export default function DebugConsole() {
     return parts.length ? "-" + parts.join("-") : "";
   };
 
+  const buildLogFilename = (ext: "ndjson" | "csv") => {
+    const dev = ((localStorage.getItem("devcode") || "UNKNOWN")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")) || "UNKNOWN";
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Africa/Nairobi",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date()).reduce<Record<string, string>>((a, p) => {
+      a[p.type] = p.value;
+      return a;
+    }, {});
+    const ts = `${parts.year}-${parts.month}-${parts.day}_${parts.hour}-${parts.minute}-${parts.second}`;
+    return `debug-logs-${dev}-v${APP_VERSION}-${ts}${filterSuffix()}.${ext}`;
+  };
+
   const onShareNDJSON = async () => {
     const filter = buildActiveFilter();
     const blob = await plog.exportNDJSON(filter);
     const text = await blob.text();
     const lineCount = text ? text.split("\n").length : 0;
+    await saveExportedFile(
+      buildLogFilename("ndjson"),
+      text,
+      "application/x-ndjson"
+    );
+    toast.success(`Shared ${lineCount} filtered entries`);
+  };
     await saveExportedFile(
       `debug-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}${filterSuffix()}.ndjson`,
       text,
