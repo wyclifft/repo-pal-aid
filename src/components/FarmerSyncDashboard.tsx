@@ -168,18 +168,50 @@ export const FarmerSyncDashboard = () => {
             const fId = bf.farmer_id.trim();
             const farmerMeta = nameLookup.get(fId);
             const cumData = await getFarmerCumulative(fId, route || activeRoute || undefined);
+
+            // v2.10.96: when an active product is selected, restrict baseCount
+            // to the matching by_product slice instead of the combined total.
+            // Source of truth precedence: cached cumulative (already merged with
+            // unsynced) → batch API by_product → 0.
+            let baseCount: number;
+            let localCount: number;
+            let cumulativeTotal: number;
+
+            if (activeIcode) {
+              const cachedSlice = cumData?.byProduct?.find(
+                (p) => String(p.icode || '').trim().toUpperCase() === activeIcode
+              );
+              const apiSlice = bf.by_product?.find(
+                (p) => String(p.icode || '').trim().toUpperCase() === activeIcode
+              );
+              baseCount = cachedSlice?.weight ?? apiSlice?.weight ?? 0;
+              // localCount unavailable per-icode from cumData (it's a total);
+              // unsynced-per-icode is already folded into cachedSlice when
+              // getFarmerTotalCumulative was the writer. Default to 0 here.
+              localCount = 0;
+              cumulativeTotal = baseCount;
+            } else {
+              baseCount = cumData?.baseCount || bf.cumulative_weight || 0;
+              localCount = cumData?.localCount || 0;
+              cumulativeTotal = cumData ? cumData.baseCount + cumData.localCount : bf.cumulative_weight || 0;
+            }
+
             return {
               farmer_id: fId,
               name: farmerMeta?.name || fId,
               route: farmerMeta?.route?.trim() || route || 'N/A',
-              cumulativeTotal: cumData ? cumData.baseCount + cumData.localCount : bf.cumulative_weight || 0,
-              baseCount: cumData?.baseCount || bf.cumulative_weight || 0,
-              localCount: cumData?.localCount || 0,
+              cumulativeTotal,
+              baseCount,
+              localCount,
               isCached: !!cumData,
             };
           })
         );
-        results.push(...batchResults);
+        // v2.10.96: drop rows that have zero weight for the selected product.
+        const filteredBatch = activeIcode
+          ? batchResults.filter((r) => r.cumulativeTotal > 0)
+          : batchResults;
+        results.push(...filteredBatch);
 
         const processed = Math.min(i + BATCH_SIZE, batchFarmers.length);
         setProgressInfo({ current: processed, total, status: `Processing ${processed} of ${total} farmers...` });
@@ -193,7 +225,7 @@ export const FarmerSyncDashboard = () => {
       console.warn('[SyncDash] Batch API failed:', err);
       return null;
     }
-  }, [getFarmerCumulative, activeRoute]);
+  }, [getFarmerCumulative, activeRoute, activeIcode]);
 
   /**
    * Offline fallback (v2.10.62): transaction-driven, NOT cm_members-driven.
