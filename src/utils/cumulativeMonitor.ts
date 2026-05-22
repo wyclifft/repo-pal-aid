@@ -140,7 +140,7 @@ function emitClassified(
     if (icodeSetDiffers && commonDelta >= -0.001) {
       plog.info("CUM:RECONTEXT",
         `${ctx.farmerId} route=${ctx.route || "?"} re-bucketed ${before}→${after} (Δ${delta}) dropped=[${dropped.join(",")}] added=[${added.join(",")}]`,
-        { ...ctx, before, after, delta, dropped, added, commonDelta, cause: dropped.length && !added.length ? "icode-removed" : added.length && !dropped.length ? "icode-added" : "icode-reshuffled" }
+        { ...getActiveContext(), ...ctx, before, after, delta, dropped, added, commonDelta, cause: dropped.length && !added.length ? "icode-removed" : added.length && !dropped.length ? "icode-added" : "icode-reshuffled" }
       );
       return;
     }
@@ -152,14 +152,14 @@ function emitClassified(
     }
     plog.pinned("error", "CUM:REGRESSION",
       `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta}) [confirmed]`,
-      { ...ctx, before, after, delta, perIcodeDiff: diff, dropped, added, suspectedCause: classifyRegression(diff, dropped, added), confirmed: true }
+      { ...getActiveContext(), ...ctx, before, after, delta, perIcodeDiff: diff, dropped, added, suspectedCause: classifyRegression(diff, dropped, added), confirmed: true }
     );
     return;
   }
 
   plog.warn("CUM:REGRESSION?",
     `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta}) [confirmed, no breakdown]`,
-    { ...ctx, before, after, delta, confirmed: true, note: "byProduct unavailable; cannot distinguish regression from re-bucketing" }
+    { ...getActiveContext(), ...ctx, before, after, delta, confirmed: true, note: "byProduct unavailable; cannot distinguish regression from re-bucketing" }
   );
 }
 
