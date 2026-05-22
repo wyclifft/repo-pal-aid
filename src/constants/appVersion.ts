@@ -601,5 +601,20 @@
 //   "transient suppressed / 24h"). Noise floor of |Δ| ≥ 0.05 kg AND ≥ 0.1% filters
 //   float-precision wobble. No backend, IndexedDB schema, sync engine, reference
 //   generator, receipt, photo, Bluetooth, or auth changes.
-export const APP_VERSION = '2.10.93';
-export const APP_VERSION_CODE = 115;
+// v2.10.94: CUMULATIVE INTEGRITY HARDENING — fixes 4 latent cumulative bugs:
+//   (1) IndexedDB DB_VERSION bumped 12 → 15 with idempotent farmer_cumulative
+//       migration. Earlier preview builds left some browsers at v13/v14, so
+//       openDatabase failed with VersionError and EVERY cumulative read/write
+//       silently no-op'd — breaking printed cumulatives, post-sync refresh,
+//       and the sync dashboard. (2) Unsynced AI receipts (transtype=3) were
+//       being added to BUY cumulative in getUnsyncedWeightForFarmer and the
+//       offline sync dashboard; now only transtype=1 contributes. (3) Offline
+//       sync dashboard no longer double-counts localCount + unsyncedWeight
+//       (uses max() as a guard against legacy rows). (4) updateFarmerCumulative
+//       refuses to overwrite a non-zero cached base with a stale 0/empty
+//       payload from a read replica that lags the just-POSTed write — the
+//       monitor's transient guard only suppressed the log, this protects the
+//       data. No backend, sync engine, reference generator, receipt, photo,
+//       Bluetooth, or auth flow changes.
+export const APP_VERSION = '2.10.94';
+export const APP_VERSION_CODE = 116;

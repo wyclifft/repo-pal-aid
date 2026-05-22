@@ -5,8 +5,13 @@ import { observeBaseChange } from '@/utils/cumulativeMonitor';
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
 // (e.g. referenceGenerator) open the SAME version and never trigger
 // VersionError. Single source of truth — bump here only.
+// v2.10.94: bumped 12 → 15 to recover devices already on v13/v14 schemas
+// (legacy preview builds) that were throwing VersionError and silently
+// no-op-ing every cumulative read/write. onupgradeneeded is now idempotent
+// for farmer_cumulative — we only drop the store if its keyPath isn't
+// already the v2.10.73 'cacheKey' shape.
 export const DB_NAME = 'milkCollectionDB';
-export const DB_VERSION = 12; // v2.10.73: farmer_cumulative cache keyed by farmer+route+month for per-factory isolation
+export const DB_VERSION = 15;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -118,19 +123,31 @@ export const useIndexedDB = () => {
 
       // farmer_cumulative store for offline cumulative tracking
       // v2.10.73: cacheKey now includes route for per-factory isolation.
-      // On upgrade we wipe and recreate the store so old farmer-month-only keys
-      // don't leak across factories. Data is recoverable from backend on next sync.
+      // v2.10.94: idempotent migration — only drop the store if it's the legacy
+      // (pre-v2.10.73) shape with a different keyPath. Otherwise preserve rows
+      // so we don't lose cached base totals on every version bump.
       if (database.objectStoreNames.contains('farmer_cumulative')) {
         try {
-          database.deleteObjectStore('farmer_cumulative');
-          console.log('[DB] v2.10.73 migration: dropped legacy farmer_cumulative store (will rebuild from backend)');
+          const existingStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('farmer_cumulative');
+          if (existingStore.keyPath !== 'cacheKey') {
+            database.deleteObjectStore('farmer_cumulative');
+            const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+            cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
+            console.log('[DB] v2.10.94 migration: legacy farmer_cumulative keyPath replaced (rows rebuild from backend)');
+          } else {
+            console.log('[DB] farmer_cumulative store preserved (cacheKey schema intact)');
+          }
         } catch (e) {
-          console.warn('[DB] Failed to drop legacy farmer_cumulative store:', e);
+          console.warn('[DB] farmer_cumulative migration check failed, recreating:', e);
+          try { database.deleteObjectStore('farmer_cumulative'); } catch {}
+          const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+          cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
         }
+      } else {
+        const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+        cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
+        console.log('[DB] Created farmer_cumulative store (v2.10.73 schema: farmer+route+month key)');
       }
-      const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
-      cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
-      console.log('[DB] Created farmer_cumulative store (v2.10.73 schema: farmer+route+month key)');
 
       // Add dedicated printed_receipts store (Bug 4 fix: remove mixed-type key from receipts store)
       if (!database.objectStoreNames.contains('printed_receipts')) {
@@ -866,6 +883,23 @@ export const useIndexedDB = () => {
           if (fromBackend) {
             // v2.10.90: pass byProduct breakdowns so monitor can distinguish
             // a true regression from a per-icode re-bucketing (e.g. ccode change).
+            // v2.10.94 BUG 4 GUARD: refuse to overwrite a non-zero cached base
+            // with a stale 0/empty payload from the backend read replica that
+            // hasn't yet ingested a just-POSTed receipt. The local row has
+            // already been deleted by sync, so writing 0 here would poison the
+            // cache until the next refresh and corrupt any receipt printed in
+            // the meantime. The monitor's transient guard only suppresses the
+            // log — this guard protects the data itself.
+            const incomingByProductSum = Array.isArray(byProduct)
+              ? byProduct.reduce((s, p) => s + (Number(p?.weight) || 0), 0)
+              : 0;
+            const existingBase = Number(existing?.baseCount || 0);
+            const incomingIsEmpty = (Number(count) || 0) === 0 && incomingByProductSum === 0;
+            if (existingBase > 0 && incomingIsEmpty) {
+              console.warn(`[CUM] Refusing stale backend write for ${cleanId} route=${routeKey}: incoming=0 vs cached=${existingBase} (read-replica lag)`);
+              resolve();
+              return;
+            }
             observeBaseChange(existing?.baseCount, count, {
               farmerId: cleanId,
               route: routeKey,
@@ -929,8 +963,11 @@ export const useIndexedDB = () => {
       let totalWeight = 0;
       const productWeights: Record<string, { icode: string; product_name: string; weight: number }> = {};
       for (const r of unsynced) {
-        // Only count Buy (transtype=1) receipts
-        if (r.transtype === 2) continue;
+        // v2.10.94 BUG 2 FIX: only BUY (transtype=1) contributes to farmer
+        // cumulative. SELL (2) and AI (3) must be excluded — they previously
+        // inflated the printed cumulative until they synced.
+        const tt = Number((r as any).transtype);
+        if (tt !== 1) continue;
         const rFarmerId = (r.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
         if (rFarmerId !== cleanFarmerId) continue;
         // Filter by route if specified
