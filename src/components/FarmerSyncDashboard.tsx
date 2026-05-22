@@ -466,6 +466,11 @@ export const FarmerSyncDashboard = () => {
     : 0;
 
   const deviceCcode = localStorage.getItem('device_ccode') || '';
+  const selectionChip = [
+    activeRoute ? `Route: ${activeRoute}` : '',
+    activeIcode ? `Product: ${activeIcode}` : '',
+    activeScode ? `Season: ${activeScode}` : '',
+  ].filter(Boolean).join(' · ');
 
   const filtered = useMemo(() => {
     return searchQuery
