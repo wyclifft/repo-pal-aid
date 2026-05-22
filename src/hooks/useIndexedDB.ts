@@ -883,6 +883,23 @@ export const useIndexedDB = () => {
           if (fromBackend) {
             // v2.10.90: pass byProduct breakdowns so monitor can distinguish
             // a true regression from a per-icode re-bucketing (e.g. ccode change).
+            // v2.10.94 BUG 4 GUARD: refuse to overwrite a non-zero cached base
+            // with a stale 0/empty payload from the backend read replica that
+            // hasn't yet ingested a just-POSTed receipt. The local row has
+            // already been deleted by sync, so writing 0 here would poison the
+            // cache until the next refresh and corrupt any receipt printed in
+            // the meantime. The monitor's transient guard only suppresses the
+            // log — this guard protects the data itself.
+            const incomingByProductSum = Array.isArray(byProduct)
+              ? byProduct.reduce((s, p) => s + (Number(p?.weight) || 0), 0)
+              : 0;
+            const existingBase = Number(existing?.baseCount || 0);
+            const incomingIsEmpty = (Number(count) || 0) === 0 && incomingByProductSum === 0;
+            if (existingBase > 0 && incomingIsEmpty) {
+              console.warn(`[CUM] Refusing stale backend write for ${cleanId} route=${routeKey}: incoming=0 vs cached=${existingBase} (read-replica lag)`);
+              resolve();
+              return;
+            }
             observeBaseChange(existing?.baseCount, count, {
               farmerId: cleanId,
               route: routeKey,
