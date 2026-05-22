@@ -458,3 +458,43 @@ function LogRow({ r }: { r: PLogEntry }) {
     </div>
   );
 }
+
+/**
+ * v2.10.95: Show the currently-selected dashboard context so log readers can
+ * confirm at a glance which route/season/product the device is on when the
+ * snapshot was captured. Pure read from localStorage — no side effects.
+ */
+function ActiveContextStrip() {
+  const ctx = (() => {
+    const out: { devcode?: string; tcode?: string; scode?: string; icode?: string; ccode?: string } = {};
+    try {
+      const raw = localStorage.getItem("active_session_data");
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (d?.route?.tcode) out.tcode = String(d.route.tcode).trim();
+        if (d?.product?.icode) out.icode = String(d.product.icode).trim().toUpperCase();
+        if (d?.session?.SCODE) out.scode = String(d.session.SCODE).trim();
+      }
+    } catch { /* noop */ }
+    try {
+      out.devcode = localStorage.getItem("devcode") || undefined;
+      out.ccode = localStorage.getItem("device_ccode") || undefined;
+    } catch { /* noop */ }
+    return out;
+  })();
+
+  return (
+    <Card>
+      <CardContent className="p-3">
+        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Active context</div>
+        <div className="flex flex-wrap gap-1.5 font-mono text-xs">
+          <Badge variant="outline">devcode: {ctx.devcode || "?"}</Badge>
+          <Badge variant="outline">tcode: {ctx.tcode || "?"}</Badge>
+          <Badge variant="outline">scode: {ctx.scode || "?"}</Badge>
+          <Badge variant="outline">icode: {ctx.icode || "?"}</Badge>
+          {ctx.ccode && <Badge variant="outline">ccode: {ctx.ccode}</Badge>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
