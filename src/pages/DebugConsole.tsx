@@ -414,12 +414,24 @@ export default function DebugConsole() {
   );
 }
 
+function fmtEAT(ms: number): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Africa/Nairobi",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    }).formatToParts(new Date(ms)).reduce<Record<string, string>>((a, p) => { a[p.type] = p.value; return a; }, {});
+    return `${parts.hour}:${parts.minute}:${parts.second}`;
+  } catch {
+    return new Date(ms).toLocaleTimeString([], { hour12: false });
+  }
+}
+
 function LogRow({ r }: { r: PLogEntry }) {
   return (
     <div className="border-b border-border/50 py-1.5">
       <div className="flex items-baseline gap-2 flex-wrap">
-        <span className="text-muted-foreground">
-          {new Date(r.ts).toLocaleTimeString([], { hour12: false })}
+        <span className="text-muted-foreground" title="Africa/Nairobi (EAT)">
+          {fmtEAT(r.ts)}
         </span>
         <span className={`font-bold ${levelClass[r.level]}`}>
           {r.level.toUpperCase()}
