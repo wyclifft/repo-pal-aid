@@ -346,6 +346,8 @@ export default function DebugConsole() {
 
       {view === "cumulative" && (
         <div className="p-3 space-y-3">
+          {/* v2.10.95: Active context strip — confirm tcode/scode/icode/devcode at glance */}
+          <ActiveContextStrip />
           {/* Summary strip */}
           <Card>
             <CardContent className="p-3 space-y-2">
