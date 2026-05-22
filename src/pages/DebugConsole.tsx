@@ -346,6 +346,8 @@ export default function DebugConsole() {
 
       {view === "cumulative" && (
         <div className="p-3 space-y-3">
+          {/* v2.10.95: Active context strip — confirm tcode/scode/icode/devcode at glance */}
+          <ActiveContextStrip />
           {/* Summary strip */}
           <Card>
             <CardContent className="p-3 space-y-2">
@@ -414,12 +416,24 @@ export default function DebugConsole() {
   );
 }
 
+function fmtEAT(ms: number): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Africa/Nairobi",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    }).formatToParts(new Date(ms)).reduce<Record<string, string>>((a, p) => { a[p.type] = p.value; return a; }, {});
+    return `${parts.hour}:${parts.minute}:${parts.second}`;
+  } catch {
+    return new Date(ms).toLocaleTimeString([], { hour12: false });
+  }
+}
+
 function LogRow({ r }: { r: PLogEntry }) {
   return (
     <div className="border-b border-border/50 py-1.5">
       <div className="flex items-baseline gap-2 flex-wrap">
-        <span className="text-muted-foreground">
-          {new Date(r.ts).toLocaleTimeString([], { hour12: false })}
+        <span className="text-muted-foreground" title="Africa/Nairobi (EAT)">
+          {fmtEAT(r.ts)}
         </span>
         <span className={`font-bold ${levelClass[r.level]}`}>
           {r.level.toUpperCase()}
@@ -442,5 +456,45 @@ function LogRow({ r }: { r: PLogEntry }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * v2.10.95: Show the currently-selected dashboard context so log readers can
+ * confirm at a glance which route/season/product the device is on when the
+ * snapshot was captured. Pure read from localStorage — no side effects.
+ */
+function ActiveContextStrip() {
+  const ctx = (() => {
+    const out: { devcode?: string; tcode?: string; scode?: string; icode?: string; ccode?: string } = {};
+    try {
+      const raw = localStorage.getItem("active_session_data");
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (d?.route?.tcode) out.tcode = String(d.route.tcode).trim();
+        if (d?.product?.icode) out.icode = String(d.product.icode).trim().toUpperCase();
+        if (d?.session?.SCODE) out.scode = String(d.session.SCODE).trim();
+      }
+    } catch { /* noop */ }
+    try {
+      out.devcode = localStorage.getItem("devcode") || undefined;
+      out.ccode = localStorage.getItem("device_ccode") || undefined;
+    } catch { /* noop */ }
+    return out;
+  })();
+
+  return (
+    <Card>
+      <CardContent className="p-3">
+        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Active context</div>
+        <div className="flex flex-wrap gap-1.5 font-mono text-xs">
+          <Badge variant="outline">devcode: {ctx.devcode || "?"}</Badge>
+          <Badge variant="outline">tcode: {ctx.tcode || "?"}</Badge>
+          <Badge variant="outline">scode: {ctx.scode || "?"}</Badge>
+          <Badge variant="outline">icode: {ctx.icode || "?"}</Badge>
+          {ctx.ccode && <Badge variant="outline">ccode: {ctx.ccode}</Badge>}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

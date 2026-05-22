@@ -454,7 +454,16 @@ export const useDataSync = () => {
                     }));
                     await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined);
                     cumulativeRefreshed = true;
-                    console.log(`[SYNC] ✅ Refreshed cumulative for ${cleanFarmerId}: ${freshTotal} kg (${freshByProduct.length} products)`);
+                    // v2.10.95: log per-icode breakdown + active context so the
+                    // device-displayed per-product slice can be reconciled against
+                    // the combined backend total recorded here.
+                    const bpStr = freshByProduct.length
+                      ? freshByProduct.map((p: any) => `${p.icode}:${p.weight}`).join(', ')
+                      : '-';
+                    const activeIcode = (() => { try { const r = localStorage.getItem('active_session_data'); return r ? String(JSON.parse(r)?.product?.icode || '').trim().toUpperCase() : ''; } catch { return ''; } })();
+                    const activeScode = (() => { try { const r = localStorage.getItem('active_session_data'); return r ? String(JSON.parse(r)?.session?.SCODE || '').trim() : ''; } catch { return ''; } })();
+                    const ctxStr = `tcode=${routeForRefresh || '?'} scode=${activeScode || '?'} active_icode=${activeIcode || '?'}`;
+                    console.log(`[SYNC] ✅ Refreshed cumulative for ${cleanFarmerId}: ${freshTotal} kg [${bpStr}] ${ctxStr}`);
                   } else {
                     console.warn(`[SYNC] Cumulative refresh returned no data for ${cleanFarmerId} — keeping local row for retry`);
                   }

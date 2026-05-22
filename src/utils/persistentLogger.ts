@@ -553,11 +553,26 @@ export const plog = {
       const s = String(v).replace(/\r?\n/g, " ").replace(/\r/g, " ");
       return `"${s.replace(/"/g, '""')}"`;
     };
-    const header = "timestamp,level,tag,message,data,count,route,version";
+    // v2.10.95: add ts_eat (Africa/Nairobi) column so log analysis matches
+    // operator-local time without losing the UTC source-of-truth column.
+    const fmtEAT = (ms: number): string => {
+      try {
+        const parts = new Intl.DateTimeFormat("en-GB", {
+          timeZone: "Africa/Nairobi",
+          year: "numeric", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+        }).formatToParts(new Date(ms)).reduce<Record<string, string>>((a, p) => { a[p.type] = p.value; return a; }, {});
+        return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} EAT`;
+      } catch {
+        return new Date(ms).toISOString();
+      }
+    };
+    const header = "timestamp,ts_eat,level,tag,message,data,count,route,version";
     const body = rows
       .map((r) =>
         [
           esc(new Date(r.ts).toISOString()),
+          esc(fmtEAT(r.ts)),
           esc(r.level),
           esc(r.tag),
           esc(r.message),

@@ -21,6 +21,34 @@
 
 import { plog } from "./persistentLogger";
 
+/**
+ * v2.10.95: Read the currently-selected dashboard context from localStorage so
+ * every cumulative log row carries tcode/icode/scode/ccode/devcode. Pure read,
+ * never throws — falls back to {} if anything is missing.
+ */
+function getActiveContext(): Record<string, string> {
+  const ctx: Record<string, string> = {};
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem("active_session_data") : null;
+    if (raw) {
+      const d = JSON.parse(raw);
+      const tcode = d?.route?.tcode;
+      const icode = d?.product?.icode;
+      const scode = d?.session?.SCODE;
+      if (tcode) ctx.tcode = String(tcode).trim();
+      if (icode) ctx.icode = String(icode).trim().toUpperCase();
+      if (scode) ctx.scode = String(scode).trim();
+    }
+  } catch { /* noop */ }
+  try {
+    const cc = typeof localStorage !== "undefined" ? localStorage.getItem("device_ccode") : null;
+    const dc = typeof localStorage !== "undefined" ? localStorage.getItem("devcode") : null;
+    if (cc) ctx.ccode = cc;
+    if (dc) ctx.devcode = dc;
+  } catch { /* noop */ }
+  return ctx;
+}
+
 const RECALC_SAMPLE_RATE = 50; // emit 1-in-50
 
 let recalcCounter = 0;
@@ -112,7 +140,7 @@ function emitClassified(
     if (icodeSetDiffers && commonDelta >= -0.001) {
       plog.info("CUM:RECONTEXT",
         `${ctx.farmerId} route=${ctx.route || "?"} re-bucketed ${before}→${after} (Δ${delta}) dropped=[${dropped.join(",")}] added=[${added.join(",")}]`,
-        { ...ctx, before, after, delta, dropped, added, commonDelta, cause: dropped.length && !added.length ? "icode-removed" : added.length && !dropped.length ? "icode-added" : "icode-reshuffled" }
+        { ...getActiveContext(), ...ctx, before, after, delta, dropped, added, commonDelta, cause: dropped.length && !added.length ? "icode-removed" : added.length && !dropped.length ? "icode-added" : "icode-reshuffled" }
       );
       return;
     }
@@ -124,14 +152,14 @@ function emitClassified(
     }
     plog.pinned("error", "CUM:REGRESSION",
       `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta}) [confirmed]`,
-      { ...ctx, before, after, delta, perIcodeDiff: diff, dropped, added, suspectedCause: classifyRegression(diff, dropped, added), confirmed: true }
+      { ...getActiveContext(), ...ctx, before, after, delta, perIcodeDiff: diff, dropped, added, suspectedCause: classifyRegression(diff, dropped, added), confirmed: true }
     );
     return;
   }
 
   plog.warn("CUM:REGRESSION?",
     `${ctx.farmerId} route=${ctx.route || "?"} ${before} → ${after} (Δ${delta}) [confirmed, no breakdown]`,
-    { ...ctx, before, after, delta, confirmed: true, note: "byProduct unavailable; cannot distinguish regression from re-bucketing" }
+    { ...getActiveContext(), ...ctx, before, after, delta, confirmed: true, note: "byProduct unavailable; cannot distinguish regression from re-bucketing" }
   );
 }
 
@@ -157,14 +185,14 @@ export function observeBaseChange(
         if (transientCounter % TRANSIENT_SAMPLE_RATE === 0) {
           plog.debug("CUM:TRANSIENT",
             `${ctx.farmerId} route=${ctx.route || "?"} transient drop suppressed ${p.before}→${p.after}→${after}`,
-            { ...ctx, before: p.before, transient: p.after, recovered: after }
+            { ...getActiveContext(), ...ctx, before: p.before, transient: p.after, recovered: after }
           );
         }
       }
       if (after === before && before > 0) {
         recalcCounter++;
         if (recalcCounter % RECALC_SAMPLE_RATE === 0) {
-          plog.debug("CUM:RECALC", `${ctx.farmerId} unchanged @ ${after}`, { farmerId: ctx.farmerId, route: ctx.route });
+          plog.debug("CUM:RECALC", `${ctx.farmerId} unchanged @ ${after}`, { ...getActiveContext(), farmerId: ctx.farmerId, route: ctx.route });
         }
       }
       return;
@@ -199,7 +227,7 @@ export function observeBaseChange(
       if (transientCounter % TRANSIENT_SAMPLE_RATE === 0) {
         plog.debug("CUM:TRANSIENT",
           `${ctx.farmerId} route=${ctx.route || "?"} transient drop suppressed ${p.before}→${p.after}→${after}`,
-          { ...ctx, before: p.before, transient: p.after, recovered: after }
+          { ...getActiveContext(), ...ctx, before: p.before, transient: p.after, recovered: after }
         );
       }
       return;
