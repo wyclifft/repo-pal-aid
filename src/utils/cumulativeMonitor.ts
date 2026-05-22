@@ -227,7 +227,7 @@ export function observeBaseChange(
       if (transientCounter % TRANSIENT_SAMPLE_RATE === 0) {
         plog.debug("CUM:TRANSIENT",
           `${ctx.farmerId} route=${ctx.route || "?"} transient drop suppressed ${p.before}→${p.after}→${after}`,
-          { ...ctx, before: p.before, transient: p.after, recovered: after }
+          { ...getActiveContext(), ...ctx, before: p.before, transient: p.after, recovered: after }
         );
       }
       return;
