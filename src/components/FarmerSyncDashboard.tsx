@@ -496,7 +496,7 @@ export const FarmerSyncDashboard = () => {
             <div>
               <CardTitle>Farmer Sync Status</CardTitle>
               <CardDescription>
-                Cumulative data for <span className="font-medium">{deviceCcode || 'all'}</span>{activeRoute ? ` · Route: ${activeRoute}` : ''} cached offline
+                Cumulative data for <span className="font-medium">{deviceCcode || 'all'}</span>{selectionChip ? ` · ${selectionChip}` : ''} cached offline
               </CardDescription>
             </div>
           </div>
