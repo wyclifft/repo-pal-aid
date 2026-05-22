@@ -48,6 +48,29 @@ const getActiveRoute = (): string => {
   return '';
 };
 
+// v2.10.96: respect active product (icode) and season (scode) selection.
+const getActiveProduct = (): string => {
+  try {
+    const data = localStorage.getItem('active_session_data');
+    if (data) {
+      const parsed = JSON.parse(data);
+      return (parsed?.product?.icode || '').trim().toUpperCase();
+    }
+  } catch {}
+  return '';
+};
+
+const getActiveSeason = (): string => {
+  try {
+    const data = localStorage.getItem('active_session_data');
+    if (data) {
+      const parsed = JSON.parse(data);
+      return (parsed?.session?.SCODE || '').trim();
+    }
+  } catch {}
+  return '';
+};
+
 export const FarmerSyncDashboard = () => {
   const { db, getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
   const { settings } = useAppSettings();
