@@ -21,6 +21,34 @@
 
 import { plog } from "./persistentLogger";
 
+/**
+ * v2.10.95: Read the currently-selected dashboard context from localStorage so
+ * every cumulative log row carries tcode/icode/scode/ccode/devcode. Pure read,
+ * never throws — falls back to {} if anything is missing.
+ */
+function getActiveContext(): Record<string, string> {
+  const ctx: Record<string, string> = {};
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem("active_session_data") : null;
+    if (raw) {
+      const d = JSON.parse(raw);
+      const tcode = d?.route?.tcode;
+      const icode = d?.product?.icode;
+      const scode = d?.session?.SCODE;
+      if (tcode) ctx.tcode = String(tcode).trim();
+      if (icode) ctx.icode = String(icode).trim().toUpperCase();
+      if (scode) ctx.scode = String(scode).trim();
+    }
+  } catch { /* noop */ }
+  try {
+    const cc = typeof localStorage !== "undefined" ? localStorage.getItem("device_ccode") : null;
+    const dc = typeof localStorage !== "undefined" ? localStorage.getItem("devcode") : null;
+    if (cc) ctx.ccode = cc;
+    if (dc) ctx.devcode = dc;
+  } catch { /* noop */ }
+  return ctx;
+}
+
 const RECALC_SAMPLE_RATE = 50; // emit 1-in-50
 
 let recalcCounter = 0;
