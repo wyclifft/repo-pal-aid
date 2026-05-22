@@ -5,8 +5,13 @@ import { observeBaseChange } from '@/utils/cumulativeMonitor';
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
 // (e.g. referenceGenerator) open the SAME version and never trigger
 // VersionError. Single source of truth — bump here only.
+// v2.10.94: bumped 12 → 15 to recover devices already on v13/v14 schemas
+// (legacy preview builds) that were throwing VersionError and silently
+// no-op-ing every cumulative read/write. onupgradeneeded is now idempotent
+// for farmer_cumulative — we only drop the store if its keyPath isn't
+// already the v2.10.73 'cacheKey' shape.
 export const DB_NAME = 'milkCollectionDB';
-export const DB_VERSION = 12; // v2.10.73: farmer_cumulative cache keyed by farmer+route+month for per-factory isolation
+export const DB_VERSION = 15;
 
 let dbInstance: IDBDatabase | null = null;
 
