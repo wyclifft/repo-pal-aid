@@ -968,6 +968,7 @@ export const useIndexedDB = () => {
         // inflated the printed cumulative until they synced.
         const tt = Number((r as any).transtype);
         if (tt !== 1) continue;
+        const rFarmerId = (r.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
         if (rFarmerId !== cleanFarmerId) continue;
         // Filter by route if specified
         if (cleanRoute) {
