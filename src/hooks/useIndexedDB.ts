@@ -963,9 +963,11 @@ export const useIndexedDB = () => {
       let totalWeight = 0;
       const productWeights: Record<string, { icode: string; product_name: string; weight: number }> = {};
       for (const r of unsynced) {
-        // Only count Buy (transtype=1) receipts
-        if (r.transtype === 2) continue;
-        const rFarmerId = (r.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
+        // v2.10.94 BUG 2 FIX: only BUY (transtype=1) contributes to farmer
+        // cumulative. SELL (2) and AI (3) must be excluded — they previously
+        // inflated the printed cumulative until they synced.
+        const tt = Number((r as any).transtype);
+        if (tt !== 1) continue;
         if (rFarmerId !== cleanFarmerId) continue;
         // Filter by route if specified
         if (cleanRoute) {
