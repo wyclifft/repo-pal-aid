@@ -441,7 +441,7 @@ export const FarmerSyncDashboard = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [isReady, activeRoute, buildNameLookup, loadFromBatchAPI, loadFromOfflineCache, getUnsyncedReceipts, updateFarmerCumulative]);
+  }, [isReady, activeRoute, activeIcode, activeScode, buildNameLookup, loadFromBatchAPI, loadFromOfflineCache, getUnsyncedReceipts, updateFarmerCumulative]);
 
   useEffect(() => {
     loadData(false);
