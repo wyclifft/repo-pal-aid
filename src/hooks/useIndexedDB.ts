@@ -123,19 +123,31 @@ export const useIndexedDB = () => {
 
       // farmer_cumulative store for offline cumulative tracking
       // v2.10.73: cacheKey now includes route for per-factory isolation.
-      // On upgrade we wipe and recreate the store so old farmer-month-only keys
-      // don't leak across factories. Data is recoverable from backend on next sync.
+      // v2.10.94: idempotent migration — only drop the store if it's the legacy
+      // (pre-v2.10.73) shape with a different keyPath. Otherwise preserve rows
+      // so we don't lose cached base totals on every version bump.
       if (database.objectStoreNames.contains('farmer_cumulative')) {
         try {
-          database.deleteObjectStore('farmer_cumulative');
-          console.log('[DB] v2.10.73 migration: dropped legacy farmer_cumulative store (will rebuild from backend)');
+          const existingStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('farmer_cumulative');
+          if (existingStore.keyPath !== 'cacheKey') {
+            database.deleteObjectStore('farmer_cumulative');
+            const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+            cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
+            console.log('[DB] v2.10.94 migration: legacy farmer_cumulative keyPath replaced (rows rebuild from backend)');
+          } else {
+            console.log('[DB] farmer_cumulative store preserved (cacheKey schema intact)');
+          }
         } catch (e) {
-          console.warn('[DB] Failed to drop legacy farmer_cumulative store:', e);
+          console.warn('[DB] farmer_cumulative migration check failed, recreating:', e);
+          try { database.deleteObjectStore('farmer_cumulative'); } catch {}
+          const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+          cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
         }
+      } else {
+        const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+        cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
+        console.log('[DB] Created farmer_cumulative store (v2.10.73 schema: farmer+route+month key)');
       }
-      const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
-      cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
-      console.log('[DB] Created farmer_cumulative store (v2.10.73 schema: farmer+route+month key)');
 
       // Add dedicated printed_receipts store (Bug 4 fix: remove mixed-type key from receipts store)
       if (!database.objectStoreNames.contains('printed_receipts')) {
