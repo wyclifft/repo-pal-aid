@@ -83,6 +83,8 @@ export const FarmerSyncDashboard = () => {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const cancelledRef = useRef(false);
   const activeRoute = getActiveRoute();
+  const activeIcode = getActiveProduct();
+  const activeScode = getActiveSeason();
 
   /**
    * Build a name lookup map from cm_members (IndexedDB or API).
