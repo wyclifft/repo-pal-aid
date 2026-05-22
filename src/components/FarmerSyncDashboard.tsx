@@ -261,7 +261,12 @@ export const FarmerSyncDashboard = () => {
       const baseCount = cum?.baseCount || 0;
       const localCount = cum?.localCount || 0;
       const unsyncedWeight = unsyncedByFarmer.get(fid) || 0;
-      const total = baseCount + localCount + unsyncedWeight;
+      // v2.10.94 BUG 3 FIX: don't double-count localCount alongside unsyncedWeight.
+      // All current writers reset localCount to 0 (fromBackend=true), but any
+      // legacy/stale row with localCount > 0 would otherwise be added on top of
+      // the same unsynced receipts. Use whichever is larger as the live delta.
+      const liveDelta = Math.max(localCount, unsyncedWeight);
+      const total = baseCount + liveDelta;
 
       // Drop if zero weight AND no unsynced receipts (matches web "with transactions only")
       if (total <= 0 && unsyncedWeight <= 0) continue;
@@ -276,7 +281,7 @@ export const FarmerSyncDashboard = () => {
         route: cleanActiveRoute || (meta?.route || '').trim() || 'N/A',
         cumulativeTotal: total,
         baseCount,
-        localCount: localCount + unsyncedWeight,
+        localCount: liveDelta,
         isCached: !!cum,
       });
     }
