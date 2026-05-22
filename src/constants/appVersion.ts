@@ -616,5 +616,5 @@
 //       monitor's transient guard only suppressed the log, this protects the
 //       data. No backend, sync engine, reference generator, receipt, photo,
 //       Bluetooth, or auth flow changes.
-export const APP_VERSION = '2.10.95';
-export const APP_VERSION_CODE = 117;
+export const APP_VERSION = '2.10.96';
+export const APP_VERSION_CODE = 118;
