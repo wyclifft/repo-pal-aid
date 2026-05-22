@@ -185,14 +185,14 @@ export function observeBaseChange(
         if (transientCounter % TRANSIENT_SAMPLE_RATE === 0) {
           plog.debug("CUM:TRANSIENT",
             `${ctx.farmerId} route=${ctx.route || "?"} transient drop suppressed ${p.before}→${p.after}→${after}`,
-            { ...ctx, before: p.before, transient: p.after, recovered: after }
+            { ...getActiveContext(), ...ctx, before: p.before, transient: p.after, recovered: after }
           );
         }
       }
       if (after === before && before > 0) {
         recalcCounter++;
         if (recalcCounter % RECALC_SAMPLE_RATE === 0) {
-          plog.debug("CUM:RECALC", `${ctx.farmerId} unchanged @ ${after}`, { farmerId: ctx.farmerId, route: ctx.route });
+          plog.debug("CUM:RECALC", `${ctx.farmerId} unchanged @ ${after}`, { ...getActiveContext(), farmerId: ctx.farmerId, route: ctx.route });
         }
       }
       return;
