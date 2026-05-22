@@ -230,8 +230,11 @@ export const FarmerSyncDashboard = () => {
     const unsyncedReceipts = await getUnsyncedReceipts();
     const unsyncedByFarmer = new Map<string, number>();
     for (const r of unsyncedReceipts) {
+      // v2.10.94 BUG 2 FIX: only BUY (transtype=1) contributes to farmer
+      // cumulative. Exclude SELL (2), AI (3), and any explicit sale type.
       if ((r as any).type === 'sale') continue;
-      if ((r as any).transtype === 2) continue;
+      const tt = Number((r as any).transtype);
+      if (tt !== 1) continue;
       const fid = String((r as any).farmer_id || '').replace(/^#/, '').trim();
       if (!fid) continue;
       if (cleanActiveRoute) {
