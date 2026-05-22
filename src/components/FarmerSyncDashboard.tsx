@@ -640,7 +640,7 @@ export const FarmerSyncDashboard = () => {
         ) : null}
 
         <p className="text-xs text-muted-foreground text-center">
-          Showing farmers for company code: <span className="font-medium">{deviceCcode || 'all'}</span>{activeRoute ? ` · Route: ${activeRoute}` : ''}
+          Showing farmers for company code: <span className="font-medium">{deviceCcode || 'all'}</span>{selectionChip ? ` · ${selectionChip}` : ''}
         </p>
       </CardContent>
     </Card>
