@@ -54,7 +54,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
     if (navigator.onLine) {
       try {
         // OPTIMIZED: Run auth and device check in PARALLEL with short timeout
-        const authPromise = mysqlApi.auth.login(userId, password);
+        const authPromise = mysqlApi.auth.login(userId, password, deviceFingerprint);
         const deviceCheckPromise = Promise.race([
           mysqlApi.devices.getByFingerprint(deviceFingerprint),
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)) // 2s timeout for device
