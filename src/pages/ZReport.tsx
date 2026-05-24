@@ -41,6 +41,8 @@ const ZReport = () => {
   const [showReceiptPreview, setShowReceiptPreview] = useState(false);
   const [showDeviceReceiptPreview, setShowDeviceReceiptPreview] = useState(false);
   const [showPeriodSelector, setShowPeriodSelector] = useState(false);
+  const [showTypeSelector, setShowTypeSelector] = useState(false);
+  const [selectedReportType, setSelectedReportType] = useState<ZReportType>('produce');
   const [selectedPeriod, setSelectedPeriod] = useState<ZReportPeriod>('all');
   const [selectedPeriodLabel, setSelectedPeriodLabel] = useState<string>('All Z');
   
