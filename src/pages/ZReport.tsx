@@ -667,13 +667,21 @@ const ZReport = () => {
         isCoffee={isCoffee}
       />
       
-      {/* Period Selector Dialog */}
+      {/* Type Selector Dialog — only shown when both produce + store data exist */}
+      <ZReportTypeSelector
+        open={showTypeSelector}
+        produceLabel={produceLabel}
+        onClose={() => setShowTypeSelector(false)}
+        onSelect={handleTypeSelect}
+      />
+
+      {/* Period Selector Dialog — gated to orgtype === 'D' (Dairy) by handlePrintClick */}
       <ZReportPeriodSelector
         open={showPeriodSelector}
         onClose={() => setShowPeriodSelector(false)}
         onSelect={handlePeriodSelect}
       />
-      
+
       {/* Device Z Report Receipt Modal - Uses handwritten layout for printing */}
       <DeviceZReportReceipt
         data={deviceReportData}
@@ -683,8 +691,8 @@ const ZReport = () => {
         routeName={routeLabel}
         selectedPeriod={selectedPeriod}
         periodLabel={selectedPeriodLabel}
+        reportType={selectedReportType}
       />
-    </div>
   );
 };
 
