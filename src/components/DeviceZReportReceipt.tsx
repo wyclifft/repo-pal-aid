@@ -64,19 +64,35 @@ export const DeviceZReportReceipt = ({
   onPrint,
   routeName,
   selectedPeriod = 'all',
-  periodLabel: periodLabelProp
+  periodLabel: periodLabelProp,
+  reportType = 'produce'
 }: DeviceZReportReceiptProps) => {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const isStoreReport = reportType === 'store';
   
-  // Get the display label for the period
-  const periodDisplayLabel = periodLabelProp || getPeriodDisplayLabel(selectedPeriod);
+  // Get the display label for the period (Store reports ignore period entirely)
+  const periodDisplayLabel = isStoreReport
+    ? 'Store Z'
+    : (periodLabelProp || getPeriodDisplayLabel(selectedPeriod));
   
-  // Filter transactions by selected period
+  // Filter transactions by report type first, then by selected period.
+  // Store report → only transtype 2 (SELL) and 3 (AI), and skip the session/period filter.
+  // Produce report → only transtype 1, with normal period filtering preserved.
   const filteredTransactions = useMemo(() => {
     if (!data?.transactions?.length) return [];
-    return filterTransactionsByPeriod(data.transactions, selectedPeriod);
-  }, [data?.transactions, selectedPeriod]);
+    if (isStoreReport) {
+      return data.transactions.filter(t => {
+        const tt = Number((t as any).transtype) || 1;
+        return tt === 2 || tt === 3;
+      });
+    }
+    const produceOnly = data.transactions.filter(t => {
+      const tt = Number((t as any).transtype) || 1;
+      return tt === 1;
+    });
+    return filterTransactionsByPeriod(produceOnly, selectedPeriod);
+  }, [data?.transactions, selectedPeriod, isStoreReport]);
   
   // Group filtered transactions by transaction type (1=Buy, 2=Sell, 3=AI)
   const typeGroups = useMemo<TypeGroup[]>(() => {
