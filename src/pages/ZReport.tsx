@@ -31,7 +31,7 @@ const ZReport = () => {
   const [hasPrinted, setHasPrinted] = useState(false);
   
   // App settings
-  const { sessionPrintOnly, routeLabel, produceLabel, isCoffee, weightUnit, weightLabel, periodLabel, companyName } = useAppSettings();
+  const { sessionPrintOnly, routeLabel, produceLabel, isCoffee, isDairy, weightUnit, weightLabel, periodLabel, companyName } = useAppSettings();
   
   // Sync status tracking for sessprint enforcement
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
