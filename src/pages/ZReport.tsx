@@ -191,7 +191,44 @@ const ZReport = () => {
     }
   }, [autoPrint, reportData, loading]);
 
-  // Handle print button click - show period selector first
+  // v2.10.97: Inspect device report transactions to decide which Z report types apply.
+  // transtype 1 = produce (Coffee/Milk), 2 = SELL, 3 = AI → both 2 & 3 are "store".
+  const detectAvailableTypes = useCallback((): { hasProduce: boolean; hasStore: boolean } => {
+    const txs = deviceReportData?.transactions || [];
+    let hasProduce = false;
+    let hasStore = false;
+    for (const t of txs) {
+      const tt = Number(t.transtype) || 1;
+      if (tt === 1) hasProduce = true;
+      else if (tt === 2 || tt === 3) hasStore = true;
+      if (hasProduce && hasStore) break;
+    }
+    return { hasProduce, hasStore };
+  }, [deviceReportData]);
+
+  // Open the produce flow: dairy → show period selector, otherwise skip to preview.
+  const openProduceFlow = useCallback(async () => {
+    setSelectedReportType('produce');
+    if (isDairy) {
+      setShowPeriodSelector(true);
+    } else {
+      setSelectedPeriod('all');
+      setSelectedPeriodLabel('All Z');
+      await fetchDeviceReport('all');
+      setShowDeviceReceiptPreview(true);
+    }
+  }, [isDairy, fetchDeviceReport]);
+
+  // Open the store flow: no period selector regardless of orgtype.
+  const openStoreFlow = useCallback(async () => {
+    setSelectedReportType('store');
+    setSelectedPeriod('all');
+    setSelectedPeriodLabel('Store Z');
+    await fetchDeviceReport('all');
+    setShowDeviceReceiptPreview(true);
+  }, [fetchDeviceReport]);
+
+  // Handle print button click - choose Z type first, then period if applicable.
   const handlePrintClick = () => {
     console.log('🖨️ Print button clicked', { sessionPrintOnly, isSyncComplete, pendingSyncCount });
     // Enforce sessprint: only show preview if sync is complete
@@ -199,22 +236,49 @@ const ZReport = () => {
       toast.error(`Cannot print Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
       return;
     }
-    // Show period selector dialog first
-    setShowPeriodSelector(true);
+
+    const { hasProduce, hasStore } = detectAvailableTypes();
+
+    // Only one type of data present → skip the type selector entirely.
+    if (hasProduce && !hasStore) {
+      void openProduceFlow();
+      return;
+    }
+    if (!hasProduce && hasStore) {
+      void openStoreFlow();
+      return;
+    }
+
+    // No transactions yet — fall back to existing produce flow (preserves old UX).
+    if (!hasProduce && !hasStore) {
+      void openProduceFlow();
+      return;
+    }
+
+    // Mixed data → ask the user which Z report to generate.
+    setShowTypeSelector(true);
   };
-  
+
+  // Type selector callback
+  const handleTypeSelect = (type: ZReportType) => {
+    setShowTypeSelector(false);
+    if (type === 'store') {
+      void openStoreFlow();
+    } else {
+      void openProduceFlow();
+    }
+  };
+
   // Handle period selection - fetch filtered data from backend and show receipt preview
   const handlePeriodSelect = async (period: ZReportPeriod, periodLabel: string) => {
     console.log('📋 Period selected:', period, periodLabel);
     setSelectedPeriod(period);
     setSelectedPeriodLabel(periodLabel);
     setShowPeriodSelector(false);
-    
+
     // Fetch device report with period filter from backend
-    // This ensures server-side filtering by session/CAN codes
     await fetchDeviceReport(period);
-    
-    // Show device receipt preview with filtered data
+
     setShowDeviceReceiptPreview(true);
   };
   
