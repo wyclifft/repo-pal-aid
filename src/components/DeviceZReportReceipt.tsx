@@ -373,16 +373,22 @@ export const DeviceZReportReceipt = ({
           {/* Company Name - Header (centered, intentional) */}
           <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base uppercase tracking-wide">{data.companyName}</h3>
-            <p className="font-bold text-sm mt-1">Z REPORT: {periodDisplayLabel.toUpperCase()}</p>
+            <p className="font-bold text-sm mt-1">
+              {isStoreReport ? 'STORE Z REPORT' : `Z REPORT: ${periodDisplayLabel.toUpperCase()}`}
+            </p>
           </div>
 
           {/* Metadata block (left-aligned 2-col grid for readability) */}
           <div className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm pb-2 border-b border-dashed">
-            <span className="font-semibold">SUMMARY</span>
-            <span>{data.produceLabel.toUpperCase()}</span>
+            {!isStoreReport && (
+              <>
+                <span className="font-semibold">SUMMARY</span>
+                <span>{data.produceLabel.toUpperCase()}</span>
 
-            <span className="font-semibold">{data.periodLabel.toUpperCase()}</span>
-            <span>{data.seasonName}</span>
+                <span className="font-semibold">{data.periodLabel.toUpperCase()}</span>
+                <span>{data.seasonName}</span>
+              </>
+            )}
 
             <span className="font-semibold">DATE</span>
             <span>{formattedDate}</span>
@@ -394,9 +400,14 @@ export const DeviceZReportReceipt = ({
               </>
             )}
 
-            <span className="font-semibold">PRODUCE</span>
-            <span>{data.produceName || data.produceLabel.toUpperCase()}</span>
+            {!isStoreReport && (
+              <>
+                <span className="font-semibold">PRODUCE</span>
+                <span>{data.produceName || data.produceLabel.toUpperCase()}</span>
+              </>
+            )}
           </div>
+
 
           {/* Transaction Groups by Type */}
           <div className="max-h-80 overflow-y-auto pr-1">
