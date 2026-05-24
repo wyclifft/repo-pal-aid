@@ -693,6 +693,7 @@ const ZReport = () => {
         periodLabel={selectedPeriodLabel}
         reportType={selectedReportType}
       />
+    </div>
   );
 };
 
