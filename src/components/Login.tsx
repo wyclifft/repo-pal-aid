@@ -76,6 +76,21 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         let needsRegistration = false;
         let resolvedDeviceData = deviceData;
 
+        // v2.10.97 — STRICT COMPANY ISOLATION (ccode).
+        // If both the authenticated user and the device carry a ccode, they MUST match.
+        // Prevents a user assigned to company A from logging in on a device approved
+        // for company B. Backend also enforces this on /api/auth/login when a device
+        // fingerprint is supplied, but we double-check on the client so the rejection
+        // is immediate and the offline credential cache is never written.
+        const userCcode = (userData?.ccode || '').toString().trim().toUpperCase();
+        const deviceCcode = (resolvedDeviceData?.ccode || '').toString().trim().toUpperCase();
+        if (userCcode && deviceCcode && userCcode !== deviceCcode) {
+          console.warn('[AUTH][CCODE] Mismatch — user:', userCcode, 'device:', deviceCcode);
+          toast.error('Access denied. Your account is restricted to your assigned company.');
+          setLoading(false);
+          return;
+        }
+
         // Process device data (already fetched in parallel)
         if (resolvedDeviceData && resolvedDeviceData.id) {
           // Device is registered - cache approval asynchronously (fire and forget)
