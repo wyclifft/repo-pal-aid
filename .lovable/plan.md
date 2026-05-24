@@ -1,51 +1,99 @@
-# Farmer Sync Dashboard — respect active Product (icode) & Season (scode)
+# Z Report Type/Period Gating + Company Isolation
 
-## Problem
-The dashboard currently only filters by the active **route** (`tcode`). The cumulative figures it shows are the *combined* monthly totals across every product the farmer delivered. When the operator has selected `S001` on the dashboard, they expect the Farmer Sync card to show the per-`S001` slice that matches the Receipts/Z-Report view — and to drop rows whose only activity is on a different product or season.
+## 1. Gate "Select Z Report Period" by `orgtype === "D"`
 
-The data we need is already available:
-- `mysqlApi.farmerFrequency.getMonthlyFrequencyBatch` already returns `by_product: [{ icode, product_name, weight }]` per farmer.
-- `farmer_cumulative` IndexedDB rows already persist `by_product` (written by `updateFarmerCumulative`).
-- Unsynced receipts in IndexedDB already carry `icode` and `scode/season`.
+**File:** `src/pages/ZReport.tsx`
 
-So this is a pure presentation/filtering fix — no backend, schema, or sync-engine changes.
+- Read `orgtype` via `useAppSettings()` (already imported elsewhere in the page).
+- In `handlePrintClick`, branch:
+  - If `orgtype === 'D'` **and** the new type-selector resolves to Coffee/Milk → open `ZReportPeriodSelector` (existing modal).
+  - Otherwise → skip the period selector entirely and proceed straight to `fetchDeviceReport('all')` + preview.
+- No changes to `ZReportPeriodSelector.tsx` itself (keeps it reusable, isolation per Z-Report UI rule).
 
-## Scope
-Frontend only. Touch only `src/components/FarmerSyncDashboard.tsx` plus the standard version bump trio.
+## 2. New "Select Z Report Type" step
 
-## Changes
+**New file:** `src/components/ZReportTypeSelector.tsx`
 
-### 1. `src/components/FarmerSyncDashboard.tsx`
-- Add `getActiveProduct()` and `getActiveSeason()` helpers next to existing `getActiveRoute()`, reading `active_session_data.product.icode` and `active_session_data.session.SCODE` with the same `.trim().toUpperCase()` normalization used elsewhere.
-- Capture `activeIcode` and `activeScode` in the component, include both in the `loadData` dependency array so changes re-run the load.
-- **Online path (`loadFromBatchAPI`)**:
-  - When `activeIcode` is set, compute each farmer's displayed total from the matching `by_product[]` entry instead of `cumulative_weight`:
-    - `baseCount = matchingEntry?.weight ?? 0`
-    - Drop farmers whose matching entry is `0` and who have no unsynced receipts for that icode.
-  - When `activeIcode` is empty, keep current combined behaviour.
-- **Offline path (`loadFromOfflineCache`)**:
-  - Read `by_product` off each `farmer_cumulative` row; when `activeIcode` is set, use the matching slice for `baseCount`, else use the row's combined `baseCount`.
-  - Apply `activeIcode` + `activeScode` filters to the unsynced-receipts loop (normalized compare on `r.icode`, and `r.scode || r.season`). Receipts that don't match are excluded from `unsyncedByFarmer`.
-  - Keep the existing route filter, the `transtype === 1` (BUY-only) guard, and the "drop zero-weight farmers" rule.
-- **`localCount` semantics**: keep using `Math.max(localCount, unsyncedWeight)` so the on-card `+X local` badge reflects only the filtered unsynced weight.
-- **Header / footer copy**: extend the route chip to include the active product + season when present, e.g. `Route: T001 · Product: S001 · Season: S0001`. Update the empty-state message similarly.
-- Pass `activeIcode`/`activeScode` along to the batch-refresh log line via the existing context enrichment (already wired in v2.10.95).
+- Small dialog with two options:
+  - **Coffee / Milk Z Report {depending on the orgtype}** — value `produce`
+  - **Store Z Report** — value `store`
+- Same visual pattern as `ZReportPeriodSelector` (RadioGroup + Confirm/Cancel).
+- Exports `ZReportType = 'produce' | 'store'`.
 
-### 2. Version bump (mandatory per workspace rule)
-- `src/constants/appVersion.ts` → `2.10.96`
-- `public/sw.js` → cache `v43`
-- `android/app/build.gradle` → versionCode `118`, versionName `2.10.96`
+**Flow in `ZReport.tsx`:**
 
-## Out of scope / explicit non-goals
-- **No backend changes.** The monthly batch API stays per-route; we filter client-side. Season is intrinsically monthly on the backend, so for `baseCount` we cannot retroactively isolate a different scode — we only filter *unsynced* deltas by scode and use it for context labelling. This matches how Z-Report and Receipts treat scode today.
-- No edits to `useIndexedDB`, sync engine, IndexedDB schema, or cumulative recompute logic.
-- No changes to `FarmerCumulative` storage shape — `by_product` is already persisted.
-- No new UI components, just chip text + filtered rows.
+```text
+Print click
+   │
+   ├─ Inspect reportData transactions:
+   │     hasProduce = any tx with transtype === 1
+   │     hasStore   = any tx with transtype === 2 || 3
+   │
+   ├─ If hasProduce && hasStore → open ZReportTypeSelector
+   ├─ Else if only hasProduce   → type = 'produce' (auto)
+   ├─ Else if only hasStore     → type = 'store'   (auto)
+   │
+   ├─ type === 'produce'
+   │     ├─ orgtype === 'D' → open ZReportPeriodSelector → fetchDeviceReport(period)
+   │     └─ orgtype !== 'D' → fetchDeviceReport('all') directly
+   │
+   └─ type === 'store' → fetchDeviceReport('all') with reportMode='store'
+```
 
-## Verification checklist
-1. Select `T001` + `S001` + `S0001` on the dashboard → Sync Status card lists only farmers with `S001` activity on `T001`, totals match the per-product values seen in receipts (e.g. M00003 = 32.1 kg, M00001 = 5040.1 kg, M00007 = 91.9 kg from the recent test batch).
-2. Switch product to a different icode → list re-loads with that slice; farmers with no activity for it disappear.
-3. Clear product selection → behaviour returns to today's combined totals.
-4. Offline mode (airplane on): same filtering applied from IndexedDB cache + unsynced receipts.
-5. Unsynced receipt count unchanged (it's a global indicator, not per-icode).
-6. No regression to transaction creation, receipt printing, sync, or device auth.
+- New state: `selectedReportType: ZReportType`, `showTypeSelector: boolean`.
+- Pass `reportType` down to the receipt preview component.
+
+## 3. Store Z report rendering
+
+**File:** `src/components/DeviceZReportReceipt.tsx` (and/or the produce variant currently used)
+
+- Accept new prop `reportType?: 'produce' | 'store'` (default `'produce'` — backward compatible).
+- When `reportType === 'store'`:
+  - Filter transactions to `transtype === 2 || transtype === 3` only.
+  - Hide: session header, season/scode chip, produce/icode column, farmer-delivery breakdown rows, per-product cumulative section.
+  - Show: header "STORE Z REPORT", date/route/device chip, columns `Ref | Item | Qty | Amount`, grand totals split by SELL vs AI (already supported by store-units rule), no Kgs unit override (use stored unit / "items").
+- Re-use existing thermal-print CSS classes so receipt-output standards stay intact.
+- Produce mode renders exactly as today (no regression to existing Z-report layout, headers, column alignment rule).
+
+## 4. Strict company isolation by `user.ccode`
+
+**Frontend — `src/components/Login.tsx` / `AuthContext`:**
+
+- After a successful `/api/auth/login`, read the cached device ccode (from `devsettings`-driven device approval payload already stored locally).
+- If `user.ccode` is present and does **not** equal device `ccode`:
+  - Reject the login (do not call `login()`).
+  - Show toast: `"Access denied. Your account is restricted to your assigned company."`
+  - Do not cache offline credentials.
+- Offline login path: compare cached `user.ccode` against cached device ccode before allowing entry; same denial message.
+
+**Backend — `backend-api/server.js` (`/api/auth/login`, additive only):**
+
+- Accept optional `device_fingerprint` in the login body.
+- If provided, after the user row is found:
+  - Look up `devsettings.ccode WHERE uniquedevcode = ?`.
+  - If device ccode exists and `user.ccode !== device.ccode` → return `403 { success:false, error:"Access denied. Your account is restricted to your assigned company." }`.
+- All existing fields/behaviour preserved → mobile clients that don't send `device_fingerprint` continue to work (backward compatible per server.js production safety rule).
+- No changes to existing data endpoints (they already filter `WHERE ccode = ?` via the device fingerprint lookup — DEVICE_FILTERING_SETUP.md).
+
+## 5. Versioning
+
+Per workspace version rule:
+
+- `src/constants/appVersion.ts` → `APP_VERSION = '2.10.97'`, `APP_VERSION_CODE = 119`.
+- `public/sw.js` → `CACHE_VERSION = 'v44'`.
+- `android/app/build.gradle` → bump `versionCode`/`versionName`.
+
+## Out of scope
+
+- No IndexedDB schema changes.
+- No changes to transaction creation, sync engine, receipt generation for produce, photo upload, or farmer cumulative logic.
+- No new backend tables; only an additive guard on `/api/auth/login`.
+
+## Verification
+
+- Dairy device (`orgtype=D`) with mixed transtype 1+2/3 → type selector appears → Coffee/Milk path shows period selector → Store path skips period selector and renders store-only receipt.
+- Coffee device (`orgtype=C`) → period selector never appears regardless of choice.
+- Device with only `transtype=1` → no type selector, original flow.
+- Device with only `transtype=2/3` → no type selector, store receipt directly.
+- Login attempt with mismatched `user.ccode` vs device ccode → blocked with the required message, both online and offline.
+- Existing transaction creation, sync, receipt print (transtype 1 and 2/3), device auth, photo upload paths unchanged.

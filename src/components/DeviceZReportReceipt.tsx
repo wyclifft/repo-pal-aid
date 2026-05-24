@@ -42,6 +42,10 @@ interface DeviceZReportReceiptProps {
   routeName?: string; // Factory name from route selection
   selectedPeriod?: ZReportPeriod; // Period filter
   periodLabel?: string; // Display label for selected period (e.g., "Morning Z")
+  // v2.10.97: 'store' renders an independent stock-only Z report that excludes
+  // session, season, produce and farmer-delivery metadata. Defaults to 'produce'
+  // so the existing dairy/coffee Z report layout is fully backward-compatible.
+  reportType?: 'produce' | 'store';
 }
 
 // Helper to group transactions by transaction type
@@ -60,19 +64,35 @@ export const DeviceZReportReceipt = ({
   onPrint,
   routeName,
   selectedPeriod = 'all',
-  periodLabel: periodLabelProp
+  periodLabel: periodLabelProp,
+  reportType = 'produce'
 }: DeviceZReportReceiptProps) => {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const isStoreReport = reportType === 'store';
   
-  // Get the display label for the period
-  const periodDisplayLabel = periodLabelProp || getPeriodDisplayLabel(selectedPeriod);
+  // Get the display label for the period (Store reports ignore period entirely)
+  const periodDisplayLabel = isStoreReport
+    ? 'Store Z'
+    : (periodLabelProp || getPeriodDisplayLabel(selectedPeriod));
   
-  // Filter transactions by selected period
+  // Filter transactions by report type first, then by selected period.
+  // Store report → only transtype 2 (SELL) and 3 (AI), and skip the session/period filter.
+  // Produce report → only transtype 1, with normal period filtering preserved.
   const filteredTransactions = useMemo(() => {
     if (!data?.transactions?.length) return [];
-    return filterTransactionsByPeriod(data.transactions, selectedPeriod);
-  }, [data?.transactions, selectedPeriod]);
+    if (isStoreReport) {
+      return data.transactions.filter(t => {
+        const tt = Number((t as any).transtype) || 1;
+        return tt === 2 || tt === 3;
+      });
+    }
+    const produceOnly = data.transactions.filter(t => {
+      const tt = Number((t as any).transtype) || 1;
+      return tt === 1;
+    });
+    return filterTransactionsByPeriod(produceOnly, selectedPeriod);
+  }, [data?.transactions, selectedPeriod, isStoreReport]);
   
   // Group filtered transactions by transaction type (1=Buy, 2=Sell, 3=AI)
   const typeGroups = useMemo<TypeGroup[]>(() => {
@@ -353,16 +373,22 @@ export const DeviceZReportReceipt = ({
           {/* Company Name - Header (centered, intentional) */}
           <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base uppercase tracking-wide">{data.companyName}</h3>
-            <p className="font-bold text-sm mt-1">Z REPORT: {periodDisplayLabel.toUpperCase()}</p>
+            <p className="font-bold text-sm mt-1">
+              {isStoreReport ? 'STORE Z REPORT' : `Z REPORT: ${periodDisplayLabel.toUpperCase()}`}
+            </p>
           </div>
 
           {/* Metadata block (left-aligned 2-col grid for readability) */}
           <div className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm pb-2 border-b border-dashed">
-            <span className="font-semibold">SUMMARY</span>
-            <span>{data.produceLabel.toUpperCase()}</span>
+            {!isStoreReport && (
+              <>
+                <span className="font-semibold">SUMMARY</span>
+                <span>{data.produceLabel.toUpperCase()}</span>
 
-            <span className="font-semibold">{data.periodLabel.toUpperCase()}</span>
-            <span>{data.seasonName}</span>
+                <span className="font-semibold">{data.periodLabel.toUpperCase()}</span>
+                <span>{data.seasonName}</span>
+              </>
+            )}
 
             <span className="font-semibold">DATE</span>
             <span>{formattedDate}</span>
@@ -374,9 +400,14 @@ export const DeviceZReportReceipt = ({
               </>
             )}
 
-            <span className="font-semibold">PRODUCE</span>
-            <span>{data.produceName || data.produceLabel.toUpperCase()}</span>
+            {!isStoreReport && (
+              <>
+                <span className="font-semibold">PRODUCE</span>
+                <span>{data.produceName || data.produceLabel.toUpperCase()}</span>
+              </>
+            )}
           </div>
+
 
           {/* Transaction Groups by Type */}
           <div className="max-h-80 overflow-y-auto pr-1">

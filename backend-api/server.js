@@ -3249,9 +3249,9 @@ const server = http.createServer(async (req, res) => {
     // Authentication endpoints
     if (path === '/api/auth/login' && method === 'POST') {
       const body = await parseBody(req);
-      const { userid, password } = body;
+      const { userid, password, device_fingerprint } = body;
       
-      console.log('🔐 Login attempt:', { userid, passwordLength: password?.length });
+      console.log('🔐 Login attempt:', { userid, passwordLength: password?.length, hasFp: !!device_fingerprint });
       
       if (!userid || !password) {
         return sendJSON(res, { 
@@ -3288,6 +3288,33 @@ const server = http.createServer(async (req, res) => {
       }
       
       const user = rows[0];
+
+      // v2.10.97 — STRICT COMPANY ISOLATION (additive, backward compatible).
+      // When a device_fingerprint is supplied AND the device is registered in
+      // devsettings with a non-empty ccode, the authenticated user's ccode MUST
+      // match the device's ccode. Older clients that do not send a fingerprint
+      // continue to work exactly as before — no behaviour change for them.
+      if (device_fingerprint) {
+        try {
+          const [devRows] = await pool.query(
+            'SELECT ccode FROM devsettings WHERE uniquedevcode = ? LIMIT 1',
+            [String(device_fingerprint).trim()]
+          );
+          const deviceCcode = (devRows[0]?.ccode || '').toString().trim().toUpperCase();
+          const userCcode = (user.ccode || '').toString().trim().toUpperCase();
+          if (deviceCcode && userCcode && deviceCcode !== userCcode) {
+            console.warn(`[AUTH][CCODE] Mismatch user=${userCcode} device=${deviceCcode}`);
+            return sendJSON(res, {
+              success: false,
+              error: 'Access denied. Your account is restricted to your assigned company.'
+            }, 403);
+          }
+        } catch (ccodeErr) {
+          // Never block login on an unexpected lookup failure — log and continue.
+          console.warn('[AUTH][CCODE] device ccode lookup failed:', ccodeErr?.message);
+        }
+      }
+
       
       // Helper to convert MySQL bit/tinyint to boolean
       const toBool = (value) => {

@@ -943,12 +943,19 @@ export interface AuthUser {
 
 export const authApi = {
   /**
-   * Login with userid and password
+   * Login with userid and password.
+   * v2.10.97: optional device_fingerprint enables backend ccode-isolation guard.
    */
-  login: async (userid: string, password: string): Promise<ApiResponse<AuthUser>> => {
+  login: async (
+    userid: string,
+    password: string,
+    device_fingerprint?: string
+  ): Promise<ApiResponse<AuthUser>> => {
     return apiRequest<AuthUser>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ userid, password }),
+      body: JSON.stringify(
+        device_fingerprint ? { userid, password, device_fingerprint } : { userid, password }
+      ),
     });
   },
 };
