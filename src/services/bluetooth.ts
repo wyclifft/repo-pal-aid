@@ -2392,6 +2392,9 @@ export const printZReport = async (data: {
   deviceCode: string;
   isCoffee?: boolean;
   periodFilter?: string; // Display label for selected period (e.g., "Morning Z", "All Z")
+  // v2.10.98: 'store' renders a stock-only Z report — no SUMMARY/SEASON/PRODUCE
+  // metadata, item names left-aligned full-width, items+KSh totals only.
+  reportType?: 'produce' | 'store';
 }): Promise<{ success: boolean; error?: string }> => {
   // 58mm thermal paper = 32 characters per line
   const W = 32;
@@ -2447,23 +2450,28 @@ export const printZReport = async (data: {
     return left + ' '.repeat(space) + right;
   };
 
+  const isStore = data.reportType === 'store';
   let receipt = '';
 
   // Header — Company Name (centered, intentional)
   receipt += centerText(data.companyName, W) + '\n';
-  if (data.periodFilter) {
+  if (isStore) {
+    receipt += centerText('Z REPORT: STORE Z', W) + '\n';
+  } else if (data.periodFilter) {
     receipt += centerText(`Z REPORT: ${data.periodFilter.toUpperCase()}`, W) + '\n';
   }
   receipt += sep + '\n';
 
-  // Metadata block (left-aligned label : value)
-  receipt += `* ${data.produceLabel.toUpperCase()} SUMMARY\n`;
-  receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
+  // Metadata block — store mode emits only DATE + CENTER, no produce fields.
+  if (!isStore) {
+    receipt += `* ${data.produceLabel.toUpperCase()} SUMMARY\n`;
+    receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
+  }
   receipt += `* DATE: ${formattedDate}\n`;
   if (data.factoryName) {
     receipt += `* ${routeLabel}: ${data.factoryName.trim()}\n`;
   }
-  if (data.produceName) {
+  if (!isStore && data.produceName) {
     receipt += `* PRODUCE: ${data.produceName}\n`;
   }
   receipt += sep + '\n';
@@ -2525,9 +2533,14 @@ export const printZReport = async (data: {
       // subsequent products (JOGOO) were correctly labelled.
       const currentProduct = tx.product_code || '';
       if (showProductDividers && prevProductCode !== currentProduct) {
-        const produceName = tx.product_name || tx.product_code || 'OTHER';
-        const label = `-- ${produceName} --`;
-        receipt += centerText(label, W) + '\n';
+        const produceName = (tx.product_name || tx.product_code || 'OTHER').trim();
+        if (isStore) {
+          // v2.10.98: store mode — item name left-aligned full-width, no padding/dashes.
+          receipt += produceName + '\n';
+        } else {
+          const label = `-- ${produceName} --`;
+          receipt += centerText(label, W) + '\n';
+        }
       }
       prevProductCode = currentProduct;
 
@@ -2592,7 +2605,7 @@ export const printZReport = async (data: {
     }
   }
 
-  if (buyWeight > 0) {
+  if (!isStore && buyWeight > 0) {
     receipt += lr('TOTAL', `${buyWeight.toFixed(1)} ${weightUnit}`) + '\n';
   }
   if (sellAiItems > 0) {

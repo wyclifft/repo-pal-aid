@@ -210,6 +210,7 @@ export const DeviceZReportReceipt = ({
           deviceCode: data.deviceCode,
           isCoffee: data.isCoffee,
           periodFilter: periodDisplayLabel, // Pass period label for display on receipt
+          reportType, // v2.10.98: store mode strips produce metadata in print
         });
         
         if (result.success) {
@@ -317,12 +318,19 @@ export const DeviceZReportReceipt = ({
             return (
               <div key={tx.transrefno || index}>
                 {showItemSeparator && (
-                  <div className="my-1.5">
-                    <div className="border-t border-dotted border-muted-foreground/60" />
-                    <div className="text-center text-[9px] font-semibold text-muted-foreground tracking-wide py-0.5">
-                      ── {tx.product_name || tx.product_code || 'OTHER'} ──
+                  isStoreReport && showMoney ? (
+                    // v2.10.98: store — item name left-aligned full-width, no fixed column.
+                    <div className="text-left font-semibold text-[11px] pt-1.5 pb-0.5 uppercase">
+                      {(tx.product_name || tx.product_code || 'OTHER').trim()}
                     </div>
-                  </div>
+                  ) : (
+                    <div className="my-1.5">
+                      <div className="border-t border-dotted border-muted-foreground/60" />
+                      <div className="text-center text-[9px] font-semibold text-muted-foreground tracking-wide py-0.5">
+                        ── {tx.product_name || tx.product_code || 'OTHER'} ──
+                      </div>
+                    </div>
+                  )
                 )}
                 <div className={`${gridTemplate} text-[11px] border-b border-dotted border-muted-foreground/30 py-1`}>
                   <span className="truncate text-left">{tx.farmer_id}</span>
