@@ -2533,9 +2533,14 @@ export const printZReport = async (data: {
       // subsequent products (JOGOO) were correctly labelled.
       const currentProduct = tx.product_code || '';
       if (showProductDividers && prevProductCode !== currentProduct) {
-        const produceName = tx.product_name || tx.product_code || 'OTHER';
-        const label = `-- ${produceName} --`;
-        receipt += centerText(label, W) + '\n';
+        const produceName = (tx.product_name || tx.product_code || 'OTHER').trim();
+        if (isStore) {
+          // v2.10.98: store mode — item name left-aligned full-width, no padding/dashes.
+          receipt += produceName + '\n';
+        } else {
+          const label = `-- ${produceName} --`;
+          receipt += centerText(label, W) + '\n';
+        }
       }
       prevProductCode = currentProduct;
 
