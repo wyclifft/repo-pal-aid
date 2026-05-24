@@ -42,6 +42,10 @@ interface DeviceZReportReceiptProps {
   routeName?: string; // Factory name from route selection
   selectedPeriod?: ZReportPeriod; // Period filter
   periodLabel?: string; // Display label for selected period (e.g., "Morning Z")
+  // v2.10.97: 'store' renders an independent stock-only Z report that excludes
+  // session, season, produce and farmer-delivery metadata. Defaults to 'produce'
+  // so the existing dairy/coffee Z report layout is fully backward-compatible.
+  reportType?: 'produce' | 'store';
 }
 
 // Helper to group transactions by transaction type
