@@ -2450,23 +2450,28 @@ export const printZReport = async (data: {
     return left + ' '.repeat(space) + right;
   };
 
+  const isStore = data.reportType === 'store';
   let receipt = '';
 
   // Header — Company Name (centered, intentional)
   receipt += centerText(data.companyName, W) + '\n';
-  if (data.periodFilter) {
+  if (isStore) {
+    receipt += centerText('Z REPORT: STORE Z', W) + '\n';
+  } else if (data.periodFilter) {
     receipt += centerText(`Z REPORT: ${data.periodFilter.toUpperCase()}`, W) + '\n';
   }
   receipt += sep + '\n';
 
-  // Metadata block (left-aligned label : value)
-  receipt += `* ${data.produceLabel.toUpperCase()} SUMMARY\n`;
-  receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
+  // Metadata block — store mode emits only DATE + CENTER, no produce fields.
+  if (!isStore) {
+    receipt += `* ${data.produceLabel.toUpperCase()} SUMMARY\n`;
+    receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
+  }
   receipt += `* DATE: ${formattedDate}\n`;
   if (data.factoryName) {
     receipt += `* ${routeLabel}: ${data.factoryName.trim()}\n`;
   }
-  if (data.produceName) {
+  if (!isStore && data.produceName) {
     receipt += `* PRODUCE: ${data.produceName}\n`;
   }
   receipt += sep + '\n';
