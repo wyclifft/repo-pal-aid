@@ -2392,6 +2392,9 @@ export const printZReport = async (data: {
   deviceCode: string;
   isCoffee?: boolean;
   periodFilter?: string; // Display label for selected period (e.g., "Morning Z", "All Z")
+  // v2.10.98: 'store' renders a stock-only Z report — no SUMMARY/SEASON/PRODUCE
+  // metadata, item names left-aligned full-width, items+KSh totals only.
+  reportType?: 'produce' | 'store';
 }): Promise<{ success: boolean; error?: string }> => {
   // 58mm thermal paper = 32 characters per line
   const W = 32;
