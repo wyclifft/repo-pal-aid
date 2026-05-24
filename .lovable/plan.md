@@ -1,99 +1,82 @@
-# Z Report Type/Period Gating + Company Isolation
+# Store Z Report — Strip Non-Store Fields + Clean POS Layout
 
-## 1. Gate "Select Z Report Period" by `orgtype === "D"`
+The on-screen preview already gates the produce fields behind `isStoreReport`, but the **printed receipt** (`printZReport` in `src/services/bluetooth.ts`) still emits `COFFEE SUMMARY`, `SEASON`, `PRODUCE` and uses BUY-shaped column widths. The user's photo confirms this — those lines are crossed out on the printed slip. We fix the print path and tighten the store row layout, without touching the produce (transtype=1) path.
 
-**File:** `src/pages/ZReport.tsx`
+## 1. `src/services/bluetooth.ts` — `printZReport`
 
-- Read `orgtype` via `useAppSettings()` (already imported elsewhere in the page).
-- In `handlePrintClick`, branch:
-  - If `orgtype === 'D'` **and** the new type-selector resolves to Coffee/Milk → open `ZReportPeriodSelector` (existing modal).
-  - Otherwise → skip the period selector entirely and proceed straight to `fetchDeviceReport('all')` + preview.
-- No changes to `ZReportPeriodSelector.tsx` itself (keeps it reusable, isolation per Z-Report UI rule).
+- Add new optional field on the data arg: `reportType?: 'produce' | 'store'` (default `'produce'` — backward compatible for any caller that doesn't set it).
+- Derive `isStore = reportType === 'store'`.
+- **Header**:
+  - Company name (unchanged).
+  - If `isStore` → second line: `Z REPORT: STORE Z` (skip the existing `Z REPORT: <periodFilter>` line entirely).
+  - Else → unchanged.
+- **Metadata block** — when `isStore`, emit ONLY:
+  ```
+  * DATE: DD/MM/YYYY
+  * <ROUTE LABEL>: <factoryName>
+  ```
+  Skip `* <PRODUCE> SUMMARY`, `* SEASON: ...`, and `* PRODUCE: ...`.
+- **Section rendering for SELL / AI when `isStore`** — replace fixed-width product-name divider + 5-col grid with a compact POS layout:
+  ```
+  == SELL ==
+  TWIGA ACE 1LTR
+  M00021 00085  1   650  8:59
+  FERTILIZER C.A.N 25 KGS
+  M00010 00116 21 36750  8:35
+  M00021 00084  2  3500  8:59
+  Coffee Seedlings S1 28
+  M00021 00086  9   360  8:59
+  Spray Pumps
+  M00011 00080  1  7000 11:54
+  SELL TOTAL          34 items KSh 48260
+  ```
+  Rules:
+  - Item name line is left-aligned, full-width (no padding, no centered dashes, no reserved column). Long names wrap on the printer naturally; do not truncate or pad.
+  - Data rows: keep the existing right-aligned numeric columns so QTY / KSh / TIME stay in a vertical tabular spine. Spec: `MNO(7) REF(5) QTY(4 R) KSh(7 R) TIME(5 R)` (already used; total = 32). No change to data-row math, only the surrounding scaffolding.
+  - Drop the `'-'.repeat(W)` underline beneath the column header for store mode — produce mode keeps it. Column header (`MNO REF QTY KSh TIME`) only prints once per section.
+- **Subtotal line** stays as `<TYPE> TOTAL  N items  KSh A`.
+- **Grand totals (store mode)**: emit only the SELL/AI lines:
+  ```
+  TOTAL ITEMS  34 items
+  TOTAL VALUE  KSh 48260
+  ```
+  Suppress the `TOTAL <kg> KGS` line (BUY won't exist anyway in store mode, but make it explicit).
+- **Footer**: unchanged (CLERK / date+time / DEV).
+- Produce-mode rendering (transtype=1) is untouched — fully backward compatible per the workspace stability rule.
 
-## 2. New "Select Z Report Type" step
+## 2. `src/components/DeviceZReportReceipt.tsx`
 
-**New file:** `src/components/ZReportTypeSelector.tsx`
+- In `handlePrint`, pass `reportType` through to `printZReport`:
+  ```ts
+  await printZReport({ ..., reportType });
+  ```
+- In the on-screen preview, the metadata block already hides SUMMARY/SEASON/PRODUCE for `isStoreReport`. Apply the same "item name left-aligned, no fixed column" tweak inside `renderTypeSection` **only when `isStoreReport && showMoney`**:
+  - Replace the centered `── product name ──` divider with a left-aligned bold line: `<div class="text-left font-semibold text-[11px] pt-1.5 pb-0.5">{product_name}</div>`.
+  - Keep the right-aligned numeric grid as-is for the data rows so MNO/REF/QTY/KSh/TIME still align top-to-bottom.
+- No change to produce mode rendering.
 
-- Small dialog with two options:
-  - **Coffee / Milk Z Report {depending on the orgtype}** — value `produce`
-  - **Store Z Report** — value `store`
-- Same visual pattern as `ZReportPeriodSelector` (RadioGroup + Confirm/Cancel).
-- Exports `ZReportType = 'produce' | 'store'`.
+## 3. `src/services/bluetooth.ts` callers
 
-**Flow in `ZReport.tsx`:**
+Only `DeviceZReportReceipt` calls `printZReport`. Other callers (none in the project) keep working because `reportType` is optional and defaults to `'produce'`.
 
-```text
-Print click
-   │
-   ├─ Inspect reportData transactions:
-   │     hasProduce = any tx with transtype === 1
-   │     hasStore   = any tx with transtype === 2 || 3
-   │
-   ├─ If hasProduce && hasStore → open ZReportTypeSelector
-   ├─ Else if only hasProduce   → type = 'produce' (auto)
-   ├─ Else if only hasStore     → type = 'store'   (auto)
-   │
-   ├─ type === 'produce'
-   │     ├─ orgtype === 'D' → open ZReportPeriodSelector → fetchDeviceReport(period)
-   │     └─ orgtype !== 'D' → fetchDeviceReport('all') directly
-   │
-   └─ type === 'store' → fetchDeviceReport('all') with reportMode='store'
-```
+## 4. Versioning (per workspace rule)
 
-- New state: `selectedReportType: ZReportType`, `showTypeSelector: boolean`.
-- Pass `reportType` down to the receipt preview component.
-
-## 3. Store Z report rendering
-
-**File:** `src/components/DeviceZReportReceipt.tsx` (and/or the produce variant currently used)
-
-- Accept new prop `reportType?: 'produce' | 'store'` (default `'produce'` — backward compatible).
-- When `reportType === 'store'`:
-  - Filter transactions to `transtype === 2 || transtype === 3` only.
-  - Hide: session header, season/scode chip, produce/icode column, farmer-delivery breakdown rows, per-product cumulative section.
-  - Show: header "STORE Z REPORT", date/route/device chip, columns `Ref | Item | Qty | Amount`, grand totals split by SELL vs AI (already supported by store-units rule), no Kgs unit override (use stored unit / "items").
-- Re-use existing thermal-print CSS classes so receipt-output standards stay intact.
-- Produce mode renders exactly as today (no regression to existing Z-report layout, headers, column alignment rule).
-
-## 4. Strict company isolation by `user.ccode`
-
-**Frontend — `src/components/Login.tsx` / `AuthContext`:**
-
-- After a successful `/api/auth/login`, read the cached device ccode (from `devsettings`-driven device approval payload already stored locally).
-- If `user.ccode` is present and does **not** equal device `ccode`:
-  - Reject the login (do not call `login()`).
-  - Show toast: `"Access denied. Your account is restricted to your assigned company."`
-  - Do not cache offline credentials.
-- Offline login path: compare cached `user.ccode` against cached device ccode before allowing entry; same denial message.
-
-**Backend — `backend-api/server.js` (`/api/auth/login`, additive only):**
-
-- Accept optional `device_fingerprint` in the login body.
-- If provided, after the user row is found:
-  - Look up `devsettings.ccode WHERE uniquedevcode = ?`.
-  - If device ccode exists and `user.ccode !== device.ccode` → return `403 { success:false, error:"Access denied. Your account is restricted to your assigned company." }`.
-- All existing fields/behaviour preserved → mobile clients that don't send `device_fingerprint` continue to work (backward compatible per server.js production safety rule).
-- No changes to existing data endpoints (they already filter `WHERE ccode = ?` via the device fingerprint lookup — DEVICE_FILTERING_SETUP.md).
-
-## 5. Versioning
-
-Per workspace version rule:
-
-- `src/constants/appVersion.ts` → `APP_VERSION = '2.10.97'`, `APP_VERSION_CODE = 119`.
-- `public/sw.js` → `CACHE_VERSION = 'v44'`.
-- `android/app/build.gradle` → bump `versionCode`/`versionName`.
+- `src/constants/appVersion.ts` → `APP_VERSION = '2.10.98'`, `APP_VERSION_CODE = 120`.
+- `public/sw.js` → `CACHE_VERSION = 'v45'`.
+- `android/app/build.gradle` → bump `versionCode` to `120`, `versionName` to `'2.10.98'`.
 
 ## Out of scope
 
-- No IndexedDB schema changes.
-- No changes to transaction creation, sync engine, receipt generation for produce, photo upload, or farmer cumulative logic.
-- No new backend tables; only an additive guard on `/api/auth/login`.
+- No change to transaction creation, sync, photo upload, device auth, period selector, type selector, produce Z layout, or any backend code.
+- No new fields persisted; `reportType` is a UI/print-only flag.
 
 ## Verification
 
-- Dairy device (`orgtype=D`) with mixed transtype 1+2/3 → type selector appears → Coffee/Milk path shows period selector → Store path skips period selector and renders store-only receipt.
-- Coffee device (`orgtype=C`) → period selector never appears regardless of choice.
-- Device with only `transtype=1` → no type selector, original flow.
-- Device with only `transtype=2/3` → no type selector, store receipt directly.
-- Login attempt with mismatched `user.ccode` vs device ccode → blocked with the required message, both online and offline.
-- Existing transaction creation, sync, receipt print (transtype 1 and 2/3), device auth, photo upload paths unchanged.
+- Store Z print on a device with mixed SELL+AI transactions:
+  - Header shows `Z REPORT: STORE Z`.
+  - No `COFFEE SUMMARY`, `SEASON`, or `PRODUCE` lines.
+  - Item names print left-aligned across the full width; numeric columns still align vertically.
+  - Subtotal and grand totals render `items` + `KSh`, no `KGS`.
+- Produce Z (transtype=1) print is byte-identical to current output.
+- On-screen Store Z preview matches the printed layout (item names left-aligned, no centered dividers).
+- App still builds, transactions still create, sync still works, no console errors.
