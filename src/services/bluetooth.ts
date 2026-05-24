@@ -2605,7 +2605,7 @@ export const printZReport = async (data: {
     }
   }
 
-  if (buyWeight > 0) {
+  if (!isStore && buyWeight > 0) {
     receipt += lr('TOTAL', `${buyWeight.toFixed(1)} ${weightUnit}`) + '\n';
   }
   if (sellAiItems > 0) {
