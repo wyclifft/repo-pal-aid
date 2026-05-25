@@ -35,6 +35,7 @@ import {
   quickReconnectPrinter as quickReconnectBlePrinter,
   getStoredDeviceInfo,
   getStoredPrinterInfo,
+  isBleHalfOfDualModeScale,
   clearStoredDevice,
   clearStoredPrinter,
   disconnectBluetoothScale,
