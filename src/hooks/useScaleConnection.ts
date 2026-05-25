@@ -347,6 +347,16 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     const storedDevice = getStoredDeviceInfo();
     if (!storedDevice || scaleConnected) return;
 
+    // v2.10.99: Never reconnect to the BLE half of a dual-mode scale
+    // (e.g. HC-04BLE). That port silently pairs but never streams weight.
+    // Clear it once so the manager stops retrying every 2-4 seconds.
+    if (isBleHalfOfDualModeScale(storedDevice.deviceName)) {
+      console.warn(`🚫 [v2.10.99] Skipping autoReconnect — "${storedDevice.deviceName}" is the BLE half of a dual-mode scale. Pair the SPP port via Settings → Classic BT.`);
+      clearStoredDevice();
+      return;
+    }
+
+
     // v2.10.69: Guard for integrated POS hardware. If a Classic printer is
     // currently connected and its address matches the stored "scale" device id
     // (which can happen when the same controller exposes both roles), do NOT
