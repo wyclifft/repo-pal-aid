@@ -1,82 +1,55 @@
-# Store Z Report — Strip Non-Store Fields + Clean POS Layout
+# Fix dual-mode HC-04 scale: ignore BLE port, use Classic SPP only
 
-The on-screen preview already gates the produce fields behind `isStoreReport`, but the **printed receipt** (`printZReport` in `src/services/bluetooth.ts`) still emits `COFFEE SUMMARY`, `SEASON`, `PRODUCE` and uses BUY-shaped column widths. The user's photo confirms this — those lines are crossed out on the printed slip. We fix the print path and tighten the store row layout, without touching the produce (transtype=1) path.
+## Problem
 
-## 1. `src/services/bluetooth.ts` — `printZReport`
+Dual-mode modules like HC-04 expose two Bluetooth endpoints:
+- `HC-04BLE` — BLE GATT side. Pairs/connects silently, advertises generic services, but **does not stream weight data**.
+- `HC-04` — Classic SPP (RFCOMM) side. PIN-paired (1234) and the only port that emits weight frames.
 
-- Add new optional field on the data arg: `reportType?: 'produce' | 'store'` (default `'produce'` — backward compatible for any caller that doesn't set it).
-- Derive `isStore = reportType === 'store'`.
-- **Header**:
-  - Company name (unchanged).
-  - If `isStore` → second line: `Z REPORT: STORE Z` (skip the existing `Z REPORT: <periodFilter>` line entirely).
-  - Else → unchanged.
-- **Metadata block** — when `isStore`, emit ONLY:
-  ```
-  * DATE: DD/MM/YYYY
-  * <ROUTE LABEL>: <factoryName>
-  ```
-  Skip `* <PRODUCE> SUMMARY`, `* SEASON: ...`, and `* PRODUCE: ...`.
-- **Section rendering for SELL / AI when `isStore`** — replace fixed-width product-name divider + 5-col grid with a compact POS layout:
-  ```
-  == SELL ==
-  TWIGA ACE 1LTR
-  M00021 00085  1   650  8:59
-  FERTILIZER C.A.N 25 KGS
-  M00010 00116 21 36750  8:35
-  M00021 00084  2  3500  8:59
-  Coffee Seedlings S1 28
-  M00021 00086  9   360  8:59
-  Spray Pumps
-  M00011 00080  1  7000 11:54
-  SELL TOTAL          34 items KSh 48260
-  ```
-  Rules:
-  - Item name line is left-aligned, full-width (no padding, no centered dashes, no reserved column). Long names wrap on the printer naturally; do not truncate or pad.
-  - Data rows: keep the existing right-aligned numeric columns so QTY / KSh / TIME stay in a vertical tabular spine. Spec: `MNO(7) REF(5) QTY(4 R) KSh(7 R) TIME(5 R)` (already used; total = 32). No change to data-row math, only the surrounding scaffolding.
-  - Drop the `'-'.repeat(W)` underline beneath the column header for store mode — produce mode keeps it. Column header (`MNO REF QTY KSh TIME`) only prints once per section.
-- **Subtotal line** stays as `<TYPE> TOTAL  N items  KSh A`.
-- **Grand totals (store mode)**: emit only the SELL/AI lines:
-  ```
-  TOTAL ITEMS  34 items
-  TOTAL VALUE  KSh 48260
-  ```
-  Suppress the `TOTAL <kg> KGS` line (BUY won't exist anyway in store mode, but make it explicit).
-- **Footer**: unchanged (CLERK / date+time / DEV).
-- Produce-mode rendering (transtype=1) is untouched — fully backward compatible per the workspace stability rule.
+Today the BLE auto-reconnect / scan path picks up `HC-04BLE` because the name matches the broad `HC-` pattern in `BTM_SERIES_PATTERNS` (`src/services/bluetooth.ts:79`). It connects, never receives data, and the saved `storedDevice` keeps re-binding to the BLE half on every restart.
 
-## 2. `src/components/DeviceZReportReceipt.tsx`
+Per the logs (BA01 v2.10.98), `[BT][scale] status: connecting → connected (HC-04BLE)` followed by no weight events, then disconnect cycles.
 
-- In `handlePrint`, pass `reportType` through to `printZReport`:
-  ```ts
-  await printZReport({ ..., reportType });
-  ```
-- In the on-screen preview, the metadata block already hides SUMMARY/SEASON/PRODUCE for `isStoreReport`. Apply the same "item name left-aligned, no fixed column" tweak inside `renderTypeSection` **only when `isStoreReport && showMoney`**:
-  - Replace the centered `── product name ──` divider with a left-aligned bold line: `<div class="text-left font-semibold text-[11px] pt-1.5 pb-0.5">{product_name}</div>`.
-  - Keep the right-aligned numeric grid as-is for the data rows so MNO/REF/QTY/KSh/TIME still align top-to-bottom.
-- No change to produce mode rendering.
+## Goal (UI/connection-layer only — no backend, no transaction logic)
 
-## 3. `src/services/bluetooth.ts` callers
+1. Never auto-connect to the BLE half of a dual-mode scale (any device whose name ends in `BLE` or matches `*-BLE` / `*BLE` suffix on a known scale family).
+2. Hide the BLE half from the BLE scan results / paired list shown to the user, so it can't be picked accidentally.
+3. For HC-04-class devices, route the user to the Classic SPP path (which already exists and requires the user to have paired with PIN 1234 in Android Bluetooth settings).
+4. On startup, if the previously stored scale device is the BLE half, treat it as invalid: clear it and prompt the user to connect via Classic BT from Settings.
 
-Only `DeviceZReportReceipt` calls `printZReport`. Other callers (none in the project) keep working because `reportType` is optional and defaults to `'produce'`.
+## Scope (files touched)
 
-## 4. Versioning (per workspace rule)
+1. `src/services/bluetooth.ts`
+   - Add helper `isBleHalfOfDualModeScale(name)` → true when `name` ends with `BLE` (case-insensitive) and the stripped base matches `isCompatibleScale` (e.g. `HC-04BLE`, `HC-05BLE`, `BTM…BLE`). Pure name check, no side effects.
+   - In `isCompatibleScale` (used by BLE scan filter and auto-reconnect), return `false` when `isBleHalfOfDualModeScale(name)` is true.
+   - In `quickReconnect` and any code path that loads `getStoredDeviceInfo()` to auto-reconnect over BLE, bail out early when the stored `deviceName` is the BLE half: log `[BT][scale] stored device is BLE half of dual-mode scale (HC-04BLE) — clearing and requiring Classic SPP pairing`, call `clearStoredDevice()`, return `{ success: false, error: 'BLE_HALF_BLOCKED' }`.
+   - In the BLE scan result handler that surfaces devices to the picker UI, filter out names where `isBleHalfOfDualModeScale(name)` is true.
 
-- `src/constants/appVersion.ts` → `APP_VERSION = '2.10.98'`, `APP_VERSION_CODE = 120`.
-- `public/sw.js` → `CACHE_VERSION = 'v45'`.
-- `android/app/build.gradle` → bump `versionCode` to `120`, `versionName` to `'2.10.98'`.
+2. `src/services/bluetoothClassic.ts` (`getPairedScales`)
+   - When listing paired devices for the Classic BT picker, **keep** `HC-04` (the SPP half) and **exclude** `HC-04BLE`. Same `isBleHalfOfDualModeScale` check.
+   - When the user has `HC-04BLE` paired but not `HC-04`, surface a soft hint in the returned list metadata (e.g. add a synthetic `note` field) so the UI can show: *"Pair the SPP port 'HC-04' with PIN 1234 in Android Bluetooth settings — the BLE half does not transmit weight."* (UI string only; no behavior change if the field is unused.)
+
+3. `src/hooks/useScaleConnection.ts`
+   - In `autoReconnect`, after the existing printer-collision guard, add: if `storedDevice.deviceName` is the BLE half, call `clearStoredDevice()`, set `scaleConnected=false`, do not retry. One-shot, idempotent.
+
+4. `src/services/btConnectionManager.ts`
+   - In the scale reconnect branch (`role === "scale"`), if `getStoredDeviceInfo()` returns a BLE-half device, skip scheduling further BLE retries (prevents the 2s/4s loop seen in logs) and emit a single `btlog("warn", "scale", "BLE half of dual-mode scale blocked — pair Classic SPP port")`.
+
+5. Version bump (per workspace rules):
+   - `src/constants/appVersion.ts` → `APP_VERSION='2.10.99'`, `APP_VERSION_CODE=121`
+   - `public/sw.js` → `CACHE_VERSION='v46'`
+   - `android/app/build.gradle` → `versionCode 121`, `versionName "2.10.99"`
 
 ## Out of scope
 
-- No change to transaction creation, sync, photo upload, device auth, period selector, type selector, produce Z layout, or any backend code.
-- No new fields persisted; `reportType` is a UI/print-only flag.
+- No changes to transaction creation, sync, receipts, photos, reports, device auth, or backend `server.js`.
+- No changes to BLE notification/parsing for legitimate BLE-only scales (BTM/DR series without the `BLE` suffix continue to work).
+- No new UI screens — only filtering of existing pickers and one toast/log message.
 
-## Verification
+## Validation
 
-- Store Z print on a device with mixed SELL+AI transactions:
-  - Header shows `Z REPORT: STORE Z`.
-  - No `COFFEE SUMMARY`, `SEASON`, or `PRODUCE` lines.
-  - Item names print left-aligned across the full width; numeric columns still align vertically.
-  - Subtotal and grand totals render `items` + `KSh`, no `KGS`.
-- Produce Z (transtype=1) print is byte-identical to current output.
-- On-screen Store Z preview matches the printed layout (item names left-aligned, no centered dividers).
-- App still builds, transactions still create, sync still works, no console errors.
+- Logs should show: on app start with `HC-04BLE` stored → one `BLE half blocked` warn, no reconnect storm.
+- BLE scan in Settings → `HC-04BLE` no longer appears; `HC-04` appears under Classic BT paired list.
+- Connecting via Classic BT to `HC-04` → existing weight stream and `scaleConnectionChange(true)` fire normally.
+- Verify other scales (BTM0304…, DR-series) still scan and connect via BLE as before.
+

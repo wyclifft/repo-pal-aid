@@ -95,8 +95,27 @@ const isBTMSeriesScale = (deviceName: string | undefined): boolean => {
   return BTM_SERIES_PATTERNS.some(pattern => upperName.includes(pattern.toUpperCase()));
 };
 
+// v2.10.99: Dual-mode HC-04/HC-05 modules expose BOTH a Classic SPP port
+// (e.g. "HC-04") that streams weight AND a BLE companion port (e.g. "HC-04BLE")
+// that does NOT transmit weight. We must never auto-connect or list the BLE
+// half — it silently pairs, reports "connected" but no data ever arrives.
+// Match any name ending in "BLE" (case-insensitive) belonging to a known
+// scale module family.
+export const isBleHalfOfDualModeScale = (deviceName: string | undefined): boolean => {
+  if (!deviceName) return false;
+  const upper = deviceName.trim().toUpperCase();
+  if (!/BLE$/.test(upper)) return false;
+  // Strip trailing BLE (and optional separator) to test the underlying base name.
+  const base = upper.replace(/[-_ ]?BLE$/, '');
+  if (!base) return false;
+  // Treat as dual-mode if the base looks like a known scale module prefix.
+  return /^(HC-?\d+|HM-?\d+|BTM|JDY|CC41|BT[-_])/.test(base);
+};
+
 // Check if device is a compatible scale (DR Series or BTM Series)
 const isCompatibleScale = (deviceName: string | undefined): boolean => {
+  // Never treat the BLE half of a dual-mode scale as a usable scale.
+  if (isBleHalfOfDualModeScale(deviceName)) return false;
   return isDRSeriesScale(deviceName) || isBTMSeriesScale(deviceName);
 };
 
@@ -709,6 +728,20 @@ export const connectBluetoothScale = async (
       });
 
       console.log(`📱 Device selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
+
+      // v2.10.99: Reject the BLE half of dual-mode scales (e.g. HC-04BLE).
+      // The user must pair the Classic SPP port (HC-04) with PIN 1234 in
+      // Android Bluetooth settings and connect via "Classic BT (Paired)".
+      if (isBleHalfOfDualModeScale(device.name)) {
+        console.warn(`🚫 Rejected BLE half of dual-mode scale: ${device.name}. Use Classic BT and pair the SPP port (e.g. HC-04) with PIN 1234.`);
+        try { await BleClient.disconnect(device.deviceId); } catch {}
+        return {
+          success: false,
+          type: 'Unknown',
+          error: `${device.name} is the BLE port and does not transmit weight. Pair the SPP port (e.g. HC-04) with PIN 1234 in Android Bluetooth settings, then use "Connect via Classic BT (Paired)".`,
+        };
+      }
+
       
       // Connect with device-scoped disconnect callback (v2.10.54)
       await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
@@ -1184,6 +1217,15 @@ export const quickReconnect = async (
   onWeightUpdate: (weight: number, scaleType: ScaleType) => void,
   retries: number = 3
 ): Promise<{ success: boolean; type: ScaleType; error?: string }> => {
+  // v2.10.99: If the persisted device is the BLE half of a dual-mode scale
+  // (e.g. HC-04BLE), do NOT attempt to reconnect. Clear it so the retry
+  // loop in btConnectionManager does not flood the log every 2-4 s.
+  const storedInfoForBleCheck = getStoredDeviceInfo();
+  if (storedInfoForBleCheck && isBleHalfOfDualModeScale(storedInfoForBleCheck.deviceName)) {
+    console.warn(`🚫 [v2.10.99] Stored scale "${storedInfoForBleCheck.deviceName}" is the BLE half of a dual-mode scale — clearing and requiring Classic SPP pairing.`);
+    clearStoredDevice();
+    return { success: false, type: 'Unknown', error: 'BLE_HALF_BLOCKED' };
+  }
   let lastError: any = null;
   
   for (let attempt = 1; attempt <= retries; attempt++) {

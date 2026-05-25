@@ -116,15 +116,33 @@ const CLASSIC_SCALE_PATTERNS = [
   'DR 150', 'DR150', 'DR-150',
   'T SCALE', 'T-SCALE', 'TSCALE', 'SCALE DR', 'SCALE-DR',
   'BTM', 'BTM03', 'BTM04', 'BTM05', 'BTM0304', 'BTM0404',
-  'HC-05', 'HC-06', 'HM-10', 'JDY', 'CC41', 'BT-', 'BT_',
+  // v2.10.99: HC-04 SPP port (used by HC-04/HC-04BLE dual-mode modules) added
+  // so it surfaces in the Classic BT paired list. The BLE companion (HC-04BLE)
+  // is explicitly excluded below.
+  'HC-04', 'HC-05', 'HC-06', 'HM-10', 'JDY', 'CC41', 'BT-', 'BT_',
   'SCALE', 'WEIGHT', 'BALANCE',
 ];
+
+/**
+ * v2.10.99: BLE companion port of dual-mode modules (e.g. HC-04BLE, HC-05BLE).
+ * This port advertises over BLE GATT but does NOT stream weight data and must
+ * never be offered as a Classic SPP scale option.
+ */
+const isBleHalfOfDualModeScale = (deviceName: string | undefined): boolean => {
+  if (!deviceName) return false;
+  const upper = deviceName.trim().toUpperCase();
+  if (!/BLE$/.test(upper)) return false;
+  const base = upper.replace(/[-_ ]?BLE$/, '');
+  return /^(HC-?\d+|HM-?\d+|BTM|JDY|CC41|BT[-_])/.test(base);
+};
 
 /**
  * Check if device name suggests Classic Bluetooth (industrial scale)
  */
 export const isLikelyClassicDevice = (deviceName: string | undefined): boolean => {
   if (!deviceName) return false;
+  // Exclude BLE companion ports of dual-mode modules — they cannot stream weight.
+  if (isBleHalfOfDualModeScale(deviceName)) return false;
   const upperName = deviceName.toUpperCase();
   return CLASSIC_SCALE_PATTERNS.some(pattern => upperName.includes(pattern.toUpperCase()));
 };
