@@ -95,8 +95,27 @@ const isBTMSeriesScale = (deviceName: string | undefined): boolean => {
   return BTM_SERIES_PATTERNS.some(pattern => upperName.includes(pattern.toUpperCase()));
 };
 
+// v2.10.99: Dual-mode HC-04/HC-05 modules expose BOTH a Classic SPP port
+// (e.g. "HC-04") that streams weight AND a BLE companion port (e.g. "HC-04BLE")
+// that does NOT transmit weight. We must never auto-connect or list the BLE
+// half — it silently pairs, reports "connected" but no data ever arrives.
+// Match any name ending in "BLE" (case-insensitive) belonging to a known
+// scale module family.
+export const isBleHalfOfDualModeScale = (deviceName: string | undefined): boolean => {
+  if (!deviceName) return false;
+  const upper = deviceName.trim().toUpperCase();
+  if (!/BLE$/.test(upper)) return false;
+  // Strip trailing BLE (and optional separator) to test the underlying base name.
+  const base = upper.replace(/[-_ ]?BLE$/, '');
+  if (!base) return false;
+  // Treat as dual-mode if the base looks like a known scale module prefix.
+  return /^(HC-?\d+|HM-?\d+|BTM|JDY|CC41|BT[-_])/.test(base);
+};
+
 // Check if device is a compatible scale (DR Series or BTM Series)
 const isCompatibleScale = (deviceName: string | undefined): boolean => {
+  // Never treat the BLE half of a dual-mode scale as a usable scale.
+  if (isBleHalfOfDualModeScale(deviceName)) return false;
   return isDRSeriesScale(deviceName) || isBTMSeriesScale(deviceName);
 };
 
