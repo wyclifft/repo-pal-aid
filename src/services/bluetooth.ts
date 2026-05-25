@@ -728,6 +728,20 @@ export const connectBluetoothScale = async (
       });
 
       console.log(`📱 Device selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
+
+      // v2.10.99: Reject the BLE half of dual-mode scales (e.g. HC-04BLE).
+      // The user must pair the Classic SPP port (HC-04) with PIN 1234 in
+      // Android Bluetooth settings and connect via "Classic BT (Paired)".
+      if (isBleHalfOfDualModeScale(device.name)) {
+        console.warn(`🚫 Rejected BLE half of dual-mode scale: ${device.name}. Use Classic BT and pair the SPP port (e.g. HC-04) with PIN 1234.`);
+        try { await BleClient.disconnect(device.deviceId); } catch {}
+        return {
+          success: false,
+          type: 'Unknown',
+          error: `${device.name} is the BLE port and does not transmit weight. Pair the SPP port (e.g. HC-04) with PIN 1234 in Android Bluetooth settings, then use "Connect via Classic BT (Paired)".`,
+        };
+      }
+
       
       // Connect with device-scoped disconnect callback (v2.10.54)
       await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
