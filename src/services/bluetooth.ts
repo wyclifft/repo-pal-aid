@@ -1217,6 +1217,15 @@ export const quickReconnect = async (
   onWeightUpdate: (weight: number, scaleType: ScaleType) => void,
   retries: number = 3
 ): Promise<{ success: boolean; type: ScaleType; error?: string }> => {
+  // v2.10.99: If the persisted device is the BLE half of a dual-mode scale
+  // (e.g. HC-04BLE), do NOT attempt to reconnect. Clear it so the retry
+  // loop in btConnectionManager does not flood the log every 2-4 s.
+  const storedInfoForBleCheck = getStoredDeviceInfo();
+  if (storedInfoForBleCheck && isBleHalfOfDualModeScale(storedInfoForBleCheck.deviceName)) {
+    console.warn(`🚫 [v2.10.99] Stored scale "${storedInfoForBleCheck.deviceName}" is the BLE half of a dual-mode scale — clearing and requiring Classic SPP pairing.`);
+    clearStoredDevice();
+    return { success: false, type: 'Unknown', error: 'BLE_HALF_BLOCKED' };
+  }
   let lastError: any = null;
   
   for (let attempt = 1; attempt <= retries; attempt++) {
