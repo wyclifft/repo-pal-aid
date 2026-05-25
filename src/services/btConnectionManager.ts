@@ -157,7 +157,17 @@ interface SavedDevice {
 function getSavedDevice(role: BtRole): SavedDevice | null {
   if (role === "scale") {
     const ble = getStoredDeviceInfo();
-    if (ble) return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: ble.connectionType === "classic-spp" ? "classic" : "ble" };
+    if (ble) {
+      // v2.10.99: Drop the BLE half of dual-mode scales (e.g. HC-04BLE) — it
+      // never streams weight. Clear once so we stop scheduling retries every
+      // few seconds and flooding the persistent log.
+      if (isBleHalfOfDualModeScale(ble.deviceName)) {
+        btlog("warn", "scale", `saved device "${ble.deviceName}" is BLE half of dual-mode scale — clearing; pair the SPP port (e.g. HC-04) with PIN 1234`);
+        try { clearStoredDevice(); } catch {}
+      } else {
+        return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: ble.connectionType === "classic-spp" ? "classic" : "ble" };
+      }
+    }
     const cls = getStoredClassicDevice();
     if (cls) return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
     return null;
