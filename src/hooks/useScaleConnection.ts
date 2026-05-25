@@ -10,6 +10,8 @@ import {
   connectBluetoothScale, 
   quickReconnect, 
   getStoredDeviceInfo,
+  clearStoredDevice,
+  isBleHalfOfDualModeScale,
   isScaleConnected,
   resubscribeScaleNotifications,
   type ScaleType 
