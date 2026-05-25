@@ -497,6 +497,13 @@ const saveClassicDeviceInfo = (device: ClassicBluetoothDevice) => {
     ...device,
     timestamp: Date.now(),
   }));
+  // v2.10.100: A successful Classic SPP pairing invalidates any prior BLE
+  // record (e.g. stale HC-04BLE) so auto-reconnect doesn't pick the wrong
+  // half of a dual-mode scale on restart.
+  try {
+    localStorage.removeItem('lastConnectedScale');
+    console.log('[BT][scale] cleared stale BLE record after Classic SPP pair:', device.name);
+  } catch {}
 };
 
 /**

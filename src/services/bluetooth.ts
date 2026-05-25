@@ -219,6 +219,12 @@ const saveDeviceInfo = (deviceId: string, deviceName: string, scaleType: ScaleTy
     timestamp: Date.now(),
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(info));
+  // v2.10.100: keep the two scale slots (BLE vs Classic SPP) mutually
+  // exclusive. If we just saved a BLE scale, drop any prior Classic record;
+  // saveClassicDeviceInfo() does the symmetric clear for the other side.
+  if (connectionType === 'ble') {
+    try { localStorage.removeItem('lastClassicBluetoothDevice'); } catch {}
+  }
 };
 
 export const getStoredDeviceInfo = (): StoredDeviceInfo | null => {

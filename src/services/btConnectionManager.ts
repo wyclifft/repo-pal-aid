@@ -156,6 +156,20 @@ interface SavedDevice {
 
 function getSavedDevice(role: BtRole): SavedDevice | null {
   if (role === "scale") {
+    // v2.10.100: Classic SPP is the weight-bearing transport on dual-mode
+    // modules (HC-04 etc.). Always prefer the Classic record over BLE — the
+    // BLE half (e.g. HC-04BLE) never streams weight.
+    const cls = getStoredClassicDevice();
+    if (cls) {
+      // If a stale BLE entry still lingers alongside a Classic record, drop
+      // it once so we never schedule BLE retries against the wrong half.
+      const staleBle = getStoredDeviceInfo();
+      if (staleBle) {
+        btlog("info", "scale", `migration: cleared stale BLE record (${staleBle.deviceName}) in favour of Classic SPP (${cls.name})`);
+        try { clearStoredDevice(); } catch {}
+      }
+      return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
+    }
     const ble = getStoredDeviceInfo();
     if (ble) {
       // v2.10.99: Drop the BLE half of dual-mode scales (e.g. HC-04BLE) — it
@@ -164,12 +178,10 @@ function getSavedDevice(role: BtRole): SavedDevice | null {
       if (isBleHalfOfDualModeScale(ble.deviceName)) {
         btlog("warn", "scale", `saved device "${ble.deviceName}" is BLE half of dual-mode scale — clearing; pair the SPP port (e.g. HC-04) with PIN 1234`);
         try { clearStoredDevice(); } catch {}
-      } else {
-        return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: ble.connectionType === "classic-spp" ? "classic" : "ble" };
+        return null;
       }
+      return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: ble.connectionType === "classic-spp" ? "classic" : "ble" };
     }
-    const cls = getStoredClassicDevice();
-    if (cls) return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
     return null;
   }
   // printer
