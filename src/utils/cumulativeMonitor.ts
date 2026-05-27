@@ -22,6 +22,43 @@
 import { plog } from "./persistentLogger";
 
 /**
+ * v2.10.101: Focused-farmer trace mode. When `localStorage.cum_debug_focus`
+ * is set (comma-separated farmer IDs), every read/write of those farmers'
+ * cumulative cache emits a CUM:FOCUS / CUM:READ row with full context.
+ * Empty list = no-op (zero overhead for everyone else).
+ */
+let focusSet: Set<string> | null = null;
+let focusLoaded = false;
+function loadFocus(): Set<string> {
+  if (focusLoaded && focusSet) return focusSet;
+  const s = new Set<string>();
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem("cum_debug_focus") : null;
+    if (raw) {
+      for (const id of raw.split(",")) {
+        const k = id.replace(/^#/, "").trim().toUpperCase();
+        if (k) s.add(k);
+      }
+    }
+  } catch { /* noop */ }
+  focusSet = s;
+  focusLoaded = true;
+  return s;
+}
+export function isFocusedFarmer(farmerId: string): boolean {
+  try {
+    const s = loadFocus();
+    if (s.size === 0) return false;
+    return s.has((farmerId || "").replace(/^#/, "").trim().toUpperCase());
+  } catch { return false; }
+}
+export function plogFocus(tag: string, msg: string, data?: Record<string, unknown>): void {
+  try {
+    plog.info(tag, msg, { ...getActiveContext(), ...(data || {}) });
+  } catch { /* never throw */ }
+}
+
+/**
  * v2.10.95: Read the currently-selected dashboard context from localStorage so
  * every cumulative log row carries tcode/icode/scode/ccode/devcode. Pure read,
  * never throws — falls back to {} if anything is missing.
