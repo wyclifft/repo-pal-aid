@@ -906,6 +906,10 @@ export const useIndexedDB = () => {
             const incomingIsEmpty = (Number(count) || 0) === 0 && incomingByProductSum === 0;
             if (existingBase > 0 && incomingIsEmpty) {
               console.warn(`[CUM] Refusing stale backend write for ${cleanId} route=${routeKey}: incoming=0 vs cached=${existingBase} (read-replica lag)`);
+              if (isFocusedFarmer(cleanId)) {
+                plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} REFUSED stale backend=0 cached=${existingBase}`,
+                  { farmerId: cleanId, route: routeKey, source: 'backend', refused: true, existingBase, incomingCount: count, incomingByProduct: byProduct });
+              }
               resolve();
               return;
             }
@@ -916,6 +920,10 @@ export const useIndexedDB = () => {
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct,
             });
+            if (isFocusedFarmer(cleanId)) {
+              plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} BACKEND ${existing?.baseCount ?? 0}→${count}`,
+                { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: count, prevByProduct: existing?.byProduct, nextByProduct: byProduct });
+            }
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
@@ -927,6 +935,10 @@ export const useIndexedDB = () => {
               lastUpdated: new Date().toISOString()
             };
           } else {
+            if (isFocusedFarmer(cleanId)) {
+              plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} LOCAL +${count} (base=${existing?.baseCount ?? 0})`,
+                { farmerId: cleanId, route: routeKey, source: 'local', increment: count, baseCount: existing?.baseCount ?? 0, prevLocal: existing?.localCount ?? 0, byProduct: byProduct || existing?.byProduct });
+            }
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
