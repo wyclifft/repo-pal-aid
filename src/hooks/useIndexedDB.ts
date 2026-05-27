@@ -832,14 +832,23 @@ export const useIndexedDB = () => {
         const request = store.get(cacheKey);
         request.onsuccess = () => {
           if (request.result) {
-            resolve({
+            const result = {
               baseCount: request.result.baseCount || 0,
               localCount: request.result.localCount || 0,
               month: request.result.month,
               route: request.result.route || ((route || '').trim().toUpperCase() || 'ALL'),
               byProduct: request.result.byProduct || []
-            });
+            };
+            if (isFocusedFarmer(cleanId)) {
+              plogFocus('CUM:READ', `${cleanId} route=${result.route} base=${result.baseCount} local=${result.localCount}`,
+                { farmerId: cleanId, route: result.route, source: 'getFarmerCumulative', baseCount: result.baseCount, localCount: result.localCount, byProduct: result.byProduct, lastUpdated: request.result.lastUpdated });
+            }
+            resolve(result);
           } else {
+            if (isFocusedFarmer(cleanId)) {
+              plogFocus('CUM:READ', `${cleanId} route=${(route||'').trim().toUpperCase()||'ALL'} MISS`,
+                { farmerId: cleanId, route, source: 'getFarmerCumulative', miss: true, cacheKey });
+            }
             resolve(null);
           }
         };
