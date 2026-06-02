@@ -426,9 +426,21 @@ const Index = () => {
       }
     }, PERIODIC_REFRESH_MS);
 
+    // v2.10.102: Online listener — when a previously-offline device reconnects,
+    // immediately pre-warm the route-wide farmer_cumulative cache so the next
+    // offline drop has baseCounts for every farmer on the route. Bypasses the
+    // 60 s throttle gate via the 'online' forced reason.
+    const handleOnline = () => {
+      if (!(window as any).__cumulativeSyncRunning) {
+        refreshCumulativesBatch('online');
+      }
+    };
+    window.addEventListener('online', handleOnline);
+
     return () => {
       window.removeEventListener('syncComplete', handleSyncComplete);
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('online', handleOnline);
       clearInterval(intervalId);
       if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
     };
