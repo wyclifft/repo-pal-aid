@@ -1,4 +1,17 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.102: OFFLINE CUMULATIVE PRE-WARM + DIAGNOSTIC — devices that
+//   booted offline (or lost network before the startup batch finished)
+//   never repopulated farmer_cumulative when reconnecting, so first-time
+//   offline captures printed receipts without the monthly cumulative
+//   (observed on BA02 for M03399 / M03353 / M00489). Fix: add a window
+//   'online' listener in Index.tsx that calls refreshCumulativesBatch
+//   ('online'), and treat 'online' as a forced reason alongside
+//   'post-sync'/'manual' so it bypasses the 60 s throttle gate. Also
+//   added a CUM:OFFLINE-MISS warn row to /debug, fired when
+//   shouldShowCumulativeForFarmer is true but cumulativeForPrint.total
+//   ends up 0 — gives a direct signal next time. Strictly additive: no
+//   backend, IndexedDB schema, sync engine, reference generator, receipt
+//   rendering, or auth changes.
 // v2.10.89: CUMULATIVE REFRESH THROTTLED & COALESCED — the full-batch
 //   cumulative refresh used to fire after every receipt save, every tab
 //   focus, every farmer/product selection, and on a 3-min metronome,
@@ -619,5 +632,5 @@
 // v2.10.98: Store Z print receipt strips COFFEE SUMMARY / SEASON / PRODUCE
 //   metadata and renders item names as left-aligned full-width lines (POS
 //   style). Produce Z layout unchanged. On-screen Store Z preview matches.
-export const APP_VERSION = '2.10.101';
-export const APP_VERSION_CODE = 123;
+export const APP_VERSION = '2.10.102';
+export const APP_VERSION_CODE = 124;
