@@ -1,94 +1,89 @@
-## Goal
+# v2.10.104 — Stale-Write Guard: Two-Read Confirmation + Reversal Visibility
 
-Make `FarmerSyncDashboard` honestly reflect the actual sync state on the device:
+## Problem (from log analysis)
 
-1. Show clearly when the device is **offline** (online/offline pill in the header).
-2. **Disable Refresh** when offline or while a cumulative refresh is already running, with a tooltip-style hint explaining why.
-3. Show a distinct **"Sync incomplete / interrupted"** indicator when the last refresh did not finish (network dropped mid-batch, cancelled, batch API failed and we fell back to offline cache, or background pass is still running).
+The `[CUM] Refusing stale backend write … incoming=0 vs cached=N` warning fired 183 times across 17 farmers in 3 days. Investigation confirmed every case was legitimate, not read-replica lag:
 
-Strictly UI/state in `src/components/FarmerSyncDashboard.tsx`. No sync engine, no backend, no IndexedDB schema, no receipt rendering changes.
+- **5 farmers** (M00160, M00301, M01517, M01618, M02413) — a manual negative-value transaction reversed the original delivery, so the backend correctly returns `0`. The cache holding `>0` is the stale side, and the guard is *preventing* the correct value from being written.
+- **7 farmers** (M01503, M01224, M03299, M00783, M03669, M03273, M00216) — first-ever delivery; backend has nothing prior, so `0` is correct.
 
----
+The current guard treats any `incoming=0 vs cached>0` as suspicious and refuses the write outright. We need to keep protection against true read-replica lag while accepting confirmed zeros.
 
-## Changes (single file: `src/components/FarmerSyncDashboard.tsx`)
+## Approach
 
-### 1. Online/offline awareness
+Mirror the same two-read confirmation pattern already used by `observeBaseChange` in `cumulativeMonitor.ts`: stash the first `incoming=0` sighting, and only accept the overwrite (or refuse it permanently) after a second backend read within an 8 s TTL confirms `0` is real. Also surface negative transactions as a clean info row in `/debug` so reversals are recognisable on sight.
 
-- Add `isOnline` state initialised from `navigator.onLine`.
-- Subscribe to `window` `online` / `offline` events in the existing `useEffect`; flip the state and trigger a single `loadData(false)` when transitioning back online (so the dashboard repopulates from the batch API automatically — matches the new v2.10.102 cumulative pre-warm behaviour).
-- Header gets a small status pill next to the title:
-  - online → `<Badge variant="outline">` green dot + "Online"
-  - offline → `<Badge variant="destructive">` "Offline — using cached data"
+## Changes (UI / state / monitor only — no backend, no schema)
 
-### 2. Block refresh while offline OR sync running
+### 1. `src/utils/cumulativeMonitor.ts`
 
-- Track whether a cumulative refresh is currently running anywhere in the app. We already listen to `cumulative-sync-progress`; treat `bgProgress != null && bgProgress.current < bgProgress.total` as "sync running". Also expose `(window as any).__cumulativeSyncRunning` (already set elsewhere) by checking it in `handleRefreshClick`.
-- The Refresh button is `disabled` when **any** of:
-  - `isLoading` (already there)
-  - `!isOnline`
-  - `bgProgress` active OR `__cumulativeSyncRunning === true`
-- Add a `title` attribute on the button explaining the reason (offline / sync in progress / loading) so the user gets a tooltip on long-press.
-- Defensive guard inside `loadData(true)`: if `!navigator.onLine`, short-circuit with a toast-equivalent inline notice ("Cannot refresh while offline — showing cached data") and call `loadData(false)` instead of attempting the sync path. This protects against race conditions where the button was enabled at click time but the network dropped before the handler ran.
+Add a small **zero-confirmation cache** (parallel to the existing `pending` map):
 
-### 3. Track last-sync outcome (complete / incomplete / failed)
-
-Add a small `lastSyncState` reducer-style state:
-
-```ts
-type LastSyncState =
-  | { kind: 'idle' }
-  | { kind: 'complete'; at: number; source: 'online' | 'offline-cache' }
-  | { kind: 'incomplete'; at: number; reason: string }   // cancelled, partial, bg-running
-  | { kind: 'failed'; at: number; reason: string };       // batch API failed → fell back to cache
+```text
+zeroPending: Map<key, { firstSeenAt: number, existingBase: number }>
+TTL = 8000ms, max 500 entries (LRU evict like pending)
+key = farmerId|route (same shape as pendingKey)
 ```
 
-Set it in `loadData`:
-- `'complete' source: 'online'` when `loadFromBatchAPI` returned a non-null result AND `cancelledRef.current` is false.
-- `'complete' source: 'offline-cache'` when offline path ran and finished without `cancelledRef`.
-- `'failed'` when `navigator.onLine` was true but `loadFromBatchAPI` returned `null` (batch API failure → we fell back to offline cache while online; that IS an incomplete sync from the user's POV).
-- `'incomplete'` when `cancelledRef.current` is true at the end (component unmounted / re-triggered mid-flight), OR when `bgProgress` was active at the moment loading finished.
+New exported helpers:
 
-Render below the summary stats grid:
+- `observeIncomingZero(farmerId, route, existingBase) → 'stash' | 'confirm' | 'expired-restash'`
+  - First sighting → stash, return `'stash'`
+  - Second sighting within TTL → delete entry, return `'confirm'` (caller may overwrite)
+  - Sighting after TTL → re-stash, return `'expired-restash'`
+- `clearZeroPending(farmerId, route)` — called when a non-zero backend value arrives, so a later real zero starts fresh.
 
-- `complete + online` → green check row: `"Last refreshed Xs ago from server"` (relative time updated on each render).
-- `complete + offline-cache` → muted info row with `CloudOff` icon: `"Last refreshed from offline cache · X ago"`.
-- `failed` → amber `AlertTriangle` row: `"Last server refresh failed — showing cached data. Tap Refresh when online."`
-- `incomplete` → amber `AlertTriangle` row: `"Sync did not complete — background cache pass still running"` (or `"… was interrupted"`).
+Both wrapped in try/catch — never throw into the caller.
 
-Use semantic tokens (`text-destructive`, `text-primary`, `bg-amber-500/10 text-amber-600` via the existing token system — keep colour usage consistent with the rest of the dashboard).
+New tag emitted by `recordRowFingerprint` (or a new tiny helper called from sync) when a transaction with `weight < 0` is observed for the first time:
 
-### 4. Small wording / clarity fixes
+- `CUM:REVERSAL-DETECTED` (info, sampled or one-per-transrefno) — payload: `{ farmerId, transrefno, weight, transdate }`. Lets `/debug` show reversals at-a-glance and explains downstream zero-cumulatives.
 
-- The summary "Cached" tile gets a sub-line `${cachedCount}/${totalCount}` so the user immediately sees coverage vs total without doing the math against the progress bar.
-- When `bgProgress` is active, the header pill shows a small `"Cache sync in progress (Pass X/5)"` Badge so the in-flight pass is visible without expanding the existing card.
+### 2. `src/hooks/useIndexedDB.ts` (`updateFarmerCumulative`, ~lines 892–915)
 
----
+Replace the unconditional refusal block with the two-read flow:
 
-## Version bump
+```text
+if (existingBase > 0 && incomingIsEmpty) {
+  result = observeIncomingZero(cleanId, routeKey, existingBase)
+  if (result === 'stash' || result === 'expired-restash') {
+    // First sighting — keep cached value, log as info (not warn)
+    plog.info('CUM:ZERO-PENDING', `${cleanId} route=${routeKey} backend=0 cached=${existingBase} awaiting confirmation`, {...})
+    resolve(); return;
+  }
+  // result === 'confirm' — second read confirms zero is real (reversal or wipe)
+  plog.info('CUM:ZERO-CONFIRMED', `${cleanId} route=${routeKey} accepting backend=0 (was ${existingBase})`, {...})
+  // fall through to normal write path
+}
 
-Workspace rule — bump on every change:
+// Non-zero backend path also clears any pending entry:
+if (!incomingIsEmpty) clearZeroPending(cleanId, routeKey)
+```
 
-- `src/constants/appVersion.ts`: `APP_VERSION = '2.10.103'`, `APP_VERSION_CODE = 125`, plus changelog comment at top describing the dashboard clarity fix.
-- `android/app/build.gradle`: `versionCode 125`, `versionName "2.10.103"`.
-- `public/sw.js`: `CACHE_VERSION = 'v50'`.
+Also detect negatives on the *local* write path (the `else` branch around line 937) — if `count < 0`, emit `CUM:REVERSAL-DETECTED` once per `transrefno` (dedupe via a small in-memory Set, capped at 500).
 
----
+`console.warn` line removed; new logs go through `plog` so they show up in `/debug`.
 
-## Explicitly NOT touched
+### 3. Versioning
 
-- `backend-api/server.js` — no API changes
-- `useIndexedDB.ts` — no schema migration
-- `referenceGenerator.ts`, receipt rendering, sync engine, photo upload, auth, Bluetooth — untouched
-- `src/pages/Index.tsx` — the v2.10.102 online pre-warm stays as is; this plan only consumes the same state, never overrides it
+- `src/constants/appVersion.ts` → `APP_VERSION = '2.10.104'`, `APP_VERSION_CODE = 126`, add changelog entry summarising the guard change + new tags.
+- `android/app/build.gradle` → `versionCode 126`, `versionName "2.10.104"`.
+- `public/sw.js` → `CACHE_VERSION = 'v51'`.
 
----
+## Out of scope (explicitly untouched)
+
+- `backend-api/server.js` — no backend changes, production-safe.
+- IndexedDB schema, DB_VERSION, migrations.
+- Sync engine, idempotency matrix, reference generator.
+- Receipt rendering, photo upload, auth, Bluetooth.
+- `FarmerSyncDashboard.tsx` (the v2.10.103 UI work stays as-is).
+- `cumulativeMonitor.observeBaseChange` regression detection — its own two-read flow is unchanged; we only add a parallel zero-confirmation flow.
 
 ## Verification
 
-1. **Offline cold open**: airplane mode → open `/dashboard` → header shows red "Offline — using cached data" pill, Refresh is disabled with title "Cannot refresh while offline", last-sync row shows `offline-cache` source.
-2. **Online refresh while bg sync running**: trigger a manual refresh from `/`, then immediately open dashboard → Refresh is disabled, bg progress card is shown, last-sync row reads `"Sync did not complete — background cache pass still running"`.
-3. **Batch API failure online**: simulate by killing the network mid-batch (or pointing the API at a wrong URL) → after fallback path runs, dashboard shows amber `"Last server refresh failed — showing cached data."`.
-4. **Online → offline transition**: pull the cable while dashboard is open → pill flips to Offline within ~1s (event-driven), Refresh disables. Plug back in → pill flips to Online, `loadData(false)` runs once and pill updates to "Last refreshed Xs ago from server".
-5. Regression suite (per workspace rules): confirm transaction creation, receipt printing, photo upload, farmers sync, items sync, reference generation, cumulative-on-receipt all unchanged.
-
-Switch to build mode to apply.
+1. **Reversal case** (M00160 type): cache=12.5, backend=0 twice within 8 s → first read keeps cache (`CUM:ZERO-PENDING`), second read overwrites to 0 (`CUM:ZERO-CONFIRMED`). Reprinting after the second read shows the corrected cumulative.
+2. **First delivery** (M01503 type): existingBase already 0, so the guard never triggers — write proceeds as today.
+3. **True read-replica lag**: cache=12.5, first read=0, second read=12.5 (recovered) → first sighting stashed, second read clears it via `clearZeroPending`, no data loss, no false alarm.
+4. **Negative transaction**: a local entry or synced record with `weight < 0` emits exactly one `CUM:REVERSAL-DETECTED` info row per `transrefno`.
+5. **/debug page**: `CUM:ZERO-PENDING`, `CUM:ZERO-CONFIRMED`, `CUM:REVERSAL-DETECTED` visible and filterable; old noisy `console.warn` gone.
+6. **Regression suite**: receipts still print correct cumulatives; sync dashboard counts unchanged; legacy Android 7 / WebView 52 unaffected (no new APIs used).
