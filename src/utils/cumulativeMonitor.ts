@@ -388,6 +388,80 @@ export function endBatch(label: string, totalOverride?: number): void {
   }
 }
 
+// ---- zero-confirmation guard (v2.10.104) ---------------------------------
+//
+// The stale-write guard in updateFarmerCumulative originally refused any
+// `incoming=0 vs cached>0` write outright to protect against read-replica
+// lag. In practice almost every refusal was legitimate — either a manual
+// negative-value reversal that genuinely zeroed the farmer's monthly total,
+// or a first-ever delivery for a brand-new farmer. We now require a second
+// backend read within 8 s to confirm before accepting the overwrite.
+
+interface ZeroPending { firstSeenAt: number; existingBase: number }
+const ZERO_TTL_MS = 8000;
+const ZERO_MAX = 500;
+const zeroPending = new Map<string, ZeroPending>();
+
+function zeroKey(farmerId: string, route?: string): string {
+  return `${(farmerId || "").trim().toUpperCase()}|${(route || "").trim().toUpperCase()}`;
+}
+
+export type ZeroObservation = "stash" | "confirm" | "expired-restash";
+
+export function observeIncomingZero(farmerId: string, route: string | undefined, existingBase: number): ZeroObservation {
+  try {
+    const k = zeroKey(farmerId, route);
+    const now = Date.now();
+    const p = zeroPending.get(k);
+    if (!p) {
+      if (zeroPending.size >= ZERO_MAX) {
+        const oldest = zeroPending.keys().next().value;
+        if (oldest) zeroPending.delete(oldest);
+      }
+      zeroPending.set(k, { firstSeenAt: now, existingBase });
+      return "stash";
+    }
+    if (now - p.firstSeenAt > ZERO_TTL_MS) {
+      zeroPending.set(k, { firstSeenAt: now, existingBase });
+      return "expired-restash";
+    }
+    zeroPending.delete(k);
+    return "confirm";
+  } catch {
+    return "stash"; // conservative: keep cached value
+  }
+}
+
+export function clearZeroPending(farmerId: string, route?: string): void {
+  try { zeroPending.delete(zeroKey(farmerId, route)); } catch { /* noop */ }
+}
+
+// ---- reversal detection (v2.10.104) --------------------------------------
+
+const reversalSeen = new Set<string>();
+const REVERSAL_MAX = 500;
+
+export function noteReversalIfNegative(
+  transrefno: string | undefined,
+  weight: number,
+  ctx: { farmerId?: string; route?: string; transdate?: string } = {}
+): void {
+  try {
+    if (!isFinite(weight) || weight >= 0) return;
+    const key = transrefno || `${ctx.farmerId || "?"}|${ctx.transdate || "?"}|${weight}`;
+    if (reversalSeen.has(key)) return;
+    if (reversalSeen.size >= REVERSAL_MAX) {
+      const first = reversalSeen.values().next().value;
+      if (first) reversalSeen.delete(first);
+    }
+    reversalSeen.add(key);
+    plog.info("CUM:REVERSAL-DETECTED",
+      `${ctx.farmerId || "?"} ${transrefno || "(no-ref)"} weight=${weight}`,
+      { ...getActiveContext(), transrefno, weight, ...ctx }
+    );
+  } catch { /* never throw */ }
+}
+
 // ---- public api ----------------------------------------------------------
 
 export const cumulativeMonitor = {
@@ -397,6 +471,9 @@ export const cumulativeMonitor = {
   batchOk,
   batchFail,
   endBatch,
+  observeIncomingZero,
+  clearZeroPending,
+  noteReversalIfNegative,
 };
 
 export default cumulativeMonitor;
