@@ -374,13 +374,25 @@ export const FarmerSyncDashboard = () => {
   const loadData = useCallback(async (triggerSync = false) => {
     if (!isReady) return;
     cancelledRef.current = false;
+
+    // Defensive guard: if caller asked for a server-touching refresh but the
+    // device is offline at handler time, downgrade to a cache-only reload so
+    // we never silently hit the network when there's no network.
+    if (triggerSync && !navigator.onLine) {
+      triggerSync = false;
+    }
+
     setIsLoading(true);
     setVisibleCount(PAGE_SIZE);
     setProgressInfo({ current: 0, total: 0, status: triggerSync ? 'Syncing offline receipts...' : 'Loading...' });
 
+    let serverRefreshAttempted = false;
+    let serverRefreshOk = false;
+
     try {
       // Step 1: Sync offline receipts if requested
       if (triggerSync && navigator.onLine) {
+        serverRefreshAttempted = true;
         setProgressInfo({ current: 0, total: 0, status: 'Syncing offline receipts to server...' });
         window.dispatchEvent(new CustomEvent('syncStart'));
         await new Promise(r => setTimeout(r, 2000));
@@ -408,6 +420,7 @@ export const FarmerSyncDashboard = () => {
                 }));
               }
               cumulativeMonitor.endBatch(batchLabel);
+              serverRefreshOk = true;
             }
           } catch (err) {
             console.warn('[SyncDash] Batch cumulative refresh failed:', err);
@@ -421,6 +434,7 @@ export const FarmerSyncDashboard = () => {
 
       // Step 3: Load farmer list — transaction-driven (online) or cached (offline)
       let results: FarmerSyncEntry[] | null = null;
+      let usedSource: 'online' | 'offline-cache' = 'offline-cache';
 
       // Always build name lookup — used by both online and offline paths for display names
       setProgressInfo({ current: 0, total: 0, status: 'Fetching farmer names...' });
@@ -430,7 +444,10 @@ export const FarmerSyncDashboard = () => {
         // Use batch API as the sole source of the farmer list
         setProgressInfo({ current: 0, total: 0, status: 'Fetching transaction data...' });
         results = await loadFromBatchAPI(nameLookup, activeRoute || undefined);
+        if (results) usedSource = 'online';
       }
+
+      const batchApiFailedWhileOnline = navigator.onLine && results === null;
 
       // Offline fallback or batch API failure — transaction-driven (v2.10.62)
       if (!results) {
@@ -446,9 +463,22 @@ export const FarmerSyncDashboard = () => {
 
       setEntries(results);
       setProgressInfo({ current: results.length, total: results.length, status: 'Complete' });
+
+      // Step 4: Record last-sync outcome
+      const at = Date.now();
+      if (cancelledRef.current) {
+        setLastSync({ kind: 'incomplete', at, reason: 'Interrupted' });
+      } else if (serverRefreshAttempted && !serverRefreshOk) {
+        setLastSync({ kind: 'failed', at, reason: 'Server refresh failed' });
+      } else if (batchApiFailedWhileOnline) {
+        setLastSync({ kind: 'failed', at, reason: 'Batch API unavailable' });
+      } else {
+        setLastSync({ kind: 'complete', at, source: usedSource });
+      }
     } catch (err) {
       console.error('[SyncDash] Failed to load farmer sync data:', err);
       setProgressInfo(prev => ({ ...prev, status: 'Error loading data' }));
+      setLastSync({ kind: 'failed', at: Date.now(), reason: 'Unexpected error' });
     } finally {
       setIsLoading(false);
     }
@@ -460,14 +490,32 @@ export const FarmerSyncDashboard = () => {
     const handleProgress = (e: any) => {
       setBgProgress(e.detail);
     };
+    const handleOnline = () => {
+      setIsOnline(true);
+      // Auto-reload from the batch API once we regain connectivity so the
+      // dashboard reflects the latest server state without manual refresh.
+      loadData(false);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
 
     window.addEventListener('cumulative-sync-progress', handleProgress);
-    
-    return () => { 
-      cancelledRef.current = true; 
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Lightweight ticker so the "X ago" label stays fresh.
+    const tick = window.setInterval(() => setNowTick(Date.now()), 15000);
+
+    return () => {
+      cancelledRef.current = true;
       window.removeEventListener('cumulative-sync-progress', handleProgress);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.clearInterval(tick);
     };
   }, [loadData]);
+
 
   const cachedCount = entries.filter(e => e.isCached).length;
   const totalCount = entries.length;
