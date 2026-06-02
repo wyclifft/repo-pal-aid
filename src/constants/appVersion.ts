@@ -1,4 +1,22 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.104: STALE-WRITE GUARD → TWO-READ CONFIRMATION + REVERSAL VISIBILITY.
+//   The `[CUM] Refusing stale backend write incoming=0 vs cached=N` guard
+//   fired 183 times in 3 days across 17 farmers. Every case was legitimate:
+//   5 farmers had a manual negative-value transaction that reversed their
+//   monthly total (M00160, M00301, M01517, M01618, M02413), and 7 were
+//   first-ever deliveries (M01503, M01224, M03299, M00783, M03669, M03273,
+//   M00216). The guard was protecting cache against a non-existent threat
+//   and blocking the correct zero. New flow mirrors the regression
+//   monitor's two-read pattern: first `incoming=0 vs cached>0` sighting
+//   stashes (info: CUM:ZERO-PENDING), second sighting within 8 s confirms
+//   and accepts the overwrite (info: CUM:ZERO-CONFIRMED). Any non-zero
+//   backend read in between clears the pending entry — true read-replica
+//   lag still suppressed without data loss. New CUM:REVERSAL-DETECTED info
+//   row fires once per transrefno when a negative-weight transaction is
+//   observed, so reversals are recognizable in /debug instead of looking
+//   like errors. Strictly utils/state changes — no backend, IndexedDB
+//   schema, sync engine, reference generator, receipt rendering, photo,
+//   Bluetooth, or auth changes.
 // v2.10.103: FARMER SYNC DASHBOARD CLARITY — the dashboard now honestly
 //   reflects connectivity and sync state. New online/offline pill in the
 //   header (flips on window 'online'/'offline' events). Refresh button is
@@ -647,5 +665,5 @@
 // v2.10.98: Store Z print receipt strips COFFEE SUMMARY / SEASON / PRODUCE
 //   metadata and renders item names as left-aligned full-width lines (POS
 //   style). Produce Z layout unchanged. On-screen Store Z preview matches.
-export const APP_VERSION = '2.10.103';
-export const APP_VERSION_CODE = 125;
+export const APP_VERSION = '2.10.104';
+export const APP_VERSION_CODE = 126;

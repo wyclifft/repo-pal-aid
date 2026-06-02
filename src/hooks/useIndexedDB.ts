@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
-import { observeBaseChange, isFocusedFarmer, plogFocus } from '@/utils/cumulativeMonitor';
+import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative } from '@/utils/cumulativeMonitor';
+import { plog } from '@/utils/persistentLogger';
 
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
 // (e.g. referenceGenerator) open the SAME version and never trigger
@@ -905,13 +906,30 @@ export const useIndexedDB = () => {
             const existingBase = Number(existing?.baseCount || 0);
             const incomingIsEmpty = (Number(count) || 0) === 0 && incomingByProductSum === 0;
             if (existingBase > 0 && incomingIsEmpty) {
-              console.warn(`[CUM] Refusing stale backend write for ${cleanId} route=${routeKey}: incoming=0 vs cached=${existingBase} (read-replica lag)`);
-              if (isFocusedFarmer(cleanId)) {
-                plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} REFUSED stale backend=0 cached=${existingBase}`,
-                  { farmerId: cleanId, route: routeKey, source: 'backend', refused: true, existingBase, incomingCount: count, incomingByProduct: byProduct });
+              // v2.10.104: two-read confirmation. First sighting → keep cache,
+              // log as info. Second sighting within 8s → accept the zero
+              // (legitimate reversal or admin wipe). Any non-zero read in
+              // between clears the pending entry (see below).
+              const result = observeIncomingZero(cleanId, routeKey, existingBase);
+              if (result === 'stash' || result === 'expired-restash') {
+                plog.info('CUM:ZERO-PENDING',
+                  `${cleanId} route=${routeKey} backend=0 cached=${existingBase} awaiting confirmation`,
+                  { farmerId: cleanId, route: routeKey, existingBase, sighting: result });
+                if (isFocusedFarmer(cleanId)) {
+                  plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} ZERO-PENDING cached=${existingBase}`,
+                    { farmerId: cleanId, route: routeKey, source: 'backend', existingBase, sighting: result });
+                }
+                resolve();
+                return;
               }
-              resolve();
-              return;
+              // result === 'confirm' — fall through to overwrite with 0
+              plog.info('CUM:ZERO-CONFIRMED',
+                `${cleanId} route=${routeKey} accepting backend=0 (was ${existingBase})`,
+                { farmerId: cleanId, route: routeKey, existingBase });
+            } else if (!incomingIsEmpty) {
+              // Any non-zero read clears a pending zero so a future real zero
+              // restarts the two-read flow cleanly.
+              clearZeroPending(cleanId, routeKey);
             }
             observeBaseChange(existing?.baseCount, count, {
               farmerId: cleanId,
@@ -935,6 +953,10 @@ export const useIndexedDB = () => {
               lastUpdated: new Date().toISOString()
             };
           } else {
+            // v2.10.104: surface manual negative reversals as a clean info row.
+            if (Number(count) < 0) {
+              noteReversalIfNegative(undefined, Number(count), { farmerId: cleanId, route: routeKey });
+            }
             if (isFocusedFarmer(cleanId)) {
               plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} LOCAL +${count} (base=${existing?.baseCount ?? 0})`,
                 { farmerId: cleanId, route: routeKey, source: 'local', increment: count, baseCount: existing?.baseCount ?? 0, prevLocal: existing?.localCount ?? 0, byProduct: byProduct || existing?.byProduct });
