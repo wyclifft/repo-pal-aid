@@ -1475,7 +1475,26 @@ const Index = () => {
             cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
           }
         }
-        
+
+        // v2.10.102: Diagnostic — if cumulative was supposed to print but
+        // resolved to 0, emit a single warn row so /debug surfaces the gap.
+        // Most common cause: device captured offline before route-wide
+        // pre-warm populated farmer_cumulative for this farmer.
+        if (
+          printData.shouldShowCumulativeForFarmer &&
+          (!cumulativeForPrint || cumulativeForPrint.total === 0)
+        ) {
+          try {
+            plog.warn('CUM:OFFLINE-MISS', 'Cumulative empty at print time', {
+              farmerId: printData.farmerIdForCumulative,
+              route: printData.routeCode,
+              icode: printData.productIcode,
+              online: navigator.onLine,
+              reason: 'no-baseCount-cached',
+            });
+          } catch {}
+        }
+
         // Print in background - don't block anything
         printMilkReceiptDirect(printData.collections, {
           companyName: printData.companyName,
