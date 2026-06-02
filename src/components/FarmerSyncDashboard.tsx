@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { CheckCircle2, AlertCircle, RefreshCw, Users, Database, Loader2, Search, Wifi, WifiOff, AlertTriangle, CloudOff, CloudCheck } from 'lucide-react';
+import { CheckCircle2, AlertCircle, RefreshCw, Users, Database, Loader2, Search, Wifi, WifiOff, AlertTriangle, CloudOff, Cloud } from 'lucide-react';
 import type { Farmer } from '@/lib/supabase';
 import { generateDeviceFingerprint, getStoredDeviceId } from '@/utils/deviceFingerprint';
 import { cumulativeMonitor } from '@/utils/cumulativeMonitor';
