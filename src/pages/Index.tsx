@@ -21,6 +21,7 @@ import { cumulativeMonitor } from '@/utils/cumulativeMonitor';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
 import { saveToLocalDB } from '@/services/offlineStorage';
+import { plog } from '@/utils/persistentLogger';
 import { toast } from 'sonner';
 
 // Helper: filter cumulative data to only the selected produce type
@@ -296,7 +297,7 @@ const Index = () => {
       // always pass through (they imply data we just wrote), but they still
       // ride the in-flight queue below.
       const sinceLast = Date.now() - lastCumulativeRefreshAt;
-      const isForced = reason === 'post-sync' || reason === 'manual';
+      const isForced = reason === 'post-sync' || reason === 'manual' || reason === 'online';
       if (!isForced && sinceLast < MIN_REFRESH_GAP_MS) {
         console.log(`🚦 Cumulative refresh (${reason}): throttled (last ran ${Math.round(sinceLast / 1000)}s ago)`);
         return;
@@ -425,9 +426,21 @@ const Index = () => {
       }
     }, PERIODIC_REFRESH_MS);
 
+    // v2.10.102: Online listener — when a previously-offline device reconnects,
+    // immediately pre-warm the route-wide farmer_cumulative cache so the next
+    // offline drop has baseCounts for every farmer on the route. Bypasses the
+    // 60 s throttle gate via the 'online' forced reason.
+    const handleOnline = () => {
+      if (!(window as any).__cumulativeSyncRunning) {
+        refreshCumulativesBatch('online');
+      }
+    };
+    window.addEventListener('online', handleOnline);
+
     return () => {
       window.removeEventListener('syncComplete', handleSyncComplete);
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('online', handleOnline);
       clearInterval(intervalId);
       if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
     };
@@ -1462,7 +1475,26 @@ const Index = () => {
             cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
           }
         }
-        
+
+        // v2.10.102: Diagnostic — if cumulative was supposed to print but
+        // resolved to 0, emit a single warn row so /debug surfaces the gap.
+        // Most common cause: device captured offline before route-wide
+        // pre-warm populated farmer_cumulative for this farmer.
+        if (
+          printData.shouldShowCumulativeForFarmer &&
+          (!cumulativeForPrint || cumulativeForPrint.total === 0)
+        ) {
+          try {
+            plog.warn('CUM:OFFLINE-MISS', 'Cumulative empty at print time', {
+              farmerId: printData.farmerIdForCumulative,
+              route: printData.routeCode,
+              icode: printData.productIcode,
+              online: navigator.onLine,
+              reason: 'no-baseCount-cached',
+            });
+          } catch {}
+        }
+
         // Print in background - don't block anything
         printMilkReceiptDirect(printData.collections, {
           companyName: printData.companyName,
