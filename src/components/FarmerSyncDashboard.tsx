@@ -34,6 +34,12 @@ interface FarmerSyncEntry {
   isCached: boolean;
 }
 
+type LastSyncState =
+  | { kind: 'idle' }
+  | { kind: 'complete'; at: number; source: 'online' | 'offline-cache' }
+  | { kind: 'incomplete'; at: number; reason: string }
+  | { kind: 'failed'; at: number; reason: string };
+
 const BATCH_SIZE = 20;
 const PAGE_SIZE = 50;
 
