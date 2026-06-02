@@ -297,7 +297,7 @@ const Index = () => {
       // always pass through (they imply data we just wrote), but they still
       // ride the in-flight queue below.
       const sinceLast = Date.now() - lastCumulativeRefreshAt;
-      const isForced = reason === 'post-sync' || reason === 'manual';
+      const isForced = reason === 'post-sync' || reason === 'manual' || reason === 'online';
       if (!isForced && sinceLast < MIN_REFRESH_GAP_MS) {
         console.log(`🚦 Cumulative refresh (${reason}): throttled (last ran ${Math.round(sinceLast / 1000)}s ago)`);
         return;
