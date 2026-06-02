@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { CheckCircle2, AlertCircle, RefreshCw, Users, Database, Loader2, Search } from 'lucide-react';
+import { CheckCircle2, AlertCircle, RefreshCw, Users, Database, Loader2, Search, Wifi, WifiOff, AlertTriangle, CloudOff, Cloud } from 'lucide-react';
 import type { Farmer } from '@/lib/supabase';
 import { generateDeviceFingerprint, getStoredDeviceId } from '@/utils/deviceFingerprint';
 import { cumulativeMonitor } from '@/utils/cumulativeMonitor';
@@ -33,6 +33,12 @@ interface FarmerSyncEntry {
   localCount: number;
   isCached: boolean;
 }
+
+type LastSyncState =
+  | { kind: 'idle' }
+  | { kind: 'complete'; at: number; source: 'online' | 'offline-cache' }
+  | { kind: 'incomplete'; at: number; reason: string }
+  | { kind: 'failed'; at: number; reason: string };
 
 const BATCH_SIZE = 20;
 const PAGE_SIZE = 50;
@@ -81,6 +87,11 @@ export const FarmerSyncDashboard = () => {
   const [progressInfo, setProgressInfo] = useState({ current: 0, total: 0, status: '' });
   const [bgProgress, setBgProgress] = useState<{ current: number; total: number; pass: number } | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [isOnline, setIsOnline] = useState<boolean>(() => {
+    try { return navigator.onLine; } catch { return true; }
+  });
+  const [lastSync, setLastSync] = useState<LastSyncState>({ kind: 'idle' });
+  const [nowTick, setNowTick] = useState(Date.now());
   const cancelledRef = useRef(false);
   const activeRoute = getActiveRoute();
   const activeIcode = getActiveProduct();
@@ -363,13 +374,25 @@ export const FarmerSyncDashboard = () => {
   const loadData = useCallback(async (triggerSync = false) => {
     if (!isReady) return;
     cancelledRef.current = false;
+
+    // Defensive guard: if caller asked for a server-touching refresh but the
+    // device is offline at handler time, downgrade to a cache-only reload so
+    // we never silently hit the network when there's no network.
+    if (triggerSync && !navigator.onLine) {
+      triggerSync = false;
+    }
+
     setIsLoading(true);
     setVisibleCount(PAGE_SIZE);
     setProgressInfo({ current: 0, total: 0, status: triggerSync ? 'Syncing offline receipts...' : 'Loading...' });
 
+    let serverRefreshAttempted = false;
+    let serverRefreshOk = false;
+
     try {
       // Step 1: Sync offline receipts if requested
       if (triggerSync && navigator.onLine) {
+        serverRefreshAttempted = true;
         setProgressInfo({ current: 0, total: 0, status: 'Syncing offline receipts to server...' });
         window.dispatchEvent(new CustomEvent('syncStart'));
         await new Promise(r => setTimeout(r, 2000));
@@ -397,6 +420,7 @@ export const FarmerSyncDashboard = () => {
                 }));
               }
               cumulativeMonitor.endBatch(batchLabel);
+              serverRefreshOk = true;
             }
           } catch (err) {
             console.warn('[SyncDash] Batch cumulative refresh failed:', err);
@@ -410,6 +434,7 @@ export const FarmerSyncDashboard = () => {
 
       // Step 3: Load farmer list — transaction-driven (online) or cached (offline)
       let results: FarmerSyncEntry[] | null = null;
+      let usedSource: 'online' | 'offline-cache' = 'offline-cache';
 
       // Always build name lookup — used by both online and offline paths for display names
       setProgressInfo({ current: 0, total: 0, status: 'Fetching farmer names...' });
@@ -419,7 +444,10 @@ export const FarmerSyncDashboard = () => {
         // Use batch API as the sole source of the farmer list
         setProgressInfo({ current: 0, total: 0, status: 'Fetching transaction data...' });
         results = await loadFromBatchAPI(nameLookup, activeRoute || undefined);
+        if (results) usedSource = 'online';
       }
+
+      const batchApiFailedWhileOnline = navigator.onLine && results === null;
 
       // Offline fallback or batch API failure — transaction-driven (v2.10.62)
       if (!results) {
@@ -435,9 +463,22 @@ export const FarmerSyncDashboard = () => {
 
       setEntries(results);
       setProgressInfo({ current: results.length, total: results.length, status: 'Complete' });
+
+      // Step 4: Record last-sync outcome
+      const at = Date.now();
+      if (cancelledRef.current) {
+        setLastSync({ kind: 'incomplete', at, reason: 'Interrupted' });
+      } else if (serverRefreshAttempted && !serverRefreshOk) {
+        setLastSync({ kind: 'failed', at, reason: 'Server refresh failed' });
+      } else if (batchApiFailedWhileOnline) {
+        setLastSync({ kind: 'failed', at, reason: 'Batch API unavailable' });
+      } else {
+        setLastSync({ kind: 'complete', at, source: usedSource });
+      }
     } catch (err) {
       console.error('[SyncDash] Failed to load farmer sync data:', err);
       setProgressInfo(prev => ({ ...prev, status: 'Error loading data' }));
+      setLastSync({ kind: 'failed', at: Date.now(), reason: 'Unexpected error' });
     } finally {
       setIsLoading(false);
     }
@@ -449,14 +490,32 @@ export const FarmerSyncDashboard = () => {
     const handleProgress = (e: any) => {
       setBgProgress(e.detail);
     };
+    const handleOnline = () => {
+      setIsOnline(true);
+      // Auto-reload from the batch API once we regain connectivity so the
+      // dashboard reflects the latest server state without manual refresh.
+      loadData(false);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
 
     window.addEventListener('cumulative-sync-progress', handleProgress);
-    
-    return () => { 
-      cancelledRef.current = true; 
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Lightweight ticker so the "X ago" label stays fresh.
+    const tick = window.setInterval(() => setNowTick(Date.now()), 15000);
+
+    return () => {
+      cancelledRef.current = true;
       window.removeEventListener('cumulative-sync-progress', handleProgress);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.clearInterval(tick);
     };
   }, [loadData]);
+
 
   const cachedCount = entries.filter(e => e.isCached).length;
   const totalCount = entries.length;
@@ -487,14 +546,56 @@ export const FarmerSyncDashboard = () => {
     setVisibleCount(prev => prev + PAGE_SIZE);
   }, []);
 
+  // Background cumulative sync running anywhere in the app?
+  const bgSyncRunning = !!(bgProgress && bgProgress.current < bgProgress.total);
+  const globalSyncRunning = (() => {
+    try { return !!(window as any).__cumulativeSyncRunning; } catch { return false; }
+  })();
+  const refreshDisabled = isLoading || !isOnline || bgSyncRunning || globalSyncRunning;
+  const refreshTitle = !isOnline
+    ? 'Cannot refresh while offline'
+    : isLoading
+      ? 'Refresh in progress'
+      : (bgSyncRunning || globalSyncRunning)
+        ? 'Background cache sync running — please wait'
+        : 'Refresh from server';
+
+  const formatAgo = (at: number) => {
+    const s = Math.max(0, Math.floor((nowTick - at) / 1000));
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    return `${h}h ago`;
+  };
+
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Database className="h-5 w-5 text-primary" />
-            <div>
-              <CardTitle>Farmer Sync Status</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <Database className="h-5 w-5 text-primary shrink-0" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CardTitle>Farmer Sync Status</CardTitle>
+                {isOnline ? (
+                  <Badge variant="outline" className="gap-1 text-[10px] py-0">
+                    <Wifi className="h-3 w-3 text-primary" />
+                    Online
+                  </Badge>
+                ) : (
+                  <Badge variant="destructive" className="gap-1 text-[10px] py-0">
+                    <WifiOff className="h-3 w-3" />
+                    Offline — using cached data
+                  </Badge>
+                )}
+                {(bgSyncRunning || globalSyncRunning) && (
+                  <Badge variant="outline" className="gap-1 text-[10px] py-0 border-primary/40 text-primary">
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    {bgSyncRunning ? `Cache sync (Pass ${bgProgress!.pass}/5)` : 'Cache sync in progress'}
+                  </Badge>
+                )}
+              </div>
               <CardDescription>
                 Cumulative data for <span className="font-medium">{deviceCcode || 'all'}</span>{selectionChip ? ` · ${selectionChip}` : ''} cached offline
               </CardDescription>
@@ -504,8 +605,9 @@ export const FarmerSyncDashboard = () => {
             variant="outline"
             size="sm"
             onClick={() => loadData(true)}
-            disabled={isLoading}
-            className="gap-1"
+            disabled={refreshDisabled}
+            title={refreshTitle}
+            className="gap-1 shrink-0"
           >
             {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
             Refresh
@@ -513,6 +615,46 @@ export const FarmerSyncDashboard = () => {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Last sync outcome row */}
+        {lastSync.kind !== 'idle' && !isLoading && (
+          <div
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs ${
+              lastSync.kind === 'complete' && lastSync.source === 'online'
+                ? 'bg-primary/5 border-primary/20 text-primary'
+                : lastSync.kind === 'complete'
+                  ? 'bg-muted/50 border-border text-muted-foreground'
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400'
+            }`}
+          >
+            {lastSync.kind === 'complete' && lastSync.source === 'online' && (
+              <>
+                <Cloud className="h-3.5 w-3.5 shrink-0" />
+                <span>Last refreshed from server · {formatAgo(lastSync.at)}</span>
+              </>
+            )}
+            {lastSync.kind === 'complete' && lastSync.source === 'offline-cache' && (
+              <>
+                <CloudOff className="h-3.5 w-3.5 shrink-0" />
+                <span>Showing offline cache · loaded {formatAgo(lastSync.at)}</span>
+              </>
+            )}
+            {lastSync.kind === 'failed' && (
+              <>
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>
+                  {lastSync.reason} — showing cached data. {isOnline ? 'Tap Refresh to retry.' : 'Reconnect to retry.'} ({formatAgo(lastSync.at)})
+                </span>
+              </>
+            )}
+            {lastSync.kind === 'incomplete' && (
+              <>
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>Sync did not complete — {lastSync.reason}. ({formatAgo(lastSync.at)})</span>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Loading progress */}
         {isLoading && (
           <div className="space-y-2 p-3 rounded-lg bg-muted/50 border">
@@ -552,7 +694,7 @@ export const FarmerSyncDashboard = () => {
           </div>
           <div className="text-center p-3 rounded-lg bg-primary/10">
             <CheckCircle2 className="h-4 w-4 mx-auto mb-1 text-primary" />
-            <p className="text-lg font-bold">{cachedCount}</p>
+            <p className="text-lg font-bold">{cachedCount}<span className="text-xs font-normal text-muted-foreground">/{totalCount}</span></p>
             <p className="text-xs text-muted-foreground">Cached</p>
           </div>
           <div className="text-center p-3 rounded-lg bg-secondary/20">
@@ -561,6 +703,7 @@ export const FarmerSyncDashboard = () => {
             <p className="text-xs text-muted-foreground">Unsynced Receipts</p>
           </div>
         </div>
+
 
         {/* Sync progress */}
         <div>

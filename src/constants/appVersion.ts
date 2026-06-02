@@ -1,4 +1,19 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.103: FARMER SYNC DASHBOARD CLARITY — the dashboard now honestly
+//   reflects connectivity and sync state. New online/offline pill in the
+//   header (flips on window 'online'/'offline' events). Refresh button is
+//   disabled while offline OR while a cumulative refresh is in flight
+//   (bgProgress active or window.__cumulativeSyncRunning === true), with a
+//   tooltip-style title explaining the reason. Defensive guard in
+//   loadData(true) short-circuits to a cache-only reload if the device
+//   went offline between click and handler. New last-sync status row shows
+//   one of: complete-from-server / complete-from-offline-cache /
+//   server-refresh-failed (batch API returned null while online) /
+//   incomplete (cancelled mid-flight or bg pass still running). "Cached"
+//   tile now shows coverage as "X/Y". When transitioning online the
+//   dashboard auto-reloads from the batch API once. Strictly UI/state in
+//   src/components/FarmerSyncDashboard.tsx — no backend, IndexedDB schema,
+//   sync engine, reference generator, receipt rendering, or auth changes.
 // v2.10.102: OFFLINE CUMULATIVE PRE-WARM + DIAGNOSTIC — devices that
 //   booted offline (or lost network before the startup batch finished)
 //   never repopulated farmer_cumulative when reconnecting, so first-time
@@ -632,5 +647,5 @@
 // v2.10.98: Store Z print receipt strips COFFEE SUMMARY / SEASON / PRODUCE
 //   metadata and renders item names as left-aligned full-width lines (POS
 //   style). Produce Z layout unchanged. On-screen Store Z preview matches.
-export const APP_VERSION = '2.10.102';
-export const APP_VERSION_CODE = 124;
+export const APP_VERSION = '2.10.103';
+export const APP_VERSION_CODE = 125;
