@@ -21,6 +21,7 @@ import { cumulativeMonitor } from '@/utils/cumulativeMonitor';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
 import { saveToLocalDB } from '@/services/offlineStorage';
+import { plog } from '@/utils/persistentLogger';
 import { toast } from 'sonner';
 
 // Helper: filter cumulative data to only the selected produce type
