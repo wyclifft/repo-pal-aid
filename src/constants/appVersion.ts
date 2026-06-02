@@ -632,5 +632,5 @@
 // v2.10.98: Store Z print receipt strips COFFEE SUMMARY / SEASON / PRODUCE
 //   metadata and renders item names as left-aligned full-width lines (POS
 //   style). Produce Z layout unchanged. On-screen Store Z preview matches.
-export const APP_VERSION = '2.10.101';
-export const APP_VERSION_CODE = 123;
+export const APP_VERSION = '2.10.102';
+export const APP_VERSION_CODE = 124;
