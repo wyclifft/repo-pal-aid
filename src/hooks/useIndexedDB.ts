@@ -953,6 +953,10 @@ export const useIndexedDB = () => {
               lastUpdated: new Date().toISOString()
             };
           } else {
+            // v2.10.104: surface manual negative reversals as a clean info row.
+            if (Number(count) < 0) {
+              noteReversalIfNegative(undefined, Number(count), { farmerId: cleanId, route: routeKey });
+            }
             if (isFocusedFarmer(cleanId)) {
               plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} LOCAL +${count} (base=${existing?.baseCount ?? 0})`,
                 { farmerId: cleanId, route: routeKey, source: 'local', increment: count, baseCount: existing?.baseCount ?? 0, prevLocal: existing?.localCount ?? 0, byProduct: byProduct || existing?.byProduct });
