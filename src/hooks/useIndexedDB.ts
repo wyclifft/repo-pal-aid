@@ -905,13 +905,30 @@ export const useIndexedDB = () => {
             const existingBase = Number(existing?.baseCount || 0);
             const incomingIsEmpty = (Number(count) || 0) === 0 && incomingByProductSum === 0;
             if (existingBase > 0 && incomingIsEmpty) {
-              console.warn(`[CUM] Refusing stale backend write for ${cleanId} route=${routeKey}: incoming=0 vs cached=${existingBase} (read-replica lag)`);
-              if (isFocusedFarmer(cleanId)) {
-                plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} REFUSED stale backend=0 cached=${existingBase}`,
-                  { farmerId: cleanId, route: routeKey, source: 'backend', refused: true, existingBase, incomingCount: count, incomingByProduct: byProduct });
+              // v2.10.104: two-read confirmation. First sighting → keep cache,
+              // log as info. Second sighting within 8s → accept the zero
+              // (legitimate reversal or admin wipe). Any non-zero read in
+              // between clears the pending entry (see below).
+              const result = observeIncomingZero(cleanId, routeKey, existingBase);
+              if (result === 'stash' || result === 'expired-restash') {
+                plog.info('CUM:ZERO-PENDING',
+                  `${cleanId} route=${routeKey} backend=0 cached=${existingBase} awaiting confirmation`,
+                  { farmerId: cleanId, route: routeKey, existingBase, sighting: result });
+                if (isFocusedFarmer(cleanId)) {
+                  plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} ZERO-PENDING cached=${existingBase}`,
+                    { farmerId: cleanId, route: routeKey, source: 'backend', existingBase, sighting: result });
+                }
+                resolve();
+                return;
               }
-              resolve();
-              return;
+              // result === 'confirm' — fall through to overwrite with 0
+              plog.info('CUM:ZERO-CONFIRMED',
+                `${cleanId} route=${routeKey} accepting backend=0 (was ${existingBase})`,
+                { farmerId: cleanId, route: routeKey, existingBase });
+            } else if (!incomingIsEmpty) {
+              // Any non-zero read clears a pending zero so a future real zero
+              // restarts the two-read flow cleanly.
+              clearZeroPending(cleanId, routeKey);
             }
             observeBaseChange(existing?.baseCount, count, {
               farmerId: cleanId,
