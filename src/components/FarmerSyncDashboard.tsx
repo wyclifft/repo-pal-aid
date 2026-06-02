@@ -87,6 +87,11 @@ export const FarmerSyncDashboard = () => {
   const [progressInfo, setProgressInfo] = useState({ current: 0, total: 0, status: '' });
   const [bgProgress, setBgProgress] = useState<{ current: number; total: number; pass: number } | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [isOnline, setIsOnline] = useState<boolean>(() => {
+    try { return navigator.onLine; } catch { return true; }
+  });
+  const [lastSync, setLastSync] = useState<LastSyncState>({ kind: 'idle' });
+  const [nowTick, setNowTick] = useState(Date.now());
   const cancelledRef = useRef(false);
   const activeRoute = getActiveRoute();
   const activeIcode = getActiveProduct();
