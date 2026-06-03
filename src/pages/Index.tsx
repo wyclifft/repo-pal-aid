@@ -1358,21 +1358,53 @@ const Index = () => {
 
           try {
             if (navigator.onLine) {
-              const freqResult = await Promise.race([
+              // v2.10.106: trusted-floor guard. The old guard trusted only the
+              // in-memory `previousCumTotal`, which can lag by days when the
+              // dashboard cumulative was last loaded before a previous-day
+              // sync caught up. Combined with a stale read-replica result
+              // from the backend, the floor `prev+just` silently dropped
+              // prior-day deliveries. We now anchor the floor to the cached
+              // farmer_cumulative.baseCount (updated on every sync) AND retry
+              // the cloud read once on a suspected lag.
+              const cachedRow = await getFarmerCumulative(cleanId, selectedRouteCode || undefined);
+              const cachedBase = Number(cachedRow?.baseCount || 0);
+              const trustedFloor = Math.max(cachedBase, previousCumTotal) + justSubmittedWeight;
+
+              const fetchCloud = () => Promise.race([
                 mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint, selectedRouteCode || undefined),
                 new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
               ]);
+
+              let freqResult = await fetchCloud();
               if (freqResult.success && freqResult.data) {
                 let cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-                const cloudByProduct = freqResult.data.by_product || [];
+                let cloudByProduct = freqResult.data.by_product || [];
 
-                // Race condition guard: if cloud hasn't caught up, add just-submitted weight
-                if (cloudCumulative < previousCumTotal + justSubmittedWeight) {
-                  console.log(`[CUMULATIVE] Race guard: cloud=${cloudCumulative}, prev=${previousCumTotal}, submitted=${justSubmittedWeight}. Adjusting.`);
-                  cloudCumulative = previousCumTotal + justSubmittedWeight;
+                if (cloudCumulative < trustedFloor) {
+                  // Suspected read-replica lag: retry once after a short pause.
+                  await new Promise((r) => setTimeout(r, 700));
+                  const retry = await fetchCloud();
+                  if (retry.success && retry.data && (retry.data.cumulative_weight ?? 0) >= trustedFloor) {
+                    cloudCumulative = retry.data.cumulative_weight ?? 0;
+                    cloudByProduct = retry.data.by_product || cloudByProduct;
+                    plog.info('CUM:LAG-RECOVERED',
+                      `${cleanId} cloud lag recovered ${freqResult.data.cumulative_weight}→${cloudCumulative} (floor=${trustedFloor})`,
+                      { farmerId: cleanId, route: selectedRouteCode, cloud1: freqResult.data.cumulative_weight, cloud2: cloudCumulative, cachedBase, prevCum: previousCumTotal, justSubmitted: justSubmittedWeight, trustedFloor });
+                  } else {
+                    const cloud2Val = (retry.success && retry.data) ? retry.data.cumulative_weight : null;
+                    plog.warn('CUM:LAG-FALLBACK',
+                      `${cleanId} cloud<floor cloud=${cloudCumulative} cloud2=${cloud2Val} floor=${trustedFloor} → using floor`,
+                      { farmerId: cleanId, route: selectedRouteCode, cloud: cloudCumulative, cloud2: cloud2Val, cachedBase, prevCum: previousCumTotal, justSubmitted: justSubmittedWeight, trustedFloor, used: 'floor' });
+                    cloudCumulative = trustedFloor;
+                  }
                 }
 
-                await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
+                // Only update cache when cloud value is at least as high as
+                // what we already trust — never let an unconfirmed stale read
+                // lower the persisted baseCount (mirrors v2.10.94/104 spirit).
+                if (cloudCumulative >= cachedBase) {
+                  await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
+                }
                 const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
                 const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
                 for (const p of cloudByProduct) merged[p.icode] = { ...p };
