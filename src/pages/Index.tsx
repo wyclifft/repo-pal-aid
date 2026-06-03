@@ -1463,24 +1463,41 @@ const Index = () => {
         if (printData.shouldShowCumulativeForFarmer && deviceFingerprint) {
           try {
             if (navigator.onLine) {
-              // Very short timeout - prioritize fast printing over accurate cumulative
-              const freqResult = await Promise.race([
+              // v2.10.106: trusted-floor guard (same as on-screen path above).
+              const cachedRow = await getFarmerCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
+              const cachedBase = Number(cachedRow?.baseCount || 0);
+              const prevCum = printData.previousCumulativeTotal ?? 0;
+              const justSubmitted = printData.justSubmittedWeight ?? 0;
+              const trustedFloor = Math.max(cachedBase, prevCum) + justSubmitted;
+
+              const fetchCloud = () => Promise.race([
                 mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint, printData.routeCode || undefined),
-                new Promise<{ success: false }>((resolve) => 
+                new Promise<{ success: false }>((resolve) =>
                   setTimeout(() => resolve({ success: false }), 1500)
                 )
               ]);
 
+              const freqResult = await fetchCloud();
               if (freqResult.success && freqResult.data) {
                 let cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-                const cloudByProduct = freqResult.data.by_product || [];
+                let cloudByProduct = freqResult.data.by_product || [];
 
-                // Race condition guard: ensure cloud total reflects just-submitted weight
-                const prevCum = printData.previousCumulativeTotal ?? 0;
-                const justSubmitted = printData.justSubmittedWeight ?? 0;
-                if (cloudCumulative < prevCum + justSubmitted) {
-                  console.log(`[CUMULATIVE-PRINT] Race guard: cloud=${cloudCumulative}, prev=${prevCum}, submitted=${justSubmitted}. Adjusting.`);
-                  cloudCumulative = prevCum + justSubmitted;
+                if (cloudCumulative < trustedFloor) {
+                  await new Promise((r) => setTimeout(r, 700));
+                  const retry = await fetchCloud();
+                  if (retry.success && retry.data && (retry.data.cumulative_weight ?? 0) >= trustedFloor) {
+                    cloudCumulative = retry.data.cumulative_weight ?? 0;
+                    cloudByProduct = retry.data.by_product || cloudByProduct;
+                    plog.info('CUM:LAG-RECOVERED',
+                      `${printData.farmerIdForCumulative} cloud lag recovered ${freqResult.data.cumulative_weight}→${cloudCumulative} (floor=${trustedFloor})`,
+                      { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, cloud1: freqResult.data.cumulative_weight, cloud2: cloudCumulative, cachedBase, prevCum, justSubmitted, trustedFloor, path: 'background-print' });
+                  } else {
+                    const cloud2Val = (retry.success && retry.data) ? retry.data.cumulative_weight : null;
+                    plog.warn('CUM:LAG-FALLBACK',
+                      `${printData.farmerIdForCumulative} cloud<floor cloud=${cloudCumulative} cloud2=${cloud2Val} floor=${trustedFloor} → using floor`,
+                      { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, cloud: cloudCumulative, cloud2: cloud2Val, cachedBase, prevCum, justSubmitted, trustedFloor, used: 'floor', path: 'background-print' });
+                    cloudCumulative = trustedFloor;
+                  }
                 }
 
                 const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined);
@@ -1491,8 +1508,10 @@ const Index = () => {
                   else merged[p.icode] = { ...p };
                 }
                 cumulativeForPrint = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, printData.productIcode);
-                // Update cache in background
-                updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined).catch(() => {});
+                // Update cache only when cloud >= cachedBase (don't lower the cache from a stale read).
+                if (cloudCumulative >= cachedBase) {
+                  updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined).catch(() => {});
+                }
               }
             }
             
