@@ -3260,11 +3260,51 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      // Query user table with trim to handle whitespace
-      const [rows] = await pool.query(
-        'SELECT * FROM user WHERE TRIM(userid) = ? AND TRIM(password) = ?',
-        [userid.trim(), password.trim()]
-      );
+      // v2.10.105 — Multi-tenant login resolution.
+      // The (userid, password) pair is NOT unique across companies: the same
+      // operator may exist under multiple ccodes. When the client sends a
+      // device_fingerprint we know which company this device belongs to, so
+      // we scope the user lookup by the device's ccode first. This prevents
+      // MySQL from returning an arbitrary same-credential row from another
+      // company and then triggering the "Access denied" guard below.
+      let deviceCcode = '';
+      if (device_fingerprint) {
+        try {
+          const [devRows] = await pool.query(
+            'SELECT ccode FROM devsettings WHERE uniquedevcode = ? LIMIT 1',
+            [String(device_fingerprint).trim()]
+          );
+          deviceCcode = (devRows[0]?.ccode || '').toString().trim();
+        } catch (ccodeErr) {
+          // Never block login on an unexpected lookup failure — log and continue.
+          console.warn('[AUTH][CCODE] device ccode lookup failed:', ccodeErr?.message);
+        }
+      }
+
+      // Scoped lookup: userid + password + device's ccode (when known).
+      let rows = [];
+      if (deviceCcode) {
+        const [scoped] = await pool.query(
+          'SELECT * FROM user WHERE TRIM(userid) = ? AND TRIM(password) = ? AND UPPER(TRIM(ccode)) = UPPER(?) LIMIT 1',
+          [userid.trim(), password.trim(), deviceCcode]
+        );
+        rows = scoped;
+        if (rows.length > 0) {
+          console.log(`[AUTH][CCODE] scoped match userid=${userid.trim()} ccode=${deviceCcode.toUpperCase()}`);
+        }
+      }
+
+      // Legacy / fallback lookup: userid + password only. Used when no
+      // device_fingerprint is supplied (older clients) OR when the scoped
+      // lookup found nothing (so we can still emit a precise error — either
+      // "Invalid credentials" or the existing cross-company "Access denied").
+      if (rows.length === 0) {
+        const [legacy] = await pool.query(
+          'SELECT * FROM user WHERE TRIM(userid) = ? AND TRIM(password) = ?',
+          [userid.trim(), password.trim()]
+        );
+        rows = legacy;
+      }
       
       console.log('🔍 Query result:', rows.length > 0 ? 'User found' : 'No match');
       
@@ -3290,30 +3330,23 @@ const server = http.createServer(async (req, res) => {
       const user = rows[0];
 
       // v2.10.97 — STRICT COMPANY ISOLATION (additive, backward compatible).
-      // When a device_fingerprint is supplied AND the device is registered in
-      // devsettings with a non-empty ccode, the authenticated user's ccode MUST
-      // match the device's ccode. Older clients that do not send a fingerprint
-      // continue to work exactly as before — no behaviour change for them.
-      if (device_fingerprint) {
-        try {
-          const [devRows] = await pool.query(
-            'SELECT ccode FROM devsettings WHERE uniquedevcode = ? LIMIT 1',
-            [String(device_fingerprint).trim()]
-          );
-          const deviceCcode = (devRows[0]?.ccode || '').toString().trim().toUpperCase();
-          const userCcode = (user.ccode || '').toString().trim().toUpperCase();
-          if (deviceCcode && userCcode && deviceCcode !== userCcode) {
-            console.warn(`[AUTH][CCODE] Mismatch user=${userCcode} device=${deviceCcode}`);
-            return sendJSON(res, {
-              success: false,
-              error: 'Access denied. Your account is restricted to your assigned company.'
-            }, 403);
-          }
-        } catch (ccodeErr) {
-          // Never block login on an unexpected lookup failure — log and continue.
-          console.warn('[AUTH][CCODE] device ccode lookup failed:', ccodeErr?.message);
+      // Still enforced as a defense-in-depth check: if the scoped lookup
+      // returned a matching row this is a no-op; if we fell back to the
+      // legacy lookup and the matched row's ccode does not equal the device's
+      // ccode, we reject (genuine cross-company access attempt).
+      if (device_fingerprint && deviceCcode) {
+        const userCcode = (user.ccode || '').toString().trim().toUpperCase();
+        const devCcodeU = deviceCcode.toUpperCase();
+        if (userCcode && devCcodeU !== userCcode) {
+          console.warn(`[AUTH][CCODE] Mismatch user=${userCcode} device=${devCcodeU}`);
+          return sendJSON(res, {
+            success: false,
+            error: 'Access denied. Your account is restricted to your assigned company.'
+          }, 403);
         }
       }
+
+
 
       
       // Helper to convert MySQL bit/tinyint to boolean
