@@ -15,6 +15,7 @@
 //   in /debug. Strictly client-side — no backend/server.js, schema, sync
 //   engine, reference generator, receipt rendering, photo, Bluetooth, or
 //   auth changes.
+// v2.10.104: STALE-WRITE GUARD → TWO-READ CONFIRMATION + REVERSAL VISIBILITY.
 //   The `[CUM] Refusing stale backend write incoming=0 vs cached=N` guard
 //   fired 183 times in 3 days across 17 farmers. Every case was legitimate:
 //   5 farmers had a manual negative-value transaction that reversed their
