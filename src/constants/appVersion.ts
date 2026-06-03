@@ -1,4 +1,20 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.106: TRUSTED-FLOOR CUMULATIVE PRINT GUARD. The old race-guard in
+//   src/pages/Index.tsx printed `prevCum + justSubmitted` whenever the
+//   cloud read-replica returned a value lower than expected. `prevCum` is
+//   the in-memory dashboard cumulative, which can lag by days when the
+//   farmer card was last loaded before a previous-day sync caught up.
+//   Combined with a stale cloud read, this silently dropped prior-day
+//   deliveries (observed on M00389: 30th printed 1715.2 instead of 1805,
+//   1st printed 1805 instead of 1911.8). New guard anchors the floor to
+//   max(cached farmer_cumulative.baseCount, prevCum) + justSubmitted, and
+//   retries the cloud read once after 700 ms when the first read falls
+//   below the floor. The IndexedDB cache is never lowered by an
+//   unconfirmed stale read (mirrors the v2.10.94/104 zero-guard spirit).
+//   New CUM:LAG-RECOVERED (info) and CUM:LAG-FALLBACK (warn) rows surface
+//   in /debug. Strictly client-side — no backend/server.js, schema, sync
+//   engine, reference generator, receipt rendering, photo, Bluetooth, or
+//   auth changes.
 // v2.10.104: STALE-WRITE GUARD → TWO-READ CONFIRMATION + REVERSAL VISIBILITY.
 //   The `[CUM] Refusing stale backend write incoming=0 vs cached=N` guard
 //   fired 183 times in 3 days across 17 farmers. Every case was legitimate:
@@ -665,5 +681,5 @@
 // v2.10.98: Store Z print receipt strips COFFEE SUMMARY / SEASON / PRODUCE
 //   metadata and renders item names as left-aligned full-width lines (POS
 //   style). Produce Z layout unchanged. On-screen Store Z preview matches.
-export const APP_VERSION = '2.10.104';
-export const APP_VERSION_CODE = 126;
+export const APP_VERSION = '2.10.106';
+export const APP_VERSION_CODE = 127;
