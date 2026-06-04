@@ -1406,14 +1406,33 @@ const Index = () => {
                 if (cloudCumulative >= cachedBase) {
                   await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
                 }
-                const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
+                // v2.10.107: exclude just-submitted refs — cloudCumulative
+                // already includes them, the local pending row would double-count.
+                const submittedRefs = capturedCollections.map((c) => c.reference_no).filter(Boolean) as string[];
+                const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined, { excludeRefs: submittedRefs });
+                const fullUnsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
+                const removed = +(fullUnsynced.total - unsynced.total).toFixed(3);
+                if (removed > 0) {
+                  plog.info('CUM:DOUBLE-GUARD',
+                    `${cleanId} excluded just-submitted ${removed}kg from unsynced (cloud=${cloudCumulative})`,
+                    { farmerId: cleanId, route: selectedRouteCode, cloudCumulative, removedWeight: removed, refs: submittedRefs, path: 'on-screen' });
+                }
                 const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
                 for (const p of cloudByProduct) merged[p.icode] = { ...p };
                 for (const p of unsynced.byProduct) {
                   if (merged[p.icode]) merged[p.icode].weight += p.weight;
                   else merged[p.icode] = { ...p };
                 }
-                computedCumulative = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
+                let finalTotal = cloudCumulative + unsynced.total;
+                // v2.10.107 defensive cap: printed cum cannot exceed cachedBase+justSubmitted+otherUnsynced
+                const safeCeiling = Math.max(cachedBase, cloudCumulative) + unsynced.total;
+                if (finalTotal > safeCeiling + 0.001) {
+                  plog.pinned('warn', 'CUM:DOUBLE-DETECTED',
+                    `${cleanId} clamped ${finalTotal}→${safeCeiling} (cloud=${cloudCumulative}, cachedBase=${cachedBase}, just=${justSubmittedWeight}, unsynced=${unsynced.total})`,
+                    { farmerId: cleanId, route: selectedRouteCode, finalTotal, safeCeiling, cloudCumulative, cachedBase, justSubmittedWeight, unsynced: unsynced.total, path: 'on-screen' });
+                  finalTotal = safeCeiling;
+                }
+                computedCumulative = filterCumulativeByProduct({ total: finalTotal, byProduct: Object.values(merged) }, selectedProduct?.icode);
               } else {
                 const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
                 computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
