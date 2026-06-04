@@ -1,4 +1,25 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.107: NO-DOUBLE-COUNT PRINT GUARD. After v2.10.106 fixed the under-
+//   count caused by stale read-replicas, an over-count appeared on same-
+//   session repeat captures (M00013: printed 97 vs expected 87; M00012:
+//   printed 39.7 vs expected 29.7 — extra weight always == just-submitted
+//   transaction). Root cause: the print-time cumulative composition in
+//   src/pages/Index.tsx added cloudCumulative + unsynced.total. By the time
+//   it ran, the just-submitted receipt was on BOTH sides — backend already
+//   reflected it (cloudCumulative), AND the offline-first writer had
+//   queued the local row in the IndexedDB pending bucket
+//   (getUnsyncedWeightForFarmer), which the sync engine had not yet
+//   flushed. Net effect: just-submitted weight counted twice. Fix:
+//   capture the just-submitted reference_no list into printData.
+//   submittedRefs and pass it as { excludeRefs } to
+//   getUnsyncedWeightForFarmer in BOTH the on-screen path and the
+//   background-print path. New CUM:DOUBLE-GUARD info row in /debug shows
+//   the removed weight whenever the exclusion saved us from a double-
+//   count, so the fix is observable in production. Strictly client-side
+//   — no backend, sync engine, IndexedDB schema, reference generator,
+//   receipt rendering, photo, Bluetooth, or auth changes. v2.10.106
+//   trusted-floor lag-recovery is preserved unchanged.
+
 // v2.10.106: TRUSTED-FLOOR CUMULATIVE PRINT GUARD. The old race-guard in
 //   src/pages/Index.tsx printed `prevCum + justSubmitted` whenever the
 //   cloud read-replica returned a value lower than expected. `prevCum` is
