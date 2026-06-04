@@ -1120,6 +1120,7 @@ const Index = () => {
       routeCode: selectedRouteCode, // Capture route for background cumulative filtering
       previousCumulativeTotal: cumulativeFrequency?.total ?? 0, // For race condition guard
       justSubmittedWeight: capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0), // Weight being submitted
+      submittedRefs: capturedCollections.map((c) => c.reference_no).filter(Boolean) as string[], // v2.10.107: exclude from unsynced bucket
       deliveredBy: deliveredBy || 'owner', // Pass deliveredBy for receipt printing
     };
 
