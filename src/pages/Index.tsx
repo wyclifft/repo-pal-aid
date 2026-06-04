@@ -1527,15 +1527,7 @@ const Index = () => {
                   if (merged[p.icode]) merged[p.icode].weight += p.weight;
                   else merged[p.icode] = { ...p };
                 }
-                let finalTotal = cloudCumulative + unsynced.total;
-                const safeCeiling = Math.max(cachedBase, cloudCumulative) + unsynced.total;
-                if (finalTotal > safeCeiling + 0.001) {
-                  plog.pinned('warn', 'CUM:DOUBLE-DETECTED',
-                    `${printData.farmerIdForCumulative} clamped ${finalTotal}→${safeCeiling} (cloud=${cloudCumulative}, cachedBase=${cachedBase}, just=${justSubmitted}, unsynced=${unsynced.total})`,
-                    { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, finalTotal, safeCeiling, cloudCumulative, cachedBase, justSubmitted, unsynced: unsynced.total, path: 'background-print' });
-                  finalTotal = safeCeiling;
-                }
-                cumulativeForPrint = filterCumulativeByProduct({ total: finalTotal, byProduct: Object.values(merged) }, printData.productIcode);
+                cumulativeForPrint = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, printData.productIcode);
                 // Update cache only when cloud >= cachedBase (don't lower the cache from a stale read).
                 if (cloudCumulative >= cachedBase) {
                   updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined).catch(() => {});
