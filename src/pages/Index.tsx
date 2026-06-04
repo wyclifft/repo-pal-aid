@@ -1423,16 +1423,7 @@ const Index = () => {
                   if (merged[p.icode]) merged[p.icode].weight += p.weight;
                   else merged[p.icode] = { ...p };
                 }
-                let finalTotal = cloudCumulative + unsynced.total;
-                // v2.10.107 defensive cap: printed cum cannot exceed cachedBase+justSubmitted+otherUnsynced
-                const safeCeiling = Math.max(cachedBase, cloudCumulative) + unsynced.total;
-                if (finalTotal > safeCeiling + 0.001) {
-                  plog.pinned('warn', 'CUM:DOUBLE-DETECTED',
-                    `${cleanId} clamped ${finalTotal}→${safeCeiling} (cloud=${cloudCumulative}, cachedBase=${cachedBase}, just=${justSubmittedWeight}, unsynced=${unsynced.total})`,
-                    { farmerId: cleanId, route: selectedRouteCode, finalTotal, safeCeiling, cloudCumulative, cachedBase, justSubmittedWeight, unsynced: unsynced.total, path: 'on-screen' });
-                  finalTotal = safeCeiling;
-                }
-                computedCumulative = filterCumulativeByProduct({ total: finalTotal, byProduct: Object.values(merged) }, selectedProduct?.icode);
+                computedCumulative = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
               } else {
                 const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
                 computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
