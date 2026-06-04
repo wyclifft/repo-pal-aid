@@ -992,7 +992,11 @@ export const useIndexedDB = () => {
    * Calculate cumulative weight from unsynced receipts in IndexedDB for a farmer in the current month.
    * This ensures offline cumulative is accurate even if the farmer_cumulative cache was never seeded.
    */
-  const getUnsyncedWeightForFarmer = useCallback(async (farmerId: string, routeFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
+  const getUnsyncedWeightForFarmer = useCallback(async (
+    farmerId: string,
+    routeFilter?: string,
+    opts?: { excludeRefs?: string[] }
+  ): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
     if (!db) return { total: 0, byProduct: [] };
     try {
       const unsynced = await getUnsyncedReceipts();
@@ -1002,6 +1006,11 @@ export const useIndexedDB = () => {
       // Normalize farmerId consistently
       const cleanFarmerId = farmerId.replace(/^#/, '').trim().toUpperCase();
       const cleanRoute = routeFilter ? routeFilter.trim().toUpperCase() : '';
+      // v2.10.107: exclude just-submitted reference_no(s) to prevent double-
+      // counting weight that the backend already reflects in cloudCumulative.
+      const excludeSet = new Set<string>(
+        (opts?.excludeRefs || []).map((r) => (r || '').trim().toUpperCase()).filter(Boolean)
+      );
 
       let totalWeight = 0;
       const productWeights: Record<string, { icode: string; product_name: string; weight: number }> = {};
@@ -1013,6 +1022,9 @@ export const useIndexedDB = () => {
         if (tt !== 1) continue;
         const rFarmerId = (r.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
         if (rFarmerId !== cleanFarmerId) continue;
+        // v2.10.107: skip just-submitted refs already counted by cloud value.
+        const rRef = (r.reference_no || '').trim().toUpperCase();
+        if (rRef && excludeSet.has(rRef)) continue;
         // Filter by route if specified
         if (cleanRoute) {
           const rRoute = (r.route || '').trim().toUpperCase();
