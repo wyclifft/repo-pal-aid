@@ -1120,6 +1120,7 @@ const Index = () => {
       routeCode: selectedRouteCode, // Capture route for background cumulative filtering
       previousCumulativeTotal: cumulativeFrequency?.total ?? 0, // For race condition guard
       justSubmittedWeight: capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0), // Weight being submitted
+      submittedRefs: capturedCollections.map((c) => c.reference_no).filter(Boolean) as string[], // v2.10.107: exclude from unsynced bucket
       deliveredBy: deliveredBy || 'owner', // Pass deliveredBy for receipt printing
     };
 
@@ -1405,7 +1406,17 @@ const Index = () => {
                 if (cloudCumulative >= cachedBase) {
                   await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
                 }
-                const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
+                // v2.10.107: exclude just-submitted refs — cloudCumulative
+                // already includes them, the local pending row would double-count.
+                const submittedRefs = capturedCollections.map((c) => c.reference_no).filter(Boolean) as string[];
+                const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined, { excludeRefs: submittedRefs });
+                const fullUnsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
+                const removed = +(fullUnsynced.total - unsynced.total).toFixed(3);
+                if (removed > 0) {
+                  plog.info('CUM:DOUBLE-GUARD',
+                    `${cleanId} excluded just-submitted ${removed}kg from unsynced (cloud=${cloudCumulative})`,
+                    { farmerId: cleanId, route: selectedRouteCode, cloudCumulative, removedWeight: removed, refs: submittedRefs, path: 'on-screen' });
+                }
                 const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
                 for (const p of cloudByProduct) merged[p.icode] = { ...p };
                 for (const p of unsynced.byProduct) {
@@ -1500,7 +1511,16 @@ const Index = () => {
                   }
                 }
 
-                const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined);
+                // v2.10.107: exclude just-submitted refs from unsynced bucket.
+                const submittedRefs = printData.submittedRefs || [];
+                const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined, { excludeRefs: submittedRefs });
+                const fullUnsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined);
+                const removed = +(fullUnsynced.total - unsynced.total).toFixed(3);
+                if (removed > 0) {
+                  plog.info('CUM:DOUBLE-GUARD',
+                    `${printData.farmerIdForCumulative} excluded just-submitted ${removed}kg from unsynced (cloud=${cloudCumulative})`,
+                    { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, cloudCumulative, removedWeight: removed, refs: submittedRefs, path: 'background-print' });
+                }
                 const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
                 for (const p of cloudByProduct) merged[p.icode] = { ...p };
                 for (const p of unsynced.byProduct) {
