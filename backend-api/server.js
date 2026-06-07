@@ -3818,6 +3818,26 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     const requestId = `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
+    // v2.10.108: detect DB-busy / pool-pressure and respond with a fast,
+    // retryable 503 instead of a generic 500. The client's resilientFetch
+    // already retries 5xx with backoff, so this turns silent hangs into
+    // graceful degradation when MYSQL max_user_connections (=40 on cPanel)
+    // is approached.
+    if (isPoolPressureError(error)) {
+      console.warn('[DB_BUSY]', {
+        requestId,
+        method,
+        path,
+        code: /** @type {any} */ (error).code,
+        errno: /** @type {any} */ (error).errno,
+      });
+      return sendJSON(
+        res,
+        { success: false, error: 'db_busy', retryable: true, requestId },
+        503
+      );
+    }
+
     // Log full details to stderr (this is what you want to see in cPanel/Passenger logs)
     console.error('[ERROR]', {
       requestId,
@@ -3840,5 +3860,13 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// v2.10.108: per-request timeout. Prevents requests from holding a pool slot
+// indefinitely when MySQL is slow. Client retries via resilientFetch.
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+server.setTimeout(REQUEST_TIMEOUT_MS, (socket) => {
+  try {
+    console.warn(`[TIMEOUT] socket idle > ${REQUEST_TIMEOUT_MS}ms — destroying`);
+    socket.destroy();
+  } catch (_) { /* noop */ }
+});
+server.listen(PORT, () => console.log(`✅ Server running on port ${PORT} (pool=${POOL_LIMIT}, queue=${QUEUE_LIMIT}, timeout=${REQUEST_TIMEOUT_MS}ms)`));
