@@ -79,12 +79,6 @@ async function query(sql, params = []) {
   return rows;
 }
 
-async function query(sql, params = []) {
-  const p = await getPool();
-  const [rows] = await p.execute(sql, params);
-  return rows;
-}
-
 // ============================================================================
 // CORS HEADERS
 // ============================================================================
