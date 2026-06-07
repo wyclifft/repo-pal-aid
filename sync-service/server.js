@@ -56,9 +56,27 @@ let pool = null;
 async function getPool() {
   if (!pool) {
     pool = mysql.createPool(DB_CONFIG);
-    console.log(`[${new Date().toISOString()}] Database pool created`);
+    console.log(`[${new Date().toISOString()}] Database pool created (limit=${SYNC_POOL_LIMIT}, queue=${SYNC_QUEUE_LIMIT})`);
+    // Periodic pool snapshot for observability.
+    setInterval(() => {
+      try {
+        const p = pool.pool;
+        if (!p) return;
+        const inUse = p._allConnections.length - p._freeConnections.length;
+        console.log(
+          `[POOL] limit=${SYNC_POOL_LIMIT} inUse=${inUse} free=${p._freeConnections.length} ` +
+          `queued=${p._connectionQueue.length} total=${p._allConnections.length}`
+        );
+      } catch (_) { /* diagnostics only */ }
+    }, 60000).unref();
   }
   return pool;
+}
+
+async function query(sql, params = []) {
+  const p = await getPool();
+  const [rows] = await p.execute(sql, params);
+  return rows;
 }
 
 async function query(sql, params = []) {
