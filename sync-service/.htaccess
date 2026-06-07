@@ -26,6 +26,11 @@ SetEnv MYSQL_PASSWORD 0741899183Mutee
 SetEnv MYSQL_PORT 3306
 SetEnv PORT 3001
 
+# v2.10.108 — pool tunables (stay within cPanel max_user_connections=40)
+SetEnv MYSQL_POOL_LIMIT 5
+SetEnv MYSQL_QUEUE_LIMIT 30
+SetEnv REQUEST_TIMEOUT_MS 30000
+
 # Remote API Configuration (optional - for syncing to external systems)
 # SetEnv REMOTE_API_URL https://api.example.com
 # SetEnv REMOTE_API_KEY your_api_key_here

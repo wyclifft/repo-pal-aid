@@ -15,17 +15,60 @@ if (!process.env.MYSQL_USER || !process.env.MYSQL_PASSWORD) {
   throw new Error('FATAL: MYSQL_USER and MYSQL_PASSWORD environment variables must be set');
 }
 
-// Database connection pool (minimal)
+// Database connection pool
+// v2.10.108: Sized to live within cPanel `max_user_connections = 40` shared
+// across both Node apps (backend-api + sync-service) on the same MySQL user.
+// Worst case: 2 Passenger workers × pool 8 = 16 conns for this app.
+// Tunable via .htaccess env without code changes.
+const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 8);
+const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 50);
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
+
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'localhost',
   user: process.env.MYSQL_USER,
   password: process.env.MYSQL_PASSWORD,
   database: process.env.MYSQL_DATABASE || 'maddasys_milk_collection_pwa',
   port: Number(process.env.MYSQL_PORT || 3306),
-  connectionLimit: 2,
+  connectionLimit: POOL_LIMIT,
   waitForConnections: true,
-  queueLimit: 0,
+  queueLimit: QUEUE_LIMIT,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000,
+  connectTimeout: 10000,
 });
+
+// Identify pool-pressure / DB-busy errors so the request handler can return a
+// retryable 503 instead of letting the client hang. Mirrors the codes that
+// `mysql2` surfaces when the user-level connection cap is hit.
+const isPoolPressureError = (err) => {
+  if (!err) return false;
+  const code = err.code || '';
+  const errno = err.errno;
+  return (
+    code === 'ER_USER_LIMIT_REACHED' ||      // max_user_connections cap
+    code === 'ER_CON_COUNT_ERROR' ||         // server max_connections cap
+    code === 'POOL_ENQUEUELIMIT' ||          // mysql2 queue full
+    code === 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR' ||
+    code === 'ETIMEDOUT' ||
+    errno === 1203 ||
+    errno === 1040
+  );
+};
+
+// Periodic pool snapshot for observability. Logs once a minute so cPanel logs
+// stay light. Useful to confirm whether the 40-conn cap is actually being hit.
+setInterval(() => {
+  try {
+    const p = /** @type {any} */ (pool).pool;
+    if (!p) return;
+    const inUse = p._allConnections.length - p._freeConnections.length;
+    console.log(
+      `[POOL] limit=${POOL_LIMIT} inUse=${inUse} free=${p._freeConnections.length} ` +
+      `queued=${p._connectionQueue.length} total=${p._allConnections.length}`
+    );
+  } catch (_) { /* swallow — diagnostics only */ }
+}, 60000).unref();
 
 // Helper: Parse JSON body
 const parseBody = (req) => new Promise((resolve) => {
@@ -3775,6 +3818,26 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     const requestId = `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
+    // v2.10.108: detect DB-busy / pool-pressure and respond with a fast,
+    // retryable 503 instead of a generic 500. The client's resilientFetch
+    // already retries 5xx with backoff, so this turns silent hangs into
+    // graceful degradation when MYSQL max_user_connections (=40 on cPanel)
+    // is approached.
+    if (isPoolPressureError(error)) {
+      console.warn('[DB_BUSY]', {
+        requestId,
+        method,
+        path,
+        code: /** @type {any} */ (error).code,
+        errno: /** @type {any} */ (error).errno,
+      });
+      return sendJSON(
+        res,
+        { success: false, error: 'db_busy', retryable: true, requestId },
+        503
+      );
+    }
+
     // Log full details to stderr (this is what you want to see in cPanel/Passenger logs)
     console.error('[ERROR]', {
       requestId,
@@ -3797,5 +3860,13 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// v2.10.108: per-request timeout. Prevents requests from holding a pool slot
+// indefinitely when MySQL is slow. Client retries via resilientFetch.
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+server.setTimeout(REQUEST_TIMEOUT_MS, (socket) => {
+  try {
+    console.warn(`[TIMEOUT] socket idle > ${REQUEST_TIMEOUT_MS}ms — destroying`);
+    socket.destroy();
+  } catch (_) { /* noop */ }
+});
+server.listen(PORT, () => console.log(`✅ Server running on port ${PORT} (pool=${POOL_LIMIT}, queue=${QUEUE_LIMIT}, timeout=${REQUEST_TIMEOUT_MS}ms)`));

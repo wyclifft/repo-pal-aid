@@ -18,17 +18,25 @@ const PORT = process.env.PORT || 3001;
 const VERSION = '1.0.0';
 const SERVICE_NAME = 'milk-collection-sync-service';
 
+// v2.10.108: pool tunables aligned with cPanel max_user_connections=40 shared
+// with backend-api. Default pool 5 (worst case 2 workers × 5 = 10 conns).
+const SYNC_POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 5);
+const SYNC_QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 30);
+
 // Database configuration from environment
+// NOTE: supports both DB_* (legacy) and MYSQL_* (matches .htaccess) names.
 const DB_CONFIG = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'maddasys_milk_collection_pwa',
+  host: process.env.MYSQL_HOST || process.env.DB_HOST || 'localhost',
+  user: process.env.MYSQL_USER || process.env.DB_USER || 'root',
+  password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || '',
+  database: process.env.MYSQL_DATABASE || process.env.DB_NAME || 'maddasys_milk_collection_pwa',
+  port: Number(process.env.MYSQL_PORT || 3306),
   waitForConnections: true,
-  connectionLimit: 5,
-  queueLimit: 0,
+  connectionLimit: SYNC_POOL_LIMIT,
+  queueLimit: SYNC_QUEUE_LIMIT,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 10000
+  keepAliveInitialDelay: 10000,
+  connectTimeout: 10000,
 };
 
 // External API configuration (for syncing to remote systems)
@@ -48,7 +56,19 @@ let pool = null;
 async function getPool() {
   if (!pool) {
     pool = mysql.createPool(DB_CONFIG);
-    console.log(`[${new Date().toISOString()}] Database pool created`);
+    console.log(`[${new Date().toISOString()}] Database pool created (limit=${SYNC_POOL_LIMIT}, queue=${SYNC_QUEUE_LIMIT})`);
+    // Periodic pool snapshot for observability.
+    setInterval(() => {
+      try {
+        const p = pool.pool;
+        if (!p) return;
+        const inUse = p._allConnections.length - p._freeConnections.length;
+        console.log(
+          `[POOL] limit=${SYNC_POOL_LIMIT} inUse=${inUse} free=${p._freeConnections.length} ` +
+          `queued=${p._connectionQueue.length} total=${p._allConnections.length}`
+        );
+      } catch (_) { /* diagnostics only */ }
+    }, 60000).unref();
   }
   return pool;
 }

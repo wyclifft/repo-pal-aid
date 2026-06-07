@@ -4,7 +4,7 @@
   "description": "Ultra-Lightweight Milk Collection API for cPanel",
   "main": "server.js",
   "scripts": {
-    "start": "node --max-old-space-size=96 server.js"
+    "start": "node server.js"
   },
   "keywords": ["milk-collection", "api"],
   "author": "Madda Systems",
