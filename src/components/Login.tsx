@@ -191,20 +191,58 @@ export const Login = memo(({ onLogin }: LoginProps) => {
             
             setDeviceStatus('approved');
           } else {
-            // New device - register in background with short timeout
+            // New device - register in background with short timeout.
+            // v2.10.111: include hardware bundle so backend can recover the
+            // ORIGINAL approved row (by ssaid) instead of creating a
+            // duplicate pending device.
             try {
               const deviceName = getDeviceName();
+              let regBundle: DeviceHardwareBundle | null = null;
+              try {
+                regBundle = await Promise.race([
+                  collectHardwareBundle(),
+                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 800)),
+                ]);
+              } catch { /* ignore */ }
+
               const registerResult = await Promise.race([
                 mysqlApi.devices.register({
                   device_fingerprint: deviceFingerprint,
                   user_id: userId,
                   approved: false,
                   device_info: deviceName,
+                  ssaid: regBundle?.ssaid,
+                  model: regBundle?.model,
+                  manufacturer: regBundle?.manufacturer,
+                  osVersion: regBundle?.osVersion,
                 }),
-                new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
               ]);
 
-              if (registerResult && registerResult.id) {
+              // v2.10.111: If server recovered an approved row by ssaid,
+              // adopt its fingerprint and treat the device as approved.
+              const recoveredFp = (registerResult as any)?.resolved_fingerprint;
+              if (registerResult && registerResult.id && registerResult.approved && recoveredFp) {
+                console.log(`[DEVICE][REGISTER] recovered approved fp ${String(recoveredFp).substring(0, 12)}… — rehydrating`);
+                deviceFingerprint = recoveredFp;
+                try { setStoredDeviceId(deviceFingerprint); } catch { /* ignore */ }
+                saveDeviceApproval(deviceFingerprint, registerResult.id, userId, true).catch(() => {});
+                setDeviceStatus('approved');
+                // Rehydrate device config + counters from recovered row
+                const rec: any = registerResult;
+                if (rec.company_name && rec.devcode) {
+                  try { await storeDeviceConfig(rec.company_name, rec.devcode); } catch { /* ignore */ }
+                }
+                if (rec.devcode) {
+                  localStorage.setItem('devcode', rec.devcode);
+                  const lastTrnId = rec.trnid ? parseInt(String(rec.trnid), 10) : undefined;
+                  const lastMilkId = rec.milkid ? parseInt(String(rec.milkid), 10) : undefined;
+                  const lastStoreId = rec.storeid ? parseInt(String(rec.storeid), 10) : undefined;
+                  const lastAiId = rec.aiid ? parseInt(String(rec.aiid), 10) : undefined;
+                  syncOfflineCounter(rec.devcode, lastTrnId, lastMilkId, lastStoreId, lastAiId).catch(() => {});
+                }
+                resolvedDeviceData = registerResult;
+              } else if (registerResult && registerResult.id) {
                 console.log('Device registered with ID:', registerResult.id);
                 // Save approval in background
                 saveDeviceApproval(deviceFingerprint, registerResult.id, userId, false).catch(() => {});

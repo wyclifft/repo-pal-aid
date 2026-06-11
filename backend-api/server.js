@@ -2568,15 +2568,30 @@ const server = http.createServer(async (req, res) => {
         //    by ccode hint when the client knows which company it belongs to.
         if (!matchedRow && ssaid) {
           try {
+            // v2.10.111: ORDER BY approved DESC FIRST. Without this, a
+            // freshly registered pending duplicate (created right after
+            // clear-data) wins over the original approved row because it
+            // has a newer last_seen_at. We always prefer the approved /
+            // user-assigned row so counters are preserved.
             let rows;
             if (ccodeHint) {
               [rows] = await pool.query(
-                'SELECT * FROM approved_devices WHERE ssaid = ? AND UPPER(TRIM(IFNULL(ccode, ""))) = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1',
+                `SELECT * FROM approved_devices
+                   WHERE ssaid = ? AND UPPER(TRIM(IFNULL(ccode, ""))) = ?
+                   ORDER BY approved DESC,
+                            (CASE WHEN user_id IS NULL OR user_id = '' OR LOWER(user_id) = 'pending' THEN 1 ELSE 0 END) ASC,
+                            last_seen_at DESC, id DESC
+                   LIMIT 1`,
                 [ssaid, ccodeHint]
               );
             } else {
               [rows] = await pool.query(
-                'SELECT * FROM approved_devices WHERE ssaid = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1',
+                `SELECT * FROM approved_devices
+                   WHERE ssaid = ?
+                   ORDER BY approved DESC,
+                            (CASE WHEN user_id IS NULL OR user_id = '' OR LOWER(user_id) = 'pending' THEN 1 ELSE 0 END) ASC,
+                            last_seen_at DESC, id DESC
+                   LIMIT 1`,
                 [ssaid]
               );
             }
@@ -2597,7 +2612,12 @@ const server = http.createServer(async (req, res) => {
         if (!matchedRow && ssaid && model && manufacturer) {
           try {
             const [rows] = await pool.query(
-              'SELECT * FROM approved_devices WHERE ssaid = ? AND device_model = ? AND device_manufacturer = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1',
+              `SELECT * FROM approved_devices
+                 WHERE ssaid = ? AND device_model = ? AND device_manufacturer = ?
+                 ORDER BY approved DESC,
+                          (CASE WHEN user_id IS NULL OR user_id = '' OR LOWER(user_id) = 'pending' THEN 1 ELSE 0 END) ASC,
+                          last_seen_at DESC, id DESC
+                 LIMIT 1`,
               [ssaid, model, manufacturer]
             );
             if (rows.length > 0) {
@@ -2878,6 +2898,72 @@ const server = http.createServer(async (req, res) => {
 
     if (path === '/api/devices' && method === 'POST') {
       const body = await parseBody(req);
+
+      // v2.10.111: STABLE IDENTITY GUARD on registration.
+      // If the device sends an ssaid that already maps to an approved row,
+      // return that row instead of inserting a fresh pending duplicate.
+      // Prevents reinstalled / cleared-data devices from generating a new
+      // fingerprint and silently breaking trnid/milkid continuity.
+      const regSsaid = body.ssaid ? String(body.ssaid).trim() : null;
+      if (regSsaid) {
+        try {
+          const [hwRows] = await pool.query(
+            `SELECT * FROM approved_devices
+               WHERE ssaid = ?
+               ORDER BY approved DESC,
+                        (CASE WHEN user_id IS NULL OR user_id = '' OR LOWER(user_id) = 'pending' THEN 1 ELSE 0 END) ASC,
+                        last_seen_at DESC, id DESC
+               LIMIT 1`,
+            [regSsaid]
+          );
+          if (hwRows.length > 0 && hwRows[0].approved) {
+            const recovered = hwRows[0];
+            console.log(`[DEVICE][REGISTER] ssaid match → reusing approved row id=${recovered.id} fp=${(recovered.device_fingerprint || '').substring(0, 12)}…`);
+            // Best-effort: log the new fingerprint into history
+            try {
+              const newFp = body.device_fingerprint || null;
+              if (newFp && newFp !== recovered.device_fingerprint) {
+                await pool.query(
+                  `UPDATE approved_devices
+                     SET last_seen_at = NOW(),
+                         fingerprint_history = CASE
+                           WHEN fingerprint_history IS NULL THEN ?
+                           WHEN INSTR(fingerprint_history, ?) > 0 THEN fingerprint_history
+                           ELSE CONCAT(fingerprint_history, ',', ?)
+                         END
+                     WHERE id = ?`,
+                  [newFp, newFp, newFp, recovered.id]
+                );
+              }
+            } catch (histErr) {
+              if (histErr && histErr.code !== 'ER_BAD_FIELD_ERROR') {
+                console.warn('[DEVICE][REGISTER] history merge failed:', histErr.message || histErr);
+              }
+            }
+            const [devRows] = await pool.query(
+              'SELECT devcode, trnid, milkid, storeid, aiid FROM devsettings WHERE uniquedevcode = ?',
+              [recovered.device_fingerprint]
+            );
+            const deviceData = {
+              ...recovered,
+              devcode: devRows.length > 0 ? devRows[0].devcode : null,
+              trnid: devRows.length > 0 ? (devRows[0].trnid || 0) : 0,
+              milkid: devRows.length > 0 ? (devRows[0].milkid || 0) : 0,
+              storeid: devRows.length > 0 ? (devRows[0].storeid || 0) : 0,
+              aiid: devRows.length > 0 ? (devRows[0].aiid || 0) : 0,
+              resolved_fingerprint: recovered.device_fingerprint,
+              resolved_by: 'ssaid_register',
+            };
+            return sendJSON(res, { success: true, data: deviceData, message: 'Recovered original device identity' });
+          }
+        } catch (regHwErr) {
+          if (regHwErr && regHwErr.code !== 'ER_BAD_FIELD_ERROR') {
+            console.warn('[DEVICE][REGISTER] ssaid recovery error:', regHwErr.message || regHwErr);
+          }
+          // Fall through to normal registration
+        }
+      }
+
       const [existing] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
       
       if (existing.length > 0) {
@@ -2940,20 +3026,41 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Insert new device - ALWAYS set approved to FALSE for new devices
+        // v2.10.111: also persist hardware identifiers (ssaid/model/manufacturer/osVersion)
+        // so the next reinstall can recover this row via /api/device/resolve-identity.
+        const regModel = body.model ? String(body.model).trim() : null;
+        const regManufacturer = body.manufacturer ? String(body.manufacturer).trim() : null;
+        const regOsVersion = body.osVersion ? String(body.osVersion).trim() : null;
         let result;
         try {
-          // Newer schema
+          // Newest schema (with hardware identity columns)
           [result] = await pool.query(
-            'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
-            [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
+            `INSERT INTO approved_devices
+               (device_fingerprint, user_id, approved, device_info, last_sync, ccode,
+                ssaid, device_model, device_manufacturer, os_version, last_seen_at,
+                created_at, updated_at)
+             VALUES (?, ?, FALSE, ?, NOW(), ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
+            [body.device_fingerprint, body.user_id, body.device_info || null, ccode,
+             regSsaid, regModel, regManufacturer, regOsVersion]
           );
         } catch (e) {
-          // Backward compatibility: older schema missing columns like ccode/updated_at
           if (e && e.code === 'ER_BAD_FIELD_ERROR') {
-            [result] = await pool.query(
-              'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, FALSE, ?, NOW())',
-              [body.device_fingerprint, body.user_id, body.device_info || null]
-            );
+            // Migration not run — fallback to schema without hw columns
+            try {
+              [result] = await pool.query(
+                'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
+                [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
+              );
+            } catch (e2) {
+              if (e2 && e2.code === 'ER_BAD_FIELD_ERROR') {
+                [result] = await pool.query(
+                  'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, FALSE, ?, NOW())',
+                  [body.device_fingerprint, body.user_id, body.device_info || null]
+                );
+              } else {
+                throw e2;
+              }
+            }
           } else {
             throw e;
           }
