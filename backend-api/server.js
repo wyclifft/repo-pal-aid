@@ -2568,15 +2568,30 @@ const server = http.createServer(async (req, res) => {
         //    by ccode hint when the client knows which company it belongs to.
         if (!matchedRow && ssaid) {
           try {
+            // v2.10.111: ORDER BY approved DESC FIRST. Without this, a
+            // freshly registered pending duplicate (created right after
+            // clear-data) wins over the original approved row because it
+            // has a newer last_seen_at. We always prefer the approved /
+            // user-assigned row so counters are preserved.
             let rows;
             if (ccodeHint) {
               [rows] = await pool.query(
-                'SELECT * FROM approved_devices WHERE ssaid = ? AND UPPER(TRIM(IFNULL(ccode, ""))) = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1',
+                `SELECT * FROM approved_devices
+                   WHERE ssaid = ? AND UPPER(TRIM(IFNULL(ccode, ""))) = ?
+                   ORDER BY approved DESC,
+                            (CASE WHEN user_id IS NULL OR user_id = '' OR LOWER(user_id) = 'pending' THEN 1 ELSE 0 END) ASC,
+                            last_seen_at DESC, id DESC
+                   LIMIT 1`,
                 [ssaid, ccodeHint]
               );
             } else {
               [rows] = await pool.query(
-                'SELECT * FROM approved_devices WHERE ssaid = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1',
+                `SELECT * FROM approved_devices
+                   WHERE ssaid = ?
+                   ORDER BY approved DESC,
+                            (CASE WHEN user_id IS NULL OR user_id = '' OR LOWER(user_id) = 'pending' THEN 1 ELSE 0 END) ASC,
+                            last_seen_at DESC, id DESC
+                   LIMIT 1`,
                 [ssaid]
               );
             }
@@ -2597,7 +2612,12 @@ const server = http.createServer(async (req, res) => {
         if (!matchedRow && ssaid && model && manufacturer) {
           try {
             const [rows] = await pool.query(
-              'SELECT * FROM approved_devices WHERE ssaid = ? AND device_model = ? AND device_manufacturer = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1',
+              `SELECT * FROM approved_devices
+                 WHERE ssaid = ? AND device_model = ? AND device_manufacturer = ?
+                 ORDER BY approved DESC,
+                          (CASE WHEN user_id IS NULL OR user_id = '' OR LOWER(user_id) = 'pending' THEN 1 ELSE 0 END) ASC,
+                          last_seen_at DESC, id DESC
+                 LIMIT 1`,
               [ssaid, model, manufacturer]
             );
             if (rows.length > 0) {
