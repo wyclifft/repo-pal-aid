@@ -91,15 +91,41 @@ const simpleHash = (str: string): string => {
 };
 
 /**
- * Generate a unique device fingerprint
- * Uses SHA-256 when available, falls back to simple hash for Capacitor/WebView
- * IMPORTANT: Always returns the same fingerprint for a device by using localStorage
+ * SHA-256 hex helper — crypto.subtle when available, simpleHash fallback.
+ */
+const sha256Hex = async (input: string): Promise<string> => {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function') {
+      const data = new TextEncoder().encode(input);
+      const buf = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch (e) {
+    console.warn('[FP] crypto.subtle digest failed, using fallback:', e);
+  }
+  return simpleHash(input);
+};
+
+/**
+ * Generate a unique device fingerprint.
+ *
+ * v2.10.112: On native, derive deterministically from SSAID
+ * (fp = sha256("ssaid:" + ssaid)) so reinstall/clear-data yields the SAME
+ * fingerprint and the server immediately finds the original approved row via
+ * /api/devices/fingerprint/:fp — no duplicate pending rows, no recovery dance.
+ *
+ * Priority:
+ *   1) Stored device_id in localStorage  — back-compat; already-approved
+ *      devices keep their existing fingerprint (no orphaned approved rows).
+ *   2) Native + SSAID available          — deterministic SHA-256 over SSAID.
+ *   3) Entropy fallback                  — original web/legacy behavior.
  */
 export const generateDeviceFingerprint = async (): Promise<string> => {
   const isNative = Capacitor.isNativePlatform();
   const platform = Capacitor.getPlatform();
-  
-  // ALWAYS check stored ID first for consistency
+
+  // 1) Existing stored fingerprint — never overwrite. Protects production
+  //    devices already approved under the legacy entropy hash.
   try {
     const storedId = localStorage.getItem(DEVICE_ID_KEY);
     if (storedId && storedId.length >= 32) {
@@ -109,7 +135,29 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
   } catch (e) {
     console.warn('📱 localStorage read failed:', e);
   }
-  
+
+  // 2) Native: derive from SSAID. Stable across reinstall/clear-data when the
+  //    APK signing key + user profile are the same.
+  if (isNative) {
+    try {
+      const id = await Device.getId();
+      const ssaid = id?.identifier ? String(id.identifier) : '';
+      if (ssaid) {
+        const fp = await sha256Hex('ssaid:' + ssaid);
+        try {
+          localStorage.setItem(DEVICE_ID_KEY, fp);
+          console.log('🔑 [Native] SSAID-derived fingerprint:', fp.substring(0, 16) + '...');
+        } catch (e) {
+          console.warn('[FP] Failed to persist SSAID fingerprint:', e);
+        }
+        return fp;
+      }
+      console.warn('[FP] Native but SSAID unavailable — falling back to entropy hash');
+    } catch (e) {
+      console.warn('[FP] Device.getId() failed, falling back to entropy hash:', e);
+    }
+  }
+
   console.log('📱 Generating NEW device fingerprint - platform:', platform, 'isNative:', isNative);
   
   // Generate new fingerprint only if no stored ID exists

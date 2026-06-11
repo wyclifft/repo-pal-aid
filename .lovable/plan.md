@@ -1,43 +1,68 @@
-## Problem
+## Goal
 
-The server did find the same physical device by `ssaid`, but it selected the newest pending row instead of the existing approved row:
+Make the device fingerprint deterministic from hardware (SSAID) on native Android, so reinstall/clear-data always yields the SAME fingerprint — no server lookup needed for recovery.
 
-```text
-Existing approved row: id 267, same ssaid, approved = 1, user_id = 31
-New pending row:      id 268, same ssaid, approved = 0, user_id = pending
-```
+## Why this is better
 
-Current lookup orders by `last_seen_at DESC, id DESC`, so after clear-data the freshly registered pending row becomes the preferred identity. That is why the app keeps the new fingerprint instead of recovering the original approved fingerprint.
+Current `generateDeviceFingerprint()` builds a hash from `userAgent + screen + canvas + Math.random() + Date.now()`, then caches it in localStorage. After clear-data, localStorage is gone and the random seed produces a brand new hash — that is exactly what created the duplicate `id 268` pending row. The server-side identity-recovery flow (v2.10.109–111) was a workaround. Using SSAID as the source makes the fingerprint itself stable.
 
 ## Plan
 
-1. **Fix backend identity selection**
-   - Update `POST /api/device/resolve-identity` in `backend-api/server.js` and `sync-service/server.js`.
-   - When matching by `ssaid`, prefer an approved/authorized existing device before any pending row.
-   - Use ordering like: approved first, real assigned users before `pending`, then newest seen row.
-   - Keep the endpoint additive and backward-compatible.
+1. **`src/utils/deviceFingerprint.ts` — change `generateDeviceFingerprint()`**
+   - Order of preference (first match wins, then cached in localStorage):
+     1. Stored `device_id` in localStorage (back-compat — existing installs keep their current fingerprint, so server rows like `id 267` are NOT orphaned).
+     2. On native: `await Device.getId()` → SSAID. Derive fingerprint as `sha256("ssaid:" + ssaid)` (64 hex chars, same shape as today). Salting with a constant prefix avoids leaking the raw SSAID and keeps length/format identical so backend columns, indexes, and logs are unchanged.
+     3. Fallback (web, or SSAID unavailable): current entropy-based hash — unchanged.
+   - Persist the result to `localStorage['device_id']` exactly as today.
+   - Keep the function async and the return shape (hex string) identical.
 
-2. **Prevent future duplicate pending rows from stealing identity**
-   - Update device registration so when a new fingerprint is registered with the same `ssaid`, the backend first attempts identity recovery.
-   - If an approved row already exists for that `ssaid`, return that original row instead of inserting a new pending device.
-   - If no approved row exists, registration can still create a pending row as today.
+2. **Back-compat with existing approved rows**
+   - Existing devices already have a localStorage `device_id` AND a matching `approved_devices.device_fingerprint`. Step 1.1 ensures they keep using it — no migration churn, no mass re-approval.
+   - Only fresh installs / cleared-data devices take the new SSAID-derived path. They will deterministically produce the same fingerprint every reinstall.
+   - The server-side identity-recovery endpoint (`/api/device/resolve-identity`) stays in place as a safety net for: (a) devices that were approved BEFORE this change and later clear data — the legacy fingerprint won't match, but SSAID still will; (b) factory resets where SSAID rotates (best-effort 3-way match remains).
 
-3. **Send hardware bundle during registration**
-   - Update `src/services/mysqlApi.ts` device registration payload to allow `ssaid`, `device_model`, `device_manufacturer`, `os_version`, and `legacyFingerprint`.
-   - Update `src/components/Login.tsx` so the same hardware bundle collected during login is reused when registering a new device.
-   - This allows the server to avoid creating duplicate pending rows after clear-data.
+3. **One-time self-heal on native**
+   - On native only, if `localStorage['device_id']` exists AND differs from the SSAID-derived value, do NOT overwrite. Log once `[FP] legacy fingerprint retained (pre-SSAID install)`. This protects production devices already approved on the old scheme.
+   - New installs land directly on the SSAID-derived fingerprint.
 
-4. **Add safe cleanup SQL for production**
-   - Add a small MySQL cleanup script for this exact duplicate case:
-     - keep approved row `267`
-     - remove or mark duplicate pending row `268`
-     - optionally append the new fingerprint to `fingerprint_history`
-   - This will be manual, so production data is not changed automatically by the app.
+4. **Web platform**
+   - No SSAID available → keep current behavior unchanged. Web is not the production target; native Android is.
 
-5. **Version and documentation**
-   - Bump app version to the next patch version.
-   - Add comments documenting that stable device recovery must always prefer approved identities over pending duplicates.
+5. **No backend changes**
+   - `approved_devices.device_fingerprint` column, indexes, lookups, sync, receipts, references — all untouched.
+   - SSAID is also separately stored on the row (already added in v2.10.109 migration), so the server still has the raw SSAID for the resolve-identity safety net.
+
+6. **Version + docs**
+   - Bump `APP_VERSION` to `2.10.112` and `versionCode` to `133`.
+   - Update `src/constants/appVersion.ts` comment explaining the SSAID-derived fingerprint.
+   - Update `.lovable/memory/architecture/stable-device-identity.md` with the new "fingerprint = sha256('ssaid:' + ssaid)" rule and the legacy-retention guard.
+
+## Technical details
+
+```ts
+// new path inside generateDeviceFingerprint()
+if (Capacitor.isNativePlatform()) {
+  try {
+    const { identifier } = await Device.getId();
+    if (identifier) {
+      const fp = await sha256Hex('ssaid:' + identifier); // 64 hex chars
+      localStorage.setItem(DEVICE_ID_KEY, fp);
+      return fp;
+    }
+  } catch {/* fall through to entropy path */}
+}
+```
+
+`sha256Hex` reuses the existing `crypto.subtle.digest('SHA-256', …)` block with the same `simpleHash` fallback already in the file — no new deps.
 
 ## Expected result
 
-After clear-data/reinstall, the HMD Pulse with `ssaid = b4d7e02f1500f505` will resolve back to the original approved fingerprint from row `267`, preserving `devcode`, `trnid`, `milkid`, `storeid`, and `aiid` instead of creating/using row `268`.
+- Fresh install on HMD Pulse → fingerprint deterministically derived from SSAID `b4d7e02f1500f505`. Reinstall/clear-data → identical fingerprint → server finds approved row directly via `getByFingerprint`, no pending row created, no recovery dance needed.
+- Existing approved devices (like row `id 267`) keep working with their current fingerprint — zero disruption.
+- Web users unaffected.
+
+## What this does NOT change
+
+- Reference generator format, sync engine, IndexedDB schema, receipt rendering, photo capture, Bluetooth, auth flow, RLS — all untouched.
+- `approved_devices` schema — untouched.
+- `/api/device/resolve-identity` — kept as a safety net, not removed.

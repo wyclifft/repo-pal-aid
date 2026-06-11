@@ -1,8 +1,11 @@
 ---
 name: Stable Device Identity Across Reinstalls
-description: Server-bound identity recovery using SSAID + hw bundle so reinstall/clear-data preserves devcode, uniquedevcode, and counters (v2.10.109)
+description: SSAID-derived fingerprint on native (v2.10.112) + server-bound identity recovery (v2.10.109–111) so reinstall/clear-data preserves devcode, uniquedevcode, and counters
 type: architecture
 ---
+
+**v2.10.112 (primary fix):** On native, `generateDeviceFingerprint()` derives deterministically from Android SSAID: `fp = sha256("ssaid:" + Device.getId().identifier)`. Same APK signing key + same user profile → identical fingerprint after uninstall/reinstall/clear-data. Server resolves it directly via `/api/devices/fingerprint/:fp` — no duplicate pending row created. Back-compat: an existing `localStorage['device_id']` is NEVER overwritten (priority 1), so devices already approved under the legacy entropy hash keep their fingerprint and approved row. Web behavior unchanged (entropy fallback).
+
 
 A reinstalled / cleared-data device must recover its ORIGINAL identity from the server instead of being issued a fresh one. Fresh identities risk TRNID / MILKID / STOREID / AIID mixups because counters restart.
 
