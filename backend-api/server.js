@@ -3026,20 +3026,41 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Insert new device - ALWAYS set approved to FALSE for new devices
+        // v2.10.111: also persist hardware identifiers (ssaid/model/manufacturer/osVersion)
+        // so the next reinstall can recover this row via /api/device/resolve-identity.
+        const regModel = body.model ? String(body.model).trim() : null;
+        const regManufacturer = body.manufacturer ? String(body.manufacturer).trim() : null;
+        const regOsVersion = body.osVersion ? String(body.osVersion).trim() : null;
         let result;
         try {
-          // Newer schema
+          // Newest schema (with hardware identity columns)
           [result] = await pool.query(
-            'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
-            [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
+            `INSERT INTO approved_devices
+               (device_fingerprint, user_id, approved, device_info, last_sync, ccode,
+                ssaid, device_model, device_manufacturer, os_version, last_seen_at,
+                created_at, updated_at)
+             VALUES (?, ?, FALSE, ?, NOW(), ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
+            [body.device_fingerprint, body.user_id, body.device_info || null, ccode,
+             regSsaid, regModel, regManufacturer, regOsVersion]
           );
         } catch (e) {
-          // Backward compatibility: older schema missing columns like ccode/updated_at
           if (e && e.code === 'ER_BAD_FIELD_ERROR') {
-            [result] = await pool.query(
-              'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, FALSE, ?, NOW())',
-              [body.device_fingerprint, body.user_id, body.device_info || null]
-            );
+            // Migration not run — fallback to schema without hw columns
+            try {
+              [result] = await pool.query(
+                'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
+                [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
+              );
+            } catch (e2) {
+              if (e2 && e2.code === 'ER_BAD_FIELD_ERROR') {
+                [result] = await pool.query(
+                  'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, FALSE, ?, NOW())',
+                  [body.device_fingerprint, body.user_id, body.device_info || null]
+                );
+              } else {
+                throw e2;
+              }
+            }
           } else {
             throw e;
           }
