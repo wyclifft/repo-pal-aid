@@ -228,7 +228,19 @@ export const Login = memo(({ onLogin }: LoginProps) => {
                 try { setStoredDeviceId(deviceFingerprint); } catch { /* ignore */ }
                 saveDeviceApproval(deviceFingerprint, registerResult.id, userId, true).catch(() => {});
                 setDeviceStatus('approved');
-                // Fall through to login completion below
+                // Rehydrate device config + counters from recovered row
+                const rec: any = registerResult;
+                if (rec.company_name && rec.devcode) {
+                  try { await storeDeviceConfig(rec.company_name, rec.devcode); } catch { /* ignore */ }
+                }
+                if (rec.devcode) {
+                  localStorage.setItem('devcode', rec.devcode);
+                  const lastTrnId = rec.trnid ? parseInt(String(rec.trnid), 10) : undefined;
+                  const lastMilkId = rec.milkid ? parseInt(String(rec.milkid), 10) : undefined;
+                  const lastStoreId = rec.storeid ? parseInt(String(rec.storeid), 10) : undefined;
+                  const lastAiId = rec.aiid ? parseInt(String(rec.aiid), 10) : undefined;
+                  syncOfflineCounter(rec.devcode, lastTrnId, lastMilkId, lastStoreId, lastAiId).catch(() => {});
+                }
                 resolvedDeviceData = registerResult;
               } else if (registerResult && registerResult.id) {
                 console.log('Device registered with ID:', registerResult.id);
