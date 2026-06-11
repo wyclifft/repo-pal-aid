@@ -703,6 +703,7 @@ const ZReport = () => {
         open={showPeriodSelector}
         onClose={() => setShowPeriodSelector(false)}
         onSelect={handlePeriodSelect}
+        sessions={sessionList}
       />
 
       {/* Device Z Report Receipt Modal - Uses handwritten layout for printing */}
