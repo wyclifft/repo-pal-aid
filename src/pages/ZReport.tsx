@@ -130,19 +130,22 @@ const ZReport = () => {
 
   // Fetch device-specific Z Report (for receipt/print output only)
   // Now accepts period filter for server-side filtering
-  const fetchDeviceReport = useCallback(async (period?: ZReportPeriod) => {
+  // v2.10.114: Always fetch the full day's transactions from the backend;
+  // period filtering is done client-side by SCODE (transactions.CAN) inside
+  // DeviceZReportReceipt. This keeps the backend contract unchanged while
+  // supporting any session row defined in the sessions table.
+  const fetchDeviceReport = useCallback(async (_period?: ZReportPeriod) => {
     if (!deviceFingerprint || !navigator.onLine) return;
-    
+
     try {
-      // Pass period to backend for server-side filtering
-      const data = await mysqlApi.zReport.getByDevice(selectedDate, deviceFingerprint, undefined, period);
+      const data = await mysqlApi.zReport.getByDevice(selectedDate, deviceFingerprint);
       if (data) {
         // Add clerk name from current user if not set
         if (!data.clerkName || data.clerkName === 'Unknown') {
           data.clerkName = currentUser?.username || 'Clerk';
         }
         setDeviceReportData(data);
-        console.log('[Z-REPORT] Device report loaded:', data.transactions.length, 'transactions for period:', period || 'all');
+        console.log('[Z-REPORT] Device report loaded:', data.transactions.length, 'transactions (client-side period filter applied later)');
       }
     } catch (err) {
       console.error('[Z-REPORT] Failed to fetch device report:', err);
