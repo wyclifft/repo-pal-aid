@@ -2898,6 +2898,72 @@ const server = http.createServer(async (req, res) => {
 
     if (path === '/api/devices' && method === 'POST') {
       const body = await parseBody(req);
+
+      // v2.10.111: STABLE IDENTITY GUARD on registration.
+      // If the device sends an ssaid that already maps to an approved row,
+      // return that row instead of inserting a fresh pending duplicate.
+      // Prevents reinstalled / cleared-data devices from generating a new
+      // fingerprint and silently breaking trnid/milkid continuity.
+      const regSsaid = body.ssaid ? String(body.ssaid).trim() : null;
+      if (regSsaid) {
+        try {
+          const [hwRows] = await pool.query(
+            `SELECT * FROM approved_devices
+               WHERE ssaid = ?
+               ORDER BY approved DESC,
+                        (CASE WHEN user_id IS NULL OR user_id = '' OR LOWER(user_id) = 'pending' THEN 1 ELSE 0 END) ASC,
+                        last_seen_at DESC, id DESC
+               LIMIT 1`,
+            [regSsaid]
+          );
+          if (hwRows.length > 0 && hwRows[0].approved) {
+            const recovered = hwRows[0];
+            console.log(`[DEVICE][REGISTER] ssaid match → reusing approved row id=${recovered.id} fp=${(recovered.device_fingerprint || '').substring(0, 12)}…`);
+            // Best-effort: log the new fingerprint into history
+            try {
+              const newFp = body.device_fingerprint || null;
+              if (newFp && newFp !== recovered.device_fingerprint) {
+                await pool.query(
+                  `UPDATE approved_devices
+                     SET last_seen_at = NOW(),
+                         fingerprint_history = CASE
+                           WHEN fingerprint_history IS NULL THEN ?
+                           WHEN INSTR(fingerprint_history, ?) > 0 THEN fingerprint_history
+                           ELSE CONCAT(fingerprint_history, ',', ?)
+                         END
+                     WHERE id = ?`,
+                  [newFp, newFp, newFp, recovered.id]
+                );
+              }
+            } catch (histErr) {
+              if (histErr && histErr.code !== 'ER_BAD_FIELD_ERROR') {
+                console.warn('[DEVICE][REGISTER] history merge failed:', histErr.message || histErr);
+              }
+            }
+            const [devRows] = await pool.query(
+              'SELECT devcode, trnid, milkid, storeid, aiid FROM devsettings WHERE uniquedevcode = ?',
+              [recovered.device_fingerprint]
+            );
+            const deviceData = {
+              ...recovered,
+              devcode: devRows.length > 0 ? devRows[0].devcode : null,
+              trnid: devRows.length > 0 ? (devRows[0].trnid || 0) : 0,
+              milkid: devRows.length > 0 ? (devRows[0].milkid || 0) : 0,
+              storeid: devRows.length > 0 ? (devRows[0].storeid || 0) : 0,
+              aiid: devRows.length > 0 ? (devRows[0].aiid || 0) : 0,
+              resolved_fingerprint: recovered.device_fingerprint,
+              resolved_by: 'ssaid_register',
+            };
+            return sendJSON(res, { success: true, data: deviceData, message: 'Recovered original device identity' });
+          }
+        } catch (regHwErr) {
+          if (regHwErr && regHwErr.code !== 'ER_BAD_FIELD_ERROR') {
+            console.warn('[DEVICE][REGISTER] ssaid recovery error:', regHwErr.message || regHwErr);
+          }
+          // Fall through to normal registration
+        }
+      }
+
       const [existing] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
       
       if (existing.length > 0) {
