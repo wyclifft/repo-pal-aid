@@ -4,7 +4,7 @@ import { type AppUser } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
-import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName, collectHardwareBundle } from '@/utils/deviceFingerprint';
+import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName, collectHardwareBundle, type DeviceHardwareBundle } from '@/utils/deviceFingerprint';
 import { storeDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
 import { hashPassword, hashesEqual } from '@/utils/passwordHash';
 import loginBg from '@/assets/login-bg.jpg';
@@ -61,7 +61,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         // that would risk TRNID/MILKID collisions. Strictly additive — on
         // 404 / old backend / network error we fall through to the existing
         // getByFingerprint path unchanged.
-        let resolveBundlePromise: Promise<ReturnType<typeof collectHardwareBundle> extends Promise<infer T> ? T : never> | null = null;
+        let resolveBundlePromise: Promise<DeviceHardwareBundle> | null = null;
         try {
           resolveBundlePromise = collectHardwareBundle();
         } catch (e) {
