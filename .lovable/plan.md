@@ -1,92 +1,43 @@
-# v2.10.110 — Fix Passenger "Can't acquire lock" on sync-service deploy
-
 ## Problem
 
-Your only Node app is registered in cPanel as:
+The server did find the same physical device by `ssaid`, but it selected the newest pending row instead of the existing approved row:
 
-```
-Domain : 2backend.maddasystems.co.ke
-Path   : /home/maddasys/public_html/sync-service
-Node   : 19.9.0   (status: started)
-```
-
-This directory hosts the **backend-api** code (the live `/api/devices/...` calls in the network log prove it).
-
-After uploading the v2.10.109 `server.js` + `.htaccess`, Passenger fails with:
-
-```
-Can't acquire lock for app: public_html/sync-service
+```text
+Existing approved row: id 267, same ssaid, approved = 1, user_id = 31
+New pending row:      id 268, same ssaid, approved = 0, user_id = pending
 ```
 
-### Root cause
+Current lookup orders by `last_seen_at DESC, id DESC`, so after clear-data the freshly registered pending row becomes the preferred identity. That is why the app keeps the new fingerprint instead of recovering the original approved fingerprint.
 
-`sync-service/.htaccess` declares the Node binary **twice**, with different versions:
+## Plan
 
-```apache
-# top block (auto-managed by cPanel) — Node 19
-PassengerNodejs "/home/maddasys/nodevenv/public_html/sync-service/19/bin/node"
-...
-# bottom block (manual, legacy) — Node 14
-PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node
-```
+1. **Fix backend identity selection**
+   - Update `POST /api/device/resolve-identity` in `backend-api/server.js` and `sync-service/server.js`.
+   - When matching by `ssaid`, prefer an approved/authorized existing device before any pending row.
+   - Use ordering like: approved first, real assigned users before `pending`, then newest seen row.
+   - Keep the endpoint additive and backward-compatible.
 
-Apache uses the **last** `PassengerNodejs` directive, so Passenger tries to spawn the app under Node 14 while cPanel's app registry has it pinned to Node 19. The two fight for the same Passenger app lockfile, neither side wins, and `Restart` returns *Can't acquire lock for app*.
+2. **Prevent future duplicate pending rows from stealing identity**
+   - Update device registration so when a new fingerprint is registered with the same `ssaid`, the backend first attempts identity recovery.
+   - If an approved row already exists for that `ssaid`, return that original row instead of inserting a new pending device.
+   - If no approved row exists, registration can still create a pending row as today.
 
-A secondary risk: the duplicate `PassengerEnabled / PassengerAppRoot / PassengerAppType / PassengerStartupFile` block below the auto-managed header is redundant and increases the chance of Passenger refusing to (re)register the app.
+3. **Send hardware bundle during registration**
+   - Update `src/services/mysqlApi.ts` device registration payload to allow `ssaid`, `device_model`, `device_manufacturer`, `os_version`, and `legacyFingerprint`.
+   - Update `src/components/Login.tsx` so the same hardware bundle collected during login is reused when registering a new device.
+   - This allows the server to avoid creating duplicate pending rows after clear-data.
 
-## Fix (file changes)
+4. **Add safe cleanup SQL for production**
+   - Add a small MySQL cleanup script for this exact duplicate case:
+     - keep approved row `267`
+     - remove or mark duplicate pending row `268`
+     - optionally append the new fingerprint to `fingerprint_history`
+   - This will be manual, so production data is not changed automatically by the app.
 
-### 1. `sync-service/.htaccess` — keep one Node, one Passenger block
+5. **Version and documentation**
+   - Bump app version to the next patch version.
+   - Add comments documenting that stable device recovery must always prefer approved identities over pending duplicates.
 
-- Keep ONLY the cPanel-managed Passenger header block (Node 19).
-- Delete the second `PassengerEnabled / PassengerAppRoot / PassengerAppType / PassengerStartupFile / PassengerNodejs` block.
-- Keep all `SetEnv` lines (MySQL creds, pool tunables, CORS module, OPTIONS rewrite, `<FilesMatch>` protection, `<IfModule Litespeed>` env block).
-- Result: a single, unambiguous Node 19 declaration that matches what cPanel's Node Selector has registered.
+## Expected result
 
-### 2. `backend-api/.htaccess` — preventive cleanup
-
-Same duplicate-block pattern exists. Collapse to a single Passenger header + SetEnv block so a future redeploy of that app does not hit the same lock error.
-
-### 3. `src/constants/appVersion.ts` + `android/app/build.gradle`
-
-- Bump app version to **v2.10.110 (Code 131)**.
-- Changelog note: *"Fix Passenger app-lock failure caused by duplicate PassengerNodejs directives in .htaccess; backend deploy is now lock-safe. No client logic changes."*
-
-### 4. `.lovable/memory/architecture/backend-connection-pooling.md`
-
-Append a short subsection **"Passenger .htaccess discipline"** capturing the rule: only ONE `PassengerNodejs` and ONE Passenger app block per `.htaccess`, always matching the Node version registered in cPanel's Node Selector. This prevents the next deploy from re-introducing the bug.
-
-## Recovery steps the user runs on cPanel (one-time, after uploading the fixed .htaccess)
-
-1. **Setup Node.js App → 2backend.maddasystems.co.ke → Stop App**.
-2. **Terminal** (or SSH):
-   ```bash
-   # kill any stale node worker still holding the lock
-   pkill -u $USER -f "public_html/sync-service/server.js" || true
-   # clear the Passenger restart lock if present
-   rm -f ~/public_html/sync-service/tmp/restart.txt
-   rm -f ~/public_html/sync-service/tmp/*.lock 2>/dev/null || true
-   ```
-3. Re-upload `server.js` and the **fixed** `.htaccess`.
-4. **Setup Node.js App → Run NPM Install** (only if `package.json` changed; for v2.10.109 it did not).
-5. **Start App** → wait until status shows *started*.
-6. Sanity check:
-   ```bash
-   curl -i https://2backend.maddasystems.co.ke/api/health
-   curl -i https://2backend.maddasystems.co.ke/api/devices/fingerprint/<any-known-fp>
-   ```
-
-## What this does NOT change
-
-- `backend-api/server.js` (already deployed in v2.10.109).
-- `MIGRATION_APPROVED_DEVICES_HW.sql` (already executed).
-- Client login flow, device fingerprint logic, reference generator, sync engine.
-- MySQL pool sizing (`MYSQL_POOL_LIMIT 8` for backend-api, `5` for sync-service stays).
-
-## Rollback
-
-If the fixed `.htaccess` causes any new symptom, restore the previous version from the repo and Stop/Start the app. The change is config-only and reversible.
-
-## Risk
-
-Very low: removing conflicting/duplicate directives, no code paths touched, no schema work, no API surface change. Old APKs continue to work.
+After clear-data/reinstall, the HMD Pulse with `ssaid = b4d7e02f1500f505` will resolve back to the original approved fingerprint from row `267`, preserving `devcode`, `trnid`, `milkid`, `storeid`, and `aiid` instead of creating/using row `268`.
