@@ -60,7 +60,27 @@ const ZReport = () => {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
   
-  const { saveZReport, getZReport, getUnsyncedReceipts } = useIndexedDB();
+  const { saveZReport, getZReport, getUnsyncedReceipts, getSessions } = useIndexedDB();
+
+  // v2.10.114: Load cached sessions so the Z Report period selector can show
+  // one option per session row (matched by transactions.CAN → sessions.SCODE,
+  // labeled with sessions.descript). Works offline using whatever the rest
+  // of the app (SessionSelector) has already cached.
+  const [sessionList, setSessionList] = useState<Array<{ SCODE?: string; descript?: string }>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = await getSessions();
+        if (!cancelled && Array.isArray(cached)) {
+          setSessionList(cached as any);
+        }
+      } catch (err) {
+        console.warn('[Z-REPORT] Failed to load cached sessions:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [getSessions]);
 
   // Check for pending syncs (for sessprint enforcement)
   useEffect(() => {
