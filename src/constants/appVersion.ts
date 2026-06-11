@@ -742,5 +742,23 @@
 //   server.js, schema, client logic, sync engine, reference generator,
 //   receipt rendering, photo, Bluetooth, or auth changes. v2.10.109's
 //   stable-device-identity feature is preserved unchanged.
-export const APP_VERSION = '2.10.110';
-export const APP_VERSION_CODE = 131;
+// v2.10.111: STABLE DEVICE IDENTITY — PREFER APPROVED ROW. After clear-data,
+//   /api/device/resolve-identity matched the correct ssaid but ORDER BY
+//   last_seen_at DESC picked the freshly-created pending duplicate instead
+//   of the original approved row, so the device kept the new fingerprint
+//   and started a new identity (exactly what v2.10.109 was meant to
+//   prevent). Fix has 3 additive parts:
+//   1. resolve-identity ssaid lookups ORDER BY approved DESC first, then
+//      user_id != 'pending', then last_seen_at — approved row always wins.
+//   2. POST /api/devices checks ssaid up-front: if an approved row exists
+//      for that ssaid, return it instead of inserting a duplicate pending
+//      device. Also persists ssaid/model/manufacturer/osVersion on NEW
+//      pending rows so future reinstalls have something to match on.
+//   3. Frontend register payload now sends the hardware bundle, and Login
+//      rehydrates the recovered fingerprint when the backend returns one.
+//   See backend-api/CLEANUP_DUPLICATE_DEVICE_IDS.sql for cleaning up
+//   already-duplicated rows in production. No schema changes (uses
+//   v2.10.109 columns). No sync engine / reference generator / receipt /
+//   photo / auth changes. Old APKs keep working.
+export const APP_VERSION = '2.10.111';
+export const APP_VERSION_CODE = 132;
