@@ -724,5 +724,23 @@
 //   Old APKs in the field keep working unchanged (they simply never call
 //   the new endpoint). Counter self-heal mirrors the existing
 //   GREATEST(devsettings.trnid, MAX(transrefno)) protection.
-export const APP_VERSION = '2.10.109';
-export const APP_VERSION_CODE = 130;
+// v2.10.110: PASSENGER .htaccess LOCK-FAILURE FIX. After v2.10.109 deploy,
+//   restarting the production Node app (2backend.maddasystems.co.ke →
+//   /public_html/sync-service) failed with cPanel error
+//   "Can't acquire lock for app: public_html/sync-service" and the API went
+//   offline, causing client login to fail with a network error. Root cause:
+//   sync-service/.htaccess and backend-api/.htaccess each declared TWO
+//   conflicting Passenger blocks — the cPanel-managed header pinned Node 19
+//   while a second manual block at the bottom set Node 14 via
+//   PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node. Apache uses the
+//   LAST directive, so Passenger tried to spawn the app under Node 14 while
+//   the cPanel app registry expected Node 19 — the two fought for the same
+//   Passenger app lockfile and neither won. Fix: collapse each .htaccess to
+//   a single Passenger header block (Node 19) matching what cPanel's Node
+//   Selector registered, with an inline guard comment so the duplicate is
+//   not re-introduced on the next deploy. Config-only, fully reversible. No
+//   server.js, schema, client logic, sync engine, reference generator,
+//   receipt rendering, photo, Bluetooth, or auth changes. v2.10.109's
+//   stable-device-identity feature is preserved unchanged.
+export const APP_VERSION = '2.10.110';
+export const APP_VERSION_CODE = 131;

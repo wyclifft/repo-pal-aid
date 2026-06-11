@@ -43,3 +43,25 @@ Lower `MYSQL_POOL_LIMIT` first if logs show `ER_USER_LIMIT_REACHED`.
 caching of hot read-only lookups (`psettings`, `cm_members`, `approved_devices`).
 Not wired into call sites yet — wiring requires careful per-site TTL choices
 (esp. anything touching authorization).
+
+## Passenger .htaccess discipline (v2.10.110)
+
+cPanel's Node Selector registers each Node app with a specific Node version
+(e.g. Node 19 for `/public_html/sync-service`) and auto-manages a Passenger
+header block at the top of `.htaccess`. ONLY that one block is allowed.
+
+**Rule:** exactly ONE `PassengerNodejs`, ONE `PassengerAppRoot`, ONE
+`PassengerStartupFile`, ONE `PassengerAppType` per `.htaccess`. Apache uses
+the LAST directive when duplicates exist, so a second manual block (e.g.
+pointing at `/opt/alt/alt-nodejs14/root/usr/bin/node`) makes Passenger spawn
+the app on the wrong Node binary while the cPanel registry still expects the
+original one. Both sides then fight for the same Passenger app lockfile and
+the restart fails with:
+
+```
+Can't acquire lock for app: <path>
+```
+
+The API goes offline and clients see "network error" on login. Recovery: Stop
+App in cPanel, `pkill -u $USER -f "<app-path>/server.js"`, remove
+`<app-path>/tmp/restart.txt`, fix the duplicate block, Start App.

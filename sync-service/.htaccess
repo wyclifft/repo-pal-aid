@@ -7,16 +7,15 @@ PassengerStartupFile server.js
 # DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
 
 # ============================================================================
-# Milk Collection Sync Service - cPanel Configuration
+# Milk Collection Backend (hosted under /public_html/sync-service)
 # Domain: 2backend.maddasystems.co.ke
-# Directory: /public_html/sync-service/
+#
+# IMPORTANT (v2.10.110): ONLY the cPanel-managed Passenger header block above
+# is allowed. Do NOT add a second PassengerNodejs/PassengerAppRoot/
+# PassengerStartupFile block below — Apache uses the LAST directive, and a
+# Node version mismatch with the cPanel Node Selector registration causes
+# "Can't acquire lock for app: public_html/sync-service" on restart.
 # ============================================================================
-
-PassengerEnabled on
-PassengerAppRoot /home/maddasys/public_html/sync-service
-PassengerAppType node
-PassengerStartupFile server.js
-PassengerNodejs /opt/alt/alt-nodejs14/root/usr/bin/node
 
 SetEnv NODE_ENV production
 SetEnv MYSQL_HOST localhost
@@ -39,15 +38,15 @@ SetEnv REQUEST_TIMEOUT_MS 30000
 SetEnv SYNC_BATCH_SIZE 100
 SetEnv SYNC_INTERVAL_MS 300000
 
-# ENABLE HEADERS MODULE
+# CORS headers for all origins (including Capacitor app and Netlify)
 <IfModule mod_headers.c>
   Header always set Access-Control-Allow-Origin "*"
   Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-  Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
+  Header always set Access-Control-Allow-Headers "Content-Type, Accept, Authorization, X-Requested-With, Origin, X-Device-Fingerprint, X-App-Origin"
   Header always set Access-Control-Max-Age "86400"
 </IfModule>
 
-# HANDLE OPTIONS PRE-FLIGHT CORRECTLY
+# Handle OPTIONS preflight requests at Apache level
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteCond %{REQUEST_METHOD} OPTIONS
