@@ -760,5 +760,20 @@
 //   already-duplicated rows in production. No schema changes (uses
 //   v2.10.109 columns). No sync engine / reference generator / receipt /
 //   photo / auth changes. Old APKs keep working.
-export const APP_VERSION = '2.10.111';
-export const APP_VERSION_CODE = 132;
+// v2.10.112: SSAID-DERIVED DEVICE FINGERPRINT (native). generateDeviceFingerprint
+//   in src/utils/deviceFingerprint.ts now derives the native fingerprint
+//   deterministically from Android SSAID (fp = sha256("ssaid:" + ssaid)) instead
+//   of the previous random+timestamp entropy hash. After clear-data/reinstall the
+//   same physical device produces the SAME fingerprint, so the server finds the
+//   original approved row via /api/devices/fingerprint/:fp without falling into
+//   the recovery path or creating a duplicate pending row (the bug that produced
+//   approved_devices id 268 alongside the original id 267). Back-compat is
+//   preserved: any device with an existing localStorage `device_id` keeps it
+//   (priority 1), so already-approved devices are NOT orphaned. SSAID path
+//   triggers only on fresh installs / cleared data. Web behavior unchanged.
+//   Backend, approved_devices schema, sync engine, reference generator, receipts,
+//   IndexedDB, Bluetooth and auth flow are all untouched. The v2.10.109–111
+//   resolve-identity safety net remains for legacy-fingerprint devices that
+//   clear data and for SSAID-rotating factory resets.
+export const APP_VERSION = '2.10.112';
+export const APP_VERSION_CODE = 133;
