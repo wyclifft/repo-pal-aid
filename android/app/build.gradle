@@ -2,6 +2,20 @@ apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-kapt'
 
+// Parse APP_FIX_TAG from src/constants/appVersion.ts so the APK filename
+// reflects the headline fix shipped in this build. Falls back to 'build'
+// if the constant cannot be read, so the build never fails on parsing.
+def fixTag = 'build'
+try {
+    def appVersionTs = file('../../src/constants/appVersion.ts').text
+    def m = (appVersionTs =~ /APP_FIX_TAG\s*=\s*['"]([^'"]+)['"]/)
+    if (m.find()) {
+        fixTag = m.group(1)
+    }
+} catch (Exception e) {
+    logger.warn("Could not parse APP_FIX_TAG from appVersion.ts: ${e.message}")
+}
+
 android {
     namespace "app.delicoop101"
     compileSdk rootProject.ext.compileSdkVersion
@@ -9,8 +23,8 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-    versionCode 133
-    versionName "2.10.112"
+    versionCode 134
+    versionName "2.10.113"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -31,7 +45,14 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
-    
+
+    // Rename APK output to: DeliCoop101.v<versionName>-fix<versionCode>-<fixTag>.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "DeliCoop101.v${variant.versionName}-fix${variant.versionCode}-${fixTag}.apk"
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
