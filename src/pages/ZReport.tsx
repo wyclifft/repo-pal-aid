@@ -14,7 +14,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { ZReportReceipt } from '@/components/ZReportReceipt';
 import { DeviceZReportReceipt } from '@/components/DeviceZReportReceipt';
-import { ZReportPeriodSelector, type ZReportPeriod, filterTransactionsByPeriod, getPeriodDisplayLabel } from '@/components/ZReportPeriodSelector';
+import { ZReportPeriodSelector, type ZReportPeriod } from '@/components/ZReportPeriodSelector';
 import { ZReportTypeSelector, type ZReportType } from '@/components/ZReportTypeSelector';
 
 const ZReport = () => {
@@ -60,7 +60,27 @@ const ZReport = () => {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
   
-  const { saveZReport, getZReport, getUnsyncedReceipts } = useIndexedDB();
+  const { saveZReport, getZReport, getUnsyncedReceipts, getSessions } = useIndexedDB();
+
+  // v2.10.114: Load cached sessions so the Z Report period selector can show
+  // one option per session row (matched by transactions.CAN → sessions.SCODE,
+  // labeled with sessions.descript). Works offline using whatever the rest
+  // of the app (SessionSelector) has already cached.
+  const [sessionList, setSessionList] = useState<Array<{ SCODE?: string; descript?: string }>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = await getSessions();
+        if (!cancelled && Array.isArray(cached)) {
+          setSessionList(cached as any);
+        }
+      } catch (err) {
+        console.warn('[Z-REPORT] Failed to load cached sessions:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [getSessions]);
 
   // Check for pending syncs (for sessprint enforcement)
   useEffect(() => {
@@ -110,19 +130,22 @@ const ZReport = () => {
 
   // Fetch device-specific Z Report (for receipt/print output only)
   // Now accepts period filter for server-side filtering
-  const fetchDeviceReport = useCallback(async (period?: ZReportPeriod) => {
+  // v2.10.114: Always fetch the full day's transactions from the backend;
+  // period filtering is done client-side by SCODE (transactions.CAN) inside
+  // DeviceZReportReceipt. This keeps the backend contract unchanged while
+  // supporting any session row defined in the sessions table.
+  const fetchDeviceReport = useCallback(async (_period?: ZReportPeriod) => {
     if (!deviceFingerprint || !navigator.onLine) return;
-    
+
     try {
-      // Pass period to backend for server-side filtering
-      const data = await mysqlApi.zReport.getByDevice(selectedDate, deviceFingerprint, undefined, period);
+      const data = await mysqlApi.zReport.getByDevice(selectedDate, deviceFingerprint);
       if (data) {
         // Add clerk name from current user if not set
         if (!data.clerkName || data.clerkName === 'Unknown') {
           data.clerkName = currentUser?.username || 'Clerk';
         }
         setDeviceReportData(data);
-        console.log('[Z-REPORT] Device report loaded:', data.transactions.length, 'transactions for period:', period || 'all');
+        console.log('[Z-REPORT] Device report loaded:', data.transactions.length, 'transactions (client-side period filter applied later)');
       }
     } catch (err) {
       console.error('[Z-REPORT] Failed to fetch device report:', err);
@@ -680,6 +703,7 @@ const ZReport = () => {
         open={showPeriodSelector}
         onClose={() => setShowPeriodSelector(false)}
         onSelect={handlePeriodSelect}
+        sessions={sessionList}
       />
 
       {/* Device Z Report Receipt Modal - Uses handwritten layout for printing */}

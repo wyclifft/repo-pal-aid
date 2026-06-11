@@ -1,77 +1,108 @@
 /**
  * Z Report Period Selector Dialog
- * Allows user to select which period's Z report to print:
- * - Morning Z
- * - Afternoon Z
- * - Evening Z
- * - All Z (combined)
+ *
+ * v2.10.114: Options are now dynamically generated from the sessions table
+ * (cached in IndexedDB). Each option = one session row, matched at filter
+ * time by transactions.CAN → sessions.SCODE, and labeled using
+ * sessions.descript. An "All Z" option is always appended.
+ *
+ * Previous hard-coded morning/afternoon/evening options have been removed.
  */
 
-import { useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
-import { Printer, Sun, Sunset, Moon, Calendar } from 'lucide-react';
+import { Printer, Sun, Sunset, Moon, Calendar, Clock } from 'lucide-react';
 
-export type ZReportPeriod = 'morning' | 'afternoon' | 'evening' | 'all';
+// Period is now the session SCODE (matches transactions.CAN). 'all' is the
+// reserved combined option that includes every session.
+export type ZReportPeriod = string;
 
-export interface ZReportPeriodOption {
-  value: ZReportPeriod;
-  label: string;
-  description: string;
-  icon: React.ReactNode;
-  // Session codes to filter by (null = all)
-  sessionCodes: string[] | null;
+export interface SessionOptionInput {
+  SCODE?: string;
+  descript?: string;
 }
 
-export const Z_REPORT_PERIODS: ZReportPeriodOption[] = [
-  {
-    value: 'morning',
-    label: 'Morning Z',
-    description: 'Morning session collections only',
-    icon: <Sun className="h-5 w-5 text-yellow-600" />,
-    sessionCodes: ['MO', 'AM', 'MORNING'],
-  },
-  {
-    value: 'afternoon',
-    label: 'Afternoon Z',
-    description: 'Afternoon session collections only',
-    icon: <Sunset className="h-5 w-5 text-orange-600" />,
-    sessionCodes: ['AF', 'PM', 'AFTERNOON'],
-  },
-  {
-    value: 'evening',
-    label: 'Evening Z',
-    description: 'Evening session collections only',
-    icon: <Moon className="h-5 w-5 text-blue-600" />,
-    sessionCodes: ['EV', 'EVE', 'EVENING', 'NIGHT'],
-  },
-  {
+interface BuiltOption {
+  value: string;          // SCODE or 'all'
+  label: string;          // e.g. "Morning Z"
+  description: string;    // e.g. "Morning session collections only"
+  icon: JSX.Element;
+}
+
+// Pick a cosmetic icon based on keywords in the descript. Purely visual —
+// filtering does NOT depend on this.
+const pickIcon = (descript: string): JSX.Element => {
+  const d = (descript || '').toLowerCase();
+  if (d.includes('morning') || d.includes('am')) return <Sun className="h-5 w-5 text-yellow-600" />;
+  if (d.includes('afternoon') || d.includes('pm')) return <Sunset className="h-5 w-5 text-orange-600" />;
+  if (d.includes('evening') || d.includes('night')) return <Moon className="h-5 w-5 text-blue-600" />;
+  return <Clock className="h-5 w-5 text-muted-foreground" />;
+};
+
+const buildOptions = (sessions: SessionOptionInput[]): BuiltOption[] => {
+  const seen = new Set<string>();
+  const list: BuiltOption[] = [];
+
+  (sessions || []).forEach((s) => {
+    const code = String(s?.SCODE || '').trim();
+    const descript = String(s?.descript || '').trim();
+    if (!code) return;
+    const key = code.toUpperCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    const label = descript ? `${descript} Z` : `${code} Z`;
+    list.push({
+      value: code,
+      label,
+      description: descript
+        ? `${descript} session collections only`
+        : `${code} session collections only`,
+      icon: pickIcon(descript || code),
+    });
+  });
+
+  // Always append the combined option
+  list.push({
     value: 'all',
     label: 'All Z',
     description: 'All sessions combined (full day)',
     icon: <Calendar className="h-5 w-5" />,
-    sessionCodes: null, // null means include all
-  },
-];
+  });
+
+  return list;
+};
 
 interface ZReportPeriodSelectorProps {
   open: boolean;
   onClose: () => void;
   onSelect: (period: ZReportPeriod, periodLabel: string) => void;
+  /** Sessions cached locally (from sessions table). */
+  sessions?: SessionOptionInput[];
 }
 
 export const ZReportPeriodSelector = ({
   open,
   onClose,
   onSelect,
+  sessions = [],
 }: ZReportPeriodSelectorProps) => {
+  const options = useMemo(() => buildOptions(sessions), [sessions]);
   const [selectedPeriod, setSelectedPeriod] = useState<ZReportPeriod>('all');
 
+  // If the cached sessions list changes while the dialog is open, make sure
+  // the selected value is still valid.
+  useEffect(() => {
+    if (!options.find(o => o.value === selectedPeriod)) {
+      setSelectedPeriod('all');
+    }
+  }, [options, selectedPeriod]);
+
   const handleConfirm = () => {
-    const selected = Z_REPORT_PERIODS.find(p => p.value === selectedPeriod);
-    onSelect(selectedPeriod, selected?.label || 'All Z');
+    const selected = options.find(o => o.value === selectedPeriod) || options[options.length - 1];
+    onSelect(selected.value, selected.label);
     onClose();
   };
 
@@ -88,28 +119,28 @@ export const ZReportPeriodSelector = ({
         <div className="py-4">
           <RadioGroup
             value={selectedPeriod}
-            onValueChange={(value) => setSelectedPeriod(value as ZReportPeriod)}
+            onValueChange={(value) => setSelectedPeriod(value)}
             className="space-y-3"
           >
-            {Z_REPORT_PERIODS.map((period) => (
+            {options.map((option) => (
               <div
-                key={period.value}
+                key={option.value}
                 className={`flex items-center space-x-3 p-3 rounded-lg border transition-colors cursor-pointer ${
-                  selectedPeriod === period.value
+                  selectedPeriod === option.value
                     ? 'border-primary bg-primary/5'
                     : 'border-border hover:bg-muted/50'
                 }`}
-                onClick={() => setSelectedPeriod(period.value)}
+                onClick={() => setSelectedPeriod(option.value)}
               >
-                <RadioGroupItem value={period.value} id={period.value} />
-                <div className="flex-shrink-0">{period.icon}</div>
+                <RadioGroupItem value={option.value} id={`zperiod-${option.value}`} />
+                <div className="flex-shrink-0">{option.icon}</div>
                 <Label
-                  htmlFor={period.value}
+                  htmlFor={`zperiod-${option.value}`}
                   className="flex-1 cursor-pointer"
                 >
-                  <div className="font-medium">{period.label}</div>
+                  <div className="font-medium">{option.label}</div>
                   <div className="text-xs text-muted-foreground">
-                    {period.description}
+                    {option.description}
                   </div>
                 </Label>
               </div>
@@ -131,44 +162,42 @@ export const ZReportPeriodSelector = ({
   );
 };
 
-// Helper function to filter transactions by period
-// Uses season_code (CAN column) as primary filter since session is normalized to AM/PM
+/**
+ * Filter transactions by session SCODE (transactions.CAN).
+ * - period === 'all' returns everything.
+ * - Otherwise compares case/whitespace-insensitively against season_code
+ *   (the saved CAN value). Falls back to session column for legacy rows
+ *   that pre-date season_code.
+ */
 export const filterTransactionsByPeriod = <T extends { session?: string; season_code?: string }>(
   transactions: T[],
-  period: ZReportPeriod
+  period: ZReportPeriod,
 ): T[] => {
-  if (period === 'all') {
-    return transactions;
-  }
+  if (!period || period === 'all') return transactions;
 
-  const periodOption = Z_REPORT_PERIODS.find(p => p.value === period);
-  if (!periodOption || !periodOption.sessionCodes) {
-    return transactions;
-  }
+  const target = String(period).trim().toUpperCase();
+  if (!target) return transactions;
 
-  const sessionCodes = periodOption.sessionCodes.map(s => s.toUpperCase());
-  
   return transactions.filter(tx => {
-    // First check season_code (CAN column) - this has the original SCODE (MO, AF, EV)
-    if (tx.season_code) {
-      const txSeasonCode = tx.season_code.toUpperCase().trim();
-      if (sessionCodes.some(code => txSeasonCode === code || txSeasonCode.includes(code) || code.includes(txSeasonCode))) {
-        return true;
-      }
-    }
-    
-    // Fallback to session column (normalized to AM/PM)
-    if (tx.session) {
-      const txSession = tx.session.toUpperCase().trim();
-      return sessionCodes.some(code => txSession.includes(code) || code.includes(txSession));
-    }
-    
-    return false;
+    const can = String(tx.season_code || '').trim().toUpperCase();
+    if (can) return can === target;
+    // Legacy fallback (older rows without season_code populated)
+    const sess = String(tx.session || '').trim().toUpperCase();
+    return sess === target;
   });
 };
 
-// Helper to get period label for display
-export const getPeriodDisplayLabel = (period: ZReportPeriod): string => {
-  const option = Z_REPORT_PERIODS.find(p => p.value === period);
-  return option?.label || 'All Z';
+/**
+ * Resolve a display label for the selected period using the cached
+ * sessions list. Falls back to the SCODE itself, then to 'All Z'.
+ */
+export const getPeriodDisplayLabel = (
+  period: ZReportPeriod,
+  sessions: SessionOptionInput[] = [],
+): string => {
+  if (!period || period === 'all') return 'All Z';
+  const target = String(period).trim().toUpperCase();
+  const match = sessions.find(s => String(s?.SCODE || '').trim().toUpperCase() === target);
+  if (match?.descript) return `${match.descript} Z`;
+  return `${period} Z`;
 };
