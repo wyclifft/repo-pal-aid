@@ -625,6 +625,41 @@ export const devicesApi = {
       console.error('Failed to clear pending device registration:', e);
     }
   },
+
+  /**
+   * v2.10.109 — Server-bound device identity resolution.
+   * Sends a hardware fingerprint bundle (SSAID + model + manufacturer +
+   * legacy fingerprint) and asks the server to recover the device's
+   * original identity if known. Used on login BEFORE the existing
+   * getByFingerprint flow so a reinstalled device gets back its original
+   * (devcode, uniquedevcode, trnid, milkid, storeid, aiid) instead of a
+   * fresh identity that would risk TRNID/MILKID mixups.
+   *
+   * Defensive: if the endpoint is missing (old backend) or any error
+   * occurs, returns null and the caller falls through to the existing
+   * registration / getByFingerprint flow. Strictly additive.
+   */
+  resolveIdentity: async (bundle: {
+    ssaid?: string;
+    model?: string;
+    manufacturer?: string;
+    osVersion?: string;
+    platform?: string;
+    legacyFingerprint?: string;
+    ccode?: string;
+  }): Promise<ApprovedDevice | null> => {
+    try {
+      const response = await apiRequest<ApprovedDevice>('/device/resolve-identity', {
+        method: 'POST',
+        body: JSON.stringify(bundle),
+      }, 4000);
+      if (!response.success || !response.data) return null;
+      return response.data;
+    } catch (e) {
+      console.warn('[DEVICE][RESOLVE] resolveIdentity failed:', e);
+      return null;
+    }
+  },
 };
 
 // ==================== Z-REPORT API ====================
