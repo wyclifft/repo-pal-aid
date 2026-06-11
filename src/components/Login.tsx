@@ -4,7 +4,7 @@ import { type AppUser } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { toast } from 'sonner';
-import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName } from '@/utils/deviceFingerprint';
+import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName, collectHardwareBundle } from '@/utils/deviceFingerprint';
 import { storeDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
 import { hashPassword, hashesEqual } from '@/utils/passwordHash';
 import loginBg from '@/assets/login-bg.jpg';
@@ -53,12 +53,54 @@ export const Login = memo(({ onLogin }: LoginProps) => {
     
     if (navigator.onLine) {
       try {
-        // OPTIMIZED: Run auth and device check in PARALLEL with short timeout
+        // v2.10.109 — STABLE DEVICE IDENTITY (reinstall recovery).
+        // Before falling back to the legacy lookup, ask the server if it can
+        // recognize this physical device by its SSAID/hardware bundle. If
+        // yes, we rehydrate the ORIGINAL device_fingerprint + devcode +
+        // counters instead of letting a wiped device get a fresh identity
+        // that would risk TRNID/MILKID collisions. Strictly additive — on
+        // 404 / old backend / network error we fall through to the existing
+        // getByFingerprint path unchanged.
+        let resolveBundlePromise: Promise<ReturnType<typeof collectHardwareBundle> extends Promise<infer T> ? T : never> | null = null;
+        try {
+          resolveBundlePromise = collectHardwareBundle();
+        } catch (e) {
+          console.warn('[DEVICE][RESOLVE] hw bundle collection failed:', e);
+        }
+
+        let resolvedFromServer: any = null;
+        if (resolveBundlePromise) {
+          try {
+            const bundle = await Promise.race([
+              resolveBundlePromise,
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
+            ]);
+            if (bundle) {
+              resolvedFromServer = await Promise.race([
+                mysqlApi.devices.resolveIdentity(bundle),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+              ]).catch(() => null);
+              if (resolvedFromServer?.resolved_fingerprint && resolvedFromServer.resolved_fingerprint !== deviceFingerprint) {
+                console.log(`[DEVICE][RESOLVE] hit — rehydrating fingerprint ${resolvedFromServer.resolved_fingerprint.substring(0, 12)}… (was ${deviceFingerprint.substring(0, 12)}…)`);
+                deviceFingerprint = resolvedFromServer.resolved_fingerprint;
+                try { setStoredDeviceId(deviceFingerprint); } catch { /* ignore */ }
+              }
+            }
+          } catch (e) {
+            console.warn('[DEVICE][RESOLVE] non-fatal failure:', e);
+          }
+        }
+
+        // OPTIMIZED: Run auth and device check in PARALLEL with short timeout.
+        // If resolveIdentity already produced full device data, reuse it and
+        // skip the secondary fingerprint lookup.
         const authPromise = mysqlApi.auth.login(userId, password, deviceFingerprint);
-        const deviceCheckPromise = Promise.race([
-          mysqlApi.devices.getByFingerprint(deviceFingerprint),
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)) // 2s timeout for device
-        ]);
+        const deviceCheckPromise = resolvedFromServer
+          ? Promise.resolve(resolvedFromServer)
+          : Promise.race([
+              mysqlApi.devices.getByFingerprint(deviceFingerprint),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)) // 2s timeout for device
+            ]);
 
         // Wait for auth (critical) while device check runs in parallel
         const [authResponse, deviceData] = await Promise.all([
