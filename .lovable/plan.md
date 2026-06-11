@@ -1,92 +1,139 @@
-# Tier 1 Backend Hardening — Stay Within 40 MySQL Connections
 
-## Goal
-Make `backend-api` and `sync-service` safely handle more concurrent users **without ever exceeding the cPanel `max_user_connections = 40` cap** on the shared MySQL user (`maddasys_wycliff`). No host ticket, no infra migration, no API contract changes.
+# Stable Device Identity Across Reinstalls (v2.10.109)
 
-## Connection Budget
+Make the **server** the authority for a device's identity, so that uninstall / clear-data / reinstall never produces a new `devcode`, `uniquedevcode`, or per-route `clientFetch` digit. This eliminates the root cause of TRNID / MILKID / STOREID / AIID mixups when a device is reinstalled.
 
-Assumption (safest): both Node apps use the **same** MySQL user, and Passenger may spawn **up to 2 worker processes per app**. Each Node process opens its own pool, so the worst case is `2 procs × pool_size` per app.
+## The problem today
+
+- `devcode`, `uniquedevcode`, and per-route `clientFetch` are stored in `localStorage` / IndexedDB.
+- On uninstall + reinstall (or "Clear data"), all of this is wiped.
+- The device runs the authorization flow again. Today the only key the server uses to recognize "this is the same physical device" is the locally-generated `device_fingerprint`, which on web/PWA is itself derived from local storage and so is also new after a wipe.
+- Result: the server can issue a **different `devcode` / `uniquedevcode`** to what is physically the same device, and the device's `trnid` counter restarts from whatever it had cached. Two records can end up sharing the same `transrefno` family → mixups.
+
+## The fix: server-issued, hardware-bound identity
+
+On every login / authorization, the device sends a **stable hardware fingerprint bundle**. The server looks it up in `approved_devices`; if a match is found, it returns the device's **original** `(devcode, uniquedevcode, trnid, milkid, storeid, aiid, route clientFetch map)`. The client rehydrates these instead of generating them locally.
 
 ```text
-Per-user MySQL cap            : 40
-─────────────────────────────────
-backend-api : 2 procs × pool 8 = 16
-sync-service: 2 procs × pool 5 = 10
-phpMyAdmin / cron / ad-hoc    :  ~6
-Safety headroom               :  ~8
-─────────────────────────────────
-Worst-case total              : ≤ 40 ✅
+Reinstall flow (today):
+  Wipe → Login → server issues NEW devcode → trnid resets → ID collisions risk
+
+Reinstall flow (target):
+  Wipe → Login → send hw bundle → server matches approved_devices row
+       → returns SAME devcode + last-known trnid/milkid/storeid/aiid
+       → client rehydrates localStorage → IDs continue from where they left off
 ```
 
-If later you confirm Passenger runs only 1 instance per app, pools can be doubled safely (backend 15, sync 10) without code changes beyond the `.htaccess`/env values.
+## Hardware fingerprint bundle (stable across uninstall)
 
-## Changes (Tier 1 only)
+The client sends a small JSON bundle on every authorization / login. Each field is best-effort; the server scores matches.
 
-### 1. `backend-api/server.js` — pool & resilience
-- `connectionLimit`: `2` → **`8`** (configurable via `MYSQL_POOL_LIMIT` env)
-- `queueLimit`: `0` (unbounded) → **`50`** — fast-fail instead of piling up forever
-- Add `enableKeepAlive: true`, `keepAliveInitialDelay: 10000`
-- Add `connectTimeout: 10000`
-- Add a per-request timeout: `server.setTimeout(30000)` and return `503 {error:'request_timeout'}` instead of hanging
-- Catch pool-exhaustion errors (`ER_USER_LIMIT_REACHED`, `PROTOCOL_CONNECTION_LOST`) → respond `503 {error:'db_busy', retryable:true}` so the client's `resilientFetch` can back off
-
-### 2. `sync-service/server.js` — pool tighten
-- `connectionLimit`: `5` (keep) or drop to **`5`** confirmed, add `queueLimit: 30`
-- Same keepalive + connectTimeout settings
-- Same `ER_USER_LIMIT_REACHED` graceful 503
-
-### 3. `.htaccess` env vars (both apps)
-Add tunables so future changes don't require code edits:
-```
-SetEnv MYSQL_POOL_LIMIT 8
-SetEnv MYSQL_QUEUE_LIMIT 50
-SetEnv REQUEST_TIMEOUT_MS 30000
-```
-
-### 4. In-process LRU caches (read-only hot tables)
-Cache the three tables that are hit on almost every request and rarely change. This is the single biggest connection saver.
-- `psettings` by `ccode` — TTL 120 s
-- `cm_members` by `(ccode, mcode)` — TTL 60 s
-- `approved_devices` by `device_fingerprint` — TTL 60 s
-
-Tiny hand-rolled `Map`-based LRU (≤30 LOC, no new dependency). Expected DB-query reduction on hot paths: **~50–70%**, which is the equivalent of doubling pool capacity for free.
-
-### 5. Heap cap
-Remove the `--max-old-space-size=96` flag in `backend-api/package.json` (raise to default, ~512 MB on Node 19). The 96 MB cap was a defensive guess; it actively causes GC stalls that hold connections open longer. Sync-service keeps its current heap.
-
-### 6. Observability
-- Log pool snapshot every 60 s: `{ inUse, free, queued }` to stdout
-- Log every `ER_USER_LIMIT_REACHED` with the timestamp and current pool stats — gives you a clean signal if 40 is actually being hit
-
-## Out of Scope (explicitly NOT in this plan)
-- API contract changes / new endpoints / removed endpoints
-- Schema changes, migrations, new indexes
-- Rate limiting (per project rule — separate effort)
-- Anything in the Capacitor app, frontend, sync engine, cumulative logic, auth, or Bluetooth
-- Moving off cPanel, `pm2 cluster`, read replicas (Tier 5/6 — future)
-- Raising `max_user_connections` with the host (you chose to skip)
-
-## Expected Capacity After Tier 1
-
-| Metric | Before | After Tier 1 |
+| Field | Source | Stable across uninstall? |
 |---|---|---|
-| Safe concurrent in-flight DB calls | ~2 | ~16 (or 8 if 1 worker) |
-| Safe concurrent active POS users | ~20–40 | **~60–90** |
-| Behavior at overload | Silent hang | Fast-fail 503 → client retries |
-| Risk of hitting `max_user_connections=40` | Low (pool too small) | Bounded by design |
+| `ssaid` | Capacitor `Device.getId()` (Android `Settings.Secure.ANDROID_ID`) | ✅ Same APK signing key + same user profile |
+| `model` | `Device.getInfo().model` | ✅ |
+| `manufacturer` | `Device.getInfo().manufacturer` | ✅ |
+| `osVersion` | `Device.getInfo().osVersion` | ✅ (until OS upgrade) |
+| `webViewVersion` | `Device.getInfo().webViewVersion` | mostly |
+| `legacyFingerprint` | current `generateDeviceFingerprint()` output | back-compat with rows already in `approved_devices` |
 
-## Rollout
-1. Edit `server.js`, `package.json`, `.htaccess` for both apps.
-2. Upload to cPanel, restart each Node app from cPanel UI.
-3. Hit `/api/health` and watch the new 60-second pool log line.
-4. If `ER_USER_LIMIT_REACHED` ever appears in logs → lower `MYSQL_POOL_LIMIT` to 6 via `.htaccess` (no code change, just restart).
+Web/PWA continues to use the existing localStorage-derived fingerprint (web reinstalls are rare and out of scope for this hardening).
 
-## Files Touched
-- `backend-api/server.js`
-- `backend-api/package.json`
-- `backend-api/.htaccess`
-- `sync-service/server.js`
-- `sync-service/.htaccess`
-- New: `backend-api/lib/lruCache.js` (tiny, no dependency)
+## Server-side identity resolution
 
-Production-safety: all changes are additive or numeric tuning. No endpoint signature, response shape, auth flow, or DB query result changes — the live Capacitor app sees identical behavior on the happy path, and gets explicit 503s (which it already handles via `resilientFetch` retry) instead of silent hangs on overload.
+New endpoint, additive:
+
+```
+POST /api/device/resolve-identity
+Body: { ccode, hwBundle: { ssaid, model, manufacturer, osVersion, legacyFingerprint } }
+```
+
+Match priority against `approved_devices` (within the same `ccode`):
+1. Exact `device_fingerprint == legacyFingerprint` (current behavior — back-compat).
+2. Exact `ssaid` match (new, primary key for reinstall recovery).
+3. `ssaid` + `model` + `manufacturer` triple — guards against the rare SSAID collision after factory reset.
+
+On match → return the stored `uniquedevcode`, `devcode`, current `trnid`, `milkid`, `storeid`, `aiid`, and the route→`clientFetch` map. Also update the row's `last_seen_at` and append the new fingerprint to a `fingerprint_history` JSON column so future matches widen, never narrow.
+
+On no match → fall through to the **existing** device-registration flow (unchanged). The new SSAID is then stored alongside the new fingerprint, so the second reinstall is recognized.
+
+## Schema (additive — one migration)
+
+```sql
+ALTER TABLE approved_devices
+  ADD COLUMN ssaid              VARCHAR(64)  NULL,
+  ADD COLUMN device_model       VARCHAR(128) NULL,
+  ADD COLUMN device_manufacturer VARCHAR(128) NULL,
+  ADD COLUMN fingerprint_history JSON        NULL,
+  ADD COLUMN last_seen_at       DATETIME     NULL,
+  ADD INDEX idx_ccode_ssaid (ccode, ssaid);
+```
+
+All nullable, no defaults break existing rows. The existing `device_fingerprint UNIQUE` constraint stays — this is purely additive recovery metadata.
+
+## Backend changes (`backend-api/server.js`)
+
+- New `POST /api/device/resolve-identity` (above). Defensive: if any DB lookup throws, fall back to "no match" so the existing registration flow handles it — never blocks a reinstalled device from re-authorizing.
+- On every successful device login (existing endpoint), **upsert** `ssaid`, `model`, `manufacturer`, `last_seen_at`, and append-merge `fingerprint_history` for the matched row. No change to the response shape of any existing endpoint.
+- Counter-restore safety: when serving an identity-resolve hit, return the **server-side** `trnid` from `devsettings` (already authoritative). Client must trust it and overwrite local. Combined with the existing `GREATEST()` counter persistence rule and per-process mutex, this is collision-safe even if two devices ever shared a `devcode`.
+
+## Frontend changes
+
+### `src/utils/deviceFingerprint.ts`
+Add `collectHardwareBundle()` that returns the bundle above. Existing `generateDeviceFingerprint()` is **untouched** (still used as `legacyFingerprint`).
+
+### Authorization / login flow (`src/components/Login.tsx`, `src/contexts/AuthContext.tsx`, `src/utils/referenceGenerator.ts`)
+1. Before showing the device-registration UI, call `POST /api/device/resolve-identity` with the bundle.
+2. If the server returns a known device:
+   - Write `devcode`, `uniquedevcode` to localStorage.
+   - Call existing `initializeDeviceConfig()` / `storeDeviceConfig()` with returned `devcode`.
+   - Seed local `trnid`, `milkid`, `storeid`, `aiid` from the server values (respecting `GREATEST()` semantics — never roll back if local cache happens to be ahead from an in-flight transaction).
+   - Rehydrate per-route `clientFetch` from the returned route map (already covered by existing route fetch on login — just ensure it runs before any reference is generated).
+3. If the server returns no match → existing registration flow runs unchanged.
+
+### Offline safety
+- Identity-resolve is an online-only optimization. When offline, the device falls back to whatever's in cache (current behavior). The `member-cache-resilience` rule already covers "load-then-sync, never wipe on network error".
+- If `resolve-identity` fails with 5xx → we do **not** block login; the existing `resilient-device-authorization-blocking` rule continues to apply.
+
+## What this fixes vs what it doesn't
+
+| Scenario | Fixed by this plan |
+|---|---|
+| Same APK, same signing key, uninstall + reinstall | ✅ SSAID stable → server returns original identity |
+| Factory reset (SSAID changes) | ⚠️ Partial — `model + manufacturer` match plus operator confirmation; falls through to registration if uncertain |
+| Different signed APK (sideload) | ❌ Treated as a new device (correct behavior) |
+| Web PWA "Clear site data" | ❌ Out of scope — web is rare in your fleet |
+| Two physical devices sharing one `devcode` | Already handled today by server-side `trnid` mutex; this plan does not change that |
+
+## Out of scope
+
+- IMEI / `Build.SERIAL` / MAC address (blocked by Android 10+ permissions, would risk Play Store rejection).
+- External-storage fingerprint files (Android 11+ scoped storage blocks this).
+- Account-Manager-based identity (adds a permission prompt and visible account entry).
+- Any change to the `transrefno` / `milkid` / `storeid` / `aiid` formats or to the reference generator itself.
+- Any change to `devsettings` schema or counter semantics.
+
+## Rollout (production-safe)
+
+1. Ship the migration (additive columns + index).
+2. Ship the new `POST /api/device/resolve-identity` endpoint. **No existing endpoint is modified.**
+3. Ship the new APK / web build that calls resolve-identity opportunistically. Old APKs in the field keep working unchanged (they just never get the recovery benefit).
+4. Monitor `[DEVICE][RESOLVE]` logs for hit/miss ratios over one week before considering further changes.
+
+## Files touched
+
+- `backend-api/MIGRATION_APPROVED_DEVICES_HW.sql` — new.
+- `backend-api/server.js` — add resolve-identity endpoint; upsert hw fields on existing login. No existing route signatures changed.
+- `src/utils/deviceFingerprint.ts` — add `collectHardwareBundle()`. Existing function unchanged.
+- `src/services/mysqlApi.ts` — add `device.resolveIdentity()` call.
+- `src/contexts/AuthContext.tsx` (or `Login.tsx`) — call resolve-identity before the registration branch; rehydrate identity on hit.
+- `src/utils/referenceGenerator.ts` — accept a server-seeded counter snapshot (use `GREATEST(local, server)`).
+- `src/constants/appVersion.ts` — bump to **v2.10.109**.
+- New memory: `.lovable/memory/architecture/stable-device-identity.md` + index entry.
+
+## Expected impact
+
+- Reinstalled devices recover their `devcode`, `uniquedevcode`, and counter state automatically on next login.
+- TRNID / MILKID / STOREID / AIID continuity is preserved across uninstalls.
+- Zero regression risk for in-field APKs (they don't call the new endpoint).
+- No change to receipt rendering, sync engine, Z-Reports, Bluetooth, photo capture, or any existing API contract.

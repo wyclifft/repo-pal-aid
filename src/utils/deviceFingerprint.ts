@@ -1,11 +1,70 @@
 /**
  * Device Fingerprinting Utilities
  * Generate unique device fingerprints and parse device information
+ *
+ * v2.10.109: Added collectHardwareBundle() — returns stable hardware
+ * identifiers (SSAID, model, manufacturer, OS version) that survive
+ * uninstall/reinstall on Android. Used by the server-bound identity
+ * resolution flow so devices recover their original devcode/uniquedevcode
+ * and counters instead of being issued a fresh identity (which risked
+ * TRNID/MILKID mixups). The legacy generateDeviceFingerprint() below is
+ * UNCHANGED — still used as the back-compat `legacyFingerprint` match key.
  */
 
 import { Capacitor } from '@capacitor/core';
+import { Device } from '@capacitor/device';
 
 const DEVICE_ID_KEY = 'device_id';
+
+export interface DeviceHardwareBundle {
+  ssaid?: string;                // Android SSAID — stable across reinstall (same signing key)
+  model?: string;
+  manufacturer?: string;
+  osVersion?: string;
+  platform: string;              // 'android' | 'ios' | 'web'
+  isNative: boolean;
+  legacyFingerprint: string;     // current generateDeviceFingerprint() output
+}
+
+/**
+ * Collect a hardware fingerprint bundle. Best-effort — every field is
+ * optional and any failure is swallowed so the caller can always send
+ * something. The bundle is sent to POST /api/device/resolve-identity to
+ * recover the device's original identity after a reinstall/clear-data.
+ */
+export const collectHardwareBundle = async (): Promise<DeviceHardwareBundle> => {
+  const isNative = Capacitor.isNativePlatform();
+  const platform = Capacitor.getPlatform();
+  const legacyFingerprint = await generateDeviceFingerprint();
+
+  const bundle: DeviceHardwareBundle = {
+    platform,
+    isNative,
+    legacyFingerprint,
+  };
+
+  try {
+    if (isNative) {
+      const id = await Device.getId();
+      // On Android this is Settings.Secure.ANDROID_ID (SSAID).
+      // Same APK signing key + same user profile → stable across reinstall.
+      if (id?.identifier) bundle.ssaid = String(id.identifier);
+    }
+  } catch (e) {
+    console.warn('[HW-BUNDLE] Device.getId() failed:', e);
+  }
+
+  try {
+    const info = await Device.getInfo();
+    if (info?.model) bundle.model = String(info.model).slice(0, 128);
+    if (info?.manufacturer) bundle.manufacturer = String(info.manufacturer).slice(0, 128);
+    if (info?.osVersion) bundle.osVersion = String(info.osVersion).slice(0, 64);
+  } catch (e) {
+    console.warn('[HW-BUNDLE] Device.getInfo() failed:', e);
+  }
+
+  return bundle;
+};
 
 /**
  * Simple hash function fallback for environments without crypto.subtle

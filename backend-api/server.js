@@ -2525,6 +2525,195 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, data: mappedRows });
     }
 
+    // ==================== DEVICE IDENTITY RESOLUTION (v2.10.109) ====================
+    // Server-bound identity recovery for reinstalled / cleared-data devices.
+    // The client sends a hardware fingerprint bundle; we try to match an
+    // existing approved_devices row by (in priority order):
+    //   1. legacy device_fingerprint (back-compat — current behavior)
+    //   2. SSAID  (Android Settings.Secure.ANDROID_ID — survives reinstall
+    //              when the APK is signed with the same key and runs on the
+    //              same user profile)
+    //   3. SSAID + model + manufacturer (defensive 3-way match)
+    // On hit we return the same payload shape as /api/devices/fingerprint/:fp,
+    // including devcode/trnid/milkid/storeid/aiid from devsettings, so the
+    // device rehydrates its original identity instead of being issued a
+    // fresh one. On miss we return 404 and the client falls through to the
+    // existing flow. Strictly additive — no existing endpoint touched.
+    if (path === '/api/device/resolve-identity' && method === 'POST') {
+      const body = await parseBody(req);
+      const ssaid = body.ssaid ? String(body.ssaid).trim() : null;
+      const model = body.model ? String(body.model).trim() : null;
+      const manufacturer = body.manufacturer ? String(body.manufacturer).trim() : null;
+      const osVersion = body.osVersion ? String(body.osVersion).trim() : null;
+      const legacyFingerprint = body.legacyFingerprint ? String(body.legacyFingerprint).trim() : null;
+      const ccodeHint = body.ccode ? String(body.ccode).trim().toUpperCase() : null;
+
+      let matchedRow = null;
+      let matchedBy = null;
+
+      try {
+        // 1. Try legacy fingerprint — back-compat, also covers normal logins
+        if (legacyFingerprint) {
+          const [rows] = await pool.query(
+            'SELECT * FROM approved_devices WHERE device_fingerprint = ? LIMIT 1',
+            [legacyFingerprint]
+          );
+          if (rows.length > 0) {
+            matchedRow = rows[0];
+            matchedBy = 'legacy_fingerprint';
+          }
+        }
+
+        // 2. Try SSAID (the reinstall-recovery primary key). Optionally scoped
+        //    by ccode hint when the client knows which company it belongs to.
+        if (!matchedRow && ssaid) {
+          try {
+            let rows;
+            if (ccodeHint) {
+              [rows] = await pool.query(
+                'SELECT * FROM approved_devices WHERE ssaid = ? AND UPPER(TRIM(IFNULL(ccode, ""))) = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1',
+                [ssaid, ccodeHint]
+              );
+            } else {
+              [rows] = await pool.query(
+                'SELECT * FROM approved_devices WHERE ssaid = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1',
+                [ssaid]
+              );
+            }
+            if (rows.length > 0) {
+              matchedRow = rows[0];
+              matchedBy = 'ssaid';
+            }
+          } catch (colErr) {
+            // ER_BAD_FIELD_ERROR → migration not yet run. Silently fall through.
+            if (colErr && colErr.code !== 'ER_BAD_FIELD_ERROR') {
+              console.warn('[DEVICE][RESOLVE] ssaid lookup error:', colErr.message || colErr);
+            }
+          }
+        }
+
+        // 3. Defensive: SSAID + model + manufacturer 3-way match (guards
+        //    against rare SSAID collisions after factory reset).
+        if (!matchedRow && ssaid && model && manufacturer) {
+          try {
+            const [rows] = await pool.query(
+              'SELECT * FROM approved_devices WHERE ssaid = ? AND device_model = ? AND device_manufacturer = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1',
+              [ssaid, model, manufacturer]
+            );
+            if (rows.length > 0) {
+              matchedRow = rows[0];
+              matchedBy = 'ssaid_model_manufacturer';
+            }
+          } catch (colErr) {
+            if (colErr && colErr.code !== 'ER_BAD_FIELD_ERROR') {
+              console.warn('[DEVICE][RESOLVE] 3-way lookup error:', colErr.message || colErr);
+            }
+          }
+        }
+
+        if (!matchedRow) {
+          console.log(`[DEVICE][RESOLVE] miss — ssaid=${ssaid ? ssaid.substring(0, 8) + '…' : 'none'} legacy=${legacyFingerprint ? legacyFingerprint.substring(0, 8) + '…' : 'none'}`);
+          return sendJSON(res, { success: false, error: 'Device not found' }, 404);
+        }
+
+        console.log(`[DEVICE][RESOLVE] hit by=${matchedBy} fp=${(matchedRow.device_fingerprint || '').substring(0, 12)}… ssaid=${ssaid ? ssaid.substring(0, 8) + '…' : 'none'}`);
+
+        // Best-effort: update last_seen_at and merge SSAID/model/manufacturer
+        // so subsequent matches widen. Swallow ER_BAD_FIELD_ERROR for hosts
+        // that haven't run the v2.10.109 migration yet.
+        try {
+          const historyMerge = legacyFingerprint && legacyFingerprint !== matchedRow.device_fingerprint
+            ? legacyFingerprint
+            : null;
+          await pool.query(
+            `UPDATE approved_devices
+               SET ssaid = IFNULL(ssaid, ?),
+                   device_model = IFNULL(device_model, ?),
+                   device_manufacturer = IFNULL(device_manufacturer, ?),
+                   os_version = COALESCE(?, os_version),
+                   last_seen_at = NOW(),
+                   fingerprint_history = CASE
+                     WHEN ? IS NULL THEN fingerprint_history
+                     WHEN fingerprint_history IS NULL THEN ?
+                     WHEN INSTR(fingerprint_history, ?) > 0 THEN fingerprint_history
+                     ELSE CONCAT(fingerprint_history, ',', ?)
+                   END
+             WHERE id = ?`,
+            [ssaid, model, manufacturer, osVersion,
+             historyMerge, historyMerge, historyMerge, historyMerge,
+             matchedRow.id]
+          );
+        } catch (upErr) {
+          if (upErr && upErr.code !== 'ER_BAD_FIELD_ERROR') {
+            console.warn('[DEVICE][RESOLVE] last_seen update error:', upErr.message || upErr);
+          }
+        }
+
+        // Build the response in the same shape as /api/devices/fingerprint/:fp
+        // so the client can use it as a drop-in. Pull devcode + counters from
+        // devsettings keyed on the ORIGINAL device_fingerprint (which equals
+        // uniquedevcode in this system).
+        const recoveredFingerprint = matchedRow.device_fingerprint;
+        const [devRows] = await pool.query(
+          'SELECT uniquedevcode, ccode, devcode, trnid, milkid, storeid, aiid, authorized FROM devsettings WHERE uniquedevcode = ?',
+          [recoveredFingerprint]
+        );
+
+        const deviceData = {
+          ...matchedRow,
+          authorized: devRows.length > 0 ? devRows[0].authorized : (matchedRow.approved ? 1 : 0),
+          ccode: (devRows.length > 0 && devRows[0].ccode) ? devRows[0].ccode : (matchedRow.ccode || null),
+          devcode: devRows.length > 0 ? devRows[0].devcode : null,
+          trnid: devRows.length > 0 ? (devRows[0].trnid || 0) : 0,
+          milkid: devRows.length > 0 ? (devRows[0].milkid || 0) : 0,
+          storeid: devRows.length > 0 ? (devRows[0].storeid || 0) : 0,
+          aiid: devRows.length > 0 ? (devRows[0].aiid || 0) : 0,
+          resolved_by: matchedBy,
+          resolved_fingerprint: recoveredFingerprint,
+        };
+
+        // Apply the same GREATEST(devsettings.trnid, MAX(transrefno)) self-heal
+        // we use in /api/devices/fingerprint/:fp so a reinstalled device never
+        // gets a counter lower than what's actually live in transactions.
+        let lastTrnId = parseInt(deviceData.trnid, 10) || 0;
+        if (deviceData.devcode) {
+          try {
+            const [lastRefRows] = await pool.query(
+              `SELECT transrefno FROM transactions
+                 WHERE transrefno LIKE ?
+                 ORDER BY transrefno DESC LIMIT 1`,
+              [`${deviceData.devcode}%`]
+            );
+            if (lastRefRows.length > 0 && lastRefRows[0].transrefno) {
+              const txTrnId = parseInt(lastRefRows[0].transrefno.slice(-8), 10) || 0;
+              if (txTrnId > lastTrnId) {
+                console.log(`[DEVICE][RESOLVE] trnid self-heal ${lastTrnId} -> ${txTrnId} for ${deviceData.devcode}`);
+                lastTrnId = txTrnId;
+                try {
+                  await pool.query(
+                    'UPDATE devsettings SET trnid = GREATEST(IFNULL(trnid, 0), ?) WHERE uniquedevcode = ?',
+                    [lastTrnId, recoveredFingerprint]
+                  );
+                } catch (healErr) {
+                  console.warn('[DEVICE][RESOLVE] trnid heal failed:', healErr?.message || healErr);
+                }
+              }
+            }
+          } catch (txErr) {
+            console.warn('[DEVICE][RESOLVE] trnid lookup failed:', txErr?.message || txErr);
+          }
+        }
+        deviceData.trnid = lastTrnId;
+
+        return sendJSON(res, { success: true, data: deviceData });
+      } catch (e) {
+        // Defensive: any unexpected error → 404 so client falls through to
+        // the existing registration flow. NEVER block a reinstalled device.
+        console.warn('[DEVICE][RESOLVE] unexpected error, returning miss:', e?.message || e);
+        return sendJSON(res, { success: false, error: 'Device not found' }, 404);
+      }
+    }
+
     // Devices endpoints
     if (path.startsWith('/api/devices/fingerprint/') && method === 'GET') {
       const fingerprint = decodeURIComponent(path.split('/')[4]);

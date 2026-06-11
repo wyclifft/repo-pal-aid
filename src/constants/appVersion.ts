@@ -702,5 +702,27 @@
 // v2.10.98: Store Z print receipt strips COFFEE SUMMARY / SEASON / PRODUCE
 //   metadata and renders item names as left-aligned full-width lines (POS
 //   style). Produce Z layout unchanged. On-screen Store Z preview matches.
-export const APP_VERSION = '2.10.107';
-export const APP_VERSION_CODE = 128;
+// v2.10.109: STABLE DEVICE IDENTITY ACROSS REINSTALLS. New
+//   POST /api/device/resolve-identity endpoint matches a reinstalled /
+//   cleared-data device against approved_devices using SSAID +
+//   model + manufacturer (in addition to the legacy device_fingerprint).
+//   On a hit the server returns the device's ORIGINAL
+//   (device_fingerprint, devcode, uniquedevcode, trnid, milkid, storeid,
+//   aiid) so the client rehydrates its identity instead of being issued a
+//   fresh one — eliminating the root cause of TRNID/MILKID mixups after
+//   reinstall. Frontend collects a hardware bundle via
+//   src/utils/deviceFingerprint.ts:collectHardwareBundle() (new function,
+//   uses @capacitor/device) and calls the resolver before the existing
+//   getByFingerprint path in Login.tsx. Migration:
+//   backend-api/MIGRATION_APPROVED_DEVICES_HW.sql adds ssaid /
+//   device_model / device_manufacturer / os_version / fingerprint_history /
+//   last_seen_at columns plus (ccode,ssaid) and (ssaid) indexes — all
+//   nullable, all additive. Backend uses try/catch around the new columns
+//   so it stays compatible until the migration is run. No existing
+//   endpoint, response shape, schema column, sync engine, reference
+//   generator, receipt rendering, photo capture, or auth flow is modified.
+//   Old APKs in the field keep working unchanged (they simply never call
+//   the new endpoint). Counter self-heal mirrors the existing
+//   GREATEST(devsettings.trnid, MAX(transrefno)) protection.
+export const APP_VERSION = '2.10.109';
+export const APP_VERSION_CODE = 130;
