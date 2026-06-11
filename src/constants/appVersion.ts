@@ -775,10 +775,16 @@
 //   IndexedDB, Bluetooth and auth flow are all untouched. The v2.10.109–111
 //   resolve-identity safety net remains for legacy-fingerprint devices that
 //   clear data and for SSAID-rotating factory resets.
-export const APP_VERSION = '2.10.113';
-export const APP_VERSION_CODE = 134;
+// v2.10.114: Z Report period selector now reads sessions from the sessions
+//   table (transactions.CAN → sessions.SCODE, labeled with sessions.descript).
+//   Removes hard-coded morning/afternoon/evening options. "All Z" preserved.
+//   Backend unchanged — period filter applied client-side in
+//   DeviceZReportReceipt. Strictly UI/state in
+//   src/components/ZReportPeriodSelector.tsx and src/pages/ZReport.tsx.
+export const APP_VERSION = '2.10.114';
+export const APP_VERSION_CODE = 135;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
 // Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'ssaid-fingerprint';
+export const APP_FIX_TAG = 'dynamic-zreport-sessions';
