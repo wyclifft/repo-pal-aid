@@ -537,6 +537,13 @@ export const devicesApi = {
     user_id: string;
     approved: boolean;
     device_info?: string;
+    // v2.10.111: hardware identity bundle so backend can recover original
+    // approved row instead of inserting a duplicate pending device after
+    // reinstall/clear-data.
+    ssaid?: string;
+    model?: string;
+    manufacturer?: string;
+    osVersion?: string;
   }): Promise<ApprovedDevice | null> => {
     const response = await apiRequest<ApprovedDevice>('/devices', {
       method: 'POST',
