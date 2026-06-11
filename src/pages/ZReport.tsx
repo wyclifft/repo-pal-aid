@@ -14,7 +14,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { ZReportReceipt } from '@/components/ZReportReceipt';
 import { DeviceZReportReceipt } from '@/components/DeviceZReportReceipt';
-import { ZReportPeriodSelector, type ZReportPeriod, filterTransactionsByPeriod, getPeriodDisplayLabel } from '@/components/ZReportPeriodSelector';
+import { ZReportPeriodSelector, type ZReportPeriod } from '@/components/ZReportPeriodSelector';
 import { ZReportTypeSelector, type ZReportType } from '@/components/ZReportTypeSelector';
 
 const ZReport = () => {
