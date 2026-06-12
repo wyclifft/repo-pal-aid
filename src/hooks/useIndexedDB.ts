@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
-import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative, logWrite, logPrint } from '@/utils/cumulativeMonitor';
+import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative, logWrite, logPrint, logVerify, logCaptureRead, logRaceClobber } from '@/utils/cumulativeMonitor';
 import { plog } from '@/utils/persistentLogger';
 
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
