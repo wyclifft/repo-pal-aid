@@ -938,6 +938,14 @@ export const useIndexedDB = () => {
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct,
             });
+            // v2.10.115: always-on audit row for every backend write.
+            logWrite(existing?.baseCount, count, {
+              farmerId: cleanId,
+              route: routeKey,
+              source: 'backend',
+              prevByProduct: existing?.byProduct,
+              nextByProduct: byProduct,
+            });
             if (isFocusedFarmer(cleanId)) {
               plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} BACKEND ${existing?.baseCount ?? 0}→${count}`,
                 { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: count, prevByProduct: existing?.byProduct, nextByProduct: byProduct });
