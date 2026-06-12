@@ -865,14 +865,26 @@ export const useIndexedDB = () => {
    * Update farmer's cumulative count for a specific route/factory.
    * - fromBackend=true: replaces baseCount and resets localCount.
    * - fromBackend=false: increments localCount, preserves baseCount/byProduct.
+   *
+   * v2.10.116: Returns the persisted baseCount after a verified read-back so
+   * the caller can log what was ACTUALLY committed, not just what was
+   * fetched. Resolves only on `tx.oncomplete` (the write is durable) and
+   * rejects on `tx.onabort` (silent rollback no longer masquerades as
+   * success). After commit the function opens a separate readonly tx to
+   * re-read the row and emits CUM:VERIFY / CUM:VERIFY-MISMATCH. A single
+   * retry is performed on mismatch.
+   *
+   * Backward compatible: callers that ignore the return value still work.
+   * Local-branch returns the persisted total (baseCount+localCount).
    */
   const updateFarmerCumulative = useCallback(async (
     farmerId: string,
     count: number,
     fromBackend: boolean = false,
     byProduct?: Array<{ icode: string; product_name: string; weight: number }>,
-    route?: string
-  ): Promise<void> => {
+    route?: string,
+    options?: { transrefno?: string; verifySource?: string }
+  ): Promise<number | void> => {
     if (!db) return;
     try {
       const cleanId = farmerId.replace(/^#/, '').trim();
@@ -881,35 +893,43 @@ export const useIndexedDB = () => {
       const routeKey = (route || '').trim().toUpperCase() || 'ALL';
       const cacheKey = buildCumulativeKey(cleanId, route, month);
 
-      return new Promise((resolve, reject) => {
+      // Inner writer: performs one get→put inside a single readwrite tx and
+      // resolves ONLY on tx.oncomplete (durable commit), rejects on
+      // tx.onabort/tx.onerror. Returns:
+      //   { committed: true,  baseCount, localCount }  on commit
+      //   { committed: true,  skippedZeroPending: true } when zero-guard stashes
+      //   { committed: false, reason }                   on abort
+      type WriteResult =
+        | { committed: true; skippedZeroPending: true }
+        | { committed: true; baseCount: number; localCount: number }
+        | { committed: false; reason: string };
+
+      const performWrite = (): Promise<WriteResult> => new Promise((resolve, reject) => {
+        let plannedRecord: { baseCount: number; localCount: number } | null = null;
+        let skippedZeroPending = false;
         const tx = db.transaction('farmer_cumulative', 'readwrite');
         const store = tx.objectStore('farmer_cumulative');
 
+        tx.onabort = () => {
+          resolve({ committed: false, reason: tx.error?.message || 'tx aborted' });
+        };
+        tx.onerror = () => {
+          // tx-level error — onabort will also fire; do nothing here to avoid double-resolve.
+        };
+
         const getRequest = store.get(cacheKey);
+        getRequest.onerror = () => reject(getRequest.error);
         getRequest.onsuccess = () => {
           const existing = getRequest.result;
-          let newRecord;
+          let newRecord: any;
 
           if (fromBackend) {
-            // v2.10.90: pass byProduct breakdowns so monitor can distinguish
-            // a true regression from a per-icode re-bucketing (e.g. ccode change).
-            // v2.10.94 BUG 4 GUARD: refuse to overwrite a non-zero cached base
-            // with a stale 0/empty payload from the backend read replica that
-            // hasn't yet ingested a just-POSTed receipt. The local row has
-            // already been deleted by sync, so writing 0 here would poison the
-            // cache until the next refresh and corrupt any receipt printed in
-            // the meantime. The monitor's transient guard only suppresses the
-            // log — this guard protects the data itself.
             const incomingByProductSum = Array.isArray(byProduct)
               ? byProduct.reduce((s, p) => s + (Number(p?.weight) || 0), 0)
               : 0;
             const existingBase = Number(existing?.baseCount || 0);
             const incomingIsEmpty = (Number(count) || 0) === 0 && incomingByProductSum === 0;
             if (existingBase > 0 && incomingIsEmpty) {
-              // v2.10.104: two-read confirmation. First sighting → keep cache,
-              // log as info. Second sighting within 8s → accept the zero
-              // (legitimate reversal or admin wipe). Any non-zero read in
-              // between clears the pending entry (see below).
               const result = observeIncomingZero(cleanId, routeKey, existingBase);
               if (result === 'stash' || result === 'expired-restash') {
                 plog.info('CUM:ZERO-PENDING',
@@ -919,16 +939,14 @@ export const useIndexedDB = () => {
                   plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} ZERO-PENDING cached=${existingBase}`,
                     { farmerId: cleanId, route: routeKey, source: 'backend', existingBase, sighting: result });
                 }
-                resolve();
+                // No put — just let tx.oncomplete fire.
+                skippedZeroPending = true;
                 return;
               }
-              // result === 'confirm' — fall through to overwrite with 0
               plog.info('CUM:ZERO-CONFIRMED',
                 `${cleanId} route=${routeKey} accepting backend=0 (was ${existingBase})`,
                 { farmerId: cleanId, route: routeKey, existingBase });
             } else if (!incomingIsEmpty) {
-              // Any non-zero read clears a pending zero so a future real zero
-              // restarts the two-read flow cleanly.
               clearZeroPending(cleanId, routeKey);
             }
             observeBaseChange(existing?.baseCount, count, {
@@ -938,30 +956,35 @@ export const useIndexedDB = () => {
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct,
             });
-            // v2.10.115: always-on audit row for every backend write.
             logWrite(existing?.baseCount, count, {
               farmerId: cleanId,
               route: routeKey,
               source: 'backend',
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct,
+              transrefno: options?.transrefno,
             });
             if (isFocusedFarmer(cleanId)) {
               plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} BACKEND ${existing?.baseCount ?? 0}→${count}`,
                 { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: count, prevByProduct: existing?.byProduct, nextByProduct: byProduct });
             }
+            // v2.10.116: monotonic writeSeq so a future race-clobber check has
+            // a definitive ordering. Additive field — schemaless on values.
+            const prevSeq = Number(existing?.writeSeq || 0);
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
               month,
-              baseCount: count,
+              baseCount: Number(count) || 0,
               localCount: 0,
               byProduct: byProduct || [],
-              lastUpdated: new Date().toISOString()
+              lastUpdated: new Date().toISOString(),
+              writeSeq: prevSeq + 1,
+              lastWriteSource: 'backend',
             };
+            plannedRecord = { baseCount: newRecord.baseCount, localCount: 0 };
           } else {
-            // v2.10.104: surface manual negative reversals as a clean info row.
             if (Number(count) < 0) {
               noteReversalIfNegative(undefined, Number(count), { farmerId: cleanId, route: routeKey });
             }
@@ -971,42 +994,125 @@ export const useIndexedDB = () => {
             }
             const prevBase = Number(existing?.baseCount || 0);
             const prevLocal = Number(existing?.localCount || 0);
-            const nextLocal = prevLocal + count;
-            // v2.10.115: always-on audit row for local increments.
+            const nextLocal = prevLocal + Number(count);
             logWrite(prevBase + prevLocal, prevBase + nextLocal, {
               farmerId: cleanId,
               route: routeKey,
               source: 'local',
-              increment: count,
+              increment: Number(count),
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct || existing?.byProduct,
+              transrefno: options?.transrefno,
             });
+            const prevSeq = Number(existing?.writeSeq || 0);
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
               month,
-              baseCount: existing?.baseCount || 0,
+              // CRITICAL: re-use the freshly-read existing.baseCount so a sync
+              // commit that landed between our caller's intent and our get is
+              // preserved (not demoted). The get→put pair lives in a single
+              // readwrite tx, so `existing` is the latest committed value.
+              baseCount: prevBase,
               localCount: nextLocal,
               byProduct: byProduct || existing?.byProduct || [],
-              lastUpdated: new Date().toISOString()
+              lastUpdated: new Date().toISOString(),
+              writeSeq: prevSeq + 1,
+              lastWriteSource: 'local',
             };
+            plannedRecord = { baseCount: prevBase, localCount: nextLocal };
           }
 
           const putRequest = store.put(newRecord);
-          putRequest.onsuccess = () => {
-            // v2.10.88: per-farmer cumulative writes are NO LONGER persistently logged
-            // during bulk sync — see cumulativeMonitor.startBatch/endBatch summary instead.
-            resolve();
-          };
           putRequest.onerror = () => reject(putRequest.error);
+          // Do NOT resolve here — wait for tx.oncomplete below.
         };
-        getRequest.onerror = () => reject(getRequest.error);
+
+        tx.oncomplete = () => {
+          if (skippedZeroPending) {
+            resolve({ committed: true, skippedZeroPending: true });
+          } else if (plannedRecord) {
+            resolve({ committed: true, baseCount: plannedRecord.baseCount, localCount: plannedRecord.localCount });
+          } else {
+            // Should not happen — defensive.
+            resolve({ committed: false, reason: 'tx complete with no planned record' });
+          }
+        };
       });
+
+      // Read-back in a fresh readonly tx; returns the persisted baseCount
+      // (or 0 if the row is missing).
+      const readBack = (): Promise<{ baseCount: number; localCount: number } | null> =>
+        new Promise((resolve, reject) => {
+          const tx = db.transaction('farmer_cumulative', 'readonly');
+          const store = tx.objectStore('farmer_cumulative');
+          const req = store.get(cacheKey);
+          req.onsuccess = () => {
+            if (!req.result) return resolve(null);
+            resolve({
+              baseCount: Number(req.result.baseCount || 0),
+              localCount: Number(req.result.localCount || 0),
+            });
+          };
+          req.onerror = () => reject(req.error);
+        });
+
+      // First attempt
+      let writeResult = await performWrite();
+
+      if (!writeResult.committed) {
+        // Surface aborts loudly — they're the smoking gun for the lying log.
+        plog.pinned('error', 'CUM:WRITE-ABORT',
+          `${cleanId} route=${routeKey} src=${fromBackend ? 'backend' : 'local'} tx aborted: ${writeResult.reason}`,
+          { farmerId: cleanId, route: routeKey, source: fromBackend ? 'backend' : 'local', reason: writeResult.reason });
+        return; // do not log success, do not verify
+      }
+
+      // Zero-pending path — no write happened by design; nothing to verify.
+      if ('skippedZeroPending' in writeResult && writeResult.skippedZeroPending) {
+        return;
+      }
+
+      // For backend writes: read back and verify against the value we asked
+      // to persist. For local writes: confirm the put landed (defensive).
+      const verifySource = options?.verifySource || (fromBackend ? 'backend' : 'local');
+      const expected = fromBackend ? (Number(count) || 0) : writeResult.baseCount + writeResult.localCount;
+
+      let rb = await readBack();
+      let readBackValue = rb ? (fromBackend ? rb.baseCount : rb.baseCount + rb.localCount) : 0;
+      let match = Math.abs(readBackValue - expected) < 0.0001;
+      let retried = false;
+
+      if (!match && fromBackend) {
+        // One retry: re-run the write, then re-read.
+        retried = true;
+        const retry = await performWrite();
+        if (retry.committed && !('skippedZeroPending' in retry)) {
+          rb = await readBack();
+          readBackValue = rb ? rb.baseCount : 0;
+          match = Math.abs(readBackValue - expected) < 0.0001;
+        }
+      }
+
+      logVerify({
+        farmerId: cleanId,
+        route: routeKey,
+        source: verifySource,
+        fetched: expected,
+        readBack: readBackValue,
+        match,
+        retried,
+        transrefno: options?.transrefno,
+      });
+
+      return readBackValue;
     } catch (error) {
       console.error('Failed to update farmer cumulative:', error);
     }
   }, [db]);
+
+
 
   /**
    * Calculate cumulative weight from unsynced receipts in IndexedDB for a farmer in the current month.
