@@ -1061,23 +1061,27 @@ export const useIndexedDB = () => {
       // First attempt
       let writeResult = await performWrite();
 
-      if (!writeResult.committed) {
+      if (writeResult.committed === false) {
         // Surface aborts loudly — they're the smoking gun for the lying log.
+        const reason = writeResult.reason;
         plog.pinned('error', 'CUM:WRITE-ABORT',
-          `${cleanId} route=${routeKey} src=${fromBackend ? 'backend' : 'local'} tx aborted: ${writeResult.reason}`,
-          { farmerId: cleanId, route: routeKey, source: fromBackend ? 'backend' : 'local', reason: writeResult.reason });
+          `${cleanId} route=${routeKey} src=${fromBackend ? 'backend' : 'local'} tx aborted: ${reason}`,
+          { farmerId: cleanId, route: routeKey, source: fromBackend ? 'backend' : 'local', reason });
         return; // do not log success, do not verify
       }
 
       // Zero-pending path — no write happened by design; nothing to verify.
-      if ('skippedZeroPending' in writeResult && writeResult.skippedZeroPending) {
+      if ('skippedZeroPending' in writeResult) {
         return;
       }
+
+      // From here writeResult has baseCount/localCount.
+      const committedRecord = writeResult;
 
       // For backend writes: read back and verify against the value we asked
       // to persist. For local writes: confirm the put landed (defensive).
       const verifySource = options?.verifySource || (fromBackend ? 'backend' : 'local');
-      const expected = fromBackend ? (Number(count) || 0) : writeResult.baseCount + writeResult.localCount;
+      const expected = fromBackend ? (Number(count) || 0) : committedRecord.baseCount + committedRecord.localCount;
 
       let rb = await readBack();
       let readBackValue = rb ? (fromBackend ? rb.baseCount : rb.baseCount + rb.localCount) : 0;
@@ -1088,7 +1092,7 @@ export const useIndexedDB = () => {
         // One retry: re-run the write, then re-read.
         retried = true;
         const retry = await performWrite();
-        if (retry.committed && !('skippedZeroPending' in retry)) {
+        if (retry.committed === true && !('skippedZeroPending' in retry)) {
           rb = await readBack();
           readBackValue = rb ? rb.baseCount : 0;
           match = Math.abs(readBackValue - expected) < 0.0001;
