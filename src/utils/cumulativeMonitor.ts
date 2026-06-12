@@ -591,6 +591,8 @@ export const cumulativeMonitor = {
   observeIncomingZero,
   clearZeroPending,
   noteReversalIfNegative,
+  logWrite,
+  logPrint,
 };
 
 export default cumulativeMonitor;
