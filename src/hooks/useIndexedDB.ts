@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
-import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative } from '@/utils/cumulativeMonitor';
+import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative, logWrite, logPrint } from '@/utils/cumulativeMonitor';
 import { plog } from '@/utils/persistentLogger';
 
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
@@ -938,6 +938,14 @@ export const useIndexedDB = () => {
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct,
             });
+            // v2.10.115: always-on audit row for every backend write.
+            logWrite(existing?.baseCount, count, {
+              farmerId: cleanId,
+              route: routeKey,
+              source: 'backend',
+              prevByProduct: existing?.byProduct,
+              nextByProduct: byProduct,
+            });
             if (isFocusedFarmer(cleanId)) {
               plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} BACKEND ${existing?.baseCount ?? 0}→${count}`,
                 { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: count, prevByProduct: existing?.byProduct, nextByProduct: byProduct });
@@ -961,13 +969,25 @@ export const useIndexedDB = () => {
               plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} LOCAL +${count} (base=${existing?.baseCount ?? 0})`,
                 { farmerId: cleanId, route: routeKey, source: 'local', increment: count, baseCount: existing?.baseCount ?? 0, prevLocal: existing?.localCount ?? 0, byProduct: byProduct || existing?.byProduct });
             }
+            const prevBase = Number(existing?.baseCount || 0);
+            const prevLocal = Number(existing?.localCount || 0);
+            const nextLocal = prevLocal + count;
+            // v2.10.115: always-on audit row for local increments.
+            logWrite(prevBase + prevLocal, prevBase + nextLocal, {
+              farmerId: cleanId,
+              route: routeKey,
+              source: 'local',
+              increment: count,
+              prevByProduct: existing?.byProduct,
+              nextByProduct: byProduct || existing?.byProduct,
+            });
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
               month,
               baseCount: existing?.baseCount || 0,
-              localCount: (existing?.localCount || 0) + count,
+              localCount: nextLocal,
               byProduct: byProduct || existing?.byProduct || [],
               lastUpdated: new Date().toISOString()
             };
@@ -1078,6 +1098,17 @@ export const useIndexedDB = () => {
         merged[key] = { ...p, icode: key };
       }
     }
+    // v2.10.115: emit a CUM:PRINT audit row capturing every input to the
+    // composed total so any wrong receipt cumulative is traceable later.
+    logPrint({
+      farmerId: farmerId.replace(/^#/, '').trim(),
+      route: routeFilter,
+      cachedBase: baseCount,
+      cachedLocal: cached?.localCount || 0,
+      unsyncedWeight: unsynced.total,
+      finalPrinted: total,
+      source: 'getFarmerTotalCumulative',
+    });
     return { total, byProduct: Object.values(merged) };
   }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
 

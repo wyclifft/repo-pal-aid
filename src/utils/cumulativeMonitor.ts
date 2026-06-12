@@ -286,6 +286,123 @@ function classifyRegression(perIcodeDiff: Record<string, number>, dropped: strin
   return "unknown";
 }
 
+// ---- always-on write log (v2.10.115) -------------------------------------
+//
+// Every cumulative cache write — backend refresh, local increment, sync,
+// print-time refresh — emits exactly one CUM:WRITE row so discrepancies
+// like M01186 (405.0 → 396.8 silently) are visible end-to-end without
+// relying on the regression confirmation flow.
+
+const growthCounter = { n: 0 };
+const GROWTH_SAMPLE_RATE = 20;
+
+export interface WriteLogCtx {
+  farmerId: string;
+  route?: string;
+  source: string; // 'backend' | 'local' | 'sync' | 'post-sync' | 'print' | 'batch-dashboard'
+  prevByProduct?: ByProductEntry[];
+  nextByProduct?: ByProductEntry[];
+  transrefno?: string;
+  increment?: number;
+  reason?: string;
+}
+
+export function logWrite(
+  prev: number | undefined,
+  next: number,
+  ctx: WriteLogCtx
+): void {
+  try {
+    const before = +(Number(prev) || 0).toFixed(3);
+    const after = +(Number(next) || 0).toFixed(3);
+    const delta = +(after - before).toFixed(3);
+    const prevSum = (ctx.prevByProduct || []).reduce((s, p) => s + (Number(p?.weight) || 0), 0);
+    const nextSum = (ctx.nextByProduct || []).reduce((s, p) => s + (Number(p?.weight) || 0), 0);
+
+    // Per-icode diff (best-effort; safe when breakdowns missing)
+    const prevMap = toIcodeMap(ctx.prevByProduct);
+    const nextMap = toIcodeMap(ctx.nextByProduct);
+    const perIcodeDiff: Record<string, number> = {};
+    const keys = new Set<string>([...prevMap.keys(), ...nextMap.keys()]);
+    for (const k of keys) {
+      const d = +(((nextMap.get(k) || 0) - (prevMap.get(k) || 0))).toFixed(3);
+      if (d !== 0) perIcodeDiff[k] = d;
+    }
+
+    const arrow = `${before}→${after}`;
+    const sign = delta > 0 ? `+${delta}` : `${delta}`;
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} src=${ctx.source} ${arrow} (Δ${sign})${ctx.transrefno ? ` ref=${ctx.transrefno}` : ""}`;
+    const level = delta < 0 ? "warn" : "info";
+    plog[level === "warn" ? "warn" : "info"]("CUM:WRITE", msg, {
+      ...getActiveContext(),
+      farmerId: ctx.farmerId,
+      route: ctx.route,
+      source: ctx.source,
+      before,
+      after,
+      delta,
+      prevByProductSum: +prevSum.toFixed(3),
+      nextByProductSum: +nextSum.toFixed(3),
+      perIcodeDiff,
+      transrefno: ctx.transrefno,
+      increment: ctx.increment,
+      reason: ctx.reason,
+    });
+  } catch { /* never throw */ }
+}
+
+// Print-time receipt cumulative composition. Captures everything the
+// receipt math used so a wrong printed total can be traced after the fact.
+export interface PrintLogCtx {
+  farmerId: string;
+  route?: string;
+  cachedBase: number;
+  cachedLocal: number;
+  unsyncedWeight: number;
+  cloudCumulative?: number;
+  finalPrinted: number;
+  excludedRefs?: string[];
+  source?: string; // 'on-screen' | 'background-print' | 'fallback' | ...
+  icode?: string;
+}
+
+export function logPrint(ctx: PrintLogCtx): void {
+  try {
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} printed=${+(ctx.finalPrinted || 0).toFixed(3)} (cachedBase=${+(ctx.cachedBase || 0).toFixed(3)} local=${+(ctx.cachedLocal || 0).toFixed(3)} unsynced=${+(ctx.unsyncedWeight || 0).toFixed(3)}${typeof ctx.cloudCumulative === "number" ? ` cloud=${+ctx.cloudCumulative.toFixed(3)}` : ""})`;
+    plog.info("CUM:PRINT", msg, {
+      ...getActiveContext(),
+      ...ctx,
+    });
+  } catch { /* never throw */ }
+}
+
+// Periodic flusher: any pending regression candidate older than its TTL
+// gets emitted as CUM:REGRESSION-UNCONFIRMED so the drop is never silent.
+let unconfirmedFlusherStarted = false;
+function startUnconfirmedFlusher(): void {
+  if (unconfirmedFlusherStarted) return;
+  if (typeof setInterval === "undefined") return;
+  unconfirmedFlusherStarted = true;
+  setInterval(() => {
+    try {
+      const now = Date.now();
+      for (const [key, p] of pending) {
+        if (now - p.ts <= PENDING_TTL_MS) continue;
+        pending.delete(key);
+        const [farmerId, route] = key.split("|");
+        const delta = +(p.after - p.before).toFixed(3);
+        plog.pinned("warn", "CUM:REGRESSION-UNCONFIRMED",
+          `${farmerId} route=${route || "?"} ${p.before} → ${p.after} (Δ${delta}) [no second read within ${PENDING_TTL_MS}ms]`,
+          { ...getActiveContext(), farmerId, route, before: p.before, after: p.after, delta, prevByProduct: p.prevByProduct, nextByProduct: p.nextByProduct, confirmed: false }
+        );
+      }
+    } catch { /* noop */ }
+  }, 4000);
+}
+// Start eagerly at module load so even cold-path drops are caught.
+try { startUnconfirmedFlusher(); } catch { /* noop */ }
+
+
 // ---- fingerprint tracking for edit / insert detection ---------------------
 
 interface RowFingerprint {
@@ -474,6 +591,8 @@ export const cumulativeMonitor = {
   observeIncomingZero,
   clearZeroPending,
   noteReversalIfNegative,
+  logWrite,
+  logPrint,
 };
 
 export default cumulativeMonitor;
