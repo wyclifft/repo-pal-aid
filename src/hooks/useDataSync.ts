@@ -357,8 +357,11 @@ export const useDataSync = () => {
                           product_name: String(p.product_name || p.icode || ''),
                           weight: Number(p.weight) || 0,
                         }));
-                        await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined);
-                        console.log(`[SYNC] ✅ Refreshed cumulative (collision retry) for ${cleanFarmerId}: ${freshTotal} kg`);
+                        // v2.10.116: capture the verified persisted value so
+                        // the success log reflects what IndexedDB actually
+                        // committed, not just what we fetched.
+                        const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'collision-retry' });
+                        console.log(`[SYNC] ✅ Refreshed cumulative (collision retry) for ${cleanFarmerId}: fetched=${freshTotal} kg persisted=${typeof persisted === 'number' ? persisted : 'unverified'} kg`);
                       }
                     } catch (cumErr) {
                       console.warn('[SYNC] Cumulative refresh after collision retry failed (non-fatal):', cumErr);
