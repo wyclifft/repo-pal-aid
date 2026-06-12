@@ -1208,6 +1208,17 @@ export const useIndexedDB = () => {
         merged[key] = { ...p, icode: key };
       }
     }
+    // v2.10.116: emit CUM:CAPTURE-READ so the exact inputs the capture/print
+    // path consumed are visible. Pairs with CUM:VERIFY (write side) and
+    // CUM:PRINT (final printed) to form the full traceable chain.
+    logCaptureRead({
+      farmerId: farmerId.replace(/^#/, '').trim(),
+      route: routeFilter,
+      baseCount,
+      localCount: cached?.localCount || 0,
+      unsyncedWeight: unsynced.total,
+      source: 'getFarmerTotalCumulative',
+    });
     // v2.10.115: emit a CUM:PRINT audit row capturing every input to the
     // composed total so any wrong receipt cumulative is traceable later.
     logPrint({
