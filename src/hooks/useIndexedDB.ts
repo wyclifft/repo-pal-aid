@@ -1098,6 +1098,17 @@ export const useIndexedDB = () => {
         merged[key] = { ...p, icode: key };
       }
     }
+    // v2.10.115: emit a CUM:PRINT audit row capturing every input to the
+    // composed total so any wrong receipt cumulative is traceable later.
+    logPrint({
+      farmerId: farmerId.replace(/^#/, '').trim(),
+      route: routeFilter,
+      cachedBase: baseCount,
+      cachedLocal: cached?.localCount || 0,
+      unsyncedWeight: unsynced.total,
+      finalPrinted: total,
+      source: 'getFarmerTotalCumulative',
+    });
     return { total, byProduct: Object.values(merged) };
   }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
 
