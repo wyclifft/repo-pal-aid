@@ -376,6 +376,82 @@ export function logPrint(ctx: PrintLogCtx): void {
   } catch { /* never throw */ }
 }
 
+// v2.10.116: VERIFY-AFTER-WRITE. The previous "✅ Refreshed cumulative for X: N"
+// log reported the FETCHED value, not the PERSISTED one. If the IndexedDB
+// transaction aborted after put.onsuccess, or a parallel local-increment
+// overwrote baseCount in a separate tx (last-writer-wins race), the success
+// log lied and capture read the stale value. CUM:VERIFY pairs fetched →
+// readBack so the silent overwrite is observable; CUM:VERIFY-MISMATCH is
+// pinned-error so it surfaces immediately in /debug.
+export interface VerifyLogCtx {
+  farmerId: string;
+  route?: string;
+  source: string;     // 'backend' | 'post-sync' | 'collision-retry' | 'batch-dashboard'
+  fetched: number;    // value we asked IndexedDB to persist
+  readBack: number;   // value the readonly re-read returned
+  match: boolean;
+  retried?: boolean;
+  transrefno?: string;
+}
+export function logVerify(ctx: VerifyLogCtx): void {
+  try {
+    const fetched = +(Number(ctx.fetched) || 0).toFixed(3);
+    const readBack = +(Number(ctx.readBack) || 0).toFixed(3);
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} src=${ctx.source} fetched=${fetched} readBack=${readBack} match=${ctx.match}${ctx.retried ? " (retried)" : ""}`;
+    if (ctx.match) {
+      plog.info("CUM:VERIFY", msg, { ...getActiveContext(), ...ctx, fetched, readBack });
+    } else {
+      plog.pinned("error", "CUM:VERIFY-MISMATCH", msg, {
+        ...getActiveContext(),
+        ...ctx,
+        fetched,
+        readBack,
+        delta: +(readBack - fetched).toFixed(3),
+      });
+    }
+  } catch { /* never throw */ }
+}
+
+// v2.10.116: CAPTURE-READ. The exact inputs the print/capture path consumed.
+// Together with CUM:VERIFY upstream and CUM:PRINT downstream this gives a
+// single farmer's slice the full chain: fetched → written → readBack →
+// captureRead → printed.
+export interface CaptureReadLogCtx {
+  farmerId: string;
+  route?: string;
+  baseCount: number;
+  localCount: number;
+  unsyncedWeight: number;
+  source?: string;    // 'getFarmerTotalCumulative' | ...
+}
+export function logCaptureRead(ctx: CaptureReadLogCtx): void {
+  try {
+    const base = +(Number(ctx.baseCount) || 0).toFixed(3);
+    const local = +(Number(ctx.localCount) || 0).toFixed(3);
+    const unsynced = +(Number(ctx.unsyncedWeight) || 0).toFixed(3);
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} base=${base} local=${local} unsynced=${unsynced}`;
+    plog.info("CUM:CAPTURE-READ", msg, {
+      ...getActiveContext(),
+      ...ctx,
+      baseCount: base,
+      localCount: local,
+      unsyncedWeight: unsynced,
+    });
+  } catch { /* never throw */ }
+}
+
+// v2.10.116: RACE-CLOBBER. The local-increment branch detected that its
+// `existing` snapshot was stale (writeSeq advanced between get and put),
+// re-read, and avoided demoting baseCount. Surfaces in /debug so race
+// frequency is observable.
+export function logRaceClobber(farmerId: string, route: string | undefined, prevSeq: number, freshSeq: number, source: string): void {
+  try {
+    plog.warn("CUM:RACE-CLOBBER",
+      `${farmerId} route=${route || "?"} src=${source} prevSeq=${prevSeq} freshSeq=${freshSeq} re-read to avoid demote`,
+      { ...getActiveContext(), farmerId, route, source, prevSeq, freshSeq });
+  } catch { /* never throw */ }
+}
+
 // Periodic flusher: any pending regression candidate older than its TTL
 // gets emitted as CUM:REGRESSION-UNCONFIRMED so the drop is never silent.
 let unconfirmedFlusherStarted = false;
@@ -593,6 +669,9 @@ export const cumulativeMonitor = {
   noteReversalIfNegative,
   logWrite,
   logPrint,
+  logVerify,
+  logCaptureRead,
+  logRaceClobber,
 };
 
 export default cumulativeMonitor;
