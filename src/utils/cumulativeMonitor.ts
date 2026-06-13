@@ -739,6 +739,7 @@ export const cumulativeMonitor = {
   logStaleCheck,
   logStaleReject,
   logBackendDecrease,
+  logStaleReconcile,
 };
 
 export default cumulativeMonitor;
