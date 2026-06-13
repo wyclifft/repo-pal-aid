@@ -1066,6 +1066,8 @@ export const useIndexedDB = () => {
         tx.oncomplete = () => {
           if (skippedZeroPending) {
             resolve({ committed: true, skippedZeroPending: true });
+          } else if (skippedStaleReject) {
+            resolve({ committed: true, skippedStaleReject: true, baseCount: skippedStaleReject.baseCount });
           } else if (plannedRecord) {
             resolve({ committed: true, baseCount: plannedRecord.baseCount, localCount: plannedRecord.localCount });
           } else {
