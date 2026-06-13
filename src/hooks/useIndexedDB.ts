@@ -968,10 +968,28 @@ export const useIndexedDB = () => {
               caller: options?.caller,
               transrefno: options?.transrefno,
             };
-            if (decreaseAttempt && !options?.allowDecrease) {
+            // v2.10.118: AUTO-HEAL when online + writer is user/sync-driven.
+            // Caches that are already too high never converge under pure
+            // STALE-REJECT. Heal only for W1/W4/W5 (post-sync refresh, on-
+            // select fetch, post-capture refresh) so prewarm batches (W3),
+            // collision retries (W2), and print-path reads (W6/W7) keep
+            // the strict reject behaviour. Offline always rejects.
+            const HEAL_SOURCES = new Set(['W1:postsync-refresh', 'W4:on-select-fetch', 'W5:postcapture-refresh']);
+            const isOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
+            const canHeal = decreaseAttempt
+              && !options?.allowDecrease
+              && isOnline
+              && !!options?.verifySource
+              && HEAL_SOURCES.has(options.verifySource);
+            let healedDecrease = false;
+            if (decreaseAttempt && !options?.allowDecrease && !canHeal) {
               logStaleReject(staleCtx);
               skippedStaleReject = { baseCount: existingBase };
               return; // do not put — let tx.oncomplete fire empty
+            }
+            if (canHeal) {
+              logStaleReconcile(staleCtx);
+              healedDecrease = true;
             }
             if (decreaseAttempt && options?.allowDecrease) {
               logBackendDecrease(staleCtx);
