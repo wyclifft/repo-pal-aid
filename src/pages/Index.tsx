@@ -525,7 +525,7 @@ const Index = () => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
                 try {
-                  await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined);
+                  await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch', caller: 'Index/loadCumulativeBatch' });
                   cumulativeMonitor.batchOk(batchLabel);
                 } catch {
                   cumulativeMonitor.batchFail(batchLabel);
