@@ -338,7 +338,8 @@ const Index = () => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
                 const byProd = batchResult.data.farmers.find(f => f.farmer_id.trim() === fId)?.by_product || [];
-                await updateFarmerCumulative(fId, weight, true, byProd, selectedRouteCode || undefined);
+                const vs = reason === 'post-sync' ? 'W5:postcapture-refresh' : `W3:prewarm-batch(${reason})`;
+                await updateFarmerCumulative(fId, weight, true, byProd, selectedRouteCode || undefined, { verifySource: vs, caller: `Index/refreshCumulativesBatch(${reason})` });
               }));
               written += batch.length;
               if (i + WRITE_BATCH < qualifying.length) {
@@ -525,7 +526,7 @@ const Index = () => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
                 try {
-                  await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined);
+                  await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch', caller: 'Index/loadCumulativeBatch' });
                   cumulativeMonitor.batchOk(batchLabel);
                 } catch {
                   cumulativeMonitor.batchFail(batchLabel);
@@ -591,7 +592,7 @@ const Index = () => {
                     new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), TIMEOUT))
                   ]);
                   if (res.success && res.data) {
-                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true, res.data.by_product || [], selectedRouteCode || undefined);
+                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true, res.data.by_product || [], selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch-fallback', caller: 'Index/cumulativeFallbackPass' });
                     return true;
                   }
                   return false;
@@ -709,7 +710,7 @@ const Index = () => {
             if (freqResult.success && freqResult.data) {
               const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
               const cloudByProduct = freqResult.data.by_product || [];
-              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
+              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, { verifySource: 'W4:on-select-fetch', caller: 'Index/onFarmerSelect' });
               // Fresh unsynced weight from actual IndexedDB receipts (no cached localCount)
               const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId, selectedRouteCode || undefined);
               // Merge by-product
@@ -1404,7 +1405,7 @@ const Index = () => {
                 // what we already trust — never let an unconfirmed stale read
                 // lower the persisted baseCount (mirrors v2.10.94/104 spirit).
                 if (cloudCumulative >= cachedBase) {
-                  await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
+                  await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, { verifySource: 'W6:onscreen-print', caller: 'Index/onScreenPrint' });
                 }
                 // v2.10.107: exclude just-submitted refs — cloudCumulative
                 // already includes them, the local pending row would double-count.
@@ -1530,7 +1531,7 @@ const Index = () => {
                 cumulativeForPrint = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, printData.productIcode);
                 // Update cache only when cloud >= cachedBase (don't lower the cache from a stale read).
                 if (cloudCumulative >= cachedBase) {
-                  updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined).catch(() => {});
+                  updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined, { verifySource: 'W7:background-print', caller: 'Index/backgroundPrint' }).catch(() => {});
                 }
               }
             }

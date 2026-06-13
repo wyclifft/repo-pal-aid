@@ -203,9 +203,11 @@ export default function DebugConsole() {
     const edits24h = cumRows.filter(r => (r.tag === "CUM:EDIT" || r.tag === "CUM:INSERT") && r.ts >= dayAgo);
     const recontext24h = cumRows.filter(r => r.tag === "CUM:RECONTEXT" && r.ts >= dayAgo);
     const transient24h = cumRows.filter(r => r.tag === "CUM:TRANSIENT" && r.ts >= dayAgo);
+    const staleRejects24h = cumRows.filter(r => r.tag === "CUM:STALE-REJECT" && r.ts >= dayAgo);
+    const backendDecreases24h = cumRows.filter(r => r.tag === "CUM:BACKEND-DECREASE" && r.ts >= dayAgo);
     const lastSync = cumRows.find(r => r.tag === "CUM:SYNC");
     const errors = cumRows.filter(r => r.level === "error").length;
-    return { regressions, regressions24h, edits24h, recontext24h, transient24h, lastSync, errors, total: cumRows.length };
+    return { regressions, regressions24h, edits24h, recontext24h, transient24h, staleRejects24h, backendDecreases24h, lastSync, errors, total: cumRows.length };
   }, [cumRows]);
 
   return (
@@ -373,10 +375,48 @@ export default function DebugConsole() {
                 <Badge variant="outline" title="Transient backend reads suppressed by the two-read confirmation guard (v2.10.91)">
                   {cumSummary.transient24h.length} transient suppressed / 24h
                 </Badge>
+                <Badge variant={cumSummary.staleRejects24h.length > 0 ? "destructive" : "outline"} title="Stale backend writes rejected by updateFarmerCumulative (v2.10.117)">
+                  {cumSummary.staleRejects24h.length} stale-rejects / 24h
+                </Badge>
                 <Badge variant="outline">{cumSummary.total} CUM entries</Badge>
               </div>
             </CardContent>
           </Card>
+
+          {/* v2.10.117: Stale-write rejections & backend decreases panel */}
+          {(cumSummary.staleRejects24h.length > 0 || cumSummary.backendDecreases24h.length > 0) && (
+            <Card className="border-amber-400">
+              <CardContent className="p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-amber-700 uppercase tracking-wider">
+                    Stale-write rejections & backend decreases ({cumSummary.staleRejects24h.length + cumSummary.backendDecreases24h.length} / 24h)
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1"
+                    onClick={async () => {
+                      try {
+                        const rows = [...cumSummary.staleRejects24h, ...cumSummary.backendDecreases24h]
+                          .sort((a, b) => b.ts - a.ts);
+                        const text = rows.map((r) => `${new Date(r.ts).toISOString()} [${r.tag}] ${r.message}${r.data ? " " + r.data : ""}`).join("\n");
+                        await navigator.clipboard.writeText(text);
+                        toast.success(`Copied ${rows.length} rows`);
+                      } catch { toast.error("Copy failed"); }
+                    }}
+                  >
+                    <Copy className="h-3 w-3" /> Copy
+                  </Button>
+                </div>
+                <div className="space-y-1 font-mono text-xs">
+                  {[...cumSummary.staleRejects24h, ...cumSummary.backendDecreases24h]
+                    .sort((a, b) => b.ts - a.ts)
+                    .slice(0, 50)
+                    .map(r => (<LogRow key={r.id} r={r} />))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Regressions panel (pinned, highest priority) */}
           {cumSummary.regressions.length > 0 && (

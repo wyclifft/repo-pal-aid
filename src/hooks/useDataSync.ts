@@ -360,8 +360,9 @@ export const useDataSync = () => {
                         // v2.10.116: capture the verified persisted value so
                         // the success log reflects what IndexedDB actually
                         // committed, not just what we fetched.
-                        const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'collision-retry' });
-                        console.log(`[SYNC] ✅ Refreshed cumulative (collision retry) for ${cleanFarmerId}: fetched=${freshTotal} kg persisted=${typeof persisted === 'number' ? persisted : 'unverified'} kg`);
+                        const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W2:collision-retry', caller: 'syncReceipts/collisionRetry' });
+                        const staleStr = typeof persisted === 'number' && Math.abs(persisted - freshTotal) > 0.0001 ? 'reject' : 'accept';
+                        console.log(`[SYNC] ✅ Refreshed cumulative (collision retry) for ${cleanFarmerId}: fetched=${freshTotal} kg persisted=${typeof persisted === 'number' ? persisted : 'unverified'} kg stale=${staleStr}`);
                       }
                     } catch (cumErr) {
                       console.warn('[SYNC] Cumulative refresh after collision retry failed (non-fatal):', cumErr);
@@ -456,7 +457,7 @@ export const useDataSync = () => {
                       weight: Number(p.weight) || 0,
                     }));
                     // v2.10.116: log the VERIFIED persisted value, not the fetched one.
-                    const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'post-sync' });
+                    const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W1:postsync-refresh', caller: 'syncReceipts/postSync' });
                     cumulativeRefreshed = true;
                     // v2.10.95: log per-icode breakdown + active context so the
                     // device-displayed per-product slice can be reconciled against
@@ -468,7 +469,8 @@ export const useDataSync = () => {
                     const activeScode = (() => { try { const r = localStorage.getItem('active_session_data'); return r ? String(JSON.parse(r)?.session?.SCODE || '').trim() : ''; } catch { return ''; } })();
                     const ctxStr = `tcode=${routeForRefresh || '?'} scode=${activeScode || '?'} active_icode=${activeIcode || '?'}`;
                     const persistedStr = typeof persisted === 'number' ? `${persisted}` : 'unverified';
-                    console.log(`[SYNC] ✅ Refreshed cumulative for ${cleanFarmerId}: fetched=${freshTotal} kg persisted=${persistedStr} kg [${bpStr}] ${ctxStr}`);
+                    const staleStr = typeof persisted === 'number' && Math.abs(persisted - freshTotal) > 0.0001 ? 'reject' : 'accept';
+                    console.log(`[SYNC] ✅ Refreshed cumulative for ${cleanFarmerId}: fetched=${freshTotal} kg persisted=${persistedStr} kg stale=${staleStr} [${bpStr}] ${ctxStr}`);
                   } else {
                     console.warn(`[SYNC] Cumulative refresh returned no data for ${cleanFarmerId} — keeping local row for retry`);
                   }

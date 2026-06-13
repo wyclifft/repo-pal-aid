@@ -781,10 +781,10 @@
 //   Backend unchanged — period filter applied client-side in
 //   DeviceZReportReceipt. Strictly UI/state in
 //   src/components/ZReportPeriodSelector.tsx and src/pages/ZReport.tsx.
-export const APP_VERSION = '2.10.116';
-export const APP_VERSION_CODE = 137;
+export const APP_VERSION = '2.10.117';
+export const APP_VERSION_CODE = 138;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
 // Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'cum-verify-after-write';
+export const APP_FIX_TAG = 'writer-provenance-and-stale-reject';

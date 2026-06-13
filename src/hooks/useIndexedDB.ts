@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
-import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative, logWrite, logPrint, logVerify, logCaptureRead } from '@/utils/cumulativeMonitor';
+import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative, logWrite, logPrint, logVerify, logCaptureRead, logStaleCheck, logStaleReject, logBackendDecrease } from '@/utils/cumulativeMonitor';
 import { plog } from '@/utils/persistentLogger';
 
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
@@ -883,7 +883,7 @@ export const useIndexedDB = () => {
     fromBackend: boolean = false,
     byProduct?: Array<{ icode: string; product_name: string; weight: number }>,
     route?: string,
-    options?: { transrefno?: string; verifySource?: string }
+    options?: { transrefno?: string; verifySource?: string; caller?: string; allowDecrease?: boolean }
   ): Promise<number | void> => {
     if (!db) return;
     try {
@@ -901,12 +901,14 @@ export const useIndexedDB = () => {
       //   { committed: false, reason }                   on abort
       type WriteResult =
         | { committed: true; skippedZeroPending: true }
+        | { committed: true; skippedStaleReject: true; baseCount: number }
         | { committed: true; baseCount: number; localCount: number }
         | { committed: false; reason: string };
 
       const performWrite = (): Promise<WriteResult> => new Promise((resolve, reject) => {
         let plannedRecord: { baseCount: number; localCount: number } | null = null;
         let skippedZeroPending = false;
+        let skippedStaleReject: { baseCount: number } | null = null;
         const tx = db.transaction('farmer_cumulative', 'readwrite');
         const store = tx.objectStore('farmer_cumulative');
 
@@ -949,6 +951,32 @@ export const useIndexedDB = () => {
             } else if (!incomingIsEmpty) {
               clearZeroPending(cleanId, routeKey);
             }
+            // v2.10.117: STALE-CHECK — reject backend writes whose incoming
+            // value would lower the persisted baseCount, unless the caller
+            // explicitly opts into a decrease (allowDecrease=true; reserved
+            // for future reconciliation/correction flows; no caller today).
+            // No writeSeq comparison — name reflects what's actually checked.
+            const incomingNum = Number(count) || 0;
+            const decreaseAttempt = existingBase > 0 && incomingNum < existingBase && !incomingIsEmpty;
+            const staleCtx = {
+              farmerId: cleanId,
+              route: routeKey,
+              prevValue: +existingBase.toFixed(3),
+              newValue: +incomingNum.toFixed(3),
+              writeSeq: Number(existing?.writeSeq || 0),
+              verifySource: options?.verifySource,
+              caller: options?.caller,
+              transrefno: options?.transrefno,
+            };
+            if (decreaseAttempt && !options?.allowDecrease) {
+              logStaleReject(staleCtx);
+              skippedStaleReject = { baseCount: existingBase };
+              return; // do not put — let tx.oncomplete fire empty
+            }
+            if (decreaseAttempt && options?.allowDecrease) {
+              logBackendDecrease(staleCtx);
+            }
+            logStaleCheck('accept', staleCtx);
             observeBaseChange(existing?.baseCount, count, {
               farmerId: cleanId,
               route: routeKey,
@@ -963,10 +991,13 @@ export const useIndexedDB = () => {
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct,
               transrefno: options?.transrefno,
+              verifySource: options?.verifySource,
+              caller: options?.caller,
+              writeSeq: Number(existing?.writeSeq || 0) + 1,
             });
             if (isFocusedFarmer(cleanId)) {
               plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} BACKEND ${existing?.baseCount ?? 0}→${count}`,
-                { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: count, prevByProduct: existing?.byProduct, nextByProduct: byProduct });
+                { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: count, prevByProduct: existing?.byProduct, nextByProduct: byProduct, verifySource: options?.verifySource, caller: options?.caller });
             }
             // v2.10.116: monotonic writeSeq so a future race-clobber check has
             // a definitive ordering. Additive field — schemaless on values.
@@ -1003,6 +1034,9 @@ export const useIndexedDB = () => {
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct || existing?.byProduct,
               transrefno: options?.transrefno,
+              verifySource: options?.verifySource,
+              caller: options?.caller,
+              writeSeq: Number(existing?.writeSeq || 0) + 1,
             });
             const prevSeq = Number(existing?.writeSeq || 0);
             newRecord = {
@@ -1032,6 +1066,8 @@ export const useIndexedDB = () => {
         tx.oncomplete = () => {
           if (skippedZeroPending) {
             resolve({ committed: true, skippedZeroPending: true });
+          } else if (skippedStaleReject) {
+            resolve({ committed: true, skippedStaleReject: true, baseCount: skippedStaleReject.baseCount });
           } else if (plannedRecord) {
             resolve({ committed: true, baseCount: plannedRecord.baseCount, localCount: plannedRecord.localCount });
           } else {
@@ -1075,6 +1111,12 @@ export const useIndexedDB = () => {
         return;
       }
 
+      // v2.10.117: stale-reject path — no write happened by design. Return
+      // the persisted (unchanged) baseCount so callers can detect rejection.
+      if ('skippedStaleReject' in writeResult) {
+        return writeResult.baseCount;
+      }
+
       // From here writeResult has baseCount/localCount.
       const committedRecord = writeResult;
 
@@ -1092,7 +1134,7 @@ export const useIndexedDB = () => {
         // One retry: re-run the write, then re-read.
         retried = true;
         const retry = await performWrite();
-        if (retry.committed === true && !('skippedZeroPending' in retry)) {
+        if (retry.committed === true && !('skippedZeroPending' in retry) && !('skippedStaleReject' in retry)) {
           rb = await readBack();
           readBackValue = rb ? rb.baseCount : 0;
           match = Math.abs(readBackValue - expected) < 0.0001;

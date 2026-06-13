@@ -70,9 +70,11 @@ function getActiveContext(): Record<string, string> {
     if (raw) {
       const d = JSON.parse(raw);
       const tcode = d?.route?.tcode;
+      const factory = d?.route?.factory || d?.factory?.fcode || d?.factory;
       const icode = d?.product?.icode;
       const scode = d?.session?.SCODE;
       if (tcode) ctx.tcode = String(tcode).trim();
+      if (factory) ctx.factory = String(factory).trim();
       if (icode) ctx.icode = String(icode).trim().toUpperCase();
       if (scode) ctx.scode = String(scode).trim();
     }
@@ -82,6 +84,13 @@ function getActiveContext(): Record<string, string> {
     const dc = typeof localStorage !== "undefined" ? localStorage.getItem("devcode") : null;
     if (cc) ctx.ccode = cc;
     if (dc) ctx.devcode = dc;
+    // v2.10.117: stable per-app-load session id for correlating writes
+    let sid = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("cum_session_id") : null;
+    if (!sid && typeof sessionStorage !== "undefined") {
+      sid = `S${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      sessionStorage.setItem("cum_session_id", sid);
+    }
+    if (sid) ctx.sessionId = sid;
   } catch { /* noop */ }
   return ctx;
 }
@@ -305,6 +314,9 @@ export interface WriteLogCtx {
   transrefno?: string;
   increment?: number;
   reason?: string;
+  verifySource?: string; // v2.10.117: writer tag (W1..W7)
+  caller?: string;       // v2.10.117: calling function name
+  writeSeq?: number;     // v2.10.117: persisted writeSeq snapshot
 }
 
 export function logWrite(
@@ -331,15 +343,20 @@ export function logWrite(
 
     const arrow = `${before}→${after}`;
     const sign = delta > 0 ? `+${delta}` : `${delta}`;
-    const msg = `${ctx.farmerId} route=${ctx.route || "?"} src=${ctx.source} ${arrow} (Δ${sign})${ctx.transrefno ? ` ref=${ctx.transrefno}` : ""}`;
+    const vs = ctx.verifySource ? ` vs=${ctx.verifySource}` : "";
+    const cl = ctx.caller ? ` caller=${ctx.caller}` : "";
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} src=${ctx.source}${vs}${cl} ${arrow} (Δ${sign})${ctx.transrefno ? ` ref=${ctx.transrefno}` : ""}`;
     const level = delta < 0 ? "warn" : "info";
     plog[level === "warn" ? "warn" : "info"]("CUM:WRITE", msg, {
       ...getActiveContext(),
       farmerId: ctx.farmerId,
       route: ctx.route,
       source: ctx.source,
-      before,
-      after,
+      verifySource: ctx.verifySource,
+      caller: ctx.caller,
+      writeSeq: ctx.writeSeq,
+      prevValue: before,
+      newValue: after,
       delta,
       prevByProductSum: +prevSum.toFixed(3),
       nextByProductSum: +nextSum.toFixed(3),
@@ -348,6 +365,42 @@ export function logWrite(
       increment: ctx.increment,
       reason: ctx.reason,
     });
+  } catch { /* never throw */ }
+}
+
+// v2.10.117: every backend write that reaches updateFarmerCumulative passes
+// through a stale-check. The check compares incoming vs. the just-read
+// persisted baseCount inside the same readwrite tx — no writeSeq compare,
+// hence STALE-CHECK / STALE-REJECT (not "CAS").
+export interface StaleCtx {
+  farmerId: string;
+  route?: string;
+  prevValue: number;
+  newValue: number;
+  writeSeq?: number;
+  verifySource?: string;
+  caller?: string;
+  transrefno?: string;
+}
+export function logStaleCheck(decision: "accept" | "reject", ctx: StaleCtx): void {
+  try {
+    const delta = +(ctx.newValue - ctx.prevValue).toFixed(3);
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} ${decision} prev=${ctx.prevValue} new=${ctx.newValue} (Δ${delta}) vs=${ctx.verifySource || "?"} caller=${ctx.caller || "?"}${ctx.transrefno ? ` ref=${ctx.transrefno}` : ""}`;
+    plog.info("CUM:STALE-CHECK", msg, { ...getActiveContext(), decision, ...ctx, delta });
+  } catch { /* never throw */ }
+}
+export function logStaleReject(ctx: StaleCtx): void {
+  try {
+    const delta = +(ctx.newValue - ctx.prevValue).toFixed(3);
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} REJECT incoming<persisted prev=${ctx.prevValue} new=${ctx.newValue} (Δ${delta}) vs=${ctx.verifySource || "?"} caller=${ctx.caller || "?"}${ctx.transrefno ? ` ref=${ctx.transrefno}` : ""}`;
+    plog.pinned("warn", "CUM:STALE-REJECT", msg, { ...getActiveContext(), ...ctx, delta });
+  } catch { /* never throw */ }
+}
+export function logBackendDecrease(ctx: StaleCtx): void {
+  try {
+    const delta = +(ctx.newValue - ctx.prevValue).toFixed(3);
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} backend lowered prev=${ctx.prevValue} new=${ctx.newValue} (Δ${delta}) vs=${ctx.verifySource || "?"} caller=${ctx.caller || "?"}${ctx.transrefno ? ` ref=${ctx.transrefno}` : ""}`;
+    plog.pinned("error", "CUM:BACKEND-DECREASE", msg, { ...getActiveContext(), ...ctx, delta });
   } catch { /* never throw */ }
 }
 
@@ -672,6 +725,9 @@ export const cumulativeMonitor = {
   logVerify,
   logCaptureRead,
   logRaceClobber,
+  logStaleCheck,
+  logStaleReject,
+  logBackendDecrease,
 };
 
 export default cumulativeMonitor;
