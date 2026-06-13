@@ -709,7 +709,7 @@ const Index = () => {
             if (freqResult.success && freqResult.data) {
               const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
               const cloudByProduct = freqResult.data.by_product || [];
-              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
+              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, { verifySource: 'W4:on-select-fetch', caller: 'Index/onFarmerSelect' });
               // Fresh unsynced weight from actual IndexedDB receipts (no cached localCount)
               const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId, selectedRouteCode || undefined);
               // Merge by-product
