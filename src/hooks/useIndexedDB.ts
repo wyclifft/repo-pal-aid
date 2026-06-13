@@ -883,7 +883,7 @@ export const useIndexedDB = () => {
     fromBackend: boolean = false,
     byProduct?: Array<{ icode: string; product_name: string; weight: number }>,
     route?: string,
-    options?: { transrefno?: string; verifySource?: string }
+    options?: { transrefno?: string; verifySource?: string; caller?: string; allowDecrease?: boolean }
   ): Promise<number | void> => {
     if (!db) return;
     try {
