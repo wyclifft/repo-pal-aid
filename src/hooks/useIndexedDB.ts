@@ -1034,6 +1034,9 @@ export const useIndexedDB = () => {
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct || existing?.byProduct,
               transrefno: options?.transrefno,
+              verifySource: options?.verifySource,
+              caller: options?.caller,
+              writeSeq: Number(existing?.writeSeq || 0) + 1,
             });
             const prevSeq = Number(existing?.writeSeq || 0);
             newRecord = {
