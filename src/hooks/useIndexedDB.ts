@@ -951,6 +951,32 @@ export const useIndexedDB = () => {
             } else if (!incomingIsEmpty) {
               clearZeroPending(cleanId, routeKey);
             }
+            // v2.10.117: STALE-CHECK — reject backend writes whose incoming
+            // value would lower the persisted baseCount, unless the caller
+            // explicitly opts into a decrease (allowDecrease=true; reserved
+            // for future reconciliation/correction flows; no caller today).
+            // No writeSeq comparison — name reflects what's actually checked.
+            const incomingNum = Number(count) || 0;
+            const decreaseAttempt = existingBase > 0 && incomingNum < existingBase && !incomingIsEmpty;
+            const staleCtx = {
+              farmerId: cleanId,
+              route: routeKey,
+              prevValue: +existingBase.toFixed(3),
+              newValue: +incomingNum.toFixed(3),
+              writeSeq: Number(existing?.writeSeq || 0),
+              verifySource: options?.verifySource,
+              caller: options?.caller,
+              transrefno: options?.transrefno,
+            };
+            if (decreaseAttempt && !options?.allowDecrease) {
+              cumulativeMonitor.logStaleReject(staleCtx);
+              skippedStaleReject = { baseCount: existingBase };
+              return; // do not put — let tx.oncomplete fire empty
+            }
+            if (decreaseAttempt && options?.allowDecrease) {
+              cumulativeMonitor.logBackendDecrease(staleCtx);
+            }
+            cumulativeMonitor.logStaleCheck('accept', staleCtx);
             observeBaseChange(existing?.baseCount, count, {
               farmerId: cleanId,
               route: routeKey,
@@ -965,10 +991,13 @@ export const useIndexedDB = () => {
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct,
               transrefno: options?.transrefno,
+              verifySource: options?.verifySource,
+              caller: options?.caller,
+              writeSeq: Number(existing?.writeSeq || 0) + 1,
             });
             if (isFocusedFarmer(cleanId)) {
               plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} BACKEND ${existing?.baseCount ?? 0}→${count}`,
-                { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: count, prevByProduct: existing?.byProduct, nextByProduct: byProduct });
+                { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: count, prevByProduct: existing?.byProduct, nextByProduct: byProduct, verifySource: options?.verifySource, caller: options?.caller });
             }
             // v2.10.116: monotonic writeSeq so a future race-clobber check has
             // a definitive ordering. Additive field — schemaless on values.
