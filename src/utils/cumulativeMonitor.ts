@@ -70,9 +70,11 @@ function getActiveContext(): Record<string, string> {
     if (raw) {
       const d = JSON.parse(raw);
       const tcode = d?.route?.tcode;
+      const factory = d?.route?.factory || d?.factory?.fcode || d?.factory;
       const icode = d?.product?.icode;
       const scode = d?.session?.SCODE;
       if (tcode) ctx.tcode = String(tcode).trim();
+      if (factory) ctx.factory = String(factory).trim();
       if (icode) ctx.icode = String(icode).trim().toUpperCase();
       if (scode) ctx.scode = String(scode).trim();
     }
@@ -82,6 +84,13 @@ function getActiveContext(): Record<string, string> {
     const dc = typeof localStorage !== "undefined" ? localStorage.getItem("devcode") : null;
     if (cc) ctx.ccode = cc;
     if (dc) ctx.devcode = dc;
+    // v2.10.117: stable per-app-load session id for correlating writes
+    let sid = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("cum_session_id") : null;
+    if (!sid && typeof sessionStorage !== "undefined") {
+      sid = `S${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      sessionStorage.setItem("cum_session_id", sid);
+    }
+    if (sid) ctx.sessionId = sid;
   } catch { /* noop */ }
   return ctx;
 }
