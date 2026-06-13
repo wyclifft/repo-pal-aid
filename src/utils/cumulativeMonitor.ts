@@ -725,6 +725,9 @@ export const cumulativeMonitor = {
   logVerify,
   logCaptureRead,
   logRaceClobber,
+  logStaleCheck,
+  logStaleReject,
+  logBackendDecrease,
 };
 
 export default cumulativeMonitor;
