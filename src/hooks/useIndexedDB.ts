@@ -1020,19 +1020,23 @@ export const useIndexedDB = () => {
             // v2.10.116: monotonic writeSeq so a future race-clobber check has
             // a definitive ordering. Additive field — schemaless on values.
             const prevSeq = Number(existing?.writeSeq || 0);
+            // v2.10.118: on heal, preserve localCount (un-synced offline
+            // captures must not disappear from view); normal backend writes
+            // continue to reset localCount to 0 as before.
+            const preservedLocal = healedDecrease ? Number(existing?.localCount || 0) : 0;
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
               month,
               baseCount: Number(count) || 0,
-              localCount: 0,
+              localCount: preservedLocal,
               byProduct: byProduct || [],
               lastUpdated: new Date().toISOString(),
               writeSeq: prevSeq + 1,
-              lastWriteSource: 'backend',
+              lastWriteSource: healedDecrease ? 'backend-heal' : 'backend',
             };
-            plannedRecord = { baseCount: newRecord.baseCount, localCount: 0 };
+            plannedRecord = { baseCount: newRecord.baseCount, localCount: preservedLocal };
           } else {
             if (Number(count) < 0) {
               noteReversalIfNegative(undefined, Number(count), { farmerId: cleanId, route: routeKey });
