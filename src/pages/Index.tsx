@@ -338,7 +338,8 @@ const Index = () => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
                 const byProd = batchResult.data.farmers.find(f => f.farmer_id.trim() === fId)?.by_product || [];
-                await updateFarmerCumulative(fId, weight, true, byProd, selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch', caller: 'Index/prefetchCumulativeBatch' });
+                const vs = reason === 'post-sync' ? 'W5:postcapture-refresh' : `W3:prewarm-batch(${reason})`;
+                await updateFarmerCumulative(fId, weight, true, byProd, selectedRouteCode || undefined, { verifySource: vs, caller: `Index/refreshCumulativesBatch(${reason})` });
               }));
               written += batch.length;
               if (i + WRITE_BATCH < qualifying.length) {
