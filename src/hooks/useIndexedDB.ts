@@ -1111,6 +1111,12 @@ export const useIndexedDB = () => {
         return;
       }
 
+      // v2.10.117: stale-reject path — no write happened by design. Return
+      // the persisted (unchanged) baseCount so callers can detect rejection.
+      if ('skippedStaleReject' in writeResult) {
+        return writeResult.baseCount;
+      }
+
       // From here writeResult has baseCount/localCount.
       const committedRecord = writeResult;
 
