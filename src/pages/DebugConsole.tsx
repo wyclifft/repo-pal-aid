@@ -375,6 +375,9 @@ export default function DebugConsole() {
                 <Badge variant="outline" title="Transient backend reads suppressed by the two-read confirmation guard (v2.10.91)">
                   {cumSummary.transient24h.length} transient suppressed / 24h
                 </Badge>
+                <Badge variant={cumSummary.staleRejects24h.length > 0 ? "destructive" : "outline"} title="Stale backend writes rejected by updateFarmerCumulative (v2.10.117)">
+                  {cumSummary.staleRejects24h.length} stale-rejects / 24h
+                </Badge>
                 <Badge variant="outline">{cumSummary.total} CUM entries</Badge>
               </div>
             </CardContent>
