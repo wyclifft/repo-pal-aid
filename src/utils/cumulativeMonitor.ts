@@ -403,6 +403,17 @@ export function logBackendDecrease(ctx: StaleCtx): void {
     plog.pinned("error", "CUM:BACKEND-DECREASE", msg, { ...getActiveContext(), ...ctx, delta });
   } catch { /* never throw */ }
 }
+// v2.10.118: STALE-RECONCILE — auto-heal when device is online and the
+// rejection came from a user/sync-driven fetch (W1/W4/W5). Pinned warn so
+// it surfaces in /debug like STALE-REJECT, but is informational, not an
+// error. Includes `online: true` and source writer for traceability.
+export function logStaleReconcile(ctx: StaleCtx): void {
+  try {
+    const delta = +(ctx.newValue - ctx.prevValue).toFixed(3);
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} HEAL prev=${ctx.prevValue} new=${ctx.newValue} (Δ${delta}) vs=${ctx.verifySource || "?"} caller=${ctx.caller || "?"}${ctx.transrefno ? ` ref=${ctx.transrefno}` : ""}`;
+    plog.pinned("warn", "CUM:STALE-RECONCILE", msg, { ...getActiveContext(), ...ctx, delta, online: true, healedFrom: ctx.prevValue, healedTo: ctx.newValue });
+  } catch { /* never throw */ }
+}
 
 // Print-time receipt cumulative composition. Captures everything the
 // receipt math used so a wrong printed total can be traced after the fact.
@@ -728,6 +739,7 @@ export const cumulativeMonitor = {
   logStaleCheck,
   logStaleReject,
   logBackendDecrease,
+  logStaleReconcile,
 };
 
 export default cumulativeMonitor;

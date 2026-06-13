@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
-import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative, logWrite, logPrint, logVerify, logCaptureRead, logStaleCheck, logStaleReject, logBackendDecrease } from '@/utils/cumulativeMonitor';
+import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative, logWrite, logPrint, logVerify, logCaptureRead, logStaleCheck, logStaleReject, logBackendDecrease, logStaleReconcile } from '@/utils/cumulativeMonitor';
 import { plog } from '@/utils/persistentLogger';
 
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
@@ -968,10 +968,28 @@ export const useIndexedDB = () => {
               caller: options?.caller,
               transrefno: options?.transrefno,
             };
-            if (decreaseAttempt && !options?.allowDecrease) {
+            // v2.10.118: AUTO-HEAL when online + writer is user/sync-driven.
+            // Caches that are already too high never converge under pure
+            // STALE-REJECT. Heal only for W1/W4/W5 (post-sync refresh, on-
+            // select fetch, post-capture refresh) so prewarm batches (W3),
+            // collision retries (W2), and print-path reads (W6/W7) keep
+            // the strict reject behaviour. Offline always rejects.
+            const HEAL_SOURCES = new Set(['W1:postsync-refresh', 'W4:on-select-fetch', 'W5:postcapture-refresh']);
+            const isOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
+            const canHeal = decreaseAttempt
+              && !options?.allowDecrease
+              && isOnline
+              && !!options?.verifySource
+              && HEAL_SOURCES.has(options.verifySource);
+            let healedDecrease = false;
+            if (decreaseAttempt && !options?.allowDecrease && !canHeal) {
               logStaleReject(staleCtx);
               skippedStaleReject = { baseCount: existingBase };
               return; // do not put — let tx.oncomplete fire empty
+            }
+            if (canHeal) {
+              logStaleReconcile(staleCtx);
+              healedDecrease = true;
             }
             if (decreaseAttempt && options?.allowDecrease) {
               logBackendDecrease(staleCtx);
@@ -1002,19 +1020,23 @@ export const useIndexedDB = () => {
             // v2.10.116: monotonic writeSeq so a future race-clobber check has
             // a definitive ordering. Additive field — schemaless on values.
             const prevSeq = Number(existing?.writeSeq || 0);
+            // v2.10.118: on heal, preserve localCount (un-synced offline
+            // captures must not disappear from view); normal backend writes
+            // continue to reset localCount to 0 as before.
+            const preservedLocal = healedDecrease ? Number(existing?.localCount || 0) : 0;
             newRecord = {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
               month,
               baseCount: Number(count) || 0,
-              localCount: 0,
+              localCount: preservedLocal,
               byProduct: byProduct || [],
               lastUpdated: new Date().toISOString(),
               writeSeq: prevSeq + 1,
-              lastWriteSource: 'backend',
+              lastWriteSource: healedDecrease ? 'backend-heal' : 'backend',
             };
-            plannedRecord = { baseCount: newRecord.baseCount, localCount: 0 };
+            plannedRecord = { baseCount: newRecord.baseCount, localCount: preservedLocal };
           } else {
             if (Number(count) < 0) {
               noteReversalIfNegative(undefined, Number(count), { farmerId: cleanId, route: routeKey });

@@ -205,9 +205,10 @@ export default function DebugConsole() {
     const transient24h = cumRows.filter(r => r.tag === "CUM:TRANSIENT" && r.ts >= dayAgo);
     const staleRejects24h = cumRows.filter(r => r.tag === "CUM:STALE-REJECT" && r.ts >= dayAgo);
     const backendDecreases24h = cumRows.filter(r => r.tag === "CUM:BACKEND-DECREASE" && r.ts >= dayAgo);
+    const staleReconciles24h = cumRows.filter(r => r.tag === "CUM:STALE-RECONCILE" && r.ts >= dayAgo);
     const lastSync = cumRows.find(r => r.tag === "CUM:SYNC");
     const errors = cumRows.filter(r => r.level === "error").length;
-    return { regressions, regressions24h, edits24h, recontext24h, transient24h, staleRejects24h, backendDecreases24h, lastSync, errors, total: cumRows.length };
+    return { regressions, regressions24h, edits24h, recontext24h, transient24h, staleRejects24h, backendDecreases24h, staleReconciles24h, lastSync, errors, total: cumRows.length };
   }, [cumRows]);
 
   return (
@@ -410,6 +411,40 @@ export default function DebugConsole() {
                 </div>
                 <div className="space-y-1 font-mono text-xs">
                   {[...cumSummary.staleRejects24h, ...cumSummary.backendDecreases24h]
+                    .sort((a, b) => b.ts - a.ts)
+                    .slice(0, 50)
+                    .map(r => (<LogRow key={r.id} r={r} />))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* v2.10.118: Auto-heal reconciliations panel */}
+          {cumSummary.staleReconciles24h.length > 0 && (
+            <Card className="border-emerald-400">
+              <CardContent className="p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">
+                    Auto-heal reconciliations ({cumSummary.staleReconciles24h.length} / 24h)
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1"
+                    onClick={async () => {
+                      try {
+                        const rows = [...cumSummary.staleReconciles24h].sort((a, b) => b.ts - a.ts);
+                        const text = rows.map((r) => `${new Date(r.ts).toISOString()} [${r.tag}] ${r.message}${r.data ? " " + r.data : ""}`).join("\n");
+                        await navigator.clipboard.writeText(text);
+                        toast.success(`Copied ${rows.length} rows`);
+                      } catch { toast.error("Copy failed"); }
+                    }}
+                  >
+                    <Copy className="h-3 w-3" /> Copy
+                  </Button>
+                </div>
+                <div className="space-y-1 font-mono text-xs">
+                  {cumSummary.staleReconciles24h
                     .sort((a, b) => b.ts - a.ts)
                     .slice(0, 50)
                     .map(r => (<LogRow key={r.id} r={r} />))}
