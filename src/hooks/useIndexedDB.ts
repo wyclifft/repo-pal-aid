@@ -1134,7 +1134,7 @@ export const useIndexedDB = () => {
         // One retry: re-run the write, then re-read.
         retried = true;
         const retry = await performWrite();
-        if (retry.committed === true && !('skippedZeroPending' in retry)) {
+        if (retry.committed === true && !('skippedZeroPending' in retry) && !('skippedStaleReject' in retry)) {
           rb = await readBack();
           readBackValue = rb ? rb.baseCount : 0;
           match = Math.abs(readBackValue - expected) < 0.0001;
