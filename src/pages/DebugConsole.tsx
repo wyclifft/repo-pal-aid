@@ -205,9 +205,10 @@ export default function DebugConsole() {
     const transient24h = cumRows.filter(r => r.tag === "CUM:TRANSIENT" && r.ts >= dayAgo);
     const staleRejects24h = cumRows.filter(r => r.tag === "CUM:STALE-REJECT" && r.ts >= dayAgo);
     const backendDecreases24h = cumRows.filter(r => r.tag === "CUM:BACKEND-DECREASE" && r.ts >= dayAgo);
+    const staleReconciles24h = cumRows.filter(r => r.tag === "CUM:STALE-RECONCILE" && r.ts >= dayAgo);
     const lastSync = cumRows.find(r => r.tag === "CUM:SYNC");
     const errors = cumRows.filter(r => r.level === "error").length;
-    return { regressions, regressions24h, edits24h, recontext24h, transient24h, staleRejects24h, backendDecreases24h, lastSync, errors, total: cumRows.length };
+    return { regressions, regressions24h, edits24h, recontext24h, transient24h, staleRejects24h, backendDecreases24h, staleReconciles24h, lastSync, errors, total: cumRows.length };
   }, [cumRows]);
 
   return (
