@@ -1404,7 +1404,7 @@ const Index = () => {
                 // what we already trust — never let an unconfirmed stale read
                 // lower the persisted baseCount (mirrors v2.10.94/104 spirit).
                 if (cloudCumulative >= cachedBase) {
-                  await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined);
+                  await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, { verifySource: 'W6:onscreen-print', caller: 'Index/onScreenPrint' });
                 }
                 // v2.10.107: exclude just-submitted refs — cloudCumulative
                 // already includes them, the local pending row would double-count.
