@@ -969,14 +969,14 @@ export const useIndexedDB = () => {
               transrefno: options?.transrefno,
             };
             if (decreaseAttempt && !options?.allowDecrease) {
-              cumulativeMonitor.logStaleReject(staleCtx);
+              logStaleReject(staleCtx);
               skippedStaleReject = { baseCount: existingBase };
               return; // do not put — let tx.oncomplete fire empty
             }
             if (decreaseAttempt && options?.allowDecrease) {
-              cumulativeMonitor.logBackendDecrease(staleCtx);
+              logBackendDecrease(staleCtx);
             }
-            cumulativeMonitor.logStaleCheck('accept', staleCtx);
+            logStaleCheck('accept', staleCtx);
             observeBaseChange(existing?.baseCount, count, {
               farmerId: cleanId,
               route: routeKey,
