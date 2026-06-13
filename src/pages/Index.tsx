@@ -591,7 +591,7 @@ const Index = () => {
                     new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), TIMEOUT))
                   ]);
                   if (res.success && res.data) {
-                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true, res.data.by_product || [], selectedRouteCode || undefined);
+                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true, res.data.by_product || [], selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch-fallback', caller: 'Index/cumulativeFallbackPass' });
                     return true;
                   }
                   return false;
