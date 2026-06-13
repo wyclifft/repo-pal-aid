@@ -901,12 +901,14 @@ export const useIndexedDB = () => {
       //   { committed: false, reason }                   on abort
       type WriteResult =
         | { committed: true; skippedZeroPending: true }
+        | { committed: true; skippedStaleReject: true; baseCount: number }
         | { committed: true; baseCount: number; localCount: number }
         | { committed: false; reason: string };
 
       const performWrite = (): Promise<WriteResult> => new Promise((resolve, reject) => {
         let plannedRecord: { baseCount: number; localCount: number } | null = null;
         let skippedZeroPending = false;
+        let skippedStaleReject: { baseCount: number } | null = null;
         const tx = db.transaction('farmer_cumulative', 'readwrite');
         const store = tx.objectStore('farmer_cumulative');
 
