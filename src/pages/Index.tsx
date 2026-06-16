@@ -520,14 +520,25 @@ const Index = () => {
             // Write all cumulative data to IndexedDB in batches
             const WRITE_BATCH = 50;
             let written = 0;
+            // v2.10.119: collect farmers where the batch write was stale-rejected
+            // (persisted > batch incoming). Those need a per-farmer reconfirm
+            // against the individual endpoint to either heal up (if individual
+            // returns higher than persisted) or to surface a persistent gap.
+            const reconfirmCandidates: Array<{ fId: string; batchIncoming: number; persisted: number }> = [];
+            const batchSnapshotId = (batchResult.data as any)?.snapshot_max_id;
             for (let i = 0; i < farmersToCache.length; i += WRITE_BATCH) {
               const batch = farmersToCache.slice(i, i + WRITE_BATCH);
               await Promise.all(batch.map(async (farmer) => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
                 const weight = batchMap.get(fId) ?? 0;
                 try {
-                  await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch', caller: 'Index/loadCumulativeBatch' });
+                  const persistedAfter = await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch', caller: 'Index/loadCumulativeBatch' });
                   cumulativeMonitor.batchOk(batchLabel);
+                  // Stale-reject signature: returned baseCount strictly greater
+                  // than the value we tried to write. Schedule reconfirm.
+                  if (typeof persistedAfter === 'number' && persistedAfter > weight + 0.0001) {
+                    reconfirmCandidates.push({ fId, batchIncoming: weight, persisted: persistedAfter });
+                  }
                 } catch {
                   cumulativeMonitor.batchFail(batchLabel);
                 }
@@ -546,11 +557,61 @@ const Index = () => {
             }
 
             batchSuccess = true;
+
+            // v2.10.119: W3-RECONFIRM pass — capped, fire-and-forget, never
+            // blocks the prewarm. For each stale-rejected farmer, call the
+            // individual endpoint with a 2s hard timeout. If individual >
+            // persisted → heal up via updateFarmerCumulative (free increase).
+            // If individual ≤ persisted → log persistent-gap and keep
+            // persisted (existing stale-reject behaviour). Strictly additive.
+            if (reconfirmCandidates.length > 0 && navigator.onLine) {
+              const MAX_RECONFIRM = 25;
+              const targets = reconfirmCandidates.slice(0, MAX_RECONFIRM);
+              setTimeout(() => {
+                (async () => {
+                  for (const t of targets) {
+                    try {
+                      const indPromise = mysqlApi.farmerFrequency.getMonthlyFrequency(t.fId, deviceFingerprint, selectedRouteCode || undefined);
+                      const indRes: any = await Promise.race([
+                        indPromise,
+                        new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 2000))
+                      ]);
+                      if (!indRes || !indRes.success || !indRes.data) {
+                        plog.info('CUM:W3-RECONFIRM-TIMEOUT',
+                          `${t.fId} route=${selectedRouteCode || 'ALL'} individual fetch failed/timeout; keeping persisted=${t.persisted}`,
+                          { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, snapshot_max_id_batch: batchSnapshotId });
+                        continue;
+                      }
+                      const individual = Number(indRes.data.cumulative_weight) || 0;
+                      if (individual > t.persisted + 0.0001) {
+                        await updateFarmerCumulative(t.fId, individual, true, indRes.data.by_product || [], selectedRouteCode || undefined, { verifySource: 'W3:reconfirm-heal', caller: 'Index/w3Reconfirm' });
+                        plog.info('CUM:W3-RECONFIRM-HEAL-UP',
+                          `${t.fId} route=${selectedRouteCode || 'ALL'} individual=${individual} > persisted=${t.persisted} (batch=${t.batchIncoming})`,
+                          { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, snapshot_max_id_batch: batchSnapshotId });
+                      } else if (Math.abs(individual - t.batchIncoming) < 0.0001 && individual < t.persisted) {
+                        plog.info('CUM:W3-RECONFIRM-PERSISTENT-GAP',
+                          `${t.fId} route=${selectedRouteCode || 'ALL'} batch=${t.batchIncoming} individual=${individual} both < persisted=${t.persisted}`,
+                          { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, snapshot_max_id_batch: batchSnapshotId });
+                      } else {
+                        plog.info('CUM:W3-RECONFIRM-OK',
+                          `${t.fId} route=${selectedRouteCode || 'ALL'} individual=${individual} ≥ persisted=${t.persisted} (batch=${t.batchIncoming}) — keeping persisted`,
+                          { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, snapshot_max_id_batch: batchSnapshotId });
+                      }
+                    } catch (e) {
+                      // Never throw from reconfirm
+                    }
+                    // Light yield between farmers
+                    await new Promise(r => setTimeout(r, 50));
+                  }
+                })();
+              }, 0);
+            }
           }
         } catch (batchErr) {
           console.warn('📦 Batch endpoint unavailable, falling back to individual calls:', batchErr);
         }
         if (batchSuccess) cumulativeMonitor.endBatch(batchLabel);
+        
         
         // Step 3: Fallback — individual calls with multi-pass retry (only if batch failed)
         if (!batchSuccess) {
