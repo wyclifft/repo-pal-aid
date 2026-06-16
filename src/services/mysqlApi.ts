@@ -1024,6 +1024,10 @@ export interface FarmerMonthlyFrequencyBatch {
   month_start: string;
   month_end: string;
   total_farmers: number;
+  // v2.10.119: optional snapshot id from the backend's read connection — used
+  // to detect read-replica drift between successive batch calls. Older
+  // backends omit it; clients treat absence as "unknown".
+  snapshot_max_id?: number;
 }
 
 export const farmerFrequencyApi = {
