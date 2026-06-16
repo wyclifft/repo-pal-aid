@@ -4187,13 +4187,17 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// v2.10.108: per-request timeout. Prevents requests from holding a pool slot
-// indefinitely when MySQL is slow. Client retries via resilientFetch.
+// v2.10.119 (backend hotfix): HTTP keep-alive idle reaper. Node fires this
+// callback when a socket sits idle (no request in flight) for
+// REQUEST_TIMEOUT_MS ms — typical for Capacitor clients between API calls.
+// We silently destroy the idle socket so it doesn't linger; the client
+// transparently reopens a new connection on its next request. Previously
+// this path warned on every idle close, flooding stderr with harmless
+// "[TIMEOUT] socket idle" lines. NOTE: this is socket-level only — it does
+// NOT bound in-flight request duration or hold MySQL pool slots; those
+// are guarded separately by request body / handler timeouts.
 const PORT = process.env.PORT || 3000;
 server.setTimeout(REQUEST_TIMEOUT_MS, (socket) => {
-  try {
-    console.warn(`[TIMEOUT] socket idle > ${REQUEST_TIMEOUT_MS}ms — destroying`);
-    socket.destroy();
-  } catch (_) { /* noop */ }
+  try { socket.destroy(); } catch (_) { /* noop */ }
 });
 server.listen(PORT, () => console.log(`✅ Server running on port ${PORT} (pool=${POOL_LIMIT}, queue=${QUEUE_LIMIT}, timeout=${REQUEST_TIMEOUT_MS}ms)`));
