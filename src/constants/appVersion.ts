@@ -1,4 +1,35 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.10.119: CUMULATIVE UNDER-COUNT PROTECTION — operators reported W3 batch
+//   prewarm intermittently returning `persisted − latest_delivery_weight`
+//   for select farmers (M03544, M01859, M00385 on C003/T001), even though
+//   the active season window 2026-01-01→2026-06-30 covers every row. The
+//   batch SQL is correct; the symptom is the two SQL queries (totals SUM
+//   and per-product SUM) running on DIFFERENT pooled connections that
+//   could land on slightly different commit snapshots under read-replica
+//   lag. Two-part fix:
+//   (1) BACKEND (backend-api/server.js, /api/farmer-monthly-frequency-batch):
+//       acquire one pooled connection, set SESSION TRANSACTION ISOLATION
+//       LEVEL READ COMMITTED, run BOTH the totals SUM and the per-product
+//       SUM on it, then release. Probe MAX(id) on the same connection and
+//       return it as `snapshot_max_id` so the frontend can flag drift
+//       between successive batch calls. Strictly additive: no formula
+//       change, no removed filters, no removed UPPER/TRIM normalisation.
+//   (2) FRONTEND (src/pages/Index.tsx loadCumulativeBatch): when the W3
+//       batch write is stale-rejected (updateFarmerCumulative returns a
+//       baseCount strictly greater than the value we tried to write), the
+//       farmer is added to a reconfirm queue. After the batch finishes,
+//       a capped (≤25) fire-and-forget pass calls the individual endpoint
+//       (/api/farmer-monthly-frequency) with a 2 s hard timeout. If
+//       individual > persisted → heal up via a free increase (the existing
+//       stale-check accepts increases). If individual ≤ persisted → log
+//       CUM:W3-RECONFIRM-OK / CUM:W3-RECONFIRM-PERSISTENT-GAP and keep
+//       persisted (existing stale-reject behaviour preserved). On timeout/
+//       error → CUM:W3-RECONFIRM-TIMEOUT, no change. New tags surface in
+//       /debug → Cumulative tab via the existing CUM taxonomy. No backend,
+//       IndexedDB schema, sync engine, reference generator, receipt
+//       rendering, photo, Bluetooth, or auth changes.
+//
+
 // v2.10.107: NO-DOUBLE-COUNT PRINT GUARD. After v2.10.106 fixed the under-
 //   count caused by stale read-replicas, an over-count appeared on same-
 //   session repeat captures (M00013: printed 97 vs expected 87; M00012:
@@ -781,7 +812,7 @@
 //   Backend unchanged — period filter applied client-side in
 //   DeviceZReportReceipt. Strictly UI/state in
 //   src/components/ZReportPeriodSelector.tsx and src/pages/ZReport.tsx.
-export const APP_VERSION = '2.10.118';
+export const APP_VERSION = '2.10.119';
 export const APP_VERSION_CODE = 139;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:

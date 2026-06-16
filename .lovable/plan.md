@@ -1,84 +1,85 @@
-# v2.10.118 — Auto-Heal Stale Rejections When Online
+## What we now know
 
-v2.10.117 stops bad decreases but caches that are already too high never converge. This patch lets a backend write win when (a) the device is online and (b) the write came from a user/sync-driven fetch. Everything else keeps STALE-REJECT behaviour.
+- Active session for `C003`: `2026-01-01 → 2026-06-30` ✅ correctly covers today and all four farmers' deliveries.
+- DB-truth SUM in that exact window (your earlier query):
+  - M03544 = **567.8**, M01859 = **1791.4**, M00385 = **392.4**, M03284 = **106.8**
+- Persisted (cached `baseCount`):
+  - M03544 = 539.6, M01859 = 1601.8, M00385 = 373.0, M03284 = 106.8
+- W3 batch incoming:
+  - M03544 = 518.0, M01859 = 1496.6, M00385 = 330.0, M03284 = 100.2
+- Your end=2026-06-15 query matches **persisted exactly** for 3 of 4 farmers.
 
----
+## Conclusion
 
-## Behaviour
+The backend SQL is correct. The **W3 batch response is dropping the most recent delivery row(s)** while still using the right session window. The two most plausible technical causes (both consistent with the pattern):
 
-Inside `updateFarmerCumulative` (the single writer), when a backend write would otherwise be rejected:
+1. **MySQL read-side staleness** — MariaDB's `READ COMMITTED` + pool reuse can occasionally serve a snapshot where the most-recently-written row is not yet visible to a particular pooled connection (especially under HTTP keep-alive bursts where the batch call lands on a stale-ish session).
+2. **Pool connection partial result** — the connection-pool limit (10) means a heavily concurrent moment can return a query against a connection whose session variables / transaction snapshot were started before the latest commit.
+
+Either way, the symptom is the same: batch returns `persisted − latestDeliveryWeight`, never `persisted + latestDeliveryWeight`. The cumulative guard correctly STALE-REJECTs these, but we want to (a) heal cleanly once the truth catches up, (b) prove the cause in production logs, and (c) eliminate the silent drop at its source.
+
+## Plan
+
+### 1. Backend — make the batch read self-consistent (`backend-api/server.js`)
+
+In the `/api/farmer-monthly-frequency-batch` handler:
+
+- Acquire a single dedicated connection (`pool.getConnection()`), set `SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED`, run **both** the totals query and the per-product query on the **same connection**, then release. This guarantees both SUMs see the same snapshot — eliminates split-snapshot risk.
+- Before returning, run a lightweight self-check: `SELECT MAX(id) FROM transactions WHERE ccode=? AND CAST(transdate AS DATE) BETWEEN ? AND ?` on the same connection and include it in the response as `snapshot_max_id`. The frontend can compare across calls to detect regressions.
+- Add structured server log line: `[CUM:BATCH] ccode=… route=… period=…→… farmers=N snapshot_max_id=…` for every batch call.
+
+No formula changes. No removal of existing UPPER/TRIM. Pure additive.
+
+### 2. Frontend — per-farmer reconfirm before STALE-REJECT
+
+In the W3 prewarm path (where `updateFarmerCumulative` rejects a decrease):
+
+- When `verifySource === 'W3:prewarm-batch'` AND `incoming < persisted` AND no local unsynced row can heal the gap → instead of an immediate `CUM:STALE-REJECT`, schedule a single per-farmer reconfirm by calling `/api/farmer-monthly-frequency?farmer_id=…&route=…`.
+- Compare:
+  - `individual ≥ persisted` → keep persisted, log `CUM:W3-RECONFIRM-OK` (transient lag, no harm).
+  - `individual === incoming` (both lower than persisted) → still keep persisted but raise `CUM:W3-RECONFIRM-PERSISTENT-GAP` so we can see it in `/debug` Cumulative tab.
+  - `individual > incoming AND individual > persisted` → accept individual as new floor, log `CUM:HEAL-UP-VERIFIED`.
+- Hard timeout 2s. On timeout/error, behave exactly like today (keep persisted).
+
+This is the same shape as the existing "Zero-Confirmation Guard" — never lower without two independent confirmations.
+
+### 3. Observability
+
+- Frontend: every reconfirm decision logged via `plog.info` with full tag set: `farmerId`, `route`, `persisted`, `batchIncoming`, `individual`, `decision`, `snapshot_max_id_batch`, `snapshot_max_id_individual`.
+- `/debug` → Cumulative tab automatically picks these up (existing `[CUM]` taxonomy).
+- Surface `snapshot_max_id` mismatch as a dedicated tile so operators can immediately see read-replica drift if it ever happens.
+
+### 4. Version bump
+
+- `v2.10.108` — patch fix, "cumulative under-count protection: same-connection batch reads + W3 reconfirm".
+- Updates: `src/constants/appVersion.ts`, `android/app/build.gradle` (versionName + versionCode), SW cache version in `public/sw.js`, log a one-line CHANGELOG comment in `server.js`.
+
+### 5. Verification
+
+- After deploy, watch `/debug` Cumulative tab on the M03544 / M01859 / M00385 devices through one prewarm cycle.
+- Expectation: zero `CUM:STALE-REJECT` from W3 once read catches up; if drift recurs, a `CUM:W3-RECONFIRM-OK` line appears with the snapshot ids — that's our smoking gun for replica lag and we then move the fix into the backend's connection acquisition layer.
+
+## Out of scope (explicitly NOT changing)
+
+- The cumulative formula, the existing per-route / per-product cache key, IndexedDB schema, `transrefno`/`uploadrefno` generation, any auto-generated file, any other API endpoint, RLS / auth.
+- Production endpoint contract: only **adds** `snapshot_max_id` (additive field — safe for older Capacitor clients that ignore unknown keys).
+
+## Technical details
 
 ```text
-if  fromBackend === true
-and !options.allowDecrease
-and newValue < prevValue
-and navigator.onLine === true
-and verifySource ∈ { W1:postsync-refresh, W4:on-select-fetch, W5:postcapture-refresh }
-→ emit pinned `CUM:STALE-RECONCILE` and WRITE the lower value (auto-heal)
-else
-→ existing STALE-REJECT behaviour (unchanged)
+backend-api/server.js  (≈ lines 3359–3475 and 3479–3590)
+  - getConnection() once per request; release in finally
+  - SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
+  - run totalRows, productRows, snapshot probe on same conn
+  - response: { …existing…, snapshot_max_id }
+
+src/utils/farmerCumulativeSync.ts  (the W3 prewarm consumer)
+  - new helper: reconfirmFarmerCumulative(farmerId, route, ccode)
+  - call before stale-reject when verifySource === 'W3:prewarm-batch'
+  - new plog tags: CUM:W3-RECONFIRM-{OK|GAP|HEAL-UP|TIMEOUT}
+
+src/constants/appVersion.ts, public/sw.js, android/app/build.gradle
+  - bump to 2.10.108
 ```
 
-| Writer | Online heal? | Offline |
-|---|---|---|
-| W1 post-sync refresh | yes | reject |
-| W4 on-select fetch | yes | reject |
-| W5 post-capture refresh | yes | reject |
-| W2 collision-retry | reject | reject |
-| W3 prewarm batch | reject | reject |
-| W6 on-screen print | reject | reject |
-| W7 background print | reject | reject |
-| local capture | n/a (never decreases via this path) | n/a |
-
-No 3×/60s observation window. No manual heal button. No new tabs. Receipt math untouched.
-
----
-
-## Logging
-
-`CUM:STALE-RECONCILE` (pinned warn) carries the same ctx as STALE-REJECT plus:
-`healedFrom = prevValue`, `healedTo = newValue`, `delta`, `verifySource`, `caller`, `route`, `factory`, `deviceCode`, `sessionId`, `online: true`, `writeSeq`.
-
-`localCount` is preserved across the heal. `writeSeq` increments. `lastWriteSource = 'backend-heal'`.
-
----
-
-## Files touched
-
-```text
-src/utils/cumulativeMonitor.ts   add logStaleReconcile() helper (pinned warn, tag CUM:STALE-RECONCILE)
-src/hooks/useIndexedDB.ts        in updateFarmerCumulative rejection branch, add online+writer gate;
-                                 on heal fall through to put() with reconcile logging, preserve localCount,
-                                 bump writeSeq, set lastWriteSource='backend-heal'
-src/pages/DebugConsole.tsx       Cumulative tab: add sibling panel
-                                 "Auto-heal reconciliations (24h)" listing CUM:STALE-RECONCILE rows,
-                                 same row schema and one-tap copy as the existing rejection panel
-src/constants/appVersion.ts      2.10.118, code 139, tag "auto-heal-online-stale-reject"
-android/app/build.gradle         versionCode 139 / versionName "2.10.118"
-.lovable/plan.md                 replace with this plan
-```
-
-## Untouched
-
-Backend / server.js, MySQL schema, IndexedDB schema (no version bump), sync engine, reference generator, receipt math, local capture, photo, Bluetooth, auth, Z-report, All-Logs tab UI, Capacitor config.
-
-## Production safety
-
-- Single writer site changed; existing call sites and signatures unchanged.
-- `options.allowDecrease` semantics unchanged.
-- Offline path identical to v2.10.117.
-- Web + Capacitor identical (uses `navigator.onLine`, already in use elsewhere).
-
-## Verification matrix
-
-| # | Scenario | Expected |
-|---|---|---|
-| 1 | M00001 repro online, force sync | one `CUM:STALE-RECONCILE` from W1; cache heals to backend value; next print correct |
-| 2 | M00001 repro offline | `CUM:STALE-REJECT` only; cache unchanged |
-| 3 | Healthy device (BA01 pattern) | only STALE-CHECK accepts; zero RECONCILE; zero REJECT |
-| 4 | W3 prewarm sees stale-lower value | STALE-REJECT (not healed) |
-| 5 | W6/W7 print path | STALE-REJECT (not healed); receipt math intact |
-| 6 | Two rapid captures online | baseCount monotonic; no spurious heals |
-| 7 | WRITE → VERIFY → CAPTURE-READ → PRINT after heal | all four report the healed value |
-
-Ready for build mode.
+No DB schema migration. No breaking changes. Strictly additive.
