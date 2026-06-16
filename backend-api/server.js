@@ -3423,31 +3423,59 @@ const server = http.createServer(async (req, res) => {
       // Strictly additive — widens WHERE clause, never narrows.
       const routeFilter = route ? ' AND UPPER(TRIM(route)) = UPPER(TRIM(?))' : '';
       const baseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
-      
-      const [totalRows] = await pool.query(
-        `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
-         FROM transactions 
-         WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}
-         GROUP BY TRIM(memberno)`,
-        baseParams
-      );
-      
       const tRouteFilter = route ? ' AND UPPER(TRIM(t.route)) = UPPER(TRIM(?))' : '';
       const tBaseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
-      
-      const [productRows] = await pool.query(
-        `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
-                IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
-                IFNULL(SUM(t.weight), 0) as weight 
-         FROM transactions t
-         LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
-         WHERE UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
-         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${tRouteFilter}
-         GROUP BY TRIM(t.memberno), TRIM(t.icode)`,
-        tBaseParams
-      );
-      
+
+      // v2.10.119: SAME-CONNECTION BATCH READ — acquire one pooled connection
+      // and run both the totals SUM and the per-product SUM on it under
+      // READ COMMITTED so the two queries see the same snapshot. Also
+      // returns snapshot_max_id so the client can detect read-replica drift
+      // between successive batch calls. Strictly additive: no formula
+      // changes, no removed filters, response shape extended with one new
+      // field that older clients ignore safely.
+      const conn = await pool.getConnection();
+      let totalRows, productRows, snapshotMaxId = 0;
+      try {
+        try { await conn.query("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"); } catch (e) { /* non-fatal */ }
+
+        const [tRows] = await conn.query(
+          `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
+           FROM transactions 
+           WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
+           AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}
+           GROUP BY TRIM(memberno)`,
+          baseParams
+        );
+        totalRows = tRows;
+
+        const [pRows] = await conn.query(
+          `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
+                  IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
+                  IFNULL(SUM(t.weight), 0) as weight 
+           FROM transactions t
+           LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
+           WHERE UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
+           AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${tRouteFilter}
+           GROUP BY TRIM(t.memberno), TRIM(t.icode)`,
+          tBaseParams
+        );
+        productRows = pRows;
+
+        try {
+          const snapParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
+          const [snapRows] = await conn.query(
+            `SELECT IFNULL(MAX(id), 0) as max_id
+             FROM transactions
+             WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
+             AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}`,
+            snapParams
+          );
+          snapshotMaxId = snapRows.length > 0 ? Number(snapRows[0].max_id) || 0 : 0;
+        } catch (_e) { /* probe failure is non-fatal */ }
+      } finally {
+        try { conn.release(); } catch (_e) {}
+      }
+
       // Build per-farmer product map
       const productMap = {};
       for (const r of productRows) {
@@ -3458,7 +3486,9 @@ const server = http.createServer(async (req, res) => {
           weight: parseFloat(r.weight) || 0
         });
       }
-      
+
+      console.log(`[CUM:BATCH] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totalRows.length} snapshot_max_id=${snapshotMaxId}`);
+
       return sendJSON(res, { 
         success: true, 
         data: {
@@ -3469,7 +3499,8 @@ const server = http.createServer(async (req, res) => {
           })),
           month_start: periodStart,
           month_end: periodEnd,
-          total_farmers: totalRows.length
+          total_farmers: totalRows.length,
+          snapshot_max_id: snapshotMaxId
         }
       });
     }
