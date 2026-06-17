@@ -812,10 +812,34 @@
 //   Backend unchanged — period filter applied client-side in
 //   DeviceZReportReceipt. Strictly UI/state in
 //   src/components/ZReportPeriodSelector.tsx and src/pages/ZReport.tsx.
-export const APP_VERSION = '2.10.119';
-export const APP_VERSION_CODE = 139;
+// v2.10.120: CUMULATIVE HEAL-DOWN + STICKY-REGRESSION REPLAY. v2.10.119
+//   correctly detected confirmed over-counts (CUM:W3-RECONFIRM-PERSISTENT-GAP
+//   — e.g. M03561 persisted=79.1 vs two-read backend=52.1) but only logged
+//   them, so poisoned caches stayed poisoned forever. v2.10.120 adds a
+//   guarded heal-down branch in src/pages/Index.tsx loadCumulativeBatch:
+//   when the W3 batch read AND the individual reconfirm read agree AND both
+//   are strictly less than the persisted cache AND the farmer has ZERO
+//   unsynced local receipts on that route, the cache is healed DOWN to the
+//   agreed backend value via updateFarmerCumulative(..., allowDecrease:true,
+//   verifySource:'W3:reconfirm-heal-down'). The existing zero-confirmation,
+//   stale-reject, lag-recovery, and unsynced-row safeguards are untouched —
+//   any gate failure falls back to the v2.10.119 log-only behaviour.
+//   Plus a NEW sticky-regression pin store
+//   (src/utils/cumulativeRegressionPins.ts, localStorage-backed, 7-day TTL,
+//   ≤200 entries) records every STALE-REJECT, and a STAGE-B replay queue
+//   runs on each prewarm that picks up to 25 pins NOT covered by today's
+//   batch, runs two consecutive individual reads against them, and applies
+//   the same heal-down gate. This is what finally heals farmers like
+//   M01859 / M03544 / M02957 / M00385 / M03284 that were rejected on
+//   v2.10.118 and never re-evaluated again. Heal-down + reconfirm + pin
+//   resolution events are written as pinned log lines so they bypass the
+//   logger's 50/s rate cap and stay visible in /debug. No backend,
+//   IndexedDB schema, sync engine, reference generator, receipt rendering,
+//   photo, Bluetooth, or auth changes.
+export const APP_VERSION = '2.10.120';
+export const APP_VERSION_CODE = 140;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
 // Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'auto-heal-online-stale-reject';
+export const APP_FIX_TAG = 'cum-heal-down-sticky-replay';
