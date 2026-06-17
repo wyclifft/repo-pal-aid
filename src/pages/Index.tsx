@@ -22,6 +22,7 @@ import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/re
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
 import { saveToLocalDB } from '@/services/offlineStorage';
 import { plog } from '@/utils/persistentLogger';
+import { addRegressionPin, clearRegressionPin, takeRegressionPinsForReplay } from '@/utils/cumulativeRegressionPins';
 import { toast } from 'sonner';
 
 // Helper: filter cumulative data to only the selected produce type
@@ -526,18 +527,28 @@ const Index = () => {
             // returns higher than persisted) or to surface a persistent gap.
             const reconfirmCandidates: Array<{ fId: string; batchIncoming: number; persisted: number }> = [];
             const batchSnapshotId = (batchResult.data as any)?.snapshot_max_id;
+            // v2.10.120: track which farmers got a fresh batch read this cycle —
+            // the sticky-regression replay queue excludes these so we don't
+            // double-fetch them.
+            const coveredFarmerIds = new Set<string>();
             for (let i = 0; i < farmersToCache.length; i += WRITE_BATCH) {
               const batch = farmersToCache.slice(i, i + WRITE_BATCH);
               await Promise.all(batch.map(async (farmer) => {
                 const fId = farmer.farmer_id.replace(/^#/, '').trim();
+                coveredFarmerIds.add(fId);
                 const weight = batchMap.get(fId) ?? 0;
                 try {
                   const persistedAfter = await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch', caller: 'Index/loadCumulativeBatch' });
                   cumulativeMonitor.batchOk(batchLabel);
                   // Stale-reject signature: returned baseCount strictly greater
-                  // than the value we tried to write. Schedule reconfirm.
+                  // than the value we tried to write. Schedule reconfirm AND
+                  // pin for cross-session replay (v2.10.120).
                   if (typeof persistedAfter === 'number' && persistedAfter > weight + 0.0001) {
                     reconfirmCandidates.push({ fId, batchIncoming: weight, persisted: persistedAfter });
+                    addRegressionPin(fId, selectedRouteCode || 'ALL', persistedAfter, weight);
+                  } else if (typeof persistedAfter === 'number' && Math.abs(persistedAfter - weight) < 0.0001) {
+                    // Cache and backend agree — any prior pin is resolved.
+                    clearRegressionPin(fId, selectedRouteCode || 'ALL');
                   }
                 } catch {
                   cumulativeMonitor.batchFail(batchLabel);
@@ -558,53 +569,166 @@ const Index = () => {
 
             batchSuccess = true;
 
-            // v2.10.119: W3-RECONFIRM pass — capped, fire-and-forget, never
-            // blocks the prewarm. For each stale-rejected farmer, call the
-            // individual endpoint with a 2s hard timeout. If individual >
-            // persisted → heal up via updateFarmerCumulative (free increase).
-            // If individual ≤ persisted → log persistent-gap and keep
-            // persisted (existing stale-reject behaviour). Strictly additive.
-            if (reconfirmCandidates.length > 0 && navigator.onLine) {
+            // v2.10.120: W3-RECONFIRM pass — capped, fire-and-forget, never
+            // blocks the prewarm. Two-stage:
+            //   STAGE A — today's stale-reject candidates from the just-finished
+            //   batch (in-session over-counts).
+            //   STAGE B — sticky pins from previous sessions/days that weren't
+            //   re-evaluated by today's batch (e.g. M01859, M03544 that were
+            //   never re-touched after their v2.10.118 rejection).
+            // Heal-down rules — ALL must be true to lower the cache:
+            //   1. Two independent backend reads agree (batch == individual,
+            //      or for stage B: two consecutive individual reads agree).
+            //   2. Both reads are strictly less than the persisted cache.
+            //   3. snapshot_max_id present from at least one read.
+            //   4. The farmer has ZERO unsynced local receipts on this route
+            //      (otherwise persisted legitimately > backend).
+            // If any gate fails → log PERSISTENT-GAP and keep persisted
+            // (today's behaviour). On heal-down: updateFarmerCumulative is
+            // called with allowDecrease=true (existing supported flag), and
+            // the pin is cleared.
+            if (navigator.onLine) {
               const MAX_RECONFIRM = 25;
-              const targets = reconfirmCandidates.slice(0, MAX_RECONFIRM);
-              setTimeout(() => {
-                (async () => {
-                  for (const t of targets) {
-                    try {
-                      const indPromise = mysqlApi.farmerFrequency.getMonthlyFrequency(t.fId, deviceFingerprint, selectedRouteCode || undefined);
-                      const indRes: any = await Promise.race([
-                        indPromise,
-                        new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 2000))
-                      ]);
-                      if (!indRes || !indRes.success || !indRes.data) {
-                        plog.info('CUM:W3-RECONFIRM-TIMEOUT',
-                          `${t.fId} route=${selectedRouteCode || 'ALL'} individual fetch failed/timeout; keeping persisted=${t.persisted}`,
-                          { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, snapshot_max_id_batch: batchSnapshotId });
-                        continue;
+              const MAX_PIN_REPLAY = 25;
+              const stageA = reconfirmCandidates.slice(0, MAX_RECONFIRM);
+              const stageBPins = takeRegressionPinsForReplay(selectedRouteCode || 'ALL', coveredFarmerIds, MAX_PIN_REPLAY);
+              if (stageA.length === 0 && stageBPins.length === 0) {
+                // nothing to do
+              } else {
+                setTimeout(() => {
+                  (async () => {
+                    // ---- STAGE A: in-session candidates ----
+                    for (const t of stageA) {
+                      try {
+                        const indPromise = mysqlApi.farmerFrequency.getMonthlyFrequency(t.fId, deviceFingerprint, selectedRouteCode || undefined);
+                        const indRes: any = await Promise.race([
+                          indPromise,
+                          new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 2000))
+                        ]);
+                        if (!indRes || !indRes.success || !indRes.data) {
+                          plog.info('CUM:W3-RECONFIRM-TIMEOUT',
+                            `${t.fId} route=${selectedRouteCode || 'ALL'} individual fetch failed/timeout; keeping persisted=${t.persisted}`,
+                            { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, snapshot_max_id_batch: batchSnapshotId });
+                          continue;
+                        }
+                        const individual = Number(indRes.data.cumulative_weight) || 0;
+                        if (individual > t.persisted + 0.0001) {
+                          await updateFarmerCumulative(t.fId, individual, true, indRes.data.by_product || [], selectedRouteCode || undefined, { verifySource: 'W3:reconfirm-heal', caller: 'Index/w3Reconfirm' });
+                          clearRegressionPin(t.fId, selectedRouteCode || 'ALL');
+                          plog.pinned('info', 'CUM:W3-RECONFIRM-HEAL-UP',
+                            `${t.fId} route=${selectedRouteCode || 'ALL'} individual=${individual} > persisted=${t.persisted} (batch=${t.batchIncoming})`,
+                            { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, snapshot_max_id_batch: batchSnapshotId });
+                        } else if (Math.abs(individual - t.batchIncoming) < 0.0001 && individual < t.persisted) {
+                          // v2.10.120: two reads agree AND both < persisted → confirmed over-count.
+                          // Apply heal-down only when farmer has no unsynced local rows.
+                          let unsyncedTotal = 0;
+                          try {
+                            const u = await getUnsyncedWeightForFarmerRef.current(t.fId, selectedRouteCode || undefined);
+                            unsyncedTotal = u?.total || 0;
+                          } catch { /* treat as unknown — block heal-down */ unsyncedTotal = -1; }
+                          if (unsyncedTotal === 0) {
+                            await updateFarmerCumulative(t.fId, individual, true, indRes.data.by_product || [], selectedRouteCode || undefined, { verifySource: 'W3:reconfirm-heal-down', caller: 'Index/w3Reconfirm', allowDecrease: true });
+                            clearRegressionPin(t.fId, selectedRouteCode || 'ALL');
+                            plog.pinned('warn', 'CUM:W3-RECONFIRM-HEAL-DOWN',
+                              `${t.fId} route=${selectedRouteCode || 'ALL'} HEAL-DOWN persisted=${t.persisted} → ${individual} (batch=${t.batchIncoming} == individual=${individual})`,
+                              { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, unsyncedTotal, snapshot_max_id_batch: batchSnapshotId, stage: 'A' });
+                          } else {
+                            plog.pinned('info', 'CUM:W3-RECONFIRM-PERSISTENT-GAP',
+                              `${t.fId} route=${selectedRouteCode || 'ALL'} batch=${t.batchIncoming} individual=${individual} both < persisted=${t.persisted} — held (unsyncedTotal=${unsyncedTotal})`,
+                              { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, unsyncedTotal, snapshot_max_id_batch: batchSnapshotId, reason: unsyncedTotal > 0 ? 'unsynced-rows-present' : 'unsynced-fetch-error', stage: 'A' });
+                          }
+                        } else {
+                          plog.info('CUM:W3-RECONFIRM-OK',
+                            `${t.fId} route=${selectedRouteCode || 'ALL'} individual=${individual} ≥ persisted=${t.persisted} (batch=${t.batchIncoming}) — keeping persisted`,
+                            { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, snapshot_max_id_batch: batchSnapshotId });
+                        }
+                      } catch (e) {
+                        // Never throw from reconfirm
                       }
-                      const individual = Number(indRes.data.cumulative_weight) || 0;
-                      if (individual > t.persisted + 0.0001) {
-                        await updateFarmerCumulative(t.fId, individual, true, indRes.data.by_product || [], selectedRouteCode || undefined, { verifySource: 'W3:reconfirm-heal', caller: 'Index/w3Reconfirm' });
-                        plog.info('CUM:W3-RECONFIRM-HEAL-UP',
-                          `${t.fId} route=${selectedRouteCode || 'ALL'} individual=${individual} > persisted=${t.persisted} (batch=${t.batchIncoming})`,
-                          { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, snapshot_max_id_batch: batchSnapshotId });
-                      } else if (Math.abs(individual - t.batchIncoming) < 0.0001 && individual < t.persisted) {
-                        plog.info('CUM:W3-RECONFIRM-PERSISTENT-GAP',
-                          `${t.fId} route=${selectedRouteCode || 'ALL'} batch=${t.batchIncoming} individual=${individual} both < persisted=${t.persisted}`,
-                          { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, snapshot_max_id_batch: batchSnapshotId });
-                      } else {
-                        plog.info('CUM:W3-RECONFIRM-OK',
-                          `${t.fId} route=${selectedRouteCode || 'ALL'} individual=${individual} ≥ persisted=${t.persisted} (batch=${t.batchIncoming}) — keeping persisted`,
-                          { farmerId: t.fId, route: selectedRouteCode || 'ALL', persisted: t.persisted, batchIncoming: t.batchIncoming, individual, snapshot_max_id_batch: batchSnapshotId });
-                      }
-                    } catch (e) {
-                      // Never throw from reconfirm
+                      await new Promise(r => setTimeout(r, 50));
                     }
-                    // Light yield between farmers
-                    await new Promise(r => setTimeout(r, 50));
-                  }
-                })();
-              }, 0);
+                    // ---- STAGE B: sticky pins not in today's batch ----
+                    for (const pin of stageBPins) {
+                      try {
+                        // Read CURRENT persisted from cache (may differ from pin.lastPersisted
+                        // if a write landed since the pin was created).
+                        const cached = await getFarmerCumulativeRef.current(pin.farmerId, pin.route === 'ALL' ? undefined : pin.route);
+                        const currentPersisted = (cached?.baseCount || 0);
+                        if (currentPersisted <= 0) {
+                          clearRegressionPin(pin.farmerId, pin.route);
+                          continue;
+                        }
+                        // First independent read
+                        const r1Promise = mysqlApi.farmerFrequency.getMonthlyFrequency(pin.farmerId, deviceFingerprint, pin.route === 'ALL' ? undefined : pin.route);
+                        const r1: any = await Promise.race([
+                          r1Promise,
+                          new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 2000))
+                        ]);
+                        if (!r1 || !r1.success || !r1.data) {
+                          plog.info('CUM:W3-PIN-TIMEOUT',
+                            `${pin.farmerId} route=${pin.route} stage-B read#1 failed/timeout; pin kept`,
+                            { farmerId: pin.farmerId, route: pin.route, currentPersisted, stage: 'B' });
+                          continue;
+                        }
+                        const v1 = Number(r1.data.cumulative_weight) || 0;
+                        if (v1 >= currentPersisted - 0.0001) {
+                          // Backend caught up or exceeded cache → pin resolved naturally.
+                          if (v1 > currentPersisted + 0.0001) {
+                            await updateFarmerCumulative(pin.farmerId, v1, true, r1.data.by_product || [], pin.route === 'ALL' ? undefined : pin.route, { verifySource: 'W3:reconfirm-heal', caller: 'Index/w3PinReplay' });
+                          }
+                          clearRegressionPin(pin.farmerId, pin.route);
+                          plog.info('CUM:W3-PIN-RESOLVED',
+                            `${pin.farmerId} route=${pin.route} stage-B individual=${v1} ≥ persisted=${currentPersisted} — pin cleared`,
+                            { farmerId: pin.farmerId, route: pin.route, currentPersisted, individual: v1, stage: 'B' });
+                          await new Promise(r => setTimeout(r, 50));
+                          continue;
+                        }
+                        // v1 < currentPersisted — do a second confirming read.
+                        await new Promise(r => setTimeout(r, 150));
+                        const r2Promise = mysqlApi.farmerFrequency.getMonthlyFrequency(pin.farmerId, deviceFingerprint, pin.route === 'ALL' ? undefined : pin.route);
+                        const r2: any = await Promise.race([
+                          r2Promise,
+                          new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 2000))
+                        ]);
+                        if (!r2 || !r2.success || !r2.data) {
+                          plog.info('CUM:W3-PIN-TIMEOUT',
+                            `${pin.farmerId} route=${pin.route} stage-B read#2 failed/timeout; pin kept`,
+                            { farmerId: pin.farmerId, route: pin.route, currentPersisted, v1, stage: 'B' });
+                          continue;
+                        }
+                        const v2 = Number(r2.data.cumulative_weight) || 0;
+                        const snapshot2 = (r2.data as any)?.snapshot_max_id;
+                        if (Math.abs(v1 - v2) > 0.0001) {
+                          plog.info('CUM:W3-PIN-DRIFT',
+                            `${pin.farmerId} route=${pin.route} stage-B reads disagree (v1=${v1} v2=${v2}) — pin kept`,
+                            { farmerId: pin.farmerId, route: pin.route, currentPersisted, v1, v2, snapshot2, stage: 'B' });
+                          continue;
+                        }
+                        // Two reads agree AND both < currentPersisted.
+                        let unsyncedTotal = 0;
+                        try {
+                          const u = await getUnsyncedWeightForFarmerRef.current(pin.farmerId, pin.route === 'ALL' ? undefined : pin.route);
+                          unsyncedTotal = u?.total || 0;
+                        } catch { unsyncedTotal = -1; }
+                        if (unsyncedTotal === 0) {
+                          await updateFarmerCumulative(pin.farmerId, v2, true, r2.data.by_product || [], pin.route === 'ALL' ? undefined : pin.route, { verifySource: 'W3:reconfirm-heal-down', caller: 'Index/w3PinReplay', allowDecrease: true });
+                          clearRegressionPin(pin.farmerId, pin.route);
+                          plog.pinned('warn', 'CUM:W3-RECONFIRM-HEAL-DOWN',
+                            `${pin.farmerId} route=${pin.route} STAGE-B HEAL-DOWN persisted=${currentPersisted} → ${v2} (two-read confirm v1=${v1}==v2=${v2})`,
+                            { farmerId: pin.farmerId, route: pin.route, persisted: currentPersisted, v1, v2, unsyncedTotal, snapshot_max_id: snapshot2, stage: 'B', pinFirstSeenAt: pin.firstSeenAt, pinSessions: pin.sessions });
+                        } else {
+                          plog.pinned('info', 'CUM:W3-RECONFIRM-PERSISTENT-GAP',
+                            `${pin.farmerId} route=${pin.route} STAGE-B v1=${v1}==v2=${v2} < persisted=${currentPersisted} — held (unsyncedTotal=${unsyncedTotal})`,
+                            { farmerId: pin.farmerId, route: pin.route, persisted: currentPersisted, v1, v2, unsyncedTotal, snapshot_max_id: snapshot2, stage: 'B', reason: unsyncedTotal > 0 ? 'unsynced-rows-present' : 'unsynced-fetch-error' });
+                        }
+                      } catch (e) {
+                        // Never throw from pin replay
+                      }
+                      await new Promise(r => setTimeout(r, 50));
+                    }
+                  })();
+                }, 0);
+              }
             }
           }
         } catch (batchErr) {
