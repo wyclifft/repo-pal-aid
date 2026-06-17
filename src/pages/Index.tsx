@@ -22,6 +22,7 @@ import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/re
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
 import { saveToLocalDB } from '@/services/offlineStorage';
 import { plog } from '@/utils/persistentLogger';
+import { addRegressionPin, clearRegressionPin, takeRegressionPinsForReplay } from '@/utils/cumulativeRegressionPins';
 import { toast } from 'sonner';
 
 // Helper: filter cumulative data to only the selected produce type
