@@ -1,75 +1,70 @@
-# Plan — Heal-down for confirmed persistent cumulative over-counts (v2.10.120)
+**Cause found from the logs and code**
 
-## Problem (from BA01 logs, v2.10.119)
+The 52 Kg was not deleted. The app is comparing two different cumulative states and then allowing the wrong refresh path to lower the cache.
 
-Several farmers have a cache that is permanently larger than backend reality, and the stale-reject guard protects the wrong number forever:
+For M01859:
 
-| Farmer  | Cached | Backend | Δ      | Last seen |
-|---------|--------|---------|--------|-----------|
-| M03561  | 79.1   | 52.1    | −27.0  | today, every prewarm |
-| M01859  | 1694.2 | 1496.6  | −197.6 | yesterday, then untouched |
-| M03544  | 539.6  | 518.0   | −21.6  | yesterday, then untouched |
-| M02957  | 547.4  | 485.2   | −62.2  | yesterday, then untouched |
-| M00385  | 373.0  | 330.0   | −43.0  | yesterday, then untouched |
-| M03284  | 106.8  | 100.2   | −6.6   | yesterday, then untouched |
+```text
+Previous persisted cache: 1843.4
+Backend batch refresh returned: 1791.4
+Difference: -52
+```
 
-v2.10.119's W3 reconfirm correctly **detected** the M03561 gap with two independent backend reads (`batch=52.1`, `individual=52.1`, `snapshot_max_id=706707`), but only logged `CUM:W3-RECONFIRM-PERSISTENT-GAP`. It does not yet write the corrected value. The other five farmers were never re-evaluated today because the daily prewarm only includes farmers in today's active set.
+That means the app already had a cumulative that included the 52 Kg, but `refreshCumulativesBatch()` later fetched a backend total that did not include that 52 Kg at that moment, then tried to write the lower number.
 
-## Goal
+Evidence:
+- `src/pages/Index.tsx:318-343` runs `getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode)` and writes every farmer through `updateFarmerCumulative()` as `W3:prewarm-batch(...)`.
+- `src/hooks/useIndexedDB.ts:954-988` rejects a lower incoming value for W3, so the first two reads were correctly blocked:
+  - M01859: `1843.4 → 1791.4`
+  - M03486: `365.6 → 351.6`
+  - M02957: `666.6 → 585.4`
+- But the same lower values were later accepted by `W5:postcapture-refresh` because `useIndexedDB.ts:977` allows W5 to auto-heal downward. That is why the system reduced the cumulative total.
+- The log pattern affects many farmers at the same time, so this is not one member or one deleted transaction. It is a batch refresh / stale backend-read / route-period cache issue.
 
-When two independent backend reads agree that the true total is **lower** than the cache, and we can prove it is not lag / not unsynced rows / not a transient, heal the cache **down** to the agreed backend value. Plus actively re-evaluate farmers that previously had a sticky over-count even if they aren't in today's prewarm.
+**Permanent fix**
 
-## Changes
+1. **Stop W5 from silently lowering cumulative totals**
+   - Change `updateFarmerCumulative()` so no backend refresh source can lower `baseCount` immediately unless it is an explicit confirmed reconciliation flow.
+   - Keep upward writes always accepted.
+   - Keep zero-protection intact.
 
-### 1. `src/pages/Index.tsx` — heal-down branch in W3 reconfirm
-Currently the `CUM:W3-RECONFIRM-PERSISTENT-GAP` branch only logs. Replace with a guarded heal-down:
+2. **Use confirmed two-read heal-down for all downward changes**
+   - Move downward acceptance behind the existing W3-style confirmation rules:
+     - two backend reads agree on the lower value,
+     - no unsynced local receipts exist for that farmer/route,
+     - route is normalized and scoped,
+     - log the exact confirmation source.
+   - This prevents a valid captured 52 Kg from being removed just because one refresh endpoint temporarily returned a stale/lower total.
 
-- Gate (all must be true):
-  - `individual === batch` (two independent reads agree)
-  - `individual < persisted` strictly
-  - `snapshot_max_id` present and ≥ the value seen in the first batch read
-  - Farmer has **zero unsynced local rows** for this route/icode (check the same unsynced bucket the print-floor path already uses)
-  - No in-session write advanced `writeSeq` between the two reads
-- On pass, call `updateFarmerCumulative` with `verifySource: "W3:reconfirm-heal-down"` and a new `allowDecrease: true` flag.
-- Tag log `CUM:W3-RECONFIRM-HEAL-DOWN` with prev/new/snapshot_max_id/unsyncedCount.
-- Cap to ≤25 heal-downs per batch (same as reconfirm pass).
+3. **Fix post-submit cumulative refresh behavior**
+   - After an online submit, the app must not reduce cache if the immediate backend cumulative is lower than the trusted local floor.
+   - It should use:
 
-### 2. `src/pages/Index.tsx` — sticky-regression replay queue
-- Add a tiny per-device IndexedDB key (`cumulative_regression_pins`) recording any farmer that triggered `CUM:STALE-REJECT` or `CUM:REGRESSION-UNCONFIRMED` in the last 24h, with `{ farmerId, route, lastPersisted, lastBackend, sessions }`.
-- On every successful prewarm cycle, after the normal batch finishes, take up to 25 pins **not** already covered by today's batch and run them through the same W3 reconfirm path (two reads, snapshot_max_id, heal-down gate).
-- Remove a pin when either: heal-down succeeds, OR the cache and backend become equal naturally, OR pin is older than 7 days.
-- This pulls M01859, M03544, M02957, M00385, M03284 back into evaluation without waiting for a farmer-specific event.
+   ```text
+   trustedFloor = max(cachedBase, previousDisplayedCumulative) + justSubmittedWeight
+   ```
 
-### 3. `updateFarmerCumulative` (cumulative writer)
-- Add `allowDecrease?: boolean` parameter. Override only fires when **both** `allowDecrease === true` **and** `verifySource === "W3:reconfirm-heal-down"` — defence in depth so a stray flag elsewhere can't decrease values.
-- Emit `CUM:STALE-OVERRIDE` log with prev/new/snapshot_max_id/unsyncedCount/caller. All other call-sites untouched, so the zero-confirmation guard stays intact for every other path.
+   - If backend returns below that floor, keep the trusted floor for printing/display and queue a reconfirm instead of writing the lower backend value.
 
-### 4. Logger — keep observability during prewarm
-- The 50/s rate cap dropped 193 entries in one second yesterday, right when reconfirm fired. Two-part fix:
-  - Collapse the high-volume `CUM:STALE-CHECK accept Δ0` lines into one rollup line per batch (no info loss; today they're already noise).
-  - Mark `CUM:W3-RECONFIRM-*`, `CUM:STALE-OVERRIDE`, `CUM:STALE-REJECT` as **never-drop** so they bypass the rate cap.
+4. **Make batch prewarm route/product-safe**
+   - Ensure `refreshCumulativesBatch()` and `loadCumulativeBatch()` always write to the selected route bucket only when `selectedRouteCode` is present.
+   - Normalize route and product codes before compare/write.
+   - Do not allow route `ALL` and route `T001` values to overwrite or validate each other.
 
-### 5. Version + memory
-- `src/constants/appVersion.ts` 2.10.119 → 2.10.120
-- `android/app/build.gradle` versionCode 140 → 141
-- `public/sw.js` v54 → v55
-- Update `mem://features/cumulative-w3-reconfirm.md` to document the heal-down branch and gating rules.
-- Add `mem://features/cumulative-regression-pin-replay.md` for the sticky-regression queue.
-- Add both as one-line entries under memory index → Sync & Idempotency.
+5. **Improve logs so this cannot be ambiguous again**
+   - Add explicit logs:
+     - `CUM:DOWNWARD-HELD` when lower backend is blocked.
+     - `CUM:DOWNWARD-CONFIRMED` only after two-read confirmation.
+     - include `cachedBase`, `incomingBackend`, `trustedFloor`, `unsyncedTotal`, `route`, `icode`, and caller.
 
-## Out of scope
-- Backend changes — `snapshot_max_id` is already returned by v2.10.119.
-- BT scale reconnect, reference generator, sync engine, IndexedDB schema, receipt path — all untouched.
+6. **Version and memory update**
+   - Increment app version from `2.10.120` to `2.10.121`.
+   - Document this as a permanent cumulative guard fix.
 
-## Verification
+**Expected result**
 
-After deploy and one prewarm cycle:
-- M03561 cache heals 79.1 → 52.1 and stays at 52.1 on subsequent prewarms (no oscillation, no STALE-REJECT spam).
-- M01859, M03544, M02957, M00385, M03284 picked up by the pin-replay pass on next prewarm; each heals to backend value if backend confirms twice.
-- M01690 (cached=12, backend=0) and M00031 (cached=15.4, backend=0) **remain held** — they fail the gate (backend=0 falls under zero-confirmation, not heal-down).
-- Any farmer with unsynced local rows is **not** healed (gate blocks it).
-- Logger drops in CUM channel during prewarm fall to zero; `CUM:STALE-OVERRIDE` and reconfirm lines always visible in /debug.
-- Existing tests for capture, reference generation, sync, receipt, photo, Z-report still pass — none of those paths are touched.
-
-## Risk
-Low. Heal-down requires (a) two backend reads agreeing, (b) snapshot proof of committed read, (c) zero unsynced rows, (d) explicit verifySource string, (e) explicit `allowDecrease` flag, (f) per-batch cap of 25. Any gate failure falls through to today's log-only behaviour.
+- A valid captured 52 Kg will not be removed by refresh.
+- Backend refresh can still increase cumulative immediately.
+- A real downward correction can still be applied, but only after confirmed reconciliation.
+- M01859-style `1843.4 → 1791.4` will be held, not silently accepted by W5.
+- Receipt printing keeps using the trusted floor so the farmer’s cumulative does not go backwards after a valid delivery.
