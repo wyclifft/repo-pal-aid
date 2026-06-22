@@ -836,10 +836,30 @@
 //   logger's 50/s rate cap and stay visible in /debug. No backend,
 //   IndexedDB schema, sync engine, reference generator, receipt rendering,
 //   photo, Bluetooth, or auth changes.
-export const APP_VERSION = '2.10.120';
-export const APP_VERSION_CODE = 140;
+// v2.10.121: CUMULATIVE DOWNWARD-HOLD (permanent fix). Removes the
+//   v2.10.118 silent auto-heal-down branch in
+//   src/hooks/useIndexedDB.ts updateFarmerCumulative. HEAL_SOURCES is now
+//   intentionally empty — no refresh source (W1/W3/W4/W5/W6/W7) may
+//   implicitly lower a non-zero baseCount. The only path that can lower
+//   baseCount is an explicit confirmed reconciliation that passes
+//   allowDecrease=true, i.e. the existing two-read W3:reconfirm-heal-down
+//   gate (Index/w3Reconfirm + Index/w3PinReplay) which already requires:
+//   batch and individual reads agree, both strictly < persisted, snapshot
+//   present, and zero unsynced local rows for that route. This stops the
+//   regression observed on BA01 / route T001 / 2026-06-20 where a single
+//   stale W5:postcapture-refresh read silently removed valid captured
+//   weight (e.g. M01859 1843.4 → 1791.4 Δ-52, M02957 666.6 → 585.4
+//   Δ-81.2, M03486 365.6 → 351.6 Δ-14). New pinned log lines:
+//   CUM:DOWNWARD-HELD whenever a downward write is blocked, and
+//   CUM:DOWNWARD-CONFIRMED whenever the confirmed reconciliation path
+//   accepts one. Zero-confirmation guard, stale-reject log, sync engine,
+//   reference generator, receipts, photo, Bluetooth, and auth flow are
+//   untouched. Strictly additive on logs; behaviour change is a stricter
+//   guard, never a looser one.
+export const APP_VERSION = '2.10.121';
+export const APP_VERSION_CODE = 141;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
 // Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'cum-heal-down-sticky-replay';
+export const APP_FIX_TAG = 'cum-downward-hold';
