@@ -968,13 +968,16 @@ export const useIndexedDB = () => {
               caller: options?.caller,
               transrefno: options?.transrefno,
             };
-            // v2.10.118: AUTO-HEAL when online + writer is user/sync-driven.
-            // Caches that are already too high never converge under pure
-            // STALE-REJECT. Heal only for W1/W4/W5 (post-sync refresh, on-
-            // select fetch, post-capture refresh) so prewarm batches (W3),
-            // collision retries (W2), and print-path reads (W6/W7) keep
-            // the strict reject behaviour. Offline always rejects.
-            const HEAL_SOURCES = new Set(['W1:postsync-refresh', 'W4:on-select-fetch', 'W5:postcapture-refresh']);
+            // v2.10.121: REMOVE silent auto-heal-down. No refresh source
+            // (W1/W3/W4/W5/W6/W7) is allowed to lower a non-zero baseCount
+            // implicitly. The only path that can lower baseCount is an
+            // explicit confirmed reconciliation that passes allowDecrease=true
+            // (W3:reconfirm-heal-down via Index/w3Reconfirm / w3PinReplay,
+            // already gated by two-read confirmation + zero-unsynced check).
+            // This stops the "valid captured weight disappears" regression
+            // where a single stale backend read on W5:postcapture-refresh
+            // (or any other source) silently demoted the cumulative.
+            const HEAL_SOURCES = new Set<string>(); // intentionally empty
             const isOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
             const canHeal = decreaseAttempt
               && !options?.allowDecrease
@@ -983,6 +986,11 @@ export const useIndexedDB = () => {
               && HEAL_SOURCES.has(options.verifySource);
             let healedDecrease = false;
             if (decreaseAttempt && !options?.allowDecrease && !canHeal) {
+              // Surface every blocked downward write so /debug shows why the
+              // cache did not move. Pinned so it bypasses the rate cap.
+              plog.pinned('warn', 'CUM:DOWNWARD-HELD',
+                `${cleanId} route=${routeKey} held prev=${+existingBase.toFixed(3)} incoming=${+(Number(count)||0).toFixed(3)} vs=${options?.verifySource || '?'} caller=${options?.caller || '?'}`,
+                { ...staleCtx });
               logStaleReject(staleCtx);
               skippedStaleReject = { baseCount: existingBase };
               return; // do not put — let tx.oncomplete fire empty
@@ -993,6 +1001,9 @@ export const useIndexedDB = () => {
             }
             if (decreaseAttempt && options?.allowDecrease) {
               logBackendDecrease(staleCtx);
+              plog.pinned('warn', 'CUM:DOWNWARD-CONFIRMED',
+                `${cleanId} route=${routeKey} confirmed prev=${+existingBase.toFixed(3)} new=${+(Number(count)||0).toFixed(3)} vs=${options?.verifySource || '?'} caller=${options?.caller || '?'}`,
+                { ...staleCtx });
             }
             logStaleCheck('accept', staleCtx);
             observeBaseChange(existing?.baseCount, count, {
