@@ -40,6 +40,8 @@ import {
   type BoostAccountRow, type BoostLedgerEntry,
 } from '@/services/boostLedger';
 import { listMerchants, upsertMerchant, type Merchant } from '@/services/merchants';
+import FarmerEnrollCombobox from '@/components/boost/FarmerEnrollCombobox';
+import MerchantCombobox from '@/components/boost/MerchantCombobox';
 
 type TabId = 'accounts' | 'merchants' | 'purchase' | 'farmer360';
 
@@ -195,18 +197,27 @@ function AccountsTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
     else toast.error(r.error || 'Failed');
   };
 
+  const enrolledIds = useMemo(
+    () => new Set(rows.map(r => r.farmer_id.trim().toUpperCase())),
+    [rows]
+  );
+
   return (
     <div className="space-y-4">
       {/* Enroll */}
       <div className="bg-white rounded-lg shadow p-4">
-        <h3 className="font-semibold text-gray-900 mb-3">Enroll / set limit</h3>
-        <div className="flex flex-wrap gap-2">
-          <input
-            className="border border-gray-300 rounded px-3 py-2 text-sm flex-1 min-w-[160px]"
-            placeholder="Farmer ID (e.g. M00123)"
-            value={newFarmerId}
-            onChange={e => setNewFarmerId(e.target.value)}
-          />
+        <h3 className="font-semibold text-gray-900 mb-1">Enroll member / set limit</h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Members are loaded from your cooperative directory. Type an ID (e.g. <code>1</code> → M00001) or a name.
+        </p>
+        <div className="flex flex-wrap gap-2 items-start">
+          <div className="flex-1 min-w-[220px]">
+            <FarmerEnrollCombobox
+              value={newFarmerId}
+              onChange={(id) => setNewFarmerId(id)}
+              excludeIds={enrolledIds}
+            />
+          </div>
           <input
             type="number" inputMode="decimal" min={0}
             className="border border-gray-300 rounded px-3 py-2 text-sm w-40"
@@ -513,6 +524,8 @@ function PurchaseTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
   const submit = async () => {
     const amt = Number(amount);
     if (!account || !mcode || !(amt > 0)) { toast.error('Farmer, merchant and amount required'); return; }
+    const chosen = merchants.find(m => m.mcode.toUpperCase() === mcode.toUpperCase());
+    if (!chosen) { toast.error('Merchant not found or not active'); return; }
     if (amt > account.available + 0.01) { toast.error('Exceeds available credit'); return; }
     setBusy(true);
     const prefNo = generatePrefNo('BST', Date.now() % 10);
@@ -532,10 +545,12 @@ function PurchaseTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
     <div className="space-y-4">
       <div className="bg-white rounded-lg shadow p-4 space-y-3">
         <h3 className="font-semibold text-gray-900">Post credit-funded purchase</h3>
-        <div className="flex gap-2">
-          <input value={farmerId} onChange={e => setFarmerId(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 text-sm flex-1" placeholder="Farmer ID" />
-          <button onClick={loadFarmer} className="bg-gray-800 text-white rounded px-4 py-2 text-sm">Load</button>
+        <div>
+          <label className="text-xs text-gray-600 block mb-1">Member</label>
+          <div className="flex gap-2">
+            <div className="flex-1"><FarmerEnrollCombobox value={farmerId} onChange={(id) => setFarmerId(id)} /></div>
+            <button onClick={loadFarmer} className="bg-gray-800 text-white rounded px-4 py-2 text-sm">Load</button>
+          </div>
         </div>
 
         {account && account.status !== 'INACTIVE' && (
@@ -548,11 +563,7 @@ function PurchaseTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
 
         <div>
           <label className="text-xs text-gray-600 block mb-1">Merchant</label>
-          <select value={mcode} onChange={e => setMcode(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 text-sm w-full">
-            <option value="">— Select merchant —</option>
-            {merchants.map(m => <option key={m.mcode} value={m.mcode}>{m.mcode} · {m.name}</option>)}
-          </select>
+          <MerchantCombobox merchants={merchants} value={mcode} onChange={(code) => setMcode(code)} activeOnly />
         </div>
 
         <div>
@@ -603,8 +614,7 @@ function Farmer360Tab({ uniquedevcode }: { uniquedevcode: string }) {
     <div className="space-y-4">
       <div className="bg-white rounded-lg shadow p-4">
         <div className="flex gap-2">
-          <input value={farmerId} onChange={e => setFarmerId(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 text-sm flex-1" placeholder="Farmer ID" />
+          <div className="flex-1"><FarmerEnrollCombobox value={farmerId} onChange={(id) => setFarmerId(id)} /></div>
           <button onClick={load} disabled={loading} className="bg-purple-600 text-white rounded px-4 py-2 text-sm disabled:opacity-50">
             {loading ? '…' : 'Load'}
           </button>
