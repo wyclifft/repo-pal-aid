@@ -53,18 +53,22 @@ export async function getFarmerLedger(
   timeoutMs = 6000
 ): Promise<BoostLedgerEntry[]> {
   if (!navigator.onLine) return [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const url =
       `${API_BASE_URL}/boost/ledger/${encodeURIComponent(farmerId)}` +
       `?uniquedevcode=${encodeURIComponent(uniquedevcode)}` +
       `&limit=${Math.max(1, Math.min(500, limit))}`;
-    const res = await resilientFetch(url, { method: 'GET' }, timeoutMs);
+    const res = await resilientFetch(url, { method: 'GET', signal: controller.signal });
     if (!res.ok) return [];
     const body = await res.json();
     if (!body?.success || !Array.isArray(body?.data)) return [];
     return body.data as BoostLedgerEntry[];
   } catch {
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
 

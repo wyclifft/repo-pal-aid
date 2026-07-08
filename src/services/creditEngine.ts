@@ -47,9 +47,11 @@ export async function getBoostAccount(
   timeoutMs = 4000
 ): Promise<BoostAccount | null> {
   if (!navigator.onLine) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const url = `${API_BASE_URL}/boost/account/${encodeURIComponent(farmerId)}?uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
-    const res = await resilientFetch(url, { method: 'GET' }, timeoutMs);
+    const res = await resilientFetch(url, { method: 'GET', signal: controller.signal });
     if (!res.ok) return null;
     const body = await res.json();
     if (!body?.success || !body?.data) return null;
@@ -60,6 +62,8 @@ export async function getBoostAccount(
     } as BoostAccount;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -72,15 +76,19 @@ export async function getBoostPolicy(
   timeoutMs = 4000
 ): Promise<BoostPolicy | null> {
   if (!navigator.onLine) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const url = `${API_BASE_URL}/boost/policy?uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
-    const res = await resilientFetch(url, { method: 'GET' }, timeoutMs);
+    const res = await resilientFetch(url, { method: 'GET', signal: controller.signal });
     if (!res.ok) return null;
     const body = await res.json();
     if (!body?.success || !body?.data) return null;
     return body.data as BoostPolicy;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
