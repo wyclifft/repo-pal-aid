@@ -524,6 +524,8 @@ function PurchaseTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
   const submit = async () => {
     const amt = Number(amount);
     if (!account || !mcode || !(amt > 0)) { toast.error('Farmer, merchant and amount required'); return; }
+    const chosen = merchants.find(m => m.mcode.toUpperCase() === mcode.toUpperCase());
+    if (!chosen) { toast.error('Merchant not found or not active'); return; }
     if (amt > account.available + 0.01) { toast.error('Exceeds available credit'); return; }
     setBusy(true);
     const prefNo = generatePrefNo('BST', Date.now() % 10);
