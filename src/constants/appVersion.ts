@@ -897,10 +897,18 @@
 //   reference generator, receipts, photo, Bluetooth, and auth flow are
 //   untouched. Strictly additive on logs; behaviour change is a stricter
 //   guard, never a looser one.
-export const APP_VERSION = '2.11.1';
-export const APP_VERSION_CODE = 143;
-// Short kebab-case slug describing the headline fix shipped in this build.
-// Parsed at build time by android/app/build.gradle to name the APK as:
-//   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
-// Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'boost-phase2';
+export const APP_VERSION = '2.11.2';
+export const APP_VERSION_CODE = 144;
+// v2.11.2: FARMER BOOST — operator guide + enrollment/merchant UX polish.
+//   Farmer enrollment on /boost now loads members from the cached
+//   IndexedDB `farmers` store (populated by the existing members sync,
+//   sourced from cm_members scoped to the operator's ccode via device
+//   auth) — typing "1" resolves to M00001, and partial names live-filter.
+//   Merchant fields in Accounts/Purchase now typeahead on BOTH mcode and
+//   name (description), with status badges; Purchase blocks non-ACTIVE.
+//   New docs/FARMER_BOOST_GUIDE.md covers every table/column, all seven
+//   /api/boost/* endpoints, and step-by-step operator playbooks. Strictly
+//   frontend + docs — no backend, schema, sync, reference generator,
+//   receipt, photo, Bluetooth, or auth changes. Boost stays dormant
+//   until psettings.boost_enabled = 1.
+export const APP_FIX_TAG = 'boost-onboarding';
