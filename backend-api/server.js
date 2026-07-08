@@ -4268,7 +4268,377 @@ const server = http.createServer(async (req, res) => {
         throw e;
       }
     }
-    // ============ end Farmer Boost Phase 1 ============
+
+    // =================================================================
+    // v2.11.1 — FARMER BOOST PHASE 2 + 3 (writes)
+    // Officer-driven credit-limit assignment, cash disbursement, merchant
+    // CRUD, and boost-funded purchases. Every write:
+    //   1. Requires an approved device (resolveBoostDevice above).
+    //   2. Requires the coop to have opted in — psettings.boost_enabled=1
+    //      OR boost_limits_policy.boost_enabled=1 (belt-and-suspenders,
+    //      psettings wins per project rule).
+    //   3. Is idempotent — the (ccode, ref_no) unique index on boost_ledger
+    //      turns duplicate submissions into a 200 with the existing row.
+    //   4. Runs in a single-connection transaction so account/ledger stay
+    //      in lockstep. Any failure rolls back both sides.
+    // =================================================================
+
+    const isBoostEnabledForCoop = async (ccode) => {
+      // psettings is authoritative (project Core rule). Falls back to the
+      // policy row so a coop can be enabled before psettings is touched.
+      try {
+        const [ps] = await pool.query(
+          'SELECT IFNULL(boost_enabled, 0) AS be FROM psettings WHERE TRIM(ccode) = TRIM(?) LIMIT 1',
+          [ccode]
+        );
+        if (ps.length && Number(ps[0].be) === 1) return true;
+      } catch (e) {
+        // Column may not exist yet (migration not run) — fall through.
+        if (!(e && (e.code === 'ER_BAD_FIELD_ERROR' || e.errno === 1054))) throw e;
+      }
+      try {
+        const [pol] = await pool.query(
+          'SELECT boost_enabled FROM boost_limits_policy WHERE TRIM(ccode) = TRIM(?) LIMIT 1',
+          [ccode]
+        );
+        return pol.length ? !!pol[0].boost_enabled : false;
+      } catch (e) {
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) return false;
+        throw e;
+      }
+    };
+
+    // Shared body reader — small requests only, matches other write endpoints.
+    const readJsonBody = () => new Promise((resolve, reject) => {
+      let raw = '';
+      req.on('data', (c) => { raw += c; if (raw.length > 1_000_000) req.destroy(); });
+      req.on('end', () => {
+        if (!raw) return resolve({});
+        try { resolve(JSON.parse(raw)); } catch (e) { reject(e); }
+      });
+      req.on('error', reject);
+    });
+
+    // ---------- GET /api/boost/accounts?uniquedevcode=... ----------
+    // Officer panel roster. Only farmers with an account row are returned —
+    // enrolling is explicit via POST /api/boost/limit.
+    if (path === '/api/boost/accounts' && method === 'GET') {
+      const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      try {
+        const [rows] = await pool.query(
+          `SELECT farmer_id, ccode, credit_limit, outstanding, hold_amount,
+                  status, score, set_by, notes, updated_at
+             FROM boost_accounts
+            WHERE TRIM(ccode) = TRIM(?)
+            ORDER BY updated_at DESC
+            LIMIT 2000`,
+          [auth.ccode]
+        );
+        return sendJSON(res, { success: true, data: rows });
+      } catch (e) {
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, { success: true, data: [] });
+        }
+        throw e;
+      }
+    }
+
+    // ---------- POST /api/boost/limit ----------
+    // { uniquedevcode, farmer_id, credit_limit, notes?, operator? }
+    // Upserts a boost_accounts row and writes an ADJUST ledger entry only
+    // when credit_limit actually changes (preserves append-only intent).
+    if (path === '/api/boost/limit' && method === 'POST') {
+      const body = await readJsonBody().catch(() => null);
+      if (!body) return sendJSON(res, { success: false, error: 'Invalid JSON' }, 400);
+      const auth = await resolveBoostDevice(body.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      if (!(await isBoostEnabledForCoop(auth.ccode))) {
+        return sendJSON(res, { success: false, error: 'Boost not enabled for coop' }, 403);
+      }
+      const farmerId = String(body.farmer_id || '').trim();
+      const newLimit = Math.max(0, Number(body.credit_limit) || 0);
+      if (!farmerId) return sendJSON(res, { success: false, error: 'farmer_id required' }, 400);
+
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        const [existing] = await conn.query(
+          'SELECT credit_limit, status FROM boost_accounts WHERE TRIM(ccode)=TRIM(?) AND TRIM(farmer_id)=TRIM(?) FOR UPDATE',
+          [auth.ccode, farmerId]
+        );
+        const oldLimit = existing.length ? Number(existing[0].credit_limit) : 0;
+        const nextStatus = newLimit > 0 ? 'ACTIVE' : (existing.length ? existing[0].status : 'INACTIVE');
+
+        if (existing.length) {
+          await conn.query(
+            `UPDATE boost_accounts
+                SET credit_limit=?, status=?, set_by=?, notes=?, updated_at=CURRENT_TIMESTAMP
+              WHERE TRIM(ccode)=TRIM(?) AND TRIM(farmer_id)=TRIM(?)`,
+            [newLimit, nextStatus, body.operator || null, body.notes || null, auth.ccode, farmerId]
+          );
+        } else {
+          await conn.query(
+            `INSERT INTO boost_accounts
+               (farmer_id, ccode, credit_limit, outstanding, hold_amount, status, set_by, notes)
+             VALUES (?,?,?,?,?,?,?,?)`,
+            [farmerId, auth.ccode, newLimit, 0, 0, nextStatus, body.operator || null, body.notes || null]
+          );
+        }
+
+        // Ledger note when the limit actually changed. Amount=0 (limits do not
+        // move outstanding directly), notes carry the delta for audit trail.
+        if (newLimit !== oldLimit) {
+          const refNo = `LMT-${farmerId}-${Date.now()}`;
+          await conn.query(
+            `INSERT IGNORE INTO boost_ledger
+               (ccode, farmer_id, entry_type, amount, ref_no, device_code, operator, notes)
+             VALUES (?,?,?,?,?,?,?,?)`,
+            [auth.ccode, farmerId, 'ADJUST', 0, refNo,
+             body.device_code || null, body.operator || null,
+             `LIMIT ${oldLimit} -> ${newLimit}${body.notes ? ' | ' + body.notes : ''}`]
+          );
+        }
+        await conn.commit();
+        return sendJSON(res, { success: true, data: { farmer_id: farmerId, credit_limit: newLimit, status: nextStatus } });
+      } catch (e) {
+        await conn.rollback();
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, { success: false, error: 'Boost migration not run on server' }, 503);
+        }
+        throw e;
+      } finally { conn.release(); }
+    }
+
+    // ---------- POST /api/boost/disburse ----------
+    // { uniquedevcode, farmer_id, amount, ref_no, notes?, operator?, device_code? }
+    // Cash advance. Increases outstanding, writes DISBURSE ledger row.
+    if (path === '/api/boost/disburse' && method === 'POST') {
+      const body = await readJsonBody().catch(() => null);
+      if (!body) return sendJSON(res, { success: false, error: 'Invalid JSON' }, 400);
+      const auth = await resolveBoostDevice(body.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      if (!(await isBoostEnabledForCoop(auth.ccode))) {
+        return sendJSON(res, { success: false, error: 'Boost not enabled for coop' }, 403);
+      }
+      const farmerId = String(body.farmer_id || '').trim();
+      const amount = Math.round((Number(body.amount) || 0) * 100) / 100;
+      const refNo = String(body.ref_no || '').trim();
+      if (!farmerId || amount <= 0 || !refNo) {
+        return sendJSON(res, { success: false, error: 'farmer_id, amount>0, ref_no required' }, 400);
+      }
+
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+
+        // Idempotency short-circuit.
+        const [dup] = await conn.query(
+          'SELECT id FROM boost_ledger WHERE TRIM(ccode)=TRIM(?) AND ref_no=? LIMIT 1',
+          [auth.ccode, refNo]
+        );
+        if (dup.length) {
+          await conn.commit();
+          return sendJSON(res, { success: true, data: { duplicate: true, ledger_id: dup[0].id } });
+        }
+
+        const [acct] = await conn.query(
+          'SELECT credit_limit, outstanding, hold_amount, status FROM boost_accounts WHERE TRIM(ccode)=TRIM(?) AND TRIM(farmer_id)=TRIM(?) FOR UPDATE',
+          [auth.ccode, farmerId]
+        );
+        if (!acct.length) {
+          await conn.rollback();
+          return sendJSON(res, { success: false, error: 'Farmer not enrolled — set credit limit first' }, 409);
+        }
+        const a = acct[0];
+        if (a.status === 'FROZEN' || a.status === 'WRITEOFF') {
+          await conn.rollback();
+          return sendJSON(res, { success: false, error: `Account ${a.status}` }, 409);
+        }
+        const available = Number(a.credit_limit) - Number(a.outstanding) - Number(a.hold_amount);
+        if (amount > available + 0.0001) {
+          await conn.rollback();
+          return sendJSON(res, { success: false, error: 'Amount exceeds available credit', data: { available } }, 409);
+        }
+
+        const [ins] = await conn.query(
+          `INSERT INTO boost_ledger
+             (ccode, farmer_id, entry_type, amount, ref_no, device_code, operator, notes)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          [auth.ccode, farmerId, 'DISBURSE', amount, refNo,
+           body.device_code || null, body.operator || null, body.notes || null]
+        );
+        await conn.query(
+          `UPDATE boost_accounts
+              SET outstanding = outstanding + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE TRIM(ccode)=TRIM(?) AND TRIM(farmer_id)=TRIM(?)`,
+          [amount, auth.ccode, farmerId]
+        );
+        await conn.commit();
+        return sendJSON(res, { success: true, data: { ledger_id: ins.insertId, ref_no: refNo } });
+      } catch (e) {
+        await conn.rollback();
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, { success: false, error: 'Boost migration not run on server' }, 503);
+        }
+        throw e;
+      } finally { conn.release(); }
+    }
+
+    // ---------- POST /api/boost/purchase ----------
+    // { uniquedevcode, farmer_id, mcode, amount, pref_no, items?, related_transrefno?, notes?, operator?, device_code? }
+    // Credit-funded merchant purchase. Increases outstanding, writes PURCHASE
+    // ledger row AND a boost_purchases row for merchant reconciliation.
+    if (path === '/api/boost/purchase' && method === 'POST') {
+      const body = await readJsonBody().catch(() => null);
+      if (!body) return sendJSON(res, { success: false, error: 'Invalid JSON' }, 400);
+      const auth = await resolveBoostDevice(body.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      if (!(await isBoostEnabledForCoop(auth.ccode))) {
+        return sendJSON(res, { success: false, error: 'Boost not enabled for coop' }, 403);
+      }
+      const farmerId = String(body.farmer_id || '').trim();
+      const mcode = String(body.mcode || '').trim();
+      const amount = Math.round((Number(body.amount) || 0) * 100) / 100;
+      const prefNo = String(body.pref_no || '').trim();
+      if (!farmerId || !mcode || amount <= 0 || !prefNo) {
+        return sendJSON(res, { success: false, error: 'farmer_id, mcode, amount>0, pref_no required' }, 400);
+      }
+
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+
+        // Idempotency — boost_purchases PK is (pref_no, ccode).
+        const [dupP] = await conn.query(
+          'SELECT ledger_id FROM boost_purchases WHERE TRIM(ccode)=TRIM(?) AND pref_no=? LIMIT 1',
+          [auth.ccode, prefNo]
+        );
+        if (dupP.length) {
+          await conn.commit();
+          return sendJSON(res, { success: true, data: { duplicate: true, ledger_id: dupP[0].ledger_id, pref_no: prefNo } });
+        }
+
+        const [merch] = await conn.query(
+          'SELECT status FROM merchants WHERE TRIM(ccode)=TRIM(?) AND TRIM(mcode)=TRIM(?) LIMIT 1',
+          [auth.ccode, mcode]
+        );
+        if (!merch.length || merch[0].status !== 'ACTIVE') {
+          await conn.rollback();
+          return sendJSON(res, { success: false, error: 'Merchant not active' }, 409);
+        }
+
+        const [acct] = await conn.query(
+          'SELECT credit_limit, outstanding, hold_amount, status FROM boost_accounts WHERE TRIM(ccode)=TRIM(?) AND TRIM(farmer_id)=TRIM(?) FOR UPDATE',
+          [auth.ccode, farmerId]
+        );
+        if (!acct.length) {
+          await conn.rollback();
+          return sendJSON(res, { success: false, error: 'Farmer not enrolled' }, 409);
+        }
+        const a = acct[0];
+        if (a.status === 'FROZEN' || a.status === 'WRITEOFF') {
+          await conn.rollback();
+          return sendJSON(res, { success: false, error: `Account ${a.status}` }, 409);
+        }
+        const available = Number(a.credit_limit) - Number(a.outstanding) - Number(a.hold_amount);
+        if (amount > available + 0.0001) {
+          await conn.rollback();
+          return sendJSON(res, { success: false, error: 'Amount exceeds available credit', data: { available } }, 409);
+        }
+
+        const refNo = `PUR-${prefNo}`;
+        const [ins] = await conn.query(
+          `INSERT INTO boost_ledger
+             (ccode, farmer_id, entry_type, amount, ref_no, mcode, related_transrefno, device_code, operator, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          [auth.ccode, farmerId, 'PURCHASE', amount, refNo, mcode,
+           body.related_transrefno || null,
+           body.device_code || null, body.operator || null, body.notes || null]
+        );
+        await conn.query(
+          `INSERT INTO boost_purchases
+             (pref_no, ccode, farmer_id, mcode, items_json, total, status,
+              device_code, operator, related_transrefno, ledger_id, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [prefNo, auth.ccode, farmerId, mcode,
+           body.items ? JSON.stringify(body.items) : null,
+           amount, 'POSTED',
+           body.device_code || null, body.operator || null,
+           body.related_transrefno || null, ins.insertId, body.notes || null]
+        );
+        await conn.query(
+          `UPDATE boost_accounts
+              SET outstanding = outstanding + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE TRIM(ccode)=TRIM(?) AND TRIM(farmer_id)=TRIM(?)`,
+          [amount, auth.ccode, farmerId]
+        );
+        await conn.commit();
+        return sendJSON(res, { success: true, data: { ledger_id: ins.insertId, pref_no: prefNo, ref_no: refNo } });
+      } catch (e) {
+        await conn.rollback();
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, { success: false, error: 'Boost migration not run on server' }, 503);
+        }
+        throw e;
+      } finally { conn.release(); }
+    }
+
+    // ---------- GET /api/boost/merchants?uniquedevcode=... ----------
+    if (path === '/api/boost/merchants' && method === 'GET') {
+      const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      try {
+        const [rows] = await pool.query(
+          `SELECT mcode, ccode, name, kra_pin, phone, till_paybill, bank_name, bank_acc, status, updated_at
+             FROM merchants WHERE TRIM(ccode) = TRIM(?) ORDER BY name ASC`,
+          [auth.ccode]
+        );
+        return sendJSON(res, { success: true, data: rows });
+      } catch (e) {
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, { success: true, data: [] });
+        }
+        throw e;
+      }
+    }
+
+    // ---------- POST /api/boost/merchants ----------
+    // Upsert by (ccode, mcode). Officer-driven — merchant self-service is deferred.
+    if (path === '/api/boost/merchants' && method === 'POST') {
+      const body = await readJsonBody().catch(() => null);
+      if (!body) return sendJSON(res, { success: false, error: 'Invalid JSON' }, 400);
+      const auth = await resolveBoostDevice(body.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      if (!(await isBoostEnabledForCoop(auth.ccode))) {
+        return sendJSON(res, { success: false, error: 'Boost not enabled for coop' }, 403);
+      }
+      const mcode = String(body.mcode || '').trim();
+      const name = String(body.name || '').trim();
+      if (!mcode || !name) return sendJSON(res, { success: false, error: 'mcode + name required' }, 400);
+      const status = ['PENDING','ACTIVE','SUSPENDED'].includes(body.status) ? body.status : 'ACTIVE';
+      try {
+        await pool.query(
+          `INSERT INTO merchants (mcode, ccode, name, kra_pin, phone, till_paybill, bank_name, bank_acc, status)
+           VALUES (?,?,?,?,?,?,?,?,?)
+           ON DUPLICATE KEY UPDATE
+             name=VALUES(name), kra_pin=VALUES(kra_pin), phone=VALUES(phone),
+             till_paybill=VALUES(till_paybill), bank_name=VALUES(bank_name),
+             bank_acc=VALUES(bank_acc), status=VALUES(status)`,
+          [mcode, auth.ccode, name,
+           body.kra_pin || null, body.phone || null,
+           body.till_paybill || null, body.bank_name || null, body.bank_acc || null,
+           status]
+        );
+        return sendJSON(res, { success: true, data: { mcode, name, status } });
+      } catch (e) {
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, { success: false, error: 'Boost migration not run on server' }, 503);
+        }
+        throw e;
+      }
+    }
+    // ============ end Farmer Boost Phase 2 + 3 ============
 
     // 404
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
