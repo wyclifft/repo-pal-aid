@@ -40,6 +40,8 @@ import {
   type BoostAccountRow, type BoostLedgerEntry,
 } from '@/services/boostLedger';
 import { listMerchants, upsertMerchant, type Merchant } from '@/services/merchants';
+import FarmerEnrollCombobox from '@/components/boost/FarmerEnrollCombobox';
+import MerchantCombobox from '@/components/boost/MerchantCombobox';
 
 type TabId = 'accounts' | 'merchants' | 'purchase' | 'farmer360';
 
@@ -195,18 +197,27 @@ function AccountsTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
     else toast.error(r.error || 'Failed');
   };
 
+  const enrolledIds = useMemo(
+    () => new Set(rows.map(r => r.farmer_id.trim().toUpperCase())),
+    [rows]
+  );
+
   return (
     <div className="space-y-4">
       {/* Enroll */}
       <div className="bg-white rounded-lg shadow p-4">
-        <h3 className="font-semibold text-gray-900 mb-3">Enroll / set limit</h3>
-        <div className="flex flex-wrap gap-2">
-          <input
-            className="border border-gray-300 rounded px-3 py-2 text-sm flex-1 min-w-[160px]"
-            placeholder="Farmer ID (e.g. M00123)"
-            value={newFarmerId}
-            onChange={e => setNewFarmerId(e.target.value)}
-          />
+        <h3 className="font-semibold text-gray-900 mb-1">Enroll member / set limit</h3>
+        <p className="text-xs text-gray-500 mb-3">
+          Members are loaded from your cooperative directory. Type an ID (e.g. <code>1</code> → M00001) or a name.
+        </p>
+        <div className="flex flex-wrap gap-2 items-start">
+          <div className="flex-1 min-w-[220px]">
+            <FarmerEnrollCombobox
+              value={newFarmerId}
+              onChange={(id) => setNewFarmerId(id)}
+              excludeIds={enrolledIds}
+            />
+          </div>
           <input
             type="number" inputMode="decimal" min={0}
             className="border border-gray-300 rounded px-3 py-2 text-sm w-40"
