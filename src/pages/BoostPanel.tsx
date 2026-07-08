@@ -543,10 +543,12 @@ function PurchaseTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
     <div className="space-y-4">
       <div className="bg-white rounded-lg shadow p-4 space-y-3">
         <h3 className="font-semibold text-gray-900">Post credit-funded purchase</h3>
-        <div className="flex gap-2">
-          <input value={farmerId} onChange={e => setFarmerId(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 text-sm flex-1" placeholder="Farmer ID" />
-          <button onClick={loadFarmer} className="bg-gray-800 text-white rounded px-4 py-2 text-sm">Load</button>
+        <div>
+          <label className="text-xs text-gray-600 block mb-1">Member</label>
+          <div className="flex gap-2">
+            <div className="flex-1"><FarmerEnrollCombobox value={farmerId} onChange={(id) => setFarmerId(id)} /></div>
+            <button onClick={loadFarmer} className="bg-gray-800 text-white rounded px-4 py-2 text-sm">Load</button>
+          </div>
         </div>
 
         {account && account.status !== 'INACTIVE' && (
@@ -559,11 +561,7 @@ function PurchaseTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
 
         <div>
           <label className="text-xs text-gray-600 block mb-1">Merchant</label>
-          <select value={mcode} onChange={e => setMcode(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 text-sm w-full">
-            <option value="">— Select merchant —</option>
-            {merchants.map(m => <option key={m.mcode} value={m.mcode}>{m.mcode} · {m.name}</option>)}
-          </select>
+          <MerchantCombobox merchants={merchants} value={mcode} onChange={(code) => setMcode(code)} activeOnly />
         </div>
 
         <div>
@@ -614,8 +612,7 @@ function Farmer360Tab({ uniquedevcode }: { uniquedevcode: string }) {
     <div className="space-y-4">
       <div className="bg-white rounded-lg shadow p-4">
         <div className="flex gap-2">
-          <input value={farmerId} onChange={e => setFarmerId(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 text-sm flex-1" placeholder="Farmer ID" />
+          <div className="flex-1"><FarmerEnrollCombobox value={farmerId} onChange={(id) => setFarmerId(id)} /></div>
           <button onClick={load} disabled={loading} className="bg-purple-600 text-white rounded px-4 py-2 text-sm disabled:opacity-50">
             {loading ? '…' : 'Load'}
           </button>
