@@ -9,6 +9,7 @@ import { FarmerSearchModal } from './FarmerSearchModal';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
 import { CoffeeWeightDisplay } from './CoffeeWeightDisplay';
 import { toast } from 'sonner';
+import { BoostOutstandingChip } from './BoostOutstandingChip';
 
 interface SellProduceScreenProps {
   route: Route;
