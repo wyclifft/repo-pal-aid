@@ -856,8 +856,8 @@
 //   reference generator, receipts, photo, Bluetooth, and auth flow are
 //   untouched. Strictly additive on logs; behaviour change is a stricter
 //   guard, never a looser one.
-export const APP_VERSION = '2.10.121';
-export const APP_VERSION_CODE = 141;
+export const APP_VERSION = '2.11.0';
+export const APP_VERSION_CODE = 142;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
