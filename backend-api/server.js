@@ -4139,8 +4139,140 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // =================================================================
+    // v2.11.0 — FARMER BOOST PHASE 1 (foundations, read-only endpoints)
+    // Additive only. No existing routes changed. Requires the four tables
+    // from backend-api/MIGRATION_BOOST_PHASE1.sql. Endpoints degrade to
+    // safe defaults if tables don't exist yet (feature dormant per coop).
+    // =================================================================
+
+    // Helper: resolve authorised device -> ccode. Mirrors the pattern used
+    // by /api/farmer-monthly-frequency.
+    const resolveBoostDevice = async (uniquedevcode) => {
+      if (!uniquedevcode) return { ok: false, code: 400, error: 'uniquedevcode required' };
+      const [rows] = await pool.query(
+        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        [uniquedevcode]
+      );
+      if (rows.length === 0) return { ok: false, code: 401, error: 'Device not authorized' };
+      return { ok: true, ccode: rows[0].ccode };
+    };
+
+    // GET /api/boost/policy?uniquedevcode=...
+    // Returns the coop's Farmer Boost policy (feature flag + recovery cap).
+    // Returns boost_enabled=false when the row is missing (safe default).
+    if (path === '/api/boost/policy' && method === 'GET') {
+      const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      try {
+        const [rows] = await pool.query(
+          `SELECT ccode, boost_enabled, recovery_cap_pct, limit_mode
+             FROM boost_limits_policy WHERE TRIM(ccode) = TRIM(?) LIMIT 1`,
+          [auth.ccode]
+        );
+        const row = rows[0];
+        return sendJSON(res, {
+          success: true,
+          data: {
+            ccode: auth.ccode,
+            boost_enabled: row ? !!row.boost_enabled : false,
+            recovery_cap_pct: row ? Number(row.recovery_cap_pct) : 70,
+            limit_mode: row ? row.limit_mode : 'MANUAL',
+          },
+        });
+      } catch (e) {
+        // Table missing (migration not run yet) — respond as disabled.
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, {
+            success: true,
+            data: { ccode: auth.ccode, boost_enabled: false, recovery_cap_pct: 70, limit_mode: 'MANUAL' },
+          });
+        }
+        throw e;
+      }
+    }
+
+    // GET /api/boost/account/:farmerId?uniquedevcode=...
+    // Returns a farmer's boost account. Returns a zeroed record (status=INACTIVE)
+    // when the row is missing so the UI can render "not enrolled" cleanly.
+    if (path.startsWith('/api/boost/account/') && method === 'GET') {
+      const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      const farmerId = decodeURIComponent(path.substring('/api/boost/account/'.length));
+      if (!farmerId) return sendJSON(res, { success: false, error: 'farmer_id required' }, 400);
+      try {
+        const [rows] = await pool.query(
+          `SELECT farmer_id, ccode, credit_limit, outstanding, hold_amount, status, score, updated_at
+             FROM boost_accounts
+            WHERE TRIM(ccode) = TRIM(?) AND TRIM(farmer_id) = TRIM(?)
+            LIMIT 1`,
+          [auth.ccode, farmerId]
+        );
+        const row = rows[0] || {
+          farmer_id: farmerId, ccode: auth.ccode,
+          credit_limit: 0, outstanding: 0, hold_amount: 0,
+          status: 'INACTIVE', score: null, updated_at: null,
+        };
+        return sendJSON(res, {
+          success: true,
+          data: {
+            farmer_id: row.farmer_id,
+            ccode: row.ccode,
+            credit_limit: Number(row.credit_limit),
+            outstanding: Number(row.outstanding),
+            hold_amount: Number(row.hold_amount),
+            status: row.status,
+            score: row.score,
+            updated_at: row.updated_at,
+          },
+        });
+      } catch (e) {
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, {
+            success: true,
+            data: {
+              farmer_id: farmerId, ccode: auth.ccode,
+              credit_limit: 0, outstanding: 0, hold_amount: 0,
+              status: 'INACTIVE', score: null, updated_at: null,
+            },
+          });
+        }
+        throw e;
+      }
+    }
+
+    // GET /api/boost/ledger/:farmerId?uniquedevcode=...&limit=100
+    // Returns append-only ledger entries for a farmer, newest first.
+    if (path.startsWith('/api/boost/ledger/') && method === 'GET') {
+      const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      const farmerId = decodeURIComponent(path.substring('/api/boost/ledger/'.length));
+      if (!farmerId) return sendJSON(res, { success: false, error: 'farmer_id required' }, 400);
+      const limit = Math.max(1, Math.min(500, parseInt(parsedUrl.query.limit, 10) || 100));
+      try {
+        const [rows] = await pool.query(
+          `SELECT id, ccode, farmer_id, entry_type, amount, ref_no, mcode,
+                  related_transrefno, payout_run_id, reverses_id, device_code,
+                  operator, notes, ts
+             FROM boost_ledger
+            WHERE TRIM(ccode) = TRIM(?) AND TRIM(farmer_id) = TRIM(?)
+            ORDER BY id DESC
+            LIMIT ?`,
+          [auth.ccode, farmerId, limit]
+        );
+        return sendJSON(res, { success: true, data: rows });
+      } catch (e) {
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, { success: true, data: [] });
+        }
+        throw e;
+      }
+    }
+    // ============ end Farmer Boost Phase 1 ============
+
     // 404
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
+
 
   } catch (error) {
     const requestId = `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;

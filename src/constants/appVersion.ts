@@ -1,4 +1,25 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.11.0: FARMER BOOST PHASE 1 (FOUNDATIONS). Additive-only introduction of
+//   the Farm Input Credit Financing feature. Nothing farmer-facing changes.
+//   BACKEND (backend-api/server.js + MIGRATION_BOOST_PHASE1.sql): four new
+//   tables (merchants, boost_accounts, boost_ledger, boost_limits_policy)
+//   and three read-only endpoints — /api/boost/policy, /api/boost/account/
+//   :farmerId, /api/boost/ledger/:farmerId. Every endpoint resolves ccode
+//   via devsettings.uniquedevcode (same pattern as existing routes) and
+//   degrades to "disabled / empty" when the migration hasn't been run yet,
+//   so deploying the server code before running the SQL is safe. Feature
+//   flag lives on boost_limits_policy.boost_enabled (default 0) — coops
+//   opt in per-tenant. FRONTEND: two scaffold services (creditEngine.ts,
+//   boostLedger.ts) wrapping the endpoints with resilientFetch + abort
+//   timeouts and returning null / [] on failure so callers never crash.
+//   Manual credit-limit assignment (officer-driven) and a 70% default
+//   recovery cap match the approved plan. No changes to reference
+//   generator, transrefno format, sync engine, IndexedDB schema, receipt
+//   rendering, photo, Bluetooth, or auth. Rollback = DROP the four tables;
+//   no data elsewhere is touched. Phase 2 will add merchant CRUD +
+//   officer disbursement UI behind the same feature flag.
+//
+
 // v2.10.119: CUMULATIVE UNDER-COUNT PROTECTION — operators reported W3 batch
 //   prewarm intermittently returning `persisted − latest_delivery_weight`
 //   for select farmers (M03544, M01859, M00385 on C003/T001), even though
@@ -856,8 +877,8 @@
 //   reference generator, receipts, photo, Bluetooth, and auth flow are
 //   untouched. Strictly additive on logs; behaviour change is a stricter
 //   guard, never a looser one.
-export const APP_VERSION = '2.10.121';
-export const APP_VERSION_CODE = 141;
+export const APP_VERSION = '2.11.0';
+export const APP_VERSION_CODE = 142;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
