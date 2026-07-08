@@ -1,4 +1,24 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.11.1: FARMER BOOST PHASE 2 + 3 (officer panel + purchases). Additive.
+//   BACKEND (server.js + MIGRATION_BOOST_PHASE2.sql): new `boost_purchases`
+//   table + mirrored `psettings.boost_enabled` flag (authoritative source),
+//   and six new endpoints — GET/POST /api/boost/accounts+/limit+/disburse,
+//   POST /api/boost/purchase, GET/POST /api/boost/merchants. Every write is
+//   (a) device-gated via approved_devices/devsettings (same resolveBoostDevice
+//   helper as Phase 1), (b) coop-gated via psettings.boost_enabled with
+//   boost_limits_policy fallback, (c) idempotent server-side through the
+//   (ccode, ref_no)/(ccode, pref_no) unique keys, and (d) transactional so
+//   account.outstanding and ledger rows can never desync. FRONTEND: new
+//   /boost officer panel (Accounts / Merchants / Purchase / Farmer 360 tabs)
+//   plus a read-only <BoostOutstandingChip /> that quietly appears on the
+//   Sell screen when a member has outstanding credit. Feature is fully
+//   dormant until psettings.boost_enabled = 1 for the coop — every UI surface
+//   and every write short-circuits when the flag is off. No changes to
+//   transrefno format, sync engine, IndexedDB schema, receipt rendering,
+//   photo, Bluetooth, or auth flows. Rollback = DROP boost_purchases and
+//   drop the psettings.boost_enabled column; boost_ledger/boost_accounts
+//   from Phase 1 remain safe. Phase 4 adds payout auto-recovery.
+//
 // v2.11.0: FARMER BOOST PHASE 1 (FOUNDATIONS). Additive-only introduction of
 //   the Farm Input Credit Financing feature. Nothing farmer-facing changes.
 //   BACKEND (backend-api/server.js + MIGRATION_BOOST_PHASE1.sql): four new
