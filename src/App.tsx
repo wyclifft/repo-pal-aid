@@ -183,6 +183,7 @@ const AppContent = () => {
           <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
           <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
           <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
+          <Route path="/boost" element={<PageWrapper><BoostPanel /></PageWrapper>} />
           <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
         </Routes>
       </Suspense>
