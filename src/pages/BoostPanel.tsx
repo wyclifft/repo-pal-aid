@@ -48,7 +48,7 @@ const money = (n: number) =>
 
 export default function BoostPanel() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { currentUser } = useAuth();
   const [uniquedevcode, setUniquedevcode] = useState<string>('');
   const [policy, setPolicy] = useState<BoostPolicy | null>(null);
   const [loadingPolicy, setLoadingPolicy] = useState(true);
