@@ -96,3 +96,107 @@ export function summariseLedger(entries: BoostLedgerEntry[]) {
     count: entries.length,
   };
 }
+
+// ============================================================
+// v2.11.1 — Phase 2 + 3 write helpers.
+// All writes are idempotent server-side via (ccode, ref_no) /
+// (ccode, pref_no) uniques. Callers get { ok, error? } and never crash.
+// ============================================================
+
+export interface BoostAccountRow {
+  farmer_id: string;
+  ccode: string;
+  credit_limit: number;
+  outstanding: number;
+  hold_amount: number;
+  status: 'INACTIVE' | 'ACTIVE' | 'FROZEN' | 'WRITEOFF';
+  score: number | null;
+  set_by: string | null;
+  notes: string | null;
+  updated_at: string;
+}
+
+export async function listBoostAccounts(uniquedevcode: string): Promise<BoostAccountRow[]> {
+  if (!navigator.onLine) return [];
+  try {
+    const res = await resilientFetch(
+      `${API_BASE_URL}/boost/accounts?uniquedevcode=${encodeURIComponent(uniquedevcode)}`,
+      { method: 'GET' }
+    );
+    if (!res.ok) return [];
+    const body = await res.json();
+    return body?.success && Array.isArray(body?.data) ? (body.data as BoostAccountRow[]) : [];
+  } catch { return []; }
+}
+
+export async function setCreditLimit(args: {
+  uniquedevcode: string;
+  farmer_id: string;
+  credit_limit: number;
+  operator?: string;
+  device_code?: string;
+  notes?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await resilientFetch(`${API_BASE_URL}/boost/limit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.success) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: true };
+  } catch (e: any) { return { ok: false, error: e?.message || 'Network error' }; }
+}
+
+export async function disburseCredit(args: {
+  uniquedevcode: string;
+  farmer_id: string;
+  amount: number;
+  ref_no: string;
+  operator?: string;
+  device_code?: string;
+  notes?: string;
+}): Promise<{ ok: boolean; error?: string; ledger_id?: number }> {
+  try {
+    const res = await resilientFetch(`${API_BASE_URL}/boost/disburse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.success) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: true, ledger_id: body?.data?.ledger_id };
+  } catch (e: any) { return { ok: false, error: e?.message || 'Network error' }; }
+}
+
+export async function postBoostPurchase(args: {
+  uniquedevcode: string;
+  farmer_id: string;
+  mcode: string;
+  amount: number;
+  pref_no: string;
+  items?: Array<{ name: string; qty: number; unit_price: number }>;
+  related_transrefno?: string;
+  operator?: string;
+  device_code?: string;
+  notes?: string;
+}): Promise<{ ok: boolean; error?: string; ledger_id?: number }> {
+  try {
+    const res = await resilientFetch(`${API_BASE_URL}/boost/purchase`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.success) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: true, ledger_id: body?.data?.ledger_id };
+  } catch (e: any) { return { ok: false, error: e?.message || 'Network error' }; }
+}
+
+/** Client-side pref_no generator. Mirrors transrefno spirit but distinct namespace. */
+export function generatePrefNo(deviceCode: string, clientFetch: number | string): string {
+  const seq = Math.floor(Date.now() % 100000000).toString().padStart(8, '0');
+  return `BP-${(deviceCode || 'DEV').toUpperCase()}${String(clientFetch || 0)}${seq}`;
+}
+
