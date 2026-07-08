@@ -40,6 +40,7 @@ const PeriodicReport = lazy(() => import("./pages/PeriodicReport"));
 const Settings = lazy(() => import("./pages/Settings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const DebugConsole = lazy(() => import("./pages/DebugConsole"));
+const BoostPanel = lazy(() => import("./pages/BoostPanel"));
 
 // Configure QueryClient with aggressive caching and better error handling
 const queryClient = new QueryClient({
