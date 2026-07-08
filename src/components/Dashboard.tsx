@@ -358,6 +358,8 @@ export const Dashboard = ({
                   <button onClick={() => { navigate('/periodic-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Periodic Report</button>
                   <button onClick={() => { navigate('/periodic-report?sync=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Sync Periodic Report</button>
                   <hr className="my-0.5 border-gray-200" />
+                  <button onClick={() => { navigate('/boost'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Farmer Boost</button>
+                  <hr className="my-0.5 border-gray-200" />
                   {currentUser?.add_members === true && (
                     <>
                       <button
