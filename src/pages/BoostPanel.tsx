@@ -145,9 +145,9 @@ export default function BoostPanel() {
       </div>
 
       <div className="max-w-6xl mx-auto p-4">
-        {tab === 'accounts'  && <AccountsTab   uniquedevcode={uniquedevcode} operator={currentUser?.username || ""}
+        {tab === 'accounts'  && <AccountsTab   uniquedevcode={uniquedevcode} operator={currentUser?.username || ""} />}
         {tab === 'merchants' && <MerchantsTab  uniquedevcode={uniquedevcode} />}
-        {tab === 'purchase'  && <PurchaseTab   uniquedevcode={uniquedevcode} operator={currentUser?.username || ""}
+        {tab === 'purchase'  && <PurchaseTab   uniquedevcode={uniquedevcode} operator={currentUser?.username || ""} />}
         {tab === 'farmer360' && <Farmer360Tab  uniquedevcode={uniquedevcode} />}
       </div>
     </div>
