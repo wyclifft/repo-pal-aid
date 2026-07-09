@@ -667,7 +667,7 @@ function Farmer360Tab({ uniquedevcode }: { uniquedevcode: string }) {
                   </td>
                   <td className="px-3 py-2 text-right font-mono">{money(Math.abs(Number(e.amount)))}</td>
                   <td className="px-3 py-2 font-mono text-xs">{e.ref_no}</td>
-                  <td className="px-3 py-2 text-xs">{e.mcode || '—'}</td>
+                  <td className="px-3 py-2 text-xs">{e.mercode || e.mcode || '—'}</td>
                   <td className="px-3 py-2 text-xs text-gray-600">{e.notes || ''}</td>
                 </tr>
               ))}
