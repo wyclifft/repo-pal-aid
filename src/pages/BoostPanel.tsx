@@ -396,7 +396,7 @@ function MerchantsTab({ uniquedevcode }: { uniquedevcode: string }) {
   useEffect(() => { reload(); }, [reload]);
 
   const save = async () => {
-    if (!editing?.mcode || !editing?.name) { toast.error('mercode + name required'); return; }
+    if (!editing?.mercode || !editing?.name) { toast.error('mercode + name required'); return; }
     const r = await upsertMerchant(uniquedevcode, editing as Merchant);
     if (r.ok) { toast.success('Saved'); setEditing(null); reload(); }
     else toast.error(r.error || 'Failed');
