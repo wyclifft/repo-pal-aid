@@ -396,7 +396,7 @@ function MerchantsTab({ uniquedevcode }: { uniquedevcode: string }) {
   useEffect(() => { reload(); }, [reload]);
 
   const save = async () => {
-    if (!editing?.mcode || !editing?.name) { toast.error('mcode + name required'); return; }
+    if (!editing?.mcode || !editing?.name) { toast.error('mercode + name required'); return; }
     const r = await upsertMerchant(uniquedevcode, editing as Merchant);
     if (r.ok) { toast.success('Saved'); setEditing(null); reload(); }
     else toast.error(r.error || 'Failed');
@@ -430,8 +430,8 @@ function MerchantsTab({ uniquedevcode }: { uniquedevcode: string }) {
                 {loading ? 'Loading…' : 'No merchants yet'}
               </td></tr>
             ) : rows.map(m => (
-              <tr key={m.mcode} className="border-t border-gray-100">
-                <td className="px-3 py-2 font-mono">{m.mcode}</td>
+              <tr key={m.mercode} className="border-t border-gray-100">
+                <td className="px-3 py-2 font-mono">{m.mercode}</td>
                 <td className="px-3 py-2">{m.name}</td>
                 <td className="px-3 py-2">{m.phone || '—'}</td>
                 <td className="px-3 py-2">{m.till_paybill || '—'}</td>
@@ -455,12 +455,12 @@ function MerchantsTab({ uniquedevcode }: { uniquedevcode: string }) {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
             <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="font-bold text-gray-900">{editing.mcode ? 'Edit' : 'New'} merchant</h3>
+              <h3 className="font-bold text-gray-900">{editing?.mercode ? 'Edit' : 'New'} merchant</h3>
               <button onClick={() => setEditing(null)}><XCircle className="h-5 w-5 text-gray-400" /></button>
             </div>
             <div className="p-4 space-y-2">
               {[
-                { k: 'mcode', label: 'Merchant code *', disabled: !!rows.find(r => r.mcode === editing.mcode) },
+                { k: 'mercode', label: 'Merchant code *', disabled: !!rows.find(r => r.mercode === editing?.mercode) },
                 { k: 'name', label: 'Business name *' },
                 { k: 'phone', label: 'Phone' },
                 { k: 'kra_pin', label: 'KRA PIN' },
@@ -524,7 +524,7 @@ function PurchaseTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
   const submit = async () => {
     const amt = Number(amount);
     if (!account || !mcode || !(amt > 0)) { toast.error('Farmer, merchant and amount required'); return; }
-    const chosen = merchants.find(m => m.mcode.toUpperCase() === mcode.toUpperCase());
+    const chosen = merchants.find(m => m.mercode.toUpperCase() === mcode.toUpperCase());
     if (!chosen) { toast.error('Merchant not found or not active'); return; }
     if (amt > account.available + 0.01) { toast.error('Exceeds available credit'); return; }
     setBusy(true);
