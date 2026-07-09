@@ -517,6 +517,23 @@ function MerchantsTab({ uniquedevcode }: { uniquedevcode: string }) {
                   <option>ACTIVE</option><option>PENDING</option><option>SUSPENDED</option>
                 </select>
               </div>
+              <div>
+                <label className="text-xs text-gray-600 block mb-0.5">Link to company (ccode) *</label>
+                <select
+                  value={editing.ccode || operatorCcode}
+                  onChange={e => setEditing({ ...editing, ccode: e.target.value })}
+                  className="border border-gray-300 rounded px-3 py-1.5 text-sm w-full"
+                >
+                  {companies.length === 0 && <option value="">Loading companies…</option>}
+                  {companies.map(c => (
+                    <option key={c.ccode} value={c.ccode}>{c.name} ({c.ccode})</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Merchant is stamped <code>orgtype='M'</code> — Buy / Sell / Route features stay hidden for this account.
+                </p>
+              </div>
+
               <button onClick={save} className="mt-3 w-full bg-purple-600 text-white rounded py-2 text-sm font-semibold hover:bg-purple-700">
                 Save
               </button>
