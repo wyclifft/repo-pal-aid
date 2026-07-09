@@ -37,7 +37,9 @@ import {
 import {
   listBoostAccounts, setCreditLimit, disburseCredit,
   getFarmerLedger, postBoostPurchase, generatePrefNo,
+  listEnrolledMembers, enrollMember, listBoostCompanies,
   type BoostAccountRow, type BoostLedgerEntry,
+  type EnrolledMember, type EnrolledMembersMeta, type BoostCompany,
 } from '@/services/boostLedger';
 import { listMerchants, upsertMerchant, type Merchant } from '@/services/merchants';
 import FarmerEnrollCombobox from '@/components/boost/FarmerEnrollCombobox';
