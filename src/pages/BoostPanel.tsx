@@ -162,17 +162,23 @@ export default function BoostPanel() {
 // Accounts tab
 // ---------------------------------------------------------------
 function AccountsTab({ uniquedevcode, operator }: { uniquedevcode: string; operator: string }) {
-  const [rows, setRows] = useState<BoostAccountRow[]>([]);
+  const [rows, setRows] = useState<EnrolledMember[]>([]);
+  const [meta, setMeta] = useState<EnrolledMembersMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const [editing, setEditing] = useState<BoostAccountRow | null>(null);
+  const [editing, setEditing] = useState<EnrolledMember | null>(null);
+
+  // Enrollment form (auto-enrol a cm_members row by toggling the flag)
   const [newFarmerId, setNewFarmerId] = useState('');
-  const [newLimit, setNewLimit] = useState('');
+  const [newPct, setNewPct] = useState('');
 
   const reload = useCallback(async () => {
     if (!uniquedevcode) return;
     setLoading(true);
-    setRows(await listBoostAccounts(uniquedevcode));
+    const { data, meta, error } = await listEnrolledMembers(uniquedevcode);
+    if (error && error !== 'offline') toast.error(error);
+    setRows(data);
+    setMeta(meta || null);
     setLoading(false);
   }, [uniquedevcode]);
 
@@ -181,36 +187,57 @@ function AccountsTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter(r => r.farmer_id.toLowerCase().includes(q));
+    return rows.filter(r =>
+      r.farmer_id.toLowerCase().includes(q) ||
+      (r.name || '').toLowerCase().includes(q)
+    );
   }, [rows, search]);
-
-  const saveLimit = async (farmer_id: string, credit_limit: number) => {
-    const r = await setCreditLimit({ uniquedevcode, farmer_id, credit_limit, operator });
-    if (r.ok) { toast.success('Limit updated'); setEditing(null); reload(); }
-    else toast.error(r.error || 'Failed');
-  };
-
-  const enroll = async () => {
-    const id = newFarmerId.trim();
-    const lim = Number(newLimit);
-    if (!id || !(lim >= 0)) { toast.error('Enter farmer ID and a non-negative limit'); return; }
-    const r = await setCreditLimit({ uniquedevcode, farmer_id: id, credit_limit: lim, operator });
-    if (r.ok) { toast.success('Farmer enrolled'); setNewFarmerId(''); setNewLimit(''); reload(); }
-    else toast.error(r.error || 'Failed');
-  };
 
   const enrolledIds = useMemo(
     () => new Set(rows.map(r => r.farmer_id.trim().toUpperCase())),
     [rows]
   );
 
+  const enroll = async () => {
+    const id = newFarmerId.trim();
+    const pct = Number(newPct);
+    if (!id) { toast.error('Select a member first'); return; }
+    if (!(pct >= 0 && pct <= 100)) { toast.error('Enter a limit % between 0 and 100'); return; }
+    const r = await enrollMember({ uniquedevcode, farmer_id: id, active: true, limit_percentage: pct });
+    if (r.ok) { toast.success('Member enrolled'); setNewFarmerId(''); setNewPct(''); reload(); }
+    else toast.error(r.error || 'Failed');
+  };
+
+  const unenroll = async (farmer_id: string) => {
+    if (!confirm(`Disable Farmer Boost for ${farmer_id}?`)) return;
+    const r = await enrollMember({ uniquedevcode, farmer_id, active: false });
+    if (r.ok) { toast.success('Disabled'); reload(); }
+    else toast.error(r.error || 'Failed');
+  };
+
+  const period = meta
+    ? (meta.orgtype === 'C' ? `Active season ${meta.periodStart} → ${meta.periodEnd}` : `Month ${meta.periodStart} → ${meta.periodEnd}`)
+    : '';
+  const priceLabel = meta ? `KSh ${meta.pricePerKg.toFixed(2)}/Kg` : '—';
+  const univPct = meta?.universalPct ?? 0;
+
   return (
     <div className="space-y-4">
+      {/* Config summary */}
+      <div className="bg-white rounded-lg shadow p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        <div><div className="text-gray-500">Org type</div><div className="font-bold">{meta?.orgtype || '—'}</div></div>
+        <div><div className="text-gray-500">Price / Kg</div><div className="font-bold">{priceLabel}</div></div>
+        <div><div className="text-gray-500">Universal limit</div><div className="font-bold">{univPct > 0 ? `${univPct}%` : 'per-farmer'}</div></div>
+        <div><div className="text-gray-500">Period</div><div className="font-bold truncate">{period}</div></div>
+      </div>
+
       {/* Enroll */}
       <div className="bg-white rounded-lg shadow p-4">
-        <h3 className="font-semibold text-gray-900 mb-1">Enroll member / set limit</h3>
+        <h3 className="font-semibold text-gray-900 mb-1">Enroll a member</h3>
         <p className="text-xs text-gray-500 mb-3">
-          Members are loaded from your cooperative directory. Type an ID (e.g. <code>1</code> → M00001) or a name.
+          Members are loaded from your cooperative directory (cm_members, scoped to your ccode).
+          Enrolling flips <code>farmer_boost_active=1</code>; only enrolled members appear in the list below.
+          Available credit = cumulative Kgs × price × limit %.
         </p>
         <div className="flex flex-wrap gap-2 items-start">
           <div className="flex-1 min-w-[220px]">
@@ -221,14 +248,14 @@ function AccountsTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
             />
           </div>
           <input
-            type="number" inputMode="decimal" min={0}
+            type="number" inputMode="decimal" min={0} max={100}
             className="border border-gray-300 rounded px-3 py-2 text-sm w-40"
-            placeholder="Credit limit (KSh)"
-            value={newLimit}
-            onChange={e => setNewLimit(e.target.value)}
+            placeholder={`Limit % ${univPct > 0 ? `(overridden by universal ${univPct}%)` : ''}`}
+            value={newPct}
+            onChange={e => setNewPct(e.target.value)}
           />
           <button onClick={enroll} className="bg-purple-600 text-white rounded px-4 py-2 text-sm font-semibold hover:bg-purple-700">
-            Save
+            Enroll
           </button>
         </div>
       </div>
@@ -238,7 +265,7 @@ function AccountsTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
         <div className="p-3 border-b border-gray-200 flex items-center gap-2">
           <input
             className="border border-gray-300 rounded px-3 py-2 text-sm flex-1"
-            placeholder="Search farmer ID…"
+            placeholder="Search by ID or name…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -250,81 +277,84 @@ function AccountsTab({ uniquedevcode, operator }: { uniquedevcode: string; opera
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-gray-600 text-xs uppercase">
               <tr>
-                <th className="px-3 py-2 text-left">Farmer</th>
-                <th className="px-3 py-2 text-right">Limit</th>
+                <th className="px-3 py-2 text-left">Member</th>
+                <th className="px-3 py-2 text-right">Cumulative Kgs</th>
+                <th className="px-3 py-2 text-right">Limit %</th>
+                <th className="px-3 py-2 text-right">Credit</th>
                 <th className="px-3 py-2 text-right">Outstanding</th>
                 <th className="px-3 py-2 text-right">Available</th>
-                <th className="px-3 py-2 text-center">Status</th>
                 <th className="px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} className="text-center py-8 text-gray-400">No enrolled farmers yet</td></tr>
-              ) : filtered.map(r => {
-                const available = Math.max(0, Number(r.credit_limit) - Number(r.outstanding) - Number(r.hold_amount));
-                return (
-                  <tr key={r.farmer_id} className="border-t border-gray-100">
-                    <td className="px-3 py-2 font-mono">{r.farmer_id}</td>
-                    <td className="px-3 py-2 text-right">{money(r.credit_limit)}</td>
-                    <td className="px-3 py-2 text-right text-red-700">{money(r.outstanding)}</td>
-                    <td className="px-3 py-2 text-right text-green-700 font-semibold">{money(available)}</td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={`text-xs px-2 py-0.5 rounded ${
-                        r.status === 'ACTIVE' ? 'bg-green-100 text-green-800' :
-                        r.status === 'FROZEN' ? 'bg-yellow-100 text-yellow-800' :
-                        r.status === 'WRITEOFF' ? 'bg-red-100 text-red-800' :
-                        'bg-gray-100 text-gray-700'
-                      }`}>{r.status}</span>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button onClick={() => setEditing(r)} className="text-purple-700 hover:underline text-xs">Adjust / Disburse</button>
-                    </td>
-                  </tr>
-                );
-              })}
+                <tr><td colSpan={7} className="text-center py-8 text-gray-400">
+                  {loading ? 'Loading…' : 'No enrolled members yet — enroll one above.'}
+                </td></tr>
+              ) : filtered.map(r => (
+                <tr key={r.farmer_id} className="border-t border-gray-100">
+                  <td className="px-3 py-2">
+                    <div className="font-mono text-xs">{r.farmer_id}</div>
+                    <div className="text-xs text-gray-600 truncate max-w-[180px]">{r.name}</div>
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono">{r.cumulative_kg.toFixed(1)} Kg</td>
+                  <td className="px-3 py-2 text-right">{r.limit_percentage.toFixed(1)}%</td>
+                  <td className="px-3 py-2 text-right font-semibold">{money(r.credit_limit)}</td>
+                  <td className="px-3 py-2 text-right text-red-700">{money(r.outstanding)}</td>
+                  <td className="px-3 py-2 text-right text-green-700 font-bold">{money(r.available)}</td>
+                  <td className="px-3 py-2 text-right space-x-2">
+                    <button onClick={() => setEditing(r)} className="text-purple-700 hover:underline text-xs">Disburse</button>
+                    <button onClick={() => unenroll(r.farmer_id)} className="text-red-600 hover:underline text-xs">Disable</button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       </div>
 
       {editing && (
-        <AccountActionModal
-          row={editing}
+        <DisburseModal
+          member={editing}
           uniquedevcode={uniquedevcode}
           operator={operator}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); reload(); }}
-          onSaveLimit={saveLimit}
         />
       )}
     </div>
   );
 }
 
-function AccountActionModal({
-  row, uniquedevcode, operator, onClose, onSaved, onSaveLimit,
+function DisburseModal({
+  member, uniquedevcode, operator, onClose, onSaved,
 }: {
-  row: BoostAccountRow;
+  member: EnrolledMember;
   uniquedevcode: string;
   operator: string;
   onClose: () => void;
   onSaved: () => void;
-  onSaveLimit: (farmer_id: string, credit_limit: number) => Promise<void>;
 }) {
-  const [limit, setLimit] = useState(String(row.credit_limit));
   const [amount, setAmount] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
-  const available = Math.max(0, Number(row.credit_limit) - Number(row.outstanding) - Number(row.hold_amount));
 
   const disburse = async () => {
     const amt = Number(amount);
     if (!(amt > 0)) { toast.error('Amount required'); return; }
-    if (amt > available + 0.01) { toast.error('Exceeds available credit'); return; }
+    if (amt > member.available + 0.01) { toast.error('Exceeds available credit'); return; }
     setBusy(true);
-    const refNo = `DIS-${row.farmer_id}-${Date.now()}`;
-    const r = await disburseCredit({ uniquedevcode, farmer_id: row.farmer_id, amount: amt, ref_no: refNo, operator, notes });
+    // Ensure a boost_accounts row exists with the computed credit_limit,
+    // otherwise /boost/disburse rejects with "Farmer not enrolled".
+    await setCreditLimit({
+      uniquedevcode, farmer_id: member.farmer_id,
+      credit_limit: member.credit_limit, operator,
+    });
+    const refNo = `DIS-${member.farmer_id}-${Date.now()}`;
+    const r = await disburseCredit({
+      uniquedevcode, farmer_id: member.farmer_id,
+      amount: amt, ref_no: refNo, operator, notes,
+    });
     setBusy(false);
     if (r.ok) { toast.success('Cash disbursed'); onSaved(); }
     else toast.error(r.error || 'Failed');
@@ -334,35 +364,18 @@ function AccountActionModal({
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          <h3 className="font-bold text-gray-900">{row.farmer_id}</h3>
+          <div>
+            <h3 className="font-bold text-gray-900">{member.name}</h3>
+            <p className="text-xs text-gray-500 font-mono">{member.farmer_id}</p>
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><XCircle className="h-5 w-5" /></button>
         </div>
-        <div className="p-4 space-y-4">
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div className="bg-gray-50 p-2 rounded">
-              <div className="text-xs text-gray-500">Outstanding</div>
-              <div className="font-bold text-red-700">{money(row.outstanding)}</div>
-            </div>
-            <div className="bg-gray-50 p-2 rounded">
-              <div className="text-xs text-gray-500">Available</div>
-              <div className="font-bold text-green-700">{money(available)}</div>
-            </div>
+        <div className="p-4 space-y-3">
+          <div className="grid grid-cols-3 gap-2 text-sm">
+            <div className="bg-gray-50 p-2 rounded"><div className="text-xs text-gray-500">Credit</div><div className="font-bold">{money(member.credit_limit)}</div></div>
+            <div className="bg-gray-50 p-2 rounded"><div className="text-xs text-gray-500">Outstanding</div><div className="font-bold text-red-700">{money(member.outstanding)}</div></div>
+            <div className="bg-gray-50 p-2 rounded"><div className="text-xs text-gray-500">Available</div><div className="font-bold text-green-700">{money(member.available)}</div></div>
           </div>
-
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Credit limit (KSh)</label>
-            <div className="flex gap-2">
-              <input type="number" min={0} value={limit} onChange={e => setLimit(e.target.value)}
-                className="border border-gray-300 rounded px-3 py-2 text-sm flex-1" />
-              <button
-                disabled={busy || Number(limit) === Number(row.credit_limit)}
-                onClick={async () => { setBusy(true); await onSaveLimit(row.farmer_id, Math.max(0, Number(limit) || 0)); setBusy(false); }}
-                className="bg-purple-600 text-white rounded px-3 py-2 text-sm disabled:opacity-50">
-                Save limit
-              </button>
-            </div>
-          </div>
-
           <div>
             <label className="text-xs text-gray-600 block mb-1">Disburse cash (KSh)</label>
             <input type="number" min={0} value={amount} onChange={e => setAmount(e.target.value)}
