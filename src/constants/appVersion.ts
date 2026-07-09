@@ -897,18 +897,30 @@
 //   reference generator, receipts, photo, Bluetooth, and auth flow are
 //   untouched. Strictly additive on logs; behaviour change is a stricter
 //   guard, never a looser one.
-export const APP_VERSION = '2.11.2';
-export const APP_VERSION_CODE = 144;
-// v2.11.2: FARMER BOOST — operator guide + enrollment/merchant UX polish.
-//   Farmer enrollment on /boost now loads members from the cached
-//   IndexedDB `farmers` store (populated by the existing members sync,
-//   sourced from cm_members scoped to the operator's ccode via device
-//   auth) — typing "1" resolves to M00001, and partial names live-filter.
-//   Merchant fields in Accounts/Purchase now typeahead on BOTH mcode and
-//   name (description), with status badges; Purchase blocks non-ACTIVE.
-//   New docs/FARMER_BOOST_GUIDE.md covers every table/column, all seven
-//   /api/boost/* endpoints, and step-by-step operator playbooks. Strictly
-//   frontend + docs — no backend, schema, sync, reference generator,
-//   receipt, photo, Bluetooth, or auth changes. Boost stays dormant
-//   until psettings.boost_enabled = 1.
-export const APP_FIX_TAG = 'boost-onboarding';
+export const APP_VERSION = '2.11.3';
+export const APP_VERSION_CODE = 145;
+// v2.11.3: FARMER BOOST PHASE 3 — auto-enrollment + company-bound merchants.
+//   BACKEND (server.js + MIGRATION_BOOST_PHASE3.sql): rename mcode→mercode
+//   across `merchants`, `boost_ledger`, `boost_purchases`; new columns
+//   cm_members.farmer_boost_active + limit_percentage;
+//   psettings.boost_price_per_kg + boost_limit_pct;
+//   users.can_manage_merchants + mercode + orgtype;
+//   fm_items.mercode + supporting indexes. Three additive endpoints:
+//   GET /api/boost/enrolled-members (cm_members × cumulative Kgs × price ×
+//   limit % → live credit_limit + available), POST /api/boost/enroll
+//   (toggles farmer_boost_active + sets limit_percentage), and GET
+//   /api/boost/companies (psettings directory for merchant-to-coop binding).
+//   Existing /api/boost/policy now returns orgtype, price_per_kg, limit_pct
+//   and cname; /api/boost/merchants writes accept an optional `ccode` so an
+//   officer can create a merchant on a specific coop; /api/boost/purchase
+//   accepts `mercode` (with `mcode` alias kept for old builds).
+//   FRONTEND: /boost Accounts tab is rewritten around
+//   listEnrolledMembers — auto-lists cm_members where farmer_boost_active=1
+//   with computed cumulative_kg / limit % / credit / outstanding / available;
+//   enrollment is a single toggle + limit %. Merchants tab gains a
+//   "Link to company" dropdown fed by /api/boost/companies. Every merchant
+//   is stamped orgtype='M'. Feature stays dormant until
+//   psettings.boost_enabled=1. Strictly additive on wire — sync engine,
+//   reference generator, receipts, photo, Bluetooth, auth unchanged.
+export const APP_FIX_TAG = 'boost-phase3';
+
