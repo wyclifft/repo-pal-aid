@@ -35,10 +35,10 @@ import {
   getBoostPolicy, getBoostAccount, type BoostPolicy, type BoostAccount,
 } from '@/services/creditEngine';
 import {
-  listBoostAccounts, setCreditLimit, disburseCredit,
+  setCreditLimit, disburseCredit,
   getFarmerLedger, postBoostPurchase, generatePrefNo,
   listEnrolledMembers, enrollMember, listBoostCompanies,
-  type BoostAccountRow, type BoostLedgerEntry,
+  type BoostLedgerEntry,
   type EnrolledMember, type EnrolledMembersMeta, type BoostCompany,
 } from '@/services/boostLedger';
 import { listMerchants, upsertMerchant, type Merchant } from '@/services/merchants';
