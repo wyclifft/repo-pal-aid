@@ -32,6 +32,8 @@ export interface BoostLedgerEntry {
   entry_type: BoostEntryType;
   amount: number;              // signed
   ref_no: string;
+  // Phase 3: server returns both `mercode` (canonical) and `mcode` (alias).
+  mercode: string | null;
   mcode: string | null;
   related_transrefno: string | null;
   payout_run_id: string | null;
@@ -173,7 +175,9 @@ export async function disburseCredit(args: {
 export async function postBoostPurchase(args: {
   uniquedevcode: string;
   farmer_id: string;
-  mcode: string;
+  mercode?: string;
+  /** @deprecated use `mercode`. Kept for callers that haven't migrated yet. */
+  mcode?: string;
   amount: number;
   pref_no: string;
   items?: Array<{ name: string; qty: number; unit_price: number }>;
@@ -183,16 +187,92 @@ export async function postBoostPurchase(args: {
   notes?: string;
 }): Promise<{ ok: boolean; error?: string; ledger_id?: number }> {
   try {
+    const payload = { ...args, mercode: args.mercode || args.mcode };
     const res = await resilientFetch(`${API_BASE_URL}/boost/purchase`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(args),
+      body: JSON.stringify(payload),
     });
     const body = await res.json().catch(() => null);
     if (!res.ok || !body?.success) return { ok: false, error: body?.error || `HTTP ${res.status}` };
     return { ok: true, ledger_id: body?.data?.ledger_id };
   } catch (e: any) { return { ok: false, error: e?.message || 'Network error' }; }
 }
+
+// ============================================================
+// v2.11.3 — Phase 3 auto-enrollment helpers.
+// ============================================================
+
+export interface EnrolledMember {
+  farmer_id: string;
+  name: string;
+  route: string | null;
+  cumulative_kg: number;
+  price_per_kg: number;
+  limit_percentage: number;
+  credit_limit: number;
+  outstanding: number;
+  hold_amount: number;
+  available: number;
+  status: 'INACTIVE' | 'ACTIVE' | 'FROZEN' | 'WRITEOFF';
+}
+
+export interface EnrolledMembersMeta {
+  orgtype: string;
+  pricePerKg: number;
+  universalPct: number;
+  periodStart: string;
+  periodEnd: string;
+}
+
+export async function listEnrolledMembers(
+  uniquedevcode: string
+): Promise<{ data: EnrolledMember[]; meta?: EnrolledMembersMeta; error?: string }> {
+  if (!navigator.onLine) return { data: [], error: 'offline' };
+  try {
+    const res = await resilientFetch(
+      `${API_BASE_URL}/boost/enrolled-members?uniquedevcode=${encodeURIComponent(uniquedevcode)}`,
+      { method: 'GET' }
+    );
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.success) return { data: [], error: body?.error || `HTTP ${res.status}` };
+    return { data: (body.data || []) as EnrolledMember[], meta: body.meta };
+  } catch (e: any) { return { data: [], error: e?.message || 'Network error' }; }
+}
+
+export async function enrollMember(args: {
+  uniquedevcode: string;
+  farmer_id: string;
+  active?: boolean;
+  limit_percentage?: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await resilientFetch(`${API_BASE_URL}/boost/enroll`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.success) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: true };
+  } catch (e: any) { return { ok: false, error: e?.message || 'Network error' }; }
+}
+
+export interface BoostCompany { ccode: string; name: string; orgtype: string }
+
+export async function listBoostCompanies(uniquedevcode: string): Promise<BoostCompany[]> {
+  if (!navigator.onLine) return [];
+  try {
+    const res = await resilientFetch(
+      `${API_BASE_URL}/boost/companies?uniquedevcode=${encodeURIComponent(uniquedevcode)}`,
+      { method: 'GET' }
+    );
+    if (!res.ok) return [];
+    const body = await res.json();
+    return body?.success && Array.isArray(body?.data) ? (body.data as BoostCompany[]) : [];
+  } catch { return []; }
+}
+
 
 /** Client-side pref_no generator. Mirrors transrefno spirit but distinct namespace. */
 export function generatePrefNo(deviceCode: string, clientFetch: number | string): string {

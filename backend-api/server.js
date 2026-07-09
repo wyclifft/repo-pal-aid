@@ -4164,6 +4164,32 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/boost/policy' && method === 'GET') {
       const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
       if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      // Phase 3: include orgtype, boost_price_per_kg, boost_limit_pct from psettings.
+      let ps = { boost_enabled: 0, orgtype: 'D', price_per_kg: 0, limit_pct: 0, cname: null };
+      try {
+        const [psRows] = await pool.query(
+          `SELECT IFNULL(boost_enabled,0) AS be,
+                  IFNULL(orgtype,'D') AS orgtype,
+                  IFNULL(boost_price_per_kg,0) AS price_per_kg,
+                  IFNULL(boost_limit_pct,0) AS limit_pct,
+                  cname
+             FROM psettings WHERE TRIM(ccode)=TRIM(?) LIMIT 1`,
+          [auth.ccode]
+        );
+        if (psRows.length) {
+          ps = {
+            boost_enabled: Number(psRows[0].be) || 0,
+            orgtype: psRows[0].orgtype || 'D',
+            price_per_kg: Number(psRows[0].price_per_kg) || 0,
+            limit_pct: Number(psRows[0].limit_pct) || 0,
+            cname: psRows[0].cname || null,
+          };
+        }
+      } catch (e) {
+        if (!(e && (e.code === 'ER_BAD_FIELD_ERROR' || e.errno === 1054))) {
+          if (!(e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146))) throw e;
+        }
+      }
       try {
         const [rows] = await pool.query(
           `SELECT ccode, boost_enabled, recovery_cap_pct, limit_mode
@@ -4175,22 +4201,33 @@ const server = http.createServer(async (req, res) => {
           success: true,
           data: {
             ccode: auth.ccode,
-            boost_enabled: row ? !!row.boost_enabled : false,
+            // psettings.boost_enabled wins; boost_limits_policy is a fallback.
+            boost_enabled: ps.boost_enabled === 1 || (row ? !!row.boost_enabled : false),
             recovery_cap_pct: row ? Number(row.recovery_cap_pct) : 70,
             limit_mode: row ? row.limit_mode : 'MANUAL',
+            orgtype: ps.orgtype,
+            price_per_kg: ps.price_per_kg,
+            limit_pct: ps.limit_pct,
+            cname: ps.cname,
           },
         });
       } catch (e) {
-        // Table missing (migration not run yet) — respond as disabled.
         if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
           return sendJSON(res, {
             success: true,
-            data: { ccode: auth.ccode, boost_enabled: false, recovery_cap_pct: 70, limit_mode: 'MANUAL' },
+            data: {
+              ccode: auth.ccode,
+              boost_enabled: ps.boost_enabled === 1,
+              recovery_cap_pct: 70, limit_mode: 'MANUAL',
+              orgtype: ps.orgtype, price_per_kg: ps.price_per_kg,
+              limit_pct: ps.limit_pct, cname: ps.cname,
+            },
           });
         }
         throw e;
       }
     }
+
 
     // GET /api/boost/account/:farmerId?uniquedevcode=...
     // Returns a farmer's boost account. Returns a zeroed record (status=INACTIVE)
@@ -4251,7 +4288,8 @@ const server = http.createServer(async (req, res) => {
       const limit = Math.max(1, Math.min(500, parseInt(parsedUrl.query.limit, 10) || 100));
       try {
         const [rows] = await pool.query(
-          `SELECT id, ccode, farmer_id, entry_type, amount, ref_no, mcode,
+          `SELECT id, ccode, farmer_id, entry_type, amount, ref_no,
+                  mercode, mercode AS mcode,
                   related_transrefno, payout_run_id, reverses_id, device_code,
                   operator, notes, ts
              FROM boost_ledger
@@ -4486,7 +4524,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---------- POST /api/boost/purchase ----------
-    // { uniquedevcode, farmer_id, mcode, amount, pref_no, items?, related_transrefno?, notes?, operator?, device_code? }
+    // { uniquedevcode, farmer_id, mercode (or mcode alias), amount, pref_no,
+    //   items?, related_transrefno?, notes?, operator?, device_code? }
     // Credit-funded merchant purchase. Increases outstanding, writes PURCHASE
     // ledger row AND a boost_purchases row for merchant reconciliation.
     if (path === '/api/boost/purchase' && method === 'POST') {
@@ -4498,11 +4537,12 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { success: false, error: 'Boost not enabled for coop' }, 403);
       }
       const farmerId = String(body.farmer_id || '').trim();
-      const mcode = String(body.mcode || '').trim();
+      // Phase 3: canonical name is `mercode`; accept legacy `mcode` alias.
+      const mercode = String(body.mercode || body.mcode || '').trim();
       const amount = Math.round((Number(body.amount) || 0) * 100) / 100;
       const prefNo = String(body.pref_no || '').trim();
-      if (!farmerId || !mcode || amount <= 0 || !prefNo) {
-        return sendJSON(res, { success: false, error: 'farmer_id, mcode, amount>0, pref_no required' }, 400);
+      if (!farmerId || !mercode || amount <= 0 || !prefNo) {
+        return sendJSON(res, { success: false, error: 'farmer_id, mercode, amount>0, pref_no required' }, 400);
       }
 
       const conn = await pool.getConnection();
@@ -4520,8 +4560,8 @@ const server = http.createServer(async (req, res) => {
         }
 
         const [merch] = await conn.query(
-          'SELECT status FROM merchants WHERE TRIM(ccode)=TRIM(?) AND TRIM(mcode)=TRIM(?) LIMIT 1',
-          [auth.ccode, mcode]
+          'SELECT status FROM merchants WHERE TRIM(ccode)=TRIM(?) AND TRIM(mercode)=TRIM(?) LIMIT 1',
+          [auth.ccode, mercode]
         );
         if (!merch.length || merch[0].status !== 'ACTIVE') {
           await conn.rollback();
@@ -4550,18 +4590,18 @@ const server = http.createServer(async (req, res) => {
         const refNo = `PUR-${prefNo}`;
         const [ins] = await conn.query(
           `INSERT INTO boost_ledger
-             (ccode, farmer_id, entry_type, amount, ref_no, mcode, related_transrefno, device_code, operator, notes)
+             (ccode, farmer_id, entry_type, amount, ref_no, mercode, related_transrefno, device_code, operator, notes)
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [auth.ccode, farmerId, 'PURCHASE', amount, refNo, mcode,
+          [auth.ccode, farmerId, 'PURCHASE', amount, refNo, mercode,
            body.related_transrefno || null,
            body.device_code || null, body.operator || null, body.notes || null]
         );
         await conn.query(
           `INSERT INTO boost_purchases
-             (pref_no, ccode, farmer_id, mcode, items_json, total, status,
+             (pref_no, ccode, farmer_id, mercode, items_json, total, status,
               device_code, operator, related_transrefno, ledger_id, notes)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [prefNo, auth.ccode, farmerId, mcode,
+          [prefNo, auth.ccode, farmerId, mercode,
            body.items ? JSON.stringify(body.items) : null,
            amount, 'POSTED',
            body.device_code || null, body.operator || null,
@@ -4584,15 +4624,22 @@ const server = http.createServer(async (req, res) => {
       } finally { conn.release(); }
     }
 
+
     // ---------- GET /api/boost/merchants?uniquedevcode=... ----------
+    // Phase 3: canonical field is `mercode`. Returns both `mercode` and
+    // `mcode` (alias) for client backward-compat during the rollout window.
     if (path === '/api/boost/merchants' && method === 'GET') {
       const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
       if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      const allCoops = String(parsedUrl.query.all_coops || '') === '1';
       try {
         const [rows] = await pool.query(
-          `SELECT mcode, ccode, name, kra_pin, phone, till_paybill, bank_name, bank_acc, status, updated_at
-             FROM merchants WHERE TRIM(ccode) = TRIM(?) ORDER BY name ASC`,
-          [auth.ccode]
+          `SELECT mercode, mercode AS mcode, ccode, name, kra_pin, phone,
+                  till_paybill, bank_name, bank_acc, status, orgtype, updated_at
+             FROM merchants
+            ${allCoops ? '' : 'WHERE TRIM(ccode) = TRIM(?)'}
+            ORDER BY name ASC`,
+          allCoops ? [] : [auth.ccode]
         );
         return sendJSON(res, { success: true, data: rows });
       } catch (e) {
@@ -4604,8 +4651,204 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---------- POST /api/boost/merchants ----------
-    // Upsert by (ccode, mcode). Officer-driven — merchant self-service is deferred.
+    // Upsert by (ccode, mercode). Body: { uniquedevcode, mercode|mcode, name,
+    //   ccode?, kra_pin?, phone?, till_paybill?, bank_name?, bank_acc?, status? }
+    // When `ccode` is supplied it binds the merchant to that company. If
+    // omitted, defaults to the operator's own ccode. orgtype is stamped 'M'.
     if (path === '/api/boost/merchants' && method === 'POST') {
+      const body = await readJsonBody().catch(() => null);
+      if (!body) return sendJSON(res, { success: false, error: 'Invalid JSON' }, 400);
+      const auth = await resolveBoostDevice(body.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      const targetCcode = String(body.ccode || auth.ccode).trim();
+      if (!(await isBoostEnabledForCoop(targetCcode))) {
+        return sendJSON(res, { success: false, error: 'Boost not enabled for target coop' }, 403);
+      }
+      const mercode = String(body.mercode || body.mcode || '').trim();
+      const name = String(body.name || '').trim();
+      if (!mercode || !name) return sendJSON(res, { success: false, error: 'mercode + name required' }, 400);
+      const status = ['PENDING','ACTIVE','SUSPENDED'].includes(body.status) ? body.status : 'ACTIVE';
+      try {
+        await pool.query(
+          `INSERT INTO merchants (mercode, ccode, name, kra_pin, phone, till_paybill, bank_name, bank_acc, status, orgtype)
+           VALUES (?,?,?,?,?,?,?,?,?,'M')
+           ON DUPLICATE KEY UPDATE
+             name=VALUES(name), kra_pin=VALUES(kra_pin), phone=VALUES(phone),
+             till_paybill=VALUES(till_paybill), bank_name=VALUES(bank_name),
+             bank_acc=VALUES(bank_acc), status=VALUES(status), orgtype='M'`,
+          [mercode, targetCcode, name,
+           body.kra_pin || null, body.phone || null,
+           body.till_paybill || null, body.bank_name || null, body.bank_acc || null,
+           status]
+        );
+        return sendJSON(res, { success: true, data: { mercode, ccode: targetCcode, name, status } });
+      } catch (e) {
+        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
+          return sendJSON(res, { success: false, error: 'Boost migration not run on server' }, 503);
+        }
+        if (e && (e.code === 'ER_BAD_FIELD_ERROR' || e.errno === 1054)) {
+          return sendJSON(res, { success: false, error: 'Run MIGRATION_BOOST_PHASE3.sql to rename mcode->mercode' }, 503);
+        }
+        throw e;
+      }
+    }
+
+    // ============ Farmer Boost Phase 3: auto-enrollment + companies ============
+
+    // GET /api/boost/companies?uniquedevcode=...
+    // Lists psettings rows so an officer can bind a new merchant to a coop.
+    if (path === '/api/boost/companies' && method === 'GET') {
+      const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      try {
+        const [rows] = await pool.query(
+          `SELECT TRIM(ccode) AS ccode,
+                  IFNULL(cname, ccode) AS name,
+                  IFNULL(orgtype, '') AS orgtype
+             FROM psettings
+            ORDER BY IFNULL(cname, ccode) ASC LIMIT 500`
+        );
+        return sendJSON(res, { success: true, data: rows, meta: { operator_ccode: auth.ccode } });
+      } catch (e) {
+        return sendJSON(res, { success: true, data: [{ ccode: auth.ccode, name: auth.ccode, orgtype: '' }] });
+      }
+    }
+
+    // GET /api/boost/enrolled-members?uniquedevcode=...
+    // Auto-list of farmers with cm_members.farmer_boost_active=1, joined
+    // with cumulative deliveries × psettings.boost_price_per_kg × limit%.
+    // The limit% is universal (psettings.boost_limit_pct) when >0, otherwise
+    // the per-farmer cm_members.limit_percentage is used.
+    if (path === '/api/boost/enrolled-members' && method === 'GET') {
+      const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
+      if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      try {
+        // psettings: orgtype + price + universal limit_pct
+        let orgtype = 'D', pricePerKg = 0, universalPct = 0;
+        try {
+          const [psRows] = await pool.query(
+            `SELECT IFNULL(orgtype,'D') AS orgtype,
+                    IFNULL(boost_price_per_kg,0) AS boost_price_per_kg,
+                    IFNULL(boost_limit_pct,0) AS boost_limit_pct
+               FROM psettings WHERE TRIM(ccode) = TRIM(?) LIMIT 1`,
+            [auth.ccode]
+          );
+          if (psRows.length) {
+            orgtype = psRows[0].orgtype || 'D';
+            pricePerKg = Number(psRows[0].boost_price_per_kg) || 0;
+            universalPct = Number(psRows[0].boost_limit_pct) || 0;
+          }
+        } catch (e) {
+          if (!(e && (e.code === 'ER_BAD_FIELD_ERROR' || e.errno === 1054))) throw e;
+          return sendJSON(res, { success: false, error: 'Run MIGRATION_BOOST_PHASE3.sql (psettings columns missing)' }, 503);
+        }
+
+        // Period range: coffee → active season, dairy → current month.
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const toYmd = (d) => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+        const now = new Date();
+        let periodStart = toYmd(new Date(now.getFullYear(), now.getMonth(), 1));
+        let periodEnd   = toYmd(new Date(now.getFullYear(), now.getMonth()+1, 0));
+        if (orgtype === 'C') {
+          const today = toYmd(now);
+          try {
+            const [sRows] = await pool.query(
+              `SELECT DATE_FORMAT(datefrom,'%Y-%m-%d') AS datefrom,
+                      DATE_FORMAT(dateto,  '%Y-%m-%d') AS dateto
+                 FROM sessions
+                WHERE TRIM(ccode)=TRIM(?) AND DATE(datefrom)<=? AND DATE(dateto)>=?
+                ORDER BY datefrom DESC LIMIT 1`,
+              [auth.ccode, today, today]
+            );
+            if (sRows.length) { periodStart = sRows[0].datefrom; periodEnd = sRows[0].dateto; }
+          } catch (_) { /* fall back to monthly */ }
+        }
+
+        // Enrolled members from cm_members
+        let members;
+        try {
+          const [mRows] = await pool.query(
+            `SELECT TRIM(mcode) AS farmer_id, descript AS name, route,
+                    IFNULL(limit_percentage,0) AS limit_percentage
+               FROM cm_members
+              WHERE TRIM(ccode)=TRIM(?) AND IFNULL(farmer_boost_active,0)=1
+              ORDER BY descript ASC LIMIT 5000`,
+            [auth.ccode]
+          );
+          members = mRows;
+        } catch (e) {
+          if (e && (e.code === 'ER_BAD_FIELD_ERROR' || e.errno === 1054)) {
+            return sendJSON(res, { success: false, error: 'Run MIGRATION_BOOST_PHASE3.sql (cm_members columns missing)' }, 503);
+          }
+          throw e;
+        }
+        if (members.length === 0) {
+          return sendJSON(res, { success: true, data: [], meta: { orgtype, pricePerKg, universalPct, periodStart, periodEnd } });
+        }
+
+        // Cumulative kgs per farmer for the period
+        const [cRows] = await pool.query(
+          `SELECT TRIM(memberno) AS farmer_id, IFNULL(SUM(weight),0) AS cum
+             FROM transactions
+            WHERE UPPER(TRIM(ccode))=UPPER(TRIM(?))
+              AND CAST(Transtype AS UNSIGNED)=1
+              AND CAST(transdate AS DATE) BETWEEN ? AND ?
+            GROUP BY TRIM(memberno)`,
+          [auth.ccode, periodStart, periodEnd]
+        );
+        const cumMap = new Map();
+        cRows.forEach(r => cumMap.set(String(r.farmer_id).toUpperCase(), Number(r.cum) || 0));
+
+        // Outstanding/status per farmer
+        const acctMap = new Map();
+        try {
+          const [aRows] = await pool.query(
+            `SELECT TRIM(farmer_id) AS farmer_id, outstanding, hold_amount, status
+               FROM boost_accounts WHERE TRIM(ccode)=TRIM(?)`,
+            [auth.ccode]
+          );
+          aRows.forEach(r => acctMap.set(String(r.farmer_id).toUpperCase(), r));
+        } catch (e) {
+          if (!(e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146))) throw e;
+        }
+
+        const data = members.map(m => {
+          const key = String(m.farmer_id).toUpperCase();
+          const cumulative_kg = cumMap.get(key) || 0;
+          const pct = universalPct > 0 ? universalPct : (Number(m.limit_percentage) || 0);
+          const credit_limit = Math.round(cumulative_kg * pricePerKg * pct / 100 * 100) / 100;
+          const acct = acctMap.get(key);
+          const outstanding = Number(acct?.outstanding || 0);
+          const hold_amount = Number(acct?.hold_amount || 0);
+          const available = Math.max(0, credit_limit - outstanding - hold_amount);
+          return {
+            farmer_id: m.farmer_id,
+            name: m.name,
+            route: m.route,
+            cumulative_kg,
+            price_per_kg: pricePerKg,
+            limit_percentage: pct,
+            credit_limit,
+            outstanding,
+            hold_amount,
+            available,
+            status: acct?.status || 'ACTIVE',
+          };
+        });
+
+        return sendJSON(res, {
+          success: true, data,
+          meta: { orgtype, pricePerKg, universalPct, periodStart, periodEnd },
+        });
+      } catch (e) {
+        throw e;
+      }
+    }
+
+    // POST /api/boost/enroll
+    // { uniquedevcode, farmer_id, active?=1, limit_percentage? }
+    // Toggles cm_members.farmer_boost_active and sets limit_percentage.
+    if (path === '/api/boost/enroll' && method === 'POST') {
       const body = await readJsonBody().catch(() => null);
       if (!body) return sendJSON(res, { success: false, error: 'Invalid JSON' }, 400);
       const auth = await resolveBoostDevice(body.uniquedevcode);
@@ -4613,32 +4856,34 @@ const server = http.createServer(async (req, res) => {
       if (!(await isBoostEnabledForCoop(auth.ccode))) {
         return sendJSON(res, { success: false, error: 'Boost not enabled for coop' }, 403);
       }
-      const mcode = String(body.mcode || '').trim();
-      const name = String(body.name || '').trim();
-      if (!mcode || !name) return sendJSON(res, { success: false, error: 'mcode + name required' }, 400);
-      const status = ['PENDING','ACTIVE','SUSPENDED'].includes(body.status) ? body.status : 'ACTIVE';
+      const farmerId = String(body.farmer_id || '').trim();
+      if (!farmerId) return sendJSON(res, { success: false, error: 'farmer_id required' }, 400);
+      const active = body.active === undefined ? 1 : (body.active ? 1 : 0);
+      const pct = Math.max(0, Math.min(100, Number(body.limit_percentage) || 0));
       try {
-        await pool.query(
-          `INSERT INTO merchants (mcode, ccode, name, kra_pin, phone, till_paybill, bank_name, bank_acc, status)
-           VALUES (?,?,?,?,?,?,?,?,?)
-           ON DUPLICATE KEY UPDATE
-             name=VALUES(name), kra_pin=VALUES(kra_pin), phone=VALUES(phone),
-             till_paybill=VALUES(till_paybill), bank_name=VALUES(bank_name),
-             bank_acc=VALUES(bank_acc), status=VALUES(status)`,
-          [mcode, auth.ccode, name,
-           body.kra_pin || null, body.phone || null,
-           body.till_paybill || null, body.bank_name || null, body.bank_acc || null,
-           status]
+        const [r] = await pool.query(
+          `UPDATE cm_members
+              SET farmer_boost_active = ?, limit_percentage = ?
+            WHERE TRIM(ccode)=TRIM(?) AND TRIM(mcode)=TRIM(?)`,
+          [active, pct, auth.ccode, farmerId]
         );
-        return sendJSON(res, { success: true, data: { mcode, name, status } });
+        if (r.affectedRows === 0) {
+          return sendJSON(res, { success: false, error: 'Member not found in this coop' }, 404);
+        }
+        return sendJSON(res, {
+          success: true,
+          data: { farmer_id: farmerId, active: !!active, limit_percentage: pct },
+        });
       } catch (e) {
-        if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
-          return sendJSON(res, { success: false, error: 'Boost migration not run on server' }, 503);
+        if (e && (e.code === 'ER_BAD_FIELD_ERROR' || e.errno === 1054)) {
+          return sendJSON(res, { success: false, error: 'Run MIGRATION_BOOST_PHASE3.sql (cm_members columns missing)' }, 503);
         }
         throw e;
       }
     }
+
     // ============ end Farmer Boost Phase 2 + 3 ============
+
 
     // 404
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
