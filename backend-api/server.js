@@ -4164,6 +4164,32 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/boost/policy' && method === 'GET') {
       const auth = await resolveBoostDevice(parsedUrl.query.uniquedevcode);
       if (!auth.ok) return sendJSON(res, { success: false, error: auth.error }, auth.code);
+      // Phase 3: include orgtype, boost_price_per_kg, boost_limit_pct from psettings.
+      let ps = { boost_enabled: 0, orgtype: 'D', price_per_kg: 0, limit_pct: 0, cname: null };
+      try {
+        const [psRows] = await pool.query(
+          `SELECT IFNULL(boost_enabled,0) AS be,
+                  IFNULL(orgtype,'D') AS orgtype,
+                  IFNULL(boost_price_per_kg,0) AS price_per_kg,
+                  IFNULL(boost_limit_pct,0) AS limit_pct,
+                  cname
+             FROM psettings WHERE TRIM(ccode)=TRIM(?) LIMIT 1`,
+          [auth.ccode]
+        );
+        if (psRows.length) {
+          ps = {
+            boost_enabled: Number(psRows[0].be) || 0,
+            orgtype: psRows[0].orgtype || 'D',
+            price_per_kg: Number(psRows[0].price_per_kg) || 0,
+            limit_pct: Number(psRows[0].limit_pct) || 0,
+            cname: psRows[0].cname || null,
+          };
+        }
+      } catch (e) {
+        if (!(e && (e.code === 'ER_BAD_FIELD_ERROR' || e.errno === 1054))) {
+          if (!(e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146))) throw e;
+        }
+      }
       try {
         const [rows] = await pool.query(
           `SELECT ccode, boost_enabled, recovery_cap_pct, limit_mode
@@ -4175,22 +4201,33 @@ const server = http.createServer(async (req, res) => {
           success: true,
           data: {
             ccode: auth.ccode,
-            boost_enabled: row ? !!row.boost_enabled : false,
+            // psettings.boost_enabled wins; boost_limits_policy is a fallback.
+            boost_enabled: ps.boost_enabled === 1 || (row ? !!row.boost_enabled : false),
             recovery_cap_pct: row ? Number(row.recovery_cap_pct) : 70,
             limit_mode: row ? row.limit_mode : 'MANUAL',
+            orgtype: ps.orgtype,
+            price_per_kg: ps.price_per_kg,
+            limit_pct: ps.limit_pct,
+            cname: ps.cname,
           },
         });
       } catch (e) {
-        // Table missing (migration not run yet) — respond as disabled.
         if (e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146)) {
           return sendJSON(res, {
             success: true,
-            data: { ccode: auth.ccode, boost_enabled: false, recovery_cap_pct: 70, limit_mode: 'MANUAL' },
+            data: {
+              ccode: auth.ccode,
+              boost_enabled: ps.boost_enabled === 1,
+              recovery_cap_pct: 70, limit_mode: 'MANUAL',
+              orgtype: ps.orgtype, price_per_kg: ps.price_per_kg,
+              limit_pct: ps.limit_pct, cname: ps.cname,
+            },
           });
         }
         throw e;
       }
     }
+
 
     // GET /api/boost/account/:farmerId?uniquedevcode=...
     // Returns a farmer's boost account. Returns a zeroed record (status=INACTIVE)
