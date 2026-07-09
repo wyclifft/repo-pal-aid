@@ -4487,7 +4487,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---------- POST /api/boost/purchase ----------
-    // { uniquedevcode, farmer_id, mcode, amount, pref_no, items?, related_transrefno?, notes?, operator?, device_code? }
+    // { uniquedevcode, farmer_id, mercode (or mcode alias), amount, pref_no,
+    //   items?, related_transrefno?, notes?, operator?, device_code? }
     // Credit-funded merchant purchase. Increases outstanding, writes PURCHASE
     // ledger row AND a boost_purchases row for merchant reconciliation.
     if (path === '/api/boost/purchase' && method === 'POST') {
@@ -4499,11 +4500,12 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { success: false, error: 'Boost not enabled for coop' }, 403);
       }
       const farmerId = String(body.farmer_id || '').trim();
-      const mcode = String(body.mcode || '').trim();
+      // Phase 3: canonical name is `mercode`; accept legacy `mcode` alias.
+      const mercode = String(body.mercode || body.mcode || '').trim();
       const amount = Math.round((Number(body.amount) || 0) * 100) / 100;
       const prefNo = String(body.pref_no || '').trim();
-      if (!farmerId || !mcode || amount <= 0 || !prefNo) {
-        return sendJSON(res, { success: false, error: 'farmer_id, mcode, amount>0, pref_no required' }, 400);
+      if (!farmerId || !mercode || amount <= 0 || !prefNo) {
+        return sendJSON(res, { success: false, error: 'farmer_id, mercode, amount>0, pref_no required' }, 400);
       }
 
       const conn = await pool.getConnection();
@@ -4521,8 +4523,8 @@ const server = http.createServer(async (req, res) => {
         }
 
         const [merch] = await conn.query(
-          'SELECT status FROM merchants WHERE TRIM(ccode)=TRIM(?) AND TRIM(mcode)=TRIM(?) LIMIT 1',
-          [auth.ccode, mcode]
+          'SELECT status FROM merchants WHERE TRIM(ccode)=TRIM(?) AND TRIM(mercode)=TRIM(?) LIMIT 1',
+          [auth.ccode, mercode]
         );
         if (!merch.length || merch[0].status !== 'ACTIVE') {
           await conn.rollback();
@@ -4551,18 +4553,18 @@ const server = http.createServer(async (req, res) => {
         const refNo = `PUR-${prefNo}`;
         const [ins] = await conn.query(
           `INSERT INTO boost_ledger
-             (ccode, farmer_id, entry_type, amount, ref_no, mcode, related_transrefno, device_code, operator, notes)
+             (ccode, farmer_id, entry_type, amount, ref_no, mercode, related_transrefno, device_code, operator, notes)
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [auth.ccode, farmerId, 'PURCHASE', amount, refNo, mcode,
+          [auth.ccode, farmerId, 'PURCHASE', amount, refNo, mercode,
            body.related_transrefno || null,
            body.device_code || null, body.operator || null, body.notes || null]
         );
         await conn.query(
           `INSERT INTO boost_purchases
-             (pref_no, ccode, farmer_id, mcode, items_json, total, status,
+             (pref_no, ccode, farmer_id, mercode, items_json, total, status,
               device_code, operator, related_transrefno, ledger_id, notes)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [prefNo, auth.ccode, farmerId, mcode,
+          [prefNo, auth.ccode, farmerId, mercode,
            body.items ? JSON.stringify(body.items) : null,
            amount, 'POSTED',
            body.device_code || null, body.operator || null,
@@ -4584,6 +4586,7 @@ const server = http.createServer(async (req, res) => {
         throw e;
       } finally { conn.release(); }
     }
+
 
     // ---------- GET /api/boost/merchants?uniquedevcode=... ----------
     if (path === '/api/boost/merchants' && method === 'GET') {
