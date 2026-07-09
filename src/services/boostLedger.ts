@@ -32,7 +32,15 @@ export interface BoostLedgerEntry {
   entry_type: BoostEntryType;
   amount: number;              // signed
   ref_no: string;
+  // Phase 3: server returns both `mercode` (canonical) and `mcode` (alias).
+  mercode: string | null;
   mcode: string | null;
+  related_transrefno: string | null;
+  payout_run_id: string | null;
+  reverses_id: number | null;
+  device_code: string | null;
+  operator: string | null>
+
   related_transrefno: string | null;
   payout_run_id: string | null;
   reverses_id: number | null;
