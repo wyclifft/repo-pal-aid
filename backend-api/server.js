@@ -4251,7 +4251,8 @@ const server = http.createServer(async (req, res) => {
       const limit = Math.max(1, Math.min(500, parseInt(parsedUrl.query.limit, 10) || 100));
       try {
         const [rows] = await pool.query(
-          `SELECT id, ccode, farmer_id, entry_type, amount, ref_no, mcode,
+          `SELECT id, ccode, farmer_id, entry_type, amount, ref_no,
+                  mercode, mercode AS mcode,
                   related_transrefno, payout_run_id, reverses_id, device_code,
                   operator, notes, ts
              FROM boost_ledger
