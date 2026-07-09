@@ -19,7 +19,10 @@ const API = `${API_CONFIG.MYSQL_API_URL}/api`;
 export type MerchantStatus = 'PENDING' | 'ACTIVE' | 'SUSPENDED';
 
 export interface Merchant {
-  mcode: string;
+  /** Phase 3: canonical code column. */
+  mercode: string;
+  /** @deprecated alias returned by server; use `mercode`. */
+  mcode?: string;
   ccode: string;
   name: string;
   kra_pin: string | null;
@@ -28,25 +31,35 @@ export interface Merchant {
   bank_name: string | null;
   bank_acc: string | null;
   status: MerchantStatus;
+  orgtype?: string;
   updated_at: string;
 }
 
-export async function listMerchants(uniquedevcode: string): Promise<Merchant[]> {
+export async function listMerchants(
+  uniquedevcode: string,
+  opts?: { allCoops?: boolean }
+): Promise<Merchant[]> {
   if (!navigator.onLine) return [];
   try {
-    const res = await resilientFetch(
-      `${API}/boost/merchants?uniquedevcode=${encodeURIComponent(uniquedevcode)}`,
-      { method: 'GET' }
-    );
+    const url = new URL(`${API}/boost/merchants`);
+    url.searchParams.set('uniquedevcode', uniquedevcode);
+    if (opts?.allCoops) url.searchParams.set('all_coops', '1');
+    const res = await resilientFetch(url.toString(), { method: 'GET' });
     if (!res.ok) return [];
     const body = await res.json();
-    return body?.success && Array.isArray(body?.data) ? (body.data as Merchant[]) : [];
+    if (!(body?.success && Array.isArray(body?.data))) return [];
+    // Normalise: ensure `mercode` is present even on servers that still
+    // return the legacy `mcode` field.
+    return (body.data as any[]).map((m) => ({
+      ...m,
+      mercode: m.mercode || m.mcode,
+    })) as Merchant[];
   } catch { return []; }
 }
 
 export async function upsertMerchant(
   uniquedevcode: string,
-  m: Partial<Merchant> & { mcode: string; name: string }
+  m: Partial<Merchant> & { mercode: string; name: string; ccode?: string }
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const res = await resilientFetch(`${API}/boost/merchants`, {
@@ -63,3 +76,4 @@ export async function upsertMerchant(
     return { ok: false, error: e?.message || 'Network error' };
   }
 }
+
