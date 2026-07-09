@@ -39,12 +39,6 @@ export interface BoostLedgerEntry {
   payout_run_id: string | null;
   reverses_id: number | null;
   device_code: string | null;
-  operator: string | null>
-
-  related_transrefno: string | null;
-  payout_run_id: string | null;
-  reverses_id: number | null;
-  device_code: string | null;
   operator: string | null;
   notes: string | null;
   ts: string;
