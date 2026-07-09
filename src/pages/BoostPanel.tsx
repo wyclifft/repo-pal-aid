@@ -401,6 +401,8 @@ function MerchantsTab({ uniquedevcode }: { uniquedevcode: string }) {
   const [rows, setRows] = useState<Merchant[]>([]);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Partial<Merchant> | null>(null);
+  const [companies, setCompanies] = useState<BoostCompany[]>([]);
+  const [operatorCcode, setOperatorCcode] = useState<string>('');
 
   const reload = useCallback(async () => {
     if (!uniquedevcode) return;
@@ -410,12 +412,27 @@ function MerchantsTab({ uniquedevcode }: { uniquedevcode: string }) {
   }, [uniquedevcode]);
   useEffect(() => { reload(); }, [reload]);
 
+  // Load company directory once (for the "link to company" dropdown)
+  useEffect(() => {
+    if (!uniquedevcode) return;
+    listBoostCompanies(uniquedevcode).then(cs => {
+      setCompanies(cs);
+      // The first row of `psettings` for the operator's ccode is the default.
+      // We can't know the operator ccode without another call — the server
+      // returns it in meta; for now, fall back to the first company.
+      if (cs.length && !operatorCcode) setOperatorCcode(cs[0].ccode);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uniquedevcode]);
+
   const save = async () => {
     if (!editing?.mercode || !editing?.name) { toast.error('mercode + name required'); return; }
-    const r = await upsertMerchant(uniquedevcode, editing as Merchant);
+    const payload = { ...editing, ccode: editing.ccode || operatorCcode } as Merchant;
+    const r = await upsertMerchant(uniquedevcode, payload);
     if (r.ok) { toast.success('Saved'); setEditing(null); reload(); }
     else toast.error(r.error || 'Failed');
   };
+
 
   return (
     <div className="space-y-4">
