@@ -35,6 +35,11 @@ export interface BoostPolicy {
   boost_enabled: boolean;
   recovery_cap_pct: number;
   limit_mode: 'MANUAL' | 'AUTO_90D' | 'AUTO_SEASON' | 'HYBRID';
+  // Phase 3 additions — safe defaults when the server doesn't send them.
+  orgtype?: 'C' | 'D' | 'M' | string;
+  price_per_kg?: number;
+  limit_pct?: number;
+  cname?: string | null;
 }
 
 /**
