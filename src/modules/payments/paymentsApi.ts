@@ -141,7 +141,7 @@ async function runClientSideMock(
   period: PaymentPeriod
 ): Promise<PaymentResult[]> {
   const payable = await computePayableFromLocal(period);
-  const byCode = new Map(payable.map(p => [p.farmer_code, p]));
+  const byCode = new Map<string, PayableFarmer>(payable.map(p => [p.farmer_code, p]));
   const results: PaymentResult[] = [];
   const yymmdd = new Date().toISOString().slice(2, 10).replace(/-/g, '');
 
