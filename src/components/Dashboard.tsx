@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2, UserPlus } from 'lucide-react';
+import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2, UserPlus, CreditCard } from 'lucide-react';
+import { usePaymentsAccess } from '@/modules/payments/usePaymentsAccess';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
 import { ProductSelector } from '@/components/ProductSelector';
