@@ -561,6 +561,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   // Coffee sack weighing settings
   const sackTareWeight = settings.sackTare ?? 1; // Default 1 kg
   const allowSackEdit = settings.allowSackEdit === 1; // 0 = fixed, 1 = editable
+  const paymentsActive = settings.payments_active === 1; // v2.11.0
+
 
   return {
     settings,
