@@ -33,6 +33,8 @@ export interface AppUser {
   role?: string; // Kept for backward compatibility
   // v2.10.40: permission flag controlling Add Member feature visibility
   add_members?: boolean;
+  // v2.11.0: permission flag controlling Payments module visibility (users.can_access_payments)
+  can_access_payments?: boolean;
 }
 
 /**

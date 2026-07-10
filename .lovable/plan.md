@@ -1,70 +1,118 @@
-**Cause found from the logs and code**
 
-The 52 Kg was not deleted. The app is comparing two different cumulative states and then allowing the wrong refresh path to lower the cache.
+# Payments Module + Web Bluetooth Auto-Connect Removal
 
-For M01859:
+Adds a new Payments module gated by a company-level flag and per-user permission, backed by a new `payments` table and two new fields on `transactions`. Uses a mock SACCO service today so the same workflow later swaps to the real API. Also removes only the automatic Bluetooth connect on web — the Capacitor APK Bluetooth stack is left completely untouched.
 
-```text
-Previous persisted cache: 1843.4
-Backend batch refresh returned: 1791.4
-Difference: -52
+Version bump: `2.10.121` → `2.11.0` (feature addition, per version rules).
+
+---
+
+## 1. Database changes (backend / MySQL)
+
+All changes are additive and backward compatible — no existing column is renamed, no existing API is changed.
+
+### `psettings`
+- Add column `payments_active TINYINT(1) NOT NULL DEFAULT 0`.
+- `0` = module hidden everywhere for that company. `1` = module available for that company (still gated per user).
+
+### `users`
+- Add column `can_access_payments TINYINT(1) NOT NULL DEFAULT 0`.
+- Only users with this flag `= 1` see the Payments menu, even when `payments_active = 1`.
+
+### `payments` (new)
 ```
+payment_id              BIGINT PK AUTO_INCREMENT
+payment_reference       VARCHAR(40) UNIQUE NOT NULL
+ccode                   VARCHAR(20) NOT NULL          -- multi-tenant isolation
+farmer_code             VARCHAR(40) NOT NULL
+amount                  DECIMAL(14,2) NOT NULL
+status                  ENUM('pending','success','failed') NOT NULL DEFAULT 'pending'
+payment_date            DATETIME NOT NULL
+external_transaction_id VARCHAR(80) NULL
+created_by              VARCHAR(40) NULL
+created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+```
+Indexes: `(ccode, farmer_code)`, `(ccode, status)`, `(ccode, payment_date)`.
 
-That means the app already had a cumulative that included the 52 Kg, but `refreshCumulativesBatch()` later fetched a backend total that did not include that 52 Kg at that moment, then tried to write the lower number.
+### `transactions`
+- Add `payment_id BIGINT NULL` (FK to `payments.payment_id`, nullable).
+- Add `payment_status ENUM('unpaid','paid') NOT NULL DEFAULT 'unpaid'`.
+- Index `(ccode, payment_status, farmer_code)` for the payable-list query.
 
-Evidence:
-- `src/pages/Index.tsx:318-343` runs `getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode)` and writes every farmer through `updateFarmerCumulative()` as `W3:prewarm-batch(...)`.
-- `src/hooks/useIndexedDB.ts:954-988` rejects a lower incoming value for W3, so the first two reads were correctly blocked:
-  - M01859: `1843.4 → 1791.4`
-  - M03486: `365.6 → 351.6`
-  - M02957: `666.6 → 585.4`
-- But the same lower values were later accepted by `W5:postcapture-refresh` because `useIndexedDB.ts:977` allows W5 to auto-heal downward. That is why the system reduced the cumulative total.
-- The log pattern affects many farmers at the same time, so this is not one member or one deleted transaction. It is a batch refresh / stale backend-read / route-period cache issue.
+Existing sync/reference logic (`transrefno`, `uploadrefno`, `reference_no`) is untouched. Legacy rows default to `unpaid` — no data migration risk.
 
-**Permanent fix**
+---
 
-1. **Stop W5 from silently lowering cumulative totals**
-   - Change `updateFarmerCumulative()` so no backend refresh source can lower `baseCount` immediately unless it is an explicit confirmed reconciliation flow.
-   - Keep upward writes always accepted.
-   - Keep zero-protection intact.
+## 2. Backend endpoints (`server.js`, additive only)
 
-2. **Use confirmed two-read heal-down for all downward changes**
-   - Move downward acceptance behind the existing W3-style confirmation rules:
-     - two backend reads agree on the lower value,
-     - no unsynced local receipts exist for that farmer/route,
-     - route is normalized and scoped,
-     - log the exact confirmation source.
-   - This prevents a valid captured 52 Kg from being removed just because one refresh endpoint temporarily returned a stale/lower total.
+All endpoints strictly filter by JWT `ccode` and require `payments_active=1` + `can_access_payments=1`.
 
-3. **Fix post-submit cumulative refresh behavior**
-   - After an online submit, the app must not reduce cache if the immediate backend cumulative is lower than the trusted local floor.
-   - It should use:
+- `GET  /api/payments/payable?period=day|week|month|season` → aggregates unpaid transactions per farmer: `{ farmer_code, farmer_name, total_payable, unpaid_count }`.
+- `POST /api/payments/process` → body `{ farmer_codes: [...], period }`. Server-side:
+  1. Recomputes payable per farmer (never trusts client amount).
+  2. Generates one unique `payment_reference` per farmer: `PMT-<ccode>-<yymmdd>-<seq>`.
+  3. Inserts `payments` row with `status='pending'`.
+  4. Calls **mock SACCO service** (`services/saccoPaymentService.js`, single function `chargeFarmer({ ref, amount, farmer_code })` returning `{ success, external_transaction_id }` after simulated latency; replaceable with real API without touching the route).
+  5. On success: updates `payments.status='success'` + `external_transaction_id`, and updates all matching unpaid `transactions` rows for that farmer/period with `payment_id` + `payment_status='paid'` in a single transaction.
+  6. On failure: `payments.status='failed'`, transactions untouched.
+- `GET  /api/payments/history?farmer_code=&from=&to=` → list past payments.
 
-   ```text
-   trustedFloor = max(cachedBase, previousDisplayedCumulative) + justSubmittedWeight
-   ```
+No existing endpoint is modified. Production APK stays fully compatible.
 
-   - If backend returns below that floor, keep the trusted floor for printing/display and queue a reconfirm instead of writing the lower backend value.
+---
 
-4. **Make batch prewarm route/product-safe**
-   - Ensure `refreshCumulativesBatch()` and `loadCumulativeBatch()` always write to the selected route bucket only when `selectedRouteCode` is present.
-   - Normalize route and product codes before compare/write.
-   - Do not allow route `ALL` and route `T001` values to overwrite or validate each other.
+## 3. Frontend (web) — new module
 
-5. **Improve logs so this cannot be ambiguous again**
-   - Add explicit logs:
-     - `CUM:DOWNWARD-HELD` when lower backend is blocked.
-     - `CUM:DOWNWARD-CONFIRMED` only after two-read confirmation.
-     - include `cachedBase`, `incomingBackend`, `trustedFloor`, `unsyncedTotal`, `route`, `icode`, and caller.
+Location: `src/modules/payments/` (kept isolated to avoid disturbing existing screens).
 
-6. **Version and memory update**
-   - Increment app version from `2.10.120` to `2.10.121`.
-   - Document this as a permanent cumulative guard fix.
+- `src/modules/payments/PaymentsScreen.tsx` — list + filter by period (day/week/month/season), columns: Farmer Code, Farmer Name, Total Payable, Payment Status. Multi-select via checkbox + "Pay selected" button. Uses Lucide icons only.
+- `src/modules/payments/PaymentConfirmDialog.tsx` — shows totals, generates request, streams status; includes `DialogDescription` for a11y.
+- `src/modules/payments/PaymentHistoryScreen.tsx` — per-farmer history with reference + external id.
+- `src/modules/payments/api.ts` — thin fetch wrapper using existing `nativeFetch` / `xhrFetch` resilient pattern (same rules as other POSTs).
+- `src/modules/payments/useCanAccessPayments.ts` — resolves `psettings.payments_active` (from cached psettings) AND `users.can_access_payments` (from session profile). Returns `false` if either is missing.
 
-**Expected result**
+### Menu gating
+- Dashboard/menu: Payments entry rendered only when `useCanAccessPayments() === true`. When false, the route is also not registered, so deep-link `/payments` redirects to dashboard (matches existing resilient SPA routing rule).
 
-- A valid captured 52 Kg will not be removed by refresh.
-- Backend refresh can still increase cumulative immediately.
-- A real downward correction can still be applied, but only after confirmed reconciliation.
-- M01859-style `1843.4 → 1791.4` will be held, not silently accepted by W5.
-- Receipt printing keeps using the trusted floor so the farmer’s cumulative does not go backwards after a valid delivery.
+### Offline behavior
+- Payments require online (mock or real SACCO). If offline, the "Pay" action is disabled with a clear hint; browsing payable list still works from cache. No changes to receipts / capture / sync flows.
+
+---
+
+## 4. Mock SACCO service
+
+- Backend: `services/saccoPaymentService.js` — pure function boundary; env-flag `SACCO_MODE=mock|live`. Mock returns success after 400–800 ms with a fake `external_transaction_id`. Swapping to live only touches this one file.
+- No client-side mock — the web calls the backend route only, so the swap is invisible to the app.
+
+---
+
+## 5. Bluetooth — web only
+
+- In `src/**` locate the auto-connect trigger (the on-mount effect that calls the Bluetooth Classic bridge / Web Bluetooth). Guard it with a platform check: run **only** when `Capacitor.isNativePlatform() === true`.
+- The native plugin, Android manifest, and APK code paths remain byte-for-byte unchanged. Manual "Connect printer" actions on web (if any) are also left as-is; only the *automatic* connect on load is disabled for web.
+
+---
+
+## 6. Version, logs, memory
+
+- `src/constants/appVersion.ts` → `2.11.0`, version code `142`, `APP_FIX_TAG='payments-module'`.
+- Log tags: `[PAY][PAYABLE]`, `[PAY][PROCESS]`, `[PAY][SACCO:MOCK]`, `[PAY][BT:WEB-SKIP]`.
+- Memory: add `mem://features/payments-module` (activation flag, permission column, mock swap point) and `mem://architecture/web-bluetooth-auto-disabled`. Update `mem://index.md`.
+
+---
+
+## 7. Safety checklist before completing
+
+- Existing transaction creation, receipts, sync, photo capture, farmer/item sync all still pass.
+- APK build unchanged (no native files touched).
+- `payments_active=0` company: zero UI, zero network calls, zero risk.
+- All new SQL uses `ccode` filter; new endpoints reject cross-tenant access.
+
+---
+
+## Open confirmations (please confirm or adjust before build)
+
+1. **Period definitions** — day = today; week = Mon–Sun; month = calendar month; season = current season window from `psettings` (fallback: last 90 days). OK?
+2. **"Paid" scope** — a payment marks *all* unpaid transactions for that farmer within the selected period as paid. OK, or should it be a manual pick per transaction?
+3. **Partial payments** — not supported in v1 (full payable amount only). OK?
+4. **`users` permission column name** — proposing `can_access_payments`. Any preferred name?

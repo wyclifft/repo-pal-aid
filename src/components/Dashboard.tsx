@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2, UserPlus } from 'lucide-react';
+import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2, UserPlus, CreditCard } from 'lucide-react';
+import { usePaymentsAccess } from '@/modules/payments/usePaymentsAccess';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
 import { ProductSelector } from '@/components/ProductSelector';
@@ -86,6 +87,7 @@ export const Dashboard = ({
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { visible: paymentsVisible } = usePaymentsAccess();
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const initialDataRef = useRef(getInitialSessionData());
   
@@ -358,6 +360,17 @@ export const Dashboard = ({
                   <button onClick={() => { navigate('/periodic-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Periodic Report</button>
                   <button onClick={() => { navigate('/periodic-report?sync=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Sync Periodic Report</button>
                   <hr className="my-0.5 border-gray-200" />
+                  {paymentsVisible && (
+                    <>
+                      <button
+                        onClick={() => { navigate('/payments'); setMenuOpen(false); }}
+                        className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <CreditCard className="h-4 w-4" /> Payments
+                      </button>
+                      <hr className="my-0.5 border-gray-200" />
+                    </>
+                  )}
                   {currentUser?.add_members === true && (
                     <>
                       <button

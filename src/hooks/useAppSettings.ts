@@ -43,6 +43,8 @@ export interface AppSettings {
   sackTare: number;
   // Allow frontend users to edit sack weight: 0 = fixed/backend-controlled, 1 = editable (DB: allowSackEdit, default: 0)
   allowSackEdit: number;
+  // v2.11.0: Payments module activation flag (DB: psettings.payments_active). 0 = hidden, 1 = active.
+  payments_active: number;
 }
 
 // Default settings - rdesc is empty to force use of dynamic DB value
@@ -64,7 +66,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cumulative_frequency_status: 0,
   periodLabel: 'Session', // Default to Session (dairy)
   sackTare: 1, // Default 1 kg sack tare weight for coffee
-  allowSackEdit: 0 // Default: sack weight is fixed/backend-controlled
+  allowSackEdit: 0, // Default: sack weight is fixed/backend-controlled
+  payments_active: 0 // v2.11.0: Payments module hidden by default
 };
 
 const SETTINGS_STORAGE_KEY = 'app_settings';
@@ -124,6 +127,8 @@ interface AppSettingsContextType {
   // Coffee sack weighing
   sackTareWeight: number; // Configurable sack tare weight in kg
   allowSackEdit: boolean; // Whether frontend users can edit sack weight
+  // v2.11.0: Payments module active for this company (psettings.payments_active === 1)
+  paymentsActive: boolean;
 }
 
 // React context
@@ -352,7 +357,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             cumulative_frequency_status: parseInt(String(deviceData.cumulative_frequency_status ?? DEFAULT_SETTINGS.cumulative_frequency_status), 10),
             periodLabel: deviceData.app_settings?.periodLabel ?? DEFAULT_SETTINGS.periodLabel,
             sackTare: parseFloat(String(deviceData.app_settings?.sackTare ?? DEFAULT_SETTINGS.sackTare)),
-            allowSackEdit: parseInt(String(deviceData.app_settings?.sackEdit ?? deviceData.app_settings?.allowSackEdit ?? DEFAULT_SETTINGS.allowSackEdit), 10)
+            allowSackEdit: parseInt(String(deviceData.app_settings?.sackEdit ?? deviceData.app_settings?.allowSackEdit ?? DEFAULT_SETTINGS.allowSackEdit), 10),
+            payments_active: parseInt(String(deviceData.app_settings?.payments_active ?? DEFAULT_SETTINGS.payments_active), 10)
           };
           
           // Log settings changes for debugging
@@ -555,6 +561,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   // Coffee sack weighing settings
   const sackTareWeight = settings.sackTare ?? 1; // Default 1 kg
   const allowSackEdit = settings.allowSackEdit === 1; // 0 = fixed, 1 = editable
+  const paymentsActive = settings.payments_active === 1; // v2.11.0
+
 
   return {
     settings,
@@ -581,7 +589,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     sessionPrintOnly,
     useRouteFilter,
     sackTareWeight,
-    allowSackEdit
+    allowSackEdit,
+    paymentsActive
   };
 };
 
