@@ -87,6 +87,7 @@ export const Dashboard = ({
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { visible: paymentsVisible } = usePaymentsAccess();
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const initialDataRef = useRef(getInitialSessionData());
   
