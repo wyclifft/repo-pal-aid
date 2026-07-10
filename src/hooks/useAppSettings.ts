@@ -66,7 +66,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cumulative_frequency_status: 0,
   periodLabel: 'Session', // Default to Session (dairy)
   sackTare: 1, // Default 1 kg sack tare weight for coffee
-  allowSackEdit: 0 // Default: sack weight is fixed/backend-controlled
+  allowSackEdit: 0, // Default: sack weight is fixed/backend-controlled
+  payments_active: 0 // v2.11.0: Payments module hidden by default
 };
 
 const SETTINGS_STORAGE_KEY = 'app_settings';
