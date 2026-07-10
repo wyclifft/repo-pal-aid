@@ -127,6 +127,8 @@ interface AppSettingsContextType {
   // Coffee sack weighing
   sackTareWeight: number; // Configurable sack tare weight in kg
   allowSackEdit: boolean; // Whether frontend users can edit sack weight
+  // v2.11.0: Payments module active for this company (psettings.payments_active === 1)
+  paymentsActive: boolean;
 }
 
 // React context
