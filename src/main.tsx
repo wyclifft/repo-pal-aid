@@ -8,15 +8,23 @@ import "./utils/errorHandler";
 import { installPersistentLogger, _setLoggerAppVersion } from "./utils/persistentLogger";
 import { APP_VERSION } from "./constants/appVersion";
 import { installAutoReconnect as installBtAutoReconnect } from "./services/btConnectionManager";
+import { Capacitor } from "@capacitor/core";
 
 // Install persistent debug logger BEFORE anything else so we capture early errors
 _setLoggerAppVersion(APP_VERSION);
 installPersistentLogger();
 initializeNativePlatform().catch(console.error);
 
-// v2.10.85: Resilient Bluetooth connection manager — auto-reconnects scale &
-// printer on app boot/resume/online/adapter-on; survives logout & reloads.
-installBtAutoReconnect();
+// v2.11.0: Automatic Bluetooth connection is NATIVE-ONLY.
+// Web builds no longer auto-connect scale/printer on load; manual "Reconnect"
+// buttons in Dashboard/Settings still work. The Capacitor APK is unchanged —
+// installAutoReconnect() only runs when Capacitor.isNativePlatform() === true.
+if (Capacitor.isNativePlatform()) {
+  installBtAutoReconnect();
+  console.log('[BT][WEB-SKIP=false] Native platform: auto-reconnect enabled');
+} else {
+  console.log('[BT][WEB-SKIP=true] Web build: auto-reconnect disabled (v2.11.0)');
+}
 
 // Prevent zoom on double tap for native feel
 document.addEventListener('touchstart', (e) => {
