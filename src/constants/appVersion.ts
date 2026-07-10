@@ -1,45 +1,4 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.11.1: FARMER BOOST PHASE 2 + 3 (officer panel + purchases). Additive.
-//   BACKEND (server.js + MIGRATION_BOOST_PHASE2.sql): new `boost_purchases`
-//   table + mirrored `psettings.boost_enabled` flag (authoritative source),
-//   and six new endpoints — GET/POST /api/boost/accounts+/limit+/disburse,
-//   POST /api/boost/purchase, GET/POST /api/boost/merchants. Every write is
-//   (a) device-gated via approved_devices/devsettings (same resolveBoostDevice
-//   helper as Phase 1), (b) coop-gated via psettings.boost_enabled with
-//   boost_limits_policy fallback, (c) idempotent server-side through the
-//   (ccode, ref_no)/(ccode, pref_no) unique keys, and (d) transactional so
-//   account.outstanding and ledger rows can never desync. FRONTEND: new
-//   /boost officer panel (Accounts / Merchants / Purchase / Farmer 360 tabs)
-//   plus a read-only <BoostOutstandingChip /> that quietly appears on the
-//   Sell screen when a member has outstanding credit. Feature is fully
-//   dormant until psettings.boost_enabled = 1 for the coop — every UI surface
-//   and every write short-circuits when the flag is off. No changes to
-//   transrefno format, sync engine, IndexedDB schema, receipt rendering,
-//   photo, Bluetooth, or auth flows. Rollback = DROP boost_purchases and
-//   drop the psettings.boost_enabled column; boost_ledger/boost_accounts
-//   from Phase 1 remain safe. Phase 4 adds payout auto-recovery.
-//
-// v2.11.0: FARMER BOOST PHASE 1 (FOUNDATIONS). Additive-only introduction of
-//   the Farm Input Credit Financing feature. Nothing farmer-facing changes.
-//   BACKEND (backend-api/server.js + MIGRATION_BOOST_PHASE1.sql): four new
-//   tables (merchants, boost_accounts, boost_ledger, boost_limits_policy)
-//   and three read-only endpoints — /api/boost/policy, /api/boost/account/
-//   :farmerId, /api/boost/ledger/:farmerId. Every endpoint resolves ccode
-//   via devsettings.uniquedevcode (same pattern as existing routes) and
-//   degrades to "disabled / empty" when the migration hasn't been run yet,
-//   so deploying the server code before running the SQL is safe. Feature
-//   flag lives on boost_limits_policy.boost_enabled (default 0) — coops
-//   opt in per-tenant. FRONTEND: two scaffold services (creditEngine.ts,
-//   boostLedger.ts) wrapping the endpoints with resilientFetch + abort
-//   timeouts and returning null / [] on failure so callers never crash.
-//   Manual credit-limit assignment (officer-driven) and a 70% default
-//   recovery cap match the approved plan. No changes to reference
-//   generator, transrefno format, sync engine, IndexedDB schema, receipt
-//   rendering, photo, Bluetooth, or auth. Rollback = DROP the four tables;
-//   no data elsewhere is touched. Phase 2 will add merchant CRUD +
-//   officer disbursement UI behind the same feature flag.
-//
-
 // v2.10.119: CUMULATIVE UNDER-COUNT PROTECTION — operators reported W3 batch
 //   prewarm intermittently returning `persisted − latest_delivery_weight`
 //   for select farmers (M03544, M01859, M00385 on C003/T001), even though
@@ -897,30 +856,10 @@
 //   reference generator, receipts, photo, Bluetooth, and auth flow are
 //   untouched. Strictly additive on logs; behaviour change is a stricter
 //   guard, never a looser one.
-export const APP_VERSION = '2.11.3';
-export const APP_VERSION_CODE = 145;
-// v2.11.3: FARMER BOOST PHASE 3 — auto-enrollment + company-bound merchants.
-//   BACKEND (server.js + MIGRATION_BOOST_PHASE3.sql): rename mcode→mercode
-//   across `merchants`, `boost_ledger`, `boost_purchases`; new columns
-//   cm_members.farmer_boost_active + limit_percentage;
-//   psettings.boost_price_per_kg + boost_limit_pct;
-//   users.can_manage_merchants + mercode + orgtype;
-//   fm_items.mercode + supporting indexes. Three additive endpoints:
-//   GET /api/boost/enrolled-members (cm_members × cumulative Kgs × price ×
-//   limit % → live credit_limit + available), POST /api/boost/enroll
-//   (toggles farmer_boost_active + sets limit_percentage), and GET
-//   /api/boost/companies (psettings directory for merchant-to-coop binding).
-//   Existing /api/boost/policy now returns orgtype, price_per_kg, limit_pct
-//   and cname; /api/boost/merchants writes accept an optional `ccode` so an
-//   officer can create a merchant on a specific coop; /api/boost/purchase
-//   accepts `mercode` (with `mcode` alias kept for old builds).
-//   FRONTEND: /boost Accounts tab is rewritten around
-//   listEnrolledMembers — auto-lists cm_members where farmer_boost_active=1
-//   with computed cumulative_kg / limit % / credit / outstanding / available;
-//   enrollment is a single toggle + limit %. Merchants tab gains a
-//   "Link to company" dropdown fed by /api/boost/companies. Every merchant
-//   is stamped orgtype='M'. Feature stays dormant until
-//   psettings.boost_enabled=1. Strictly additive on wire — sync engine,
-//   reference generator, receipts, photo, Bluetooth, auth unchanged.
-export const APP_FIX_TAG = 'boost-phase3';
-
+export const APP_VERSION = '2.10.121';
+export const APP_VERSION_CODE = 141;
+// Short kebab-case slug describing the headline fix shipped in this build.
+// Parsed at build time by android/app/build.gradle to name the APK as:
+//   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
+// Update this each release alongside APP_VERSION / APP_VERSION_CODE.
+export const APP_FIX_TAG = 'cum-downward-hold';

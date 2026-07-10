@@ -1,81 +1,70 @@
-# Farmer Boost — Phase 3.5: Operator Guide + Enrollment/Merchant UX polish
+**Cause found from the logs and code**
 
-Goal: ship a complete operator guide and tighten the two onboarding surfaces (farmer enrollment, merchant CRUD) so users can find records fast by typing either the code or the name/description. Additive only — no changes to milk/store/receipt/sync paths.
+The 52 Kg was not deleted. The app is comparing two different cumulative states and then allowing the wrong refresh path to lower the cache.
 
-## 1. Deliverables
+For M01859:
 
-### A. Operator guide document
-Location: `docs/FARMER_BOOST_GUIDE.md` (new, plus a link from `README.md`).
+```text
+Previous persisted cache: 1843.4
+Backend batch refresh returned: 1791.4
+Difference: -52
+```
 
-Contents:
-- **Overview** — what Farmer Boost is, when to enable it (`psettings.boost_enabled=1`), and what stays off when disabled.
-- **End-to-end flow diagram** (ASCII) covering: enroll → set limit → disburse OR purchase → outstanding chip on Sell → future payout recovery.
-- **Table & column reference** — one section per table, plain-English purpose for every column, populated from the Phase 1/2 migration files:
-  - `merchants` (mcode, ccode, name, kra_pin, phone, till_paybill, bank_name, bank_acc, status, timestamps)
-  - `boost_accounts` (farmer_id, ccode, credit_limit, outstanding, hold_amount, status, score, set_by, notes, timestamps)
-  - `boost_ledger` (id, entry_type enum, amount sign convention, ref_no idempotency, mcode, related_transrefno, payout_run_id, reverses_id, device_code, operator, notes, ts)
-  - `boost_limits_policy` (boost_enabled fallback, recovery_cap_pct, limit_mode, policy_json)
-  - `boost_purchases` (pref_no, items_json, total, status, ledger_id linkage)
-  - `psettings.boost_enabled` — authoritative flag.
-- **Endpoint reference** — the 7 `/api/boost/*` routes with request/response shape and idempotency notes.
-- **Operator playbooks** (step-by-step with screenshots):
-  1. Enable Boost for a coop (SQL snippet + psettings toggle).
-  2. Onboard a merchant (Merchants tab).
-  3. Enroll a farmer & set a credit limit (Accounts tab).
-  4. Record a credit-funded input purchase (Purchase tab).
-  5. Read a farmer's 360° history (Farmer 360 tab).
-  6. Reverse an entry (ADJUST/REVERSAL pattern — no deletes).
-- **Screenshots** — captured from the running `/boost` panel via Playwright at 1280×1800, saved to `docs/images/boost/` (`01-accounts.png`, `02-merchants.png`, `03-purchase.png`, `04-farmer360.png`, `05-sell-chip.png`, `06-flag-off.png`).
-- **Troubleshooting** — flag off, device not approved, duplicate ref_no, offline behaviour.
-- **Rollback** — drop the 5 boost tables + drop `psettings.boost_enabled` column.
+That means the app already had a cumulative that included the 52 Kg, but `refreshCumulativesBatch()` later fetched a backend total that did not include that 52 Kg at that moment, then tried to write the lower number.
 
-### B. Farmer enrollment sourced from `cm_members`
-Today the Accounts tab likely relies on already-existing boost_accounts rows. Change to:
-- Add an **Enroll farmer** control in the Accounts tab that opens a searchable picker backed by the existing member cache (`cm_members` for the operator's `ccode`, resolved server-side via `uniquedevcode` — never trust a client-supplied ccode).
-- Reuse `useFarmerResolution` semantics (M-prefix, numeric padding, `.trim().toUpperCase()`) so `1` → `M00001`, and typing part of the name filters live.
-- Enrollment = upsert into `boost_accounts` with `status='ACTIVE'`, `credit_limit=0`, `set_by=<operator>`. No ledger entry (limit change ADJUST fires only when limit>0 is later saved, matching current `/api/boost/limit` behaviour).
-- No new endpoint needed for member lookup — use the existing members list already available to the app; filter client-side against the coop's cached members.
+Evidence:
+- `src/pages/Index.tsx:318-343` runs `getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode)` and writes every farmer through `updateFarmerCumulative()` as `W3:prewarm-batch(...)`.
+- `src/hooks/useIndexedDB.ts:954-988` rejects a lower incoming value for W3, so the first two reads were correctly blocked:
+  - M01859: `1843.4 → 1791.4`
+  - M03486: `365.6 → 351.6`
+  - M02957: `666.6 → 585.4`
+- But the same lower values were later accepted by `W5:postcapture-refresh` because `useIndexedDB.ts:977` allows W5 to auto-heal downward. That is why the system reduced the cumulative total.
+- The log pattern affects many farmers at the same time, so this is not one member or one deleted transaction. It is a batch refresh / stale backend-read / route-period cache issue.
 
-### C. Merchant typeahead
-In the Merchants tab and Purchase tab:
-- Replace the plain mcode text input with a combobox that suggests as the user types. Match is a case-insensitive `includes` on **either** `mcode` **or** `name` (description). Show `mcode — name` in the list, with `status` badge.
-- Purchase tab: selecting a suggestion auto-fills `mcode` and shows the merchant name inline; block submit if the chosen merchant's status ≠ `ACTIVE`.
-- Merchants tab: same combobox on the "edit existing" path; the "add new" path stays a free-text input so new mcodes can be created.
-- Data source: existing `listMerchants(uniquedevcode)` result already scoped to ccode server-side. No new endpoint.
+**Permanent fix**
 
-### D. Version + memory
-- Bump to `v2.11.2` (code `144`) in `src/constants/appVersion.ts`.
-- Update `mem://features/farmer-boost-phase2` with a short note pointing at the new guide + typeahead changes (or add `mem://features/farmer-boost-phase3-guide`).
+1. **Stop W5 from silently lowering cumulative totals**
+   - Change `updateFarmerCumulative()` so no backend refresh source can lower `baseCount` immediately unless it is an explicit confirmed reconciliation flow.
+   - Keep upward writes always accepted.
+   - Keep zero-protection intact.
 
-## 2. Files touched
+2. **Use confirmed two-read heal-down for all downward changes**
+   - Move downward acceptance behind the existing W3-style confirmation rules:
+     - two backend reads agree on the lower value,
+     - no unsynced local receipts exist for that farmer/route,
+     - route is normalized and scoped,
+     - log the exact confirmation source.
+   - This prevents a valid captured 52 Kg from being removed just because one refresh endpoint temporarily returned a stale/lower total.
 
-New:
-- `docs/FARMER_BOOST_GUIDE.md`
-- `docs/images/boost/*.png` (6 screenshots)
-- `src/components/boost/FarmerEnrollCombobox.tsx`
-- `src/components/boost/MerchantCombobox.tsx`
+3. **Fix post-submit cumulative refresh behavior**
+   - After an online submit, the app must not reduce cache if the immediate backend cumulative is lower than the trusted local floor.
+   - It should use:
 
-Edited (surgical):
-- `src/pages/BoostPanel.tsx` — wire the two comboboxes into Accounts / Merchants / Purchase tabs; add "Enroll farmer" button.
-- `src/constants/appVersion.ts` — bump.
-- `README.md` — one-line link to the guide.
-- `.lovable/memory/features/farmer-boost-phase2.md` — append v2.11.2 note.
+   ```text
+   trustedFloor = max(cachedBase, previousDisplayedCumulative) + justSubmittedWeight
+   ```
 
-Not touched: backend `server.js`, migrations, milk/store/receipt/sync code, `SellProduceScreen` chip, `BuyProduceScreen`.
+   - If backend returns below that floor, keep the trusted floor for printing/display and queue a reconfirm instead of writing the lower backend value.
 
-## 3. Safety & compatibility
+4. **Make batch prewarm route/product-safe**
+   - Ensure `refreshCumulativesBatch()` and `loadCumulativeBatch()` always write to the selected route bucket only when `selectedRouteCode` is present.
+   - Normalize route and product codes before compare/write.
+   - Do not allow route `ALL` and route `T001` values to overwrite or validate each other.
 
-- Feature stays dormant until `psettings.boost_enabled=1`; every new UI element continues to short-circuit when the flag is off.
-- No schema changes — Phase 1 + 2 migrations already cover the tables.
-- Member data is read from the app's existing cached members list (already scoped by ccode via device auth), so no new query surface on `cm_members`.
-- All lookups are client-side against already-cached data → works offline exactly like the rest of the app.
-- Idempotency and device-approval contracts on write endpoints remain unchanged.
+5. **Improve logs so this cannot be ambiguous again**
+   - Add explicit logs:
+     - `CUM:DOWNWARD-HELD` when lower backend is blocked.
+     - `CUM:DOWNWARD-CONFIRMED` only after two-read confirmation.
+     - include `cachedBase`, `incomingBackend`, `trustedFloor`, `unsyncedTotal`, `route`, `icode`, and caller.
 
-## 4. Verification checklist
+6. **Version and memory update**
+   - Increment app version from `2.10.120` to `2.10.121`.
+   - Document this as a permanent cumulative guard fix.
 
-- [ ] With `boost_enabled=0`: `/boost` still renders a "feature disabled" state; Sell chip stays hidden; guide renders correctly.
-- [ ] With `boost_enabled=1`: enroll a farmer by typing `1` (resolves to `M00001`); enroll another by typing part of the name; both appear in Accounts.
-- [ ] Merchant typeahead matches on both `mcode` and `name`; suspended merchants blocked in Purchase.
-- [ ] Screenshots captured headless, no PII, saved under `docs/images/boost/`.
-- [ ] `markitdown` / manual read of the guide shows every table + column documented.
-- [ ] Existing txn creation, receipts, sync, and device auth verified unaffected.
+**Expected result**
+
+- A valid captured 52 Kg will not be removed by refresh.
+- Backend refresh can still increase cumulative immediately.
+- A real downward correction can still be applied, but only after confirmed reconciliation.
+- M01859-style `1843.4 → 1791.4` will be held, not silently accepted by W5.
+- Receipt printing keeps using the trusted floor so the farmer’s cumulative does not go backwards after a valid delivery.

@@ -9,7 +9,6 @@ import { FarmerSearchModal } from './FarmerSearchModal';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
 import { CoffeeWeightDisplay } from './CoffeeWeightDisplay';
 import { toast } from 'sonner';
-import { BoostOutstandingChip } from './BoostOutstandingChip';
 
 interface SellProduceScreenProps {
   route: Route;
@@ -471,9 +470,6 @@ export const SellProduceScreen = ({
               <p className="font-semibold text-sm sm:text-base truncate">
                 {selectedFarmer ? `SELECT MEMBER [${selectedFarmer.name}]` : 'SELECT MEMBER []'}
               </p>
-              {selectedFarmer?.id && (
-                <div className="mt-1"><BoostOutstandingChip farmerId={selectedFarmer.id} /></div>
-              )}
             </div>
             <span className="font-bold text-base sm:text-lg ml-2">
               {totalCapturedWeight > 0 ? totalCapturedWeight.toFixed(1) : '0.0'}
