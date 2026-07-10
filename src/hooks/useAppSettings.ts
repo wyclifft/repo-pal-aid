@@ -43,6 +43,8 @@ export interface AppSettings {
   sackTare: number;
   // Allow frontend users to edit sack weight: 0 = fixed/backend-controlled, 1 = editable (DB: allowSackEdit, default: 0)
   allowSackEdit: number;
+  // v2.11.0: Payments module activation flag (DB: psettings.payments_active). 0 = hidden, 1 = active.
+  payments_active: number;
 }
 
 // Default settings - rdesc is empty to force use of dynamic DB value
