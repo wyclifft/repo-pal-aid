@@ -589,7 +589,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     sessionPrintOnly,
     useRouteFilter,
     sackTareWeight,
-    allowSackEdit
+    allowSackEdit,
+    paymentsActive
   };
 };
 
