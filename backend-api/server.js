@@ -106,6 +106,113 @@ const sendJSON = (res, data, status = 200, origin) => {
 
 const APP_VERSION = process.env.APP_VERSION || `serverjs-${new Date().toISOString()}`;
 
+const toDbBool = (value) => {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (Buffer.isBuffer(value)) return value[0] === 1;
+  if (typeof value === 'string') return value === '1' || value.toLowerCase() === 'true';
+  return Boolean(value);
+};
+
+const toYmdLocal = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const getPaymentPeriodRange = async (period, ccode) => {
+  const normalized = ['day', 'week', 'month', 'season'].includes(period) ? period : 'month';
+  const now = new Date();
+  const today = toYmdLocal(now);
+  let start;
+  let end = today;
+
+  if (normalized === 'day') {
+    start = today;
+  } else if (normalized === 'week') {
+    const mondayOffset = (now.getDay() || 7) - 1;
+    start = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() - mondayOffset));
+  } else if (normalized === 'month') {
+    start = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+  } else {
+    try {
+      const [seasonRows] = await pool.query(
+        `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
+           FROM sessions
+          WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+            AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
+          ORDER BY datefrom DESC LIMIT 1`,
+        [ccode, today, today]
+      );
+      if (seasonRows.length > 0) {
+        start = seasonRows[0].datefrom;
+        end = seasonRows[0].dateto;
+      }
+    } catch (e) {
+      console.warn('[PAY][PERIOD] season lookup failed, using 90-day fallback:', e?.message || e);
+    }
+    if (!start) start = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 90));
+  }
+
+  return { period: normalized, start, end };
+};
+
+const resolvePaymentsAccess = async ({ deviceFingerprint, userid }) => {
+  const fingerprint = String(deviceFingerprint || '').trim();
+  const userId = String(userid || '').trim();
+
+  if (!fingerprint) return { ok: false, status: 400, error: 'device_fingerprint is required' };
+  if (!userId) return { ok: false, status: 400, error: 'userid is required' };
+
+  const [deviceRows] = await pool.query(
+    'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ? LIMIT 1',
+    [fingerprint]
+  );
+  if (deviceRows.length === 0 || !toDbBool(deviceRows[0].authorized)) {
+    return { ok: false, status: 401, error: 'Device not authorized' };
+  }
+
+  const ccode = String(deviceRows[0].ccode || '').trim();
+  if (!ccode) return { ok: false, status: 403, error: 'Device company not configured' };
+
+  const [settingsRows] = await pool.query(
+    'SELECT IFNULL(payments_active, 0) AS payments_active FROM psettings WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) LIMIT 1',
+    [ccode]
+  );
+  if (settingsRows.length === 0 || !toDbBool(settingsRows[0].payments_active)) {
+    return { ok: false, status: 403, error: 'Payments not active for this company' };
+  }
+
+  const [userRows] = await pool.query(
+    `SELECT IFNULL(can_access_payments, 0) AS can_access_payments
+       FROM user
+      WHERE TRIM(userid) = ? AND UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+      LIMIT 1`,
+    [userId, ccode]
+  );
+  if (userRows.length === 0 || !toDbBool(userRows[0].can_access_payments)) {
+    return { ok: false, status: 403, error: 'Payment permission denied' };
+  }
+
+  return { ok: true, ccode, userid: userId, deviceFingerprint: fingerprint };
+};
+
+const chargeFarmerMock = async ({ ref, amount, farmer_code, ccode }) => {
+  await new Promise(resolve => setTimeout(resolve, 400 + Math.random() * 400));
+  const externalId = `MOCK-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  console.log('[PAY][SACCO:MOCK] success', { ref, amount, farmer_code, ccode });
+  return { success: true, external_transaction_id: externalId };
+};
+
+const makePaymentReference = (ccode, index = 0) => {
+  const safeCcode = String(ccode || 'CO').trim().replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 12) || 'CO';
+  const yymmdd = toYmdLocal(new Date()).slice(2).replace(/-/g, '');
+  const seq = `${Date.now().toString(36)}${index.toString(36)}`.toUpperCase().slice(-10);
+  return `PMT-${safeCcode}-${yymmdd}-${seq}`;
+};
+
 const errorToPlainObject = (err) => {
   if (!err) return null;
   const e = err instanceof Error ? err : new Error(String(err));
