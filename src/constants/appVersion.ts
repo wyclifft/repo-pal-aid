@@ -857,16 +857,22 @@
 //   untouched. Strictly additive on logs; behaviour change is a stricter
 //   guard, never a looser one.
 // v2.11.0: PAYMENTS MODULE + WEB BLUETOOTH AUTO-CONNECT REMOVAL. New Payments
-//   module (gated by psettings.payments_active + users.can_access_payments)
+//   module (gated by psettings.payments_active + user.can_access_payments)
 //   surfaces farmers with unpaid transactions, computes payable totals from
 //   the local transactions cache, generates a unique payment reference, and
 //   marks the underlying transactions as paid via a mock SACCO service
 //   (swap point: services/saccoPaymentService.js on the backend). Web builds
 //   no longer auto-connect Bluetooth on load; the Capacitor APK is unchanged.
-export const APP_VERSION = '2.11.0';
-export const APP_VERSION_CODE = 142;
+// v2.11.1: PAYMENTS NATIVE HTTP BACKEND FIX. Payment endpoints now plug into
+//   backend-api/server.js native http.createServer routing (no Express), login
+//   exposes user.can_access_payments, psettings responses expose payments_active,
+//   and client payment calls include device fingerprint + userid for ccode-safe
+//   permission checks. Existing capture, sync, receipts, Bluetooth, and native
+//   plugin paths are untouched.
+export const APP_VERSION = '2.11.1';
+export const APP_VERSION_CODE = 143;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
 // Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'payments-module';
+export const APP_FIX_TAG = 'payments-native-http';

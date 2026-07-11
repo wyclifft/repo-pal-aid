@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useAuth } from '@/contexts/AuthContext';
 import { usePaymentsAccess } from './usePaymentsAccess';
 import {
   getPayable,
@@ -31,6 +32,7 @@ const PERIODS: { value: PaymentPeriod; label: string }[] = [
 export default function PaymentsScreen() {
   const navigate = useNavigate();
   const { visible, paymentsActive, canAccessPayments } = usePaymentsAccess();
+  const { currentUser } = useAuth();
 
   const [period, setPeriod] = useState<PaymentPeriod>('month');
   const [rows, setRows] = useState<PayableFarmer[]>([]);
@@ -61,10 +63,11 @@ export default function PaymentsScreen() {
   }, []);
 
   const load = async () => {
+    if (!currentUser?.user_id) return;
     setLoading(true);
     setSelected(new Set());
     try {
-      const data = await getPayable(period);
+      const data = await getPayable(period, { userid: currentUser.user_id });
       setRows(data);
     } catch (e: any) {
       toast.error(e?.message || 'Failed to load payable farmers');
@@ -74,9 +77,9 @@ export default function PaymentsScreen() {
   };
 
   useEffect(() => {
-    if (visible) void load();
+    if (visible && currentUser?.user_id) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, visible]);
+  }, [period, visible, currentUser?.user_id]);
 
   const selectedRows = useMemo(
     () => rows.filter(r => selected.has(r.farmer_code)),
@@ -110,6 +113,10 @@ export default function PaymentsScreen() {
       toast.error('Select at least one farmer to pay.');
       return;
     }
+    if (!currentUser?.user_id) {
+      toast.error('Login session required for payments.');
+      return;
+    }
     setConfirmOpen(true);
   };
 
@@ -117,7 +124,8 @@ export default function PaymentsScreen() {
     setProcessing(true);
     setResults(null);
     try {
-      const res = await processPayments(Array.from(selected), period);
+      if (!currentUser?.user_id) throw new Error('Login session required for payments.');
+      const res = await processPayments(Array.from(selected), period, { userid: currentUser.user_id });
       setResults(res);
       const okCount = res.filter(r => r.status === 'success').length;
       const failCount = res.length - okCount;

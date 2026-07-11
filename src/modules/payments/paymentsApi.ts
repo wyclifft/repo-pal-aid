@@ -15,6 +15,7 @@
  */
 import { API_CONFIG } from '@/config/api';
 import { resilientFetch } from '@/utils/resilientFetch';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { computePayableFromLocal, markLocalTransactionsPaid } from './localPaymentsFallback';
 
 const BASE = `${API_CONFIG.MYSQL_API_URL}/api/payments`;
@@ -48,17 +49,31 @@ export interface PaymentHistoryEntry {
   external_transaction_id?: string | null;
 }
 
+export interface PaymentAccessIdentity {
+  userid: string;
+}
+
 async function safeJson(res: Response) {
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('application/json')) return null;
   try { return await res.json(); } catch { return null; }
 }
 
-export async function getPayable(period: PaymentPeriod): Promise<PayableFarmer[]> {
+async function paymentAccessParams(identity: PaymentAccessIdentity): Promise<URLSearchParams> {
+  const deviceFingerprint = await generateDeviceFingerprint();
+  const params = new URLSearchParams();
+  params.set('uniquedevcode', deviceFingerprint);
+  params.set('userid', identity.userid);
+  return params;
+}
+
+export async function getPayable(period: PaymentPeriod, identity: PaymentAccessIdentity): Promise<PayableFarmer[]> {
   console.log('[PAY][PAYABLE] period=', period);
   if (navigator.onLine) {
     try {
-      const res = await resilientFetch(`${BASE}/payable?period=${period}`, { method: 'GET' });
+      const params = await paymentAccessParams(identity);
+      params.set('period', period);
+      const res = await resilientFetch(`${BASE}/payable?${params.toString()}`, { method: 'GET' });
       if (res.ok) {
         const body = await safeJson(res);
         if (body?.success && Array.isArray(body.data)) return body.data as PayableFarmer[];
@@ -75,17 +90,24 @@ export async function getPayable(period: PaymentPeriod): Promise<PayableFarmer[]
 
 export async function processPayments(
   farmerCodes: string[],
-  period: PaymentPeriod
+  period: PaymentPeriod,
+  identity: PaymentAccessIdentity
 ): Promise<PaymentResult[]> {
   console.log('[PAY][PROCESS] farmers=', farmerCodes.length, 'period=', period);
   if (!navigator.onLine) {
     throw new Error('Payments require an internet connection.');
   }
   try {
+    const deviceFingerprint = await generateDeviceFingerprint();
     const res = await resilientFetch(`${BASE}/process`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ farmer_codes: farmerCodes, period }),
+      body: JSON.stringify({
+        farmer_codes: farmerCodes,
+        period,
+        device_fingerprint: deviceFingerprint,
+        userid: identity.userid,
+      }),
     });
     if (res.ok) {
       const body = await safeJson(res);
@@ -118,10 +140,12 @@ export async function processPayments(
 export async function getHistory(
   farmerCode?: string,
   from?: string,
-  to?: string
+  to?: string,
+  identity?: PaymentAccessIdentity
 ): Promise<PaymentHistoryEntry[]> {
   if (!navigator.onLine) return [];
-  const params = new URLSearchParams();
+  if (!identity?.userid) return [];
+  const params = await paymentAccessParams(identity);
   if (farmerCode) params.set('farmer_code', farmerCode);
   if (from) params.set('from', from);
   if (to) params.set('to', to);
