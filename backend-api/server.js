@@ -2888,7 +2888,8 @@ const server = http.createServer(async (req, res) => {
         printcumm: 0,
         zeroOpt: 0,
         sackTare: 1,
-        sackEdit: 0
+        sackEdit: 0,
+        payments_active: 0
       };
       
       if (deviceData.ccode) {
@@ -2910,7 +2911,8 @@ const server = http.createServer(async (req, res) => {
             IFNULL(printcumm, 0) as printcumm,
             IFNULL(zeroopt, 0) as zeroopt,
             IFNULL(sackTare, 1) as sackTare,
-            IFNULL(sackEdit, 0) as sackEdit
+            IFNULL(sackEdit, 0) as sackEdit,
+            IFNULL(payments_active, 0) as payments_active
           FROM psettings WHERE ccode = ?`,
           [deviceData.ccode]);
         
@@ -2931,6 +2933,7 @@ const server = http.createServer(async (req, res) => {
             zeroOpt: companyRows[0].zeroopt,
             sackTare: companyRows[0].sackTare,
             sackEdit: companyRows[0].sackEdit,
+            payments_active: companyRows[0].payments_active,
             // Derived labels from orgtype
             periodLabel: orgtype === 'C' ? 'Season' : 'Session',
             // Additional company info
