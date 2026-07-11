@@ -4254,6 +4254,184 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    // ===== PAYMENTS ENDPOINTS (v2.11.1, native http routing — no Express) =====
+    if (path === '/api/payments/payable' && method === 'GET') {
+      const deviceFingerprint = parsedUrl.query.uniquedevcode || parsedUrl.query.device_fingerprint;
+      const userid = parsedUrl.query.userid || parsedUrl.query.user_id;
+      const access = await resolvePaymentsAccess({ deviceFingerprint, userid });
+      if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403);
+
+      const periodInput = String(parsedUrl.query.period || 'month');
+      const range = await getPaymentPeriodRange(periodInput, access.ccode);
+
+      const [rows] = await pool.query(
+        `SELECT
+            TRIM(t.memberno) AS farmer_code,
+            COALESCE(NULLIF(MAX(TRIM(cm.descript)), ''), TRIM(t.memberno)) AS farmer_name,
+            ROUND(SUM(CAST(IFNULL(t.amount, 0) AS DECIMAL(14,2))), 2) AS total_payable,
+            COUNT(*) AS unpaid_count,
+            'unpaid' AS payment_status
+           FROM transactions t
+           LEFT JOIN cm_members cm
+             ON UPPER(TRIM(cm.mcode)) = UPPER(TRIM(t.memberno))
+            AND UPPER(TRIM(cm.ccode)) = UPPER(TRIM(t.ccode))
+          WHERE UPPER(TRIM(t.ccode)) = UPPER(TRIM(?))
+            AND IFNULL(t.payment_status, 'unpaid') = 'unpaid'
+            AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+          GROUP BY TRIM(t.memberno)
+         HAVING total_payable > 0
+          ORDER BY farmer_name`,
+        [access.ccode, range.start, range.end]
+      );
+
+      console.log(`[PAY][PAYABLE] ccode=${access.ccode} userid=${access.userid} period=${range.period} ${range.start}→${range.end} farmers=${rows.length}`);
+      return sendJSON(res, { success: true, data: rows });
+    }
+
+    if (path === '/api/payments/process' && method === 'POST') {
+      const body = await parseBody(req);
+      const access = await resolvePaymentsAccess({
+        deviceFingerprint: body.device_fingerprint || body.uniquedevcode,
+        userid: body.userid || body.user_id,
+      });
+      if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403);
+
+      const farmerCodes = Array.isArray(body.farmer_codes)
+        ? body.farmer_codes.map(code => String(code || '').trim()).filter(Boolean).slice(0, 500)
+        : [];
+      if (farmerCodes.length === 0) {
+        return sendJSON(res, { success: false, error: 'farmer_codes is required' }, 400);
+      }
+
+      const range = await getPaymentPeriodRange(String(body.period || 'month'), access.ccode);
+      const results = [];
+
+      for (let i = 0; i < farmerCodes.length; i++) {
+        const farmerCode = farmerCodes[i];
+        const conn = await pool.getConnection();
+        try {
+          await conn.beginTransaction();
+
+          const [[sumRow]] = await conn.query(
+            `SELECT ROUND(SUM(CAST(IFNULL(amount, 0) AS DECIMAL(14,2))), 2) AS total
+               FROM transactions
+              WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+                AND UPPER(TRIM(memberno)) = UPPER(TRIM(?))
+                AND IFNULL(payment_status, 'unpaid') = 'unpaid'
+                AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
+            [access.ccode, farmerCode, range.start, range.end]
+          );
+
+          const amount = Number(sumRow?.total || 0);
+          if (amount <= 0) {
+            await conn.rollback();
+            results.push({
+              farmer_code: farmerCode,
+              payment_reference: '',
+              amount: 0,
+              status: 'failed',
+              error: 'No unpaid payable amount for selected period',
+            });
+            continue;
+          }
+
+          const ref = makePaymentReference(access.ccode, i);
+          const [insertResult] = await conn.query(
+            `INSERT INTO payments
+              (payment_reference, ccode, farmer_code, amount, status, payment_date, created_by)
+             VALUES (?, ?, ?, ?, 'pending', NOW(), ?)`,
+            [ref, access.ccode, farmerCode, amount, access.userid]
+          );
+          const paymentId = insertResult.insertId;
+
+          const sacco = await chargeFarmerMock({ ref, amount, farmer_code: farmerCode, ccode: access.ccode });
+          if (!sacco?.success) {
+            await conn.query(`UPDATE payments SET status = 'failed' WHERE payment_id = ?`, [paymentId]);
+            await conn.commit();
+            results.push({ farmer_code: farmerCode, payment_reference: ref, amount, status: 'failed', error: 'Payment declined' });
+            continue;
+          }
+
+          await conn.query(
+            `UPDATE payments
+                SET status = 'success', external_transaction_id = ?
+              WHERE payment_id = ?`,
+            [sacco.external_transaction_id, paymentId]
+          );
+          const [updateResult] = await conn.query(
+            `UPDATE transactions
+                SET payment_id = ?, payment_status = 'paid'
+              WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+                AND UPPER(TRIM(memberno)) = UPPER(TRIM(?))
+                AND IFNULL(payment_status, 'unpaid') = 'unpaid'
+                AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
+            [paymentId, access.ccode, farmerCode, range.start, range.end]
+          );
+
+          await conn.commit();
+          results.push({
+            farmer_code: farmerCode,
+            payment_reference: ref,
+            amount,
+            status: 'success',
+            external_transaction_id: sacco.external_transaction_id,
+            paid_count: updateResult.affectedRows || 0,
+          });
+        } catch (e) {
+          await conn.rollback().catch(() => {});
+          console.error('[PAY][PROCESS] farmer failed:', farmerCode, e?.message || e);
+          results.push({
+            farmer_code: farmerCode,
+            payment_reference: '',
+            amount: 0,
+            status: 'failed',
+            error: 'Payment processing failed',
+          });
+        } finally {
+          conn.release();
+        }
+      }
+
+      console.log(`[PAY][PROCESS] ccode=${access.ccode} userid=${access.userid} period=${range.period} requested=${farmerCodes.length}`);
+      return sendJSON(res, { success: true, data: results });
+    }
+
+    if (path === '/api/payments/history' && method === 'GET') {
+      const deviceFingerprint = parsedUrl.query.uniquedevcode || parsedUrl.query.device_fingerprint;
+      const userid = parsedUrl.query.userid || parsedUrl.query.user_id;
+      const access = await resolvePaymentsAccess({ deviceFingerprint, userid });
+      if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403);
+
+      const clauses = ['UPPER(TRIM(ccode)) = UPPER(TRIM(?))'];
+      const params = [access.ccode];
+      if (parsedUrl.query.farmer_code) {
+        clauses.push('UPPER(TRIM(farmer_code)) = UPPER(TRIM(?))');
+        params.push(String(parsedUrl.query.farmer_code).trim());
+      }
+      if (parsedUrl.query.from) {
+        clauses.push('DATE(payment_date) >= ?');
+        params.push(String(parsedUrl.query.from).trim());
+      }
+      if (parsedUrl.query.to) {
+        clauses.push('DATE(payment_date) <= ?');
+        params.push(String(parsedUrl.query.to).trim());
+      }
+
+      const [rows] = await pool.query(
+        `SELECT payment_id, payment_reference, farmer_code, amount, status,
+                DATE_FORMAT(payment_date, '%Y-%m-%d %H:%i:%s') AS payment_date,
+                external_transaction_id
+           FROM payments
+          WHERE ${clauses.join(' AND ')}
+          ORDER BY payment_date DESC
+          LIMIT 500`,
+        params
+      );
+
+      console.log(`[PAY][HISTORY] ccode=${access.ccode} userid=${access.userid} rows=${rows.length}`);
+      return sendJSON(res, { success: true, data: rows });
+    }
+
     // 404
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
 
