@@ -76,6 +76,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             dcode: user.dcode || '',
             groupid: user.groupid || '',
             depart: user.depart || '',
+            can_access_payments: user.can_access_payments ?? false,
             timestamp: Date.now(),
           };
           localStorage.setItem(CACHED_CREDENTIALS_KEY, JSON.stringify(cachedCreds));
