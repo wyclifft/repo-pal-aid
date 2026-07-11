@@ -348,7 +348,8 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           supervisor: cachedCreds.supervisor ?? 0,
           dcode: cachedCreds.dcode || '',
           groupid: cachedCreds.groupid || '',
-          depart: cachedCreds.depart || ''
+          depart: cachedCreds.depart || '',
+          can_access_payments: cachedCreds.can_access_payments ?? false
         };
         
         console.log('👤 Offline login - Cached user data:', {
