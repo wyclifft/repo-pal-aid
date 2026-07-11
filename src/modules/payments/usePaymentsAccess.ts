@@ -1,9 +1,9 @@
 /**
- * v2.11.0 — Payments module access gate
+ * v2.11.1 — Payments module access gate
  *
  * Payments menu + route are visible only when BOTH:
  *   1. psettings.payments_active === 1 (company-level flag)
- *   2. users.can_access_payments === true (per-user permission)
+ *   2. user.can_access_payments === true (per-user permission)
  *
  * Either flag missing/0 → module hidden entirely (no menu, no route).
  * Deep-link `/payments` is redirected to the dashboard by the route guard.
