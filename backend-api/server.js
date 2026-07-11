@@ -3871,7 +3871,9 @@ const server = http.createServer(async (req, res) => {
           groupid: user.groupid,
           depart: user.depart,
           // v2.10.40: expose add_members permission for member-creation gating
-          add_members: toBool(user.add_members)
+          add_members: toBool(user.add_members),
+          // v2.11.1: expose Payments permission from real MySQL table `user`
+          can_access_payments: toBool(user.can_access_payments)
         }
       });
     }
