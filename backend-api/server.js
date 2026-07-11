@@ -3409,7 +3409,8 @@ const server = http.createServer(async (req, res) => {
           IFNULL(onlinemode, 0) as onlinemode,
           IFNULL(orgtype, 'D') as orgtype,
           IFNULL(printcumm, 0) as printcumm,
-          IFNULL(zeroopt, 0) as zeroopt
+          IFNULL(zeroopt, 0) as zeroopt,
+          IFNULL(payments_active, 0) as payments_active
         FROM psettings WHERE ccode = ?`,
         [targetCcode]
       );
@@ -3434,7 +3435,8 @@ const server = http.createServer(async (req, res) => {
             orgtype: 'D',
             periodLabel: 'Session',
             printcumm: 0,
-            zeroOpt: 0
+            zeroOpt: 0,
+            payments_active: 0
           } 
         });
       }
@@ -3459,7 +3461,8 @@ const server = http.createServer(async (req, res) => {
           orgtype: orgtype,
           periodLabel: orgtype === 'C' ? 'Season' : 'Session',
           printcumm: rows[0].printcumm,
-          zeroOpt: rows[0].zeroopt
+          zeroOpt: rows[0].zeroopt,
+          payments_active: rows[0].payments_active
         }
       });
     }
