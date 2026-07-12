@@ -213,6 +213,66 @@ const makePaymentReference = (ccode, index = 0) => {
   return `PMT-${safeCcode}-${yymmdd}-${seq}`;
 };
 
+// v2.11.2 — Payment calculation. Sums transaction WEIGHT (not amount) for
+// transtype=1, payment_status='unpaid' inside the selected period. Multiplies
+// by psettings.price_per_kg (renamed from boost_price_per_kg). Deducts total
+// outstanding crbal (parsed from "CR01#2000,CR02#1000") capped at the gross
+// so a farmer can never owe negative pay. Runs on a caller-supplied executor
+// (pool or transactional connection) so it's reusable in both endpoints.
+const parseCrbalTotal = (crbal) => {
+  if (!crbal || typeof crbal !== 'string') return 0;
+  return crbal.split(',').reduce((sum, entry) => {
+    const parts = entry.trim().split('#');
+    const val = parseFloat(parts[1]);
+    return sum + (isFinite(val) ? val : 0);
+  }, 0);
+};
+
+const getCompanyPricePerKg = async (executor, ccode) => {
+  const [rows] = await executor.query(
+    'SELECT IFNULL(price_per_kg, 0) AS price_per_kg FROM psettings WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) LIMIT 1',
+    [ccode]
+  );
+  return Number(rows[0]?.price_per_kg || 0);
+};
+
+const computeFarmerPayment = async (executor, ccode, farmerCode, range, pricePerKg) => {
+  const [[sumRow]] = await executor.query(
+    `SELECT ROUND(SUM(CAST(IFNULL(weight, 0) AS DECIMAL(14,4))), 4) AS total_qty,
+            COUNT(*) AS unpaid_count
+       FROM transactions
+      WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+        AND UPPER(TRIM(memberno)) = UPPER(TRIM(?))
+        AND transtype = 1
+        AND IFNULL(payment_status, 'unpaid') = 'unpaid'
+        AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
+    [ccode, farmerCode, range.start, range.end]
+  );
+  const [[memberRow]] = await executor.query(
+    `SELECT IFNULL(crbal, '') AS crbal, IFNULL(descript, '') AS descript
+       FROM cm_members
+      WHERE UPPER(TRIM(mcode)) = UPPER(TRIM(?))
+        AND UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+      LIMIT 1`,
+    [farmerCode, ccode]
+  );
+
+  const totalQty = Number(sumRow?.total_qty || 0);
+  const unpaidCount = Number(sumRow?.unpaid_count || 0);
+  const gross = Math.round(totalQty * pricePerKg * 100) / 100;
+  const rawDeductions = parseCrbalTotal(memberRow?.crbal);
+  const deductions = Math.min(rawDeductions, gross);
+  const net = Math.round((gross - deductions) * 100) / 100;
+  return {
+    total_qty: totalQty,
+    unpaid_count: unpaidCount,
+    gross_amount: gross,
+    deductions: Math.round(deductions * 100) / 100,
+    net_amount: net,
+    farmer_name: memberRow?.descript || farmerCode,
+  };
+};
+
 const errorToPlainObject = (err) => {
   if (!err) return null;
   const e = err instanceof Error ? err : new Error(String(err));
@@ -4254,7 +4314,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // ===== PAYMENTS ENDPOINTS (v2.11.1, native http routing — no Express) =====
+    // ===== PAYMENTS ENDPOINTS (v2.11.2 — quantity × price − crbal deductions) =====
     if (path === '/api/payments/payable' && method === 'GET') {
       const deviceFingerprint = parsedUrl.query.uniquedevcode || parsedUrl.query.device_fingerprint;
       const userid = parsedUrl.query.userid || parsedUrl.query.user_id;
@@ -4263,29 +4323,52 @@ const server = http.createServer(async (req, res) => {
 
       const periodInput = String(parsedUrl.query.period || 'month');
       const range = await getPaymentPeriodRange(periodInput, access.ccode);
+      const pricePerKg = await getCompanyPricePerKg(pool, access.ccode);
 
-      const [rows] = await pool.query(
+      // Aggregate unpaid qty + counts per farmer for transtype=1 in range.
+      const [aggRows] = await pool.query(
         `SELECT
             TRIM(t.memberno) AS farmer_code,
             COALESCE(NULLIF(MAX(TRIM(cm.descript)), ''), TRIM(t.memberno)) AS farmer_name,
-            ROUND(SUM(CAST(IFNULL(t.amount, 0) AS DECIMAL(14,2))), 2) AS total_payable,
-            COUNT(*) AS unpaid_count,
-            'unpaid' AS payment_status
+            IFNULL(MAX(TRIM(cm.crbal)), '') AS crbal,
+            ROUND(SUM(CAST(IFNULL(t.weight, 0) AS DECIMAL(14,4))), 4) AS total_qty,
+            COUNT(*) AS unpaid_count
            FROM transactions t
            LEFT JOIN cm_members cm
              ON UPPER(TRIM(cm.mcode)) = UPPER(TRIM(t.memberno))
             AND UPPER(TRIM(cm.ccode)) = UPPER(TRIM(t.ccode))
           WHERE UPPER(TRIM(t.ccode)) = UPPER(TRIM(?))
+            AND t.transtype = 1
             AND IFNULL(t.payment_status, 'unpaid') = 'unpaid'
             AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
           GROUP BY TRIM(t.memberno)
-         HAVING total_payable > 0
+         HAVING total_qty > 0
           ORDER BY farmer_name`,
         [access.ccode, range.start, range.end]
       );
 
-      console.log(`[PAY][PAYABLE] ccode=${access.ccode} userid=${access.userid} period=${range.period} ${range.start}→${range.end} farmers=${rows.length}`);
-      return sendJSON(res, { success: true, data: rows });
+      const data = aggRows.map(r => {
+        const totalQty = Number(r.total_qty || 0);
+        const gross = Math.round(totalQty * pricePerKg * 100) / 100;
+        const rawDeductions = parseCrbalTotal(r.crbal);
+        const deductions = Math.round(Math.min(rawDeductions, gross) * 100) / 100;
+        const net = Math.round((gross - deductions) * 100) / 100;
+        return {
+          farmer_code: r.farmer_code,
+          farmer_name: r.farmer_name,
+          total_qty: totalQty,
+          unpaid_count: Number(r.unpaid_count || 0),
+          price_per_kg: pricePerKg,
+          gross_amount: gross,
+          deductions,
+          net_amount: net,
+          total_payable: net, // backward-compat with existing UI
+          payment_status: 'unpaid',
+        };
+      }).filter(r => r.net_amount > 0);
+
+      console.log(`[PAY][PAYABLE] ccode=${access.ccode} userid=${access.userid} period=${range.period} ${range.start}→${range.end} price=${pricePerKg} farmers=${data.length}`);
+      return sendJSON(res, { success: true, data, price_per_kg: pricePerKg, period: range });
     }
 
     if (path === '/api/payments/process' && method === 'POST') {
@@ -4304,6 +4387,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const range = await getPaymentPeriodRange(String(body.period || 'month'), access.ccode);
+      const pricePerKg = await getCompanyPricePerKg(pool, access.ccode);
       const results = [];
 
       for (let i = 0; i < farmerCodes.length; i++) {
@@ -4312,46 +4396,83 @@ const server = http.createServer(async (req, res) => {
         try {
           await conn.beginTransaction();
 
-          const [[sumRow]] = await conn.query(
-            `SELECT ROUND(SUM(CAST(IFNULL(amount, 0) AS DECIMAL(14,2))), 2) AS total
-               FROM transactions
-              WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
-                AND UPPER(TRIM(memberno)) = UPPER(TRIM(?))
-                AND IFNULL(payment_status, 'unpaid') = 'unpaid'
-                AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
-            [access.ccode, farmerCode, range.start, range.end]
-          );
-
-          const amount = Number(sumRow?.total || 0);
-          if (amount <= 0) {
+          const calc = await computeFarmerPayment(conn, access.ccode, farmerCode, range, pricePerKg);
+          if (calc.net_amount <= 0) {
             await conn.rollback();
             results.push({
               farmer_code: farmerCode,
               payment_reference: '',
               amount: 0,
+              gross_amount: calc.gross_amount,
+              deductions: calc.deductions,
+              net_amount: calc.net_amount,
+              total_qty: calc.total_qty,
               status: 'failed',
-              error: 'No unpaid payable amount for selected period',
+              error: calc.gross_amount <= 0
+                ? 'No unpaid quantity for selected period'
+                : 'Net payable is zero after credit deductions',
             });
             continue;
           }
 
           const ref = makePaymentReference(access.ccode, i);
+          // Insert payment (pending) with NET amount — this is the amount
+          // sent to the SACCO/payment provider.
           const [insertResult] = await conn.query(
             `INSERT INTO payments
               (payment_reference, ccode, farmer_code, amount, status, payment_date, created_by)
              VALUES (?, ?, ?, ?, 'pending', NOW(), ?)`,
-            [ref, access.ccode, farmerCode, amount, access.userid]
+            [ref, access.ccode, farmerCode, calc.net_amount, access.userid]
           );
           const paymentId = insertResult.insertId;
 
-          const sacco = await chargeFarmerMock({ ref, amount, farmer_code: farmerCode, ccode: access.ccode });
+          // Lock the source transactions into 'pending' so they can't be
+          // re-selected while the SACCO call is in flight.
+          await conn.query(
+            `UPDATE transactions
+                SET payment_id = ?, payment_status = 'pending'
+              WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+                AND UPPER(TRIM(memberno)) = UPPER(TRIM(?))
+                AND transtype = 1
+                AND IFNULL(payment_status, 'unpaid') = 'unpaid'
+                AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
+            [paymentId, access.ccode, farmerCode, range.start, range.end]
+          );
+          await conn.commit();
+
+          // Call the (mock) SACCO outside the DB transaction.
+          const sacco = await chargeFarmerMock({
+            ref,
+            amount: calc.net_amount,
+            farmer_code: farmerCode,
+            ccode: access.ccode,
+          });
+
           if (!sacco?.success) {
+            await conn.beginTransaction();
             await conn.query(`UPDATE payments SET status = 'failed' WHERE payment_id = ?`, [paymentId]);
+            await conn.query(
+              `UPDATE transactions
+                  SET payment_status = 'failed'
+                WHERE payment_id = ? AND payment_status = 'pending'`,
+              [paymentId]
+            );
             await conn.commit();
-            results.push({ farmer_code: farmerCode, payment_reference: ref, amount, status: 'failed', error: 'Payment declined' });
+            results.push({
+              farmer_code: farmerCode,
+              payment_reference: ref,
+              amount: calc.net_amount,
+              gross_amount: calc.gross_amount,
+              deductions: calc.deductions,
+              net_amount: calc.net_amount,
+              total_qty: calc.total_qty,
+              status: 'failed',
+              error: 'Payment declined',
+            });
             continue;
           }
 
+          await conn.beginTransaction();
           await conn.query(
             `UPDATE payments
                 SET status = 'success', external_transaction_id = ?
@@ -4360,19 +4481,20 @@ const server = http.createServer(async (req, res) => {
           );
           const [updateResult] = await conn.query(
             `UPDATE transactions
-                SET payment_id = ?, payment_status = 'paid'
-              WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
-                AND UPPER(TRIM(memberno)) = UPPER(TRIM(?))
-                AND IFNULL(payment_status, 'unpaid') = 'unpaid'
-                AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
-            [paymentId, access.ccode, farmerCode, range.start, range.end]
+                SET payment_status = 'paid'
+              WHERE payment_id = ? AND payment_status = 'pending'`,
+            [paymentId]
           );
-
           await conn.commit();
+
           results.push({
             farmer_code: farmerCode,
             payment_reference: ref,
-            amount,
+            amount: calc.net_amount,
+            gross_amount: calc.gross_amount,
+            deductions: calc.deductions,
+            net_amount: calc.net_amount,
+            total_qty: calc.total_qty,
             status: 'success',
             external_transaction_id: sacco.external_transaction_id,
             paid_count: updateResult.affectedRows || 0,
@@ -4392,7 +4514,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      console.log(`[PAY][PROCESS] ccode=${access.ccode} userid=${access.userid} period=${range.period} requested=${farmerCodes.length}`);
+      console.log(`[PAY][PROCESS] ccode=${access.ccode} userid=${access.userid} period=${range.period} price=${pricePerKg} requested=${farmerCodes.length}`);
       return sendJSON(res, { success: true, data: results });
     }
 
@@ -4431,6 +4553,7 @@ const server = http.createServer(async (req, res) => {
       console.log(`[PAY][HISTORY] ccode=${access.ccode} userid=${access.userid} rows=${rows.length}`);
       return sendJSON(res, { success: true, data: rows });
     }
+
 
     // 404
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);

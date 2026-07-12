@@ -1,4 +1,4 @@
-# v2.11.1 — Payments module backend additions
+# v2.11.2 — Payments module backend additions
 
 The web/APK frontend ships a Payments module backed by the existing native
 Node `http.createServer()` backend in `backend-api/server.js`. These additions
@@ -11,9 +11,14 @@ are additive and keep legacy APKs compatible.
 These database objects are expected to exist:
 
 ```sql
--- psettings: per-company activation flag
+-- psettings: per-company activation flag + price per Kg
 ALTER TABLE psettings
   ADD COLUMN IF NOT EXISTS payments_active TINYINT(1) NOT NULL DEFAULT 0;
+
+-- v2.11.2: rename boost_price_per_kg → price_per_kg. Skip if already renamed.
+ALTER TABLE psettings CHANGE COLUMN boost_price_per_kg price_per_kg DECIMAL(14,4) NOT NULL DEFAULT 0;
+-- If boost_price_per_kg never existed, use instead:
+-- ALTER TABLE psettings ADD COLUMN IF NOT EXISTS price_per_kg DECIMAL(14,4) NOT NULL DEFAULT 0;
 
 -- user: per-user permission gate. The production table is `user`, not `users`.
 ALTER TABLE user
@@ -24,7 +29,7 @@ CREATE TABLE IF NOT EXISTS payments (
   payment_reference       VARCHAR(40)  NOT NULL UNIQUE,
   ccode                   VARCHAR(20)  NOT NULL,
   farmer_code             VARCHAR(40)  NOT NULL,
-  amount                  DECIMAL(14,2) NOT NULL,
+  amount                  DECIMAL(14,2) NOT NULL, -- NET amount (gross − crbal deductions)
   status                  ENUM('pending','success','failed') NOT NULL DEFAULT 'pending',
   payment_date            DATETIME     NOT NULL,
   external_transaction_id VARCHAR(80)  NULL,
@@ -35,13 +40,48 @@ CREATE TABLE IF NOT EXISTS payments (
   INDEX idx_pay_ccode_date   (ccode, payment_date)
 );
 
+-- v2.11.2: transactions.payment_status extended with pending + failed.
 ALTER TABLE transactions
   ADD COLUMN IF NOT EXISTS payment_id BIGINT NULL,
-  ADD COLUMN IF NOT EXISTS payment_status ENUM('unpaid','paid') NOT NULL DEFAULT 'unpaid',
+  MODIFY COLUMN payment_status
+    ENUM('unpaid','pending','paid','failed') NOT NULL DEFAULT 'unpaid',
   ADD INDEX idx_txn_payment_lookup (ccode, payment_status, memberno);
 ```
 
 Existing rows default to `unpaid`; no destructive migration is required.
+
+### 1.1 Payment amount calculation (v2.11.2)
+
+For each farmer, over the selected period, the backend computes:
+
+```
+total_qty     = SUM(transactions.weight)
+                WHERE transtype = 1
+                  AND payment_status = 'unpaid'
+                  AND transdate ∈ [period.start, period.end]
+                  AND ccode = <company>
+
+gross_amount  = total_qty × psettings.price_per_kg
+deductions    = MIN( SUM(parsed cm_members.crbal entries), gross_amount )
+net_amount    = gross_amount − deductions
+```
+
+`cm_members.crbal` is parsed from `"CR01#2000,CR02#1000"` — comma-separated
+entries of `code#amount`. Deductions are capped at `gross_amount` so net
+payable never goes negative. Only `transtype = 1` (produce delivery)
+transactions are considered.
+
+### 1.2 Transaction payment_status lifecycle
+
+- `unpaid`  — default; eligible for payment.
+- `pending` — locked into a `payments` row awaiting SACCO confirmation.
+- `paid`    — SACCO confirmed success.
+- `failed`  — SACCO declined; eligible to be reprocessed (returned to
+  `unpaid` manually or by future retry logic).
+
+The `/api/payments/payable` aggregate strictly filters to `unpaid` — pending,
+paid, and failed rows never appear as available to pay.
+
 
 ---
 

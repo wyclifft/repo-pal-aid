@@ -86,7 +86,7 @@ export default function PaymentsScreen() {
     [rows, selected]
   );
   const selectedTotal = useMemo(
-    () => selectedRows.reduce((s, r) => s + (Number(r.total_payable) || 0), 0),
+    () => selectedRows.reduce((s, r) => s + (Number(r.net_amount ?? r.total_payable) || 0), 0),
     [selectedRows]
   );
 
@@ -229,10 +229,21 @@ export default function PaymentsScreen() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-gray-900 truncate">{r.farmer_name}</div>
-                  <div className="text-xs text-gray-500">{r.farmer_code} · {r.unpaid_count} txn</div>
+                  <div className="text-xs text-gray-500">
+                    {r.farmer_code} · {r.unpaid_count} txn
+                    {typeof r.total_qty === 'number' && (
+                      <> · {r.total_qty.toLocaleString(undefined, { maximumFractionDigits: 2 })} Kgs</>
+                    )}
+                  </div>
+                  {typeof r.deductions === 'number' && r.deductions > 0 && (
+                    <div className="text-[11px] text-gray-500 mt-0.5">
+                      Gross {Number(r.gross_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {' − '}Credit {Number(r.deductions).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  )}
                 </div>
                 <div className="w-28 text-right font-mono text-sm">
-                  {Number(r.total_payable).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(r.net_amount ?? r.total_payable).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="w-20 text-right">
                   <span className={`text-xs px-2 py-0.5 rounded ${
