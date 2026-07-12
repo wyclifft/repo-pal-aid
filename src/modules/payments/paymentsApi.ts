@@ -25,6 +25,11 @@ export type PaymentPeriod = 'day' | 'week' | 'month' | 'season';
 export interface PayableFarmer {
   farmer_code: string;
   farmer_name: string;
+  total_qty?: number;
+  price_per_kg?: number;
+  gross_amount?: number;
+  deductions?: number;
+  net_amount?: number;
   total_payable: number;
   unpaid_count: number;
   payment_status: 'unpaid' | 'partial';
@@ -34,6 +39,10 @@ export interface PaymentResult {
   farmer_code: string;
   payment_reference: string;
   amount: number;
+  gross_amount?: number;
+  deductions?: number;
+  net_amount?: number;
+  total_qty?: number;
   status: 'success' | 'failed' | 'pending';
   external_transaction_id?: string;
   error?: string;
@@ -44,7 +53,7 @@ export interface PaymentHistoryEntry {
   payment_reference: string;
   farmer_code: string;
   amount: number;
-  status: 'pending' | 'success' | 'failed';
+  status: 'unpaid' | 'pending' | 'success' | 'failed' | 'paid';
   payment_date: string;
   external_transaction_id?: string | null;
 }
