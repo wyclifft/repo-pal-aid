@@ -1,4 +1,4 @@
-# v2.11.1 — Payments module backend additions
+# v2.11.2 — Payments module backend additions
 
 The web/APK frontend ships a Payments module backed by the existing native
 Node `http.createServer()` backend in `backend-api/server.js`. These additions
