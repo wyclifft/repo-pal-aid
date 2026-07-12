@@ -213,6 +213,66 @@ const makePaymentReference = (ccode, index = 0) => {
   return `PMT-${safeCcode}-${yymmdd}-${seq}`;
 };
 
+// v2.11.2 — Payment calculation. Sums transaction WEIGHT (not amount) for
+// transtype=1, payment_status='unpaid' inside the selected period. Multiplies
+// by psettings.price_per_kg (renamed from boost_price_per_kg). Deducts total
+// outstanding crbal (parsed from "CR01#2000,CR02#1000") capped at the gross
+// so a farmer can never owe negative pay. Runs on a caller-supplied executor
+// (pool or transactional connection) so it's reusable in both endpoints.
+const parseCrbalTotal = (crbal) => {
+  if (!crbal || typeof crbal !== 'string') return 0;
+  return crbal.split(',').reduce((sum, entry) => {
+    const parts = entry.trim().split('#');
+    const val = parseFloat(parts[1]);
+    return sum + (isFinite(val) ? val : 0);
+  }, 0);
+};
+
+const getCompanyPricePerKg = async (executor, ccode) => {
+  const [rows] = await executor.query(
+    'SELECT IFNULL(price_per_kg, 0) AS price_per_kg FROM psettings WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) LIMIT 1',
+    [ccode]
+  );
+  return Number(rows[0]?.price_per_kg || 0);
+};
+
+const computeFarmerPayment = async (executor, ccode, farmerCode, range, pricePerKg) => {
+  const [[sumRow]] = await executor.query(
+    `SELECT ROUND(SUM(CAST(IFNULL(weight, 0) AS DECIMAL(14,4))), 4) AS total_qty,
+            COUNT(*) AS unpaid_count
+       FROM transactions
+      WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+        AND UPPER(TRIM(memberno)) = UPPER(TRIM(?))
+        AND transtype = 1
+        AND IFNULL(payment_status, 'unpaid') = 'unpaid'
+        AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
+    [ccode, farmerCode, range.start, range.end]
+  );
+  const [[memberRow]] = await executor.query(
+    `SELECT IFNULL(crbal, '') AS crbal, IFNULL(descript, '') AS descript
+       FROM cm_members
+      WHERE UPPER(TRIM(mcode)) = UPPER(TRIM(?))
+        AND UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+      LIMIT 1`,
+    [farmerCode, ccode]
+  );
+
+  const totalQty = Number(sumRow?.total_qty || 0);
+  const unpaidCount = Number(sumRow?.unpaid_count || 0);
+  const gross = Math.round(totalQty * pricePerKg * 100) / 100;
+  const rawDeductions = parseCrbalTotal(memberRow?.crbal);
+  const deductions = Math.min(rawDeductions, gross);
+  const net = Math.round((gross - deductions) * 100) / 100;
+  return {
+    total_qty: totalQty,
+    unpaid_count: unpaidCount,
+    gross_amount: gross,
+    deductions: Math.round(deductions * 100) / 100,
+    net_amount: net,
+    farmer_name: memberRow?.descript || farmerCode,
+  };
+};
+
 const errorToPlainObject = (err) => {
   if (!err) return null;
   const e = err instanceof Error ? err : new Error(String(err));
