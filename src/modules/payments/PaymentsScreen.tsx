@@ -86,7 +86,7 @@ export default function PaymentsScreen() {
     [rows, selected]
   );
   const selectedTotal = useMemo(
-    () => selectedRows.reduce((s, r) => s + (Number(r.total_payable) || 0), 0),
+    () => selectedRows.reduce((s, r) => s + (Number(r.net_amount ?? r.total_payable) || 0), 0),
     [selectedRows]
   );
 
