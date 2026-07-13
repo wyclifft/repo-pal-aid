@@ -1,74 +1,103 @@
-## Plan: Payments menu + native `server.js` payment endpoints
 
-### What will be fixed
-1. **Payments menu not showing**
-   - Change the frontend permission wording/logic from `users.can_access_payments` to the real table: `user.can_access_payments`.
-   - Update `/api/auth/login` in `backend-api/server.js` so the login response includes `can_access_payments` from the `user` table.
-   - Update `/api/psettings` response so `payments_active` is returned from `psettings`; this is required because the frontend already reads `app_settings.payments_active`.
-   - Keep the menu hidden unless both are true:
-     - `psettings.payments_active = 1`
-     - `user.can_access_payments = 1`
+# Payments module — production performance fix
 
-2. **Rewrite payment backend for native Node HTTP routing**
-   - Add the three routes directly inside the existing `http.createServer(async (req, res) => { ... })` routing chain.
-   - Do **not** use Express, `app.get`, `app.post`, `authenticateJWT`, or middleware.
-   - Use existing helpers already in `server.js`: `parseBody`, `sendJSON`, `pool`, `parsedUrl.query`, `path`, and `method`.
+## Problem
 
-### Endpoint design
-Add routes before the final 404:
+`GET /api/payments/payable` runs a single aggregate over `transactions` (>200k rows) with `CAST`, `TRIM`, `UPPER`, and a `LEFT JOIN cm_members`. On the shared MySQL host the query exceeds `wait_timeout`/packet limits and the pool reports `PROTOCOL_CONNECTION_LOST`. Every page load pays this full-scan cost.
 
-```text
-GET  /api/payments/payable?period=day|week|month|season&uniquedevcode=...&userid=...
-POST /api/payments/process
-GET  /api/payments/history?uniquedevcode=...&userid=...&farmer_code=&from=&to=
+Fix in three layers: (1) make the query index-friendly, (2) add the supporting indexes, (3) cache the result briefly and add a safe retry so a dropped socket does not surface as a 500.
+
+Scope: `backend-api/server.js` payments endpoints only + one SQL migration file. No frontend behavior change, no schema-shape change. Version bumps to `v2.11.3`.
+
+## 1. SQL migration (new file `backend-api/MIGRATION_PAYMENTS_INDEXES.sql`)
+
+Run once on the production DB. All additive, all `IF NOT EXISTS`-guarded via a small procedure wrapper (MySQL 5.7 compatible) or plain `CREATE INDEX` if already known missing.
+
+```sql
+-- Hot path: unpaid transtype=1 rows per ccode within a date window
+CREATE INDEX idx_tx_pay_scan
+  ON transactions (ccode, transtype, payment_status, transdate);
+
+-- Farmer grouping / joins by memberno
+CREATE INDEX idx_tx_pay_member
+  ON transactions (ccode, memberno, transtype, payment_status);
+
+-- cm_members lookup used by payable + history
+CREATE INDEX idx_cm_ccode_mcode
+  ON cm_members (ccode, mcode);
 ```
 
-For POST body:
+These are the only indexes needed. No column changes.
 
-```json
-{
-  "farmer_codes": ["M01859"],
-  "period": "month",
-  "device_fingerprint": "...",
-  "userid": "..."
-}
-```
+## 2. Rewrite `/api/payments/payable` (server.js ~4318)
 
-### Access and isolation rules
-- Resolve `ccode` from `devsettings.uniquedevcode` / `device_fingerprint` and require `authorized = 1`.
-- Check `psettings.payments_active = 1` for that `ccode`.
-- Check `user.can_access_payments = 1` for the same `ccode` and `userid`.
-- All SQL stays strictly filtered by `ccode`.
-- Use the real table name `user`, not `users`.
+Goals: let MySQL use `idx_tx_pay_scan`, drop the `LEFT JOIN` from the aggregate, avoid per-row `CAST/UPPER/TRIM` on the driving table.
 
-### Payment logic
-1. **Payable list**
-   - Aggregate unpaid transactions from `transactions` by `memberno`.
-   - Join farmer names from `cm_members` using `mcode/mmcode` compatibility where safe.
-   - Use `payment_status = 'unpaid'` and period date filters.
-   - Return `{ farmer_code, farmer_name, total_payable, unpaid_count, payment_status }`.
+Steps in the handler:
 
-2. **Process payment**
-   - Server recomputes amounts; it will not trust client totals.
-   - Insert one row per farmer into `payments` with `status='pending'`.
-   - Use an inline mock SACCO function/boundary in `server.js` or a small service file if already appropriate for this native backend.
-   - On mock success: update `payments.status='success'`, set `external_transaction_id`, and update matching unpaid `transactions` rows to `payment_status='paid'` + `payment_id` inside a DB transaction.
-   - On failure: mark payment row as `failed`; leave transactions unpaid.
+1. Resolve `ccode` once (already canonical from `resolvePaymentsAccess` — pass it through as-is, no `UPPER(TRIM(?))` on the indexed column).
+2. Aggregate first, join later:
 
-3. **History**
-   - List payment records filtered by `ccode`, optional `farmer_code`, `from`, and `to`.
+   ```sql
+   SELECT memberno AS farmer_code,
+          SUM(weight)         AS total_qty,
+          COUNT(*)            AS unpaid_count
+     FROM transactions
+    WHERE ccode = ?
+      AND transtype = 1
+      AND payment_status = 'unpaid'
+      AND transdate >= ? AND transdate < ?   -- half-open, sargable
+    GROUP BY memberno
+   HAVING total_qty > 0
+   ```
 
-### Frontend API change
-- Update `src/modules/payments/paymentsApi.ts` to send the device fingerprint and logged-in user id with all payment calls, matching the existing backend security style.
-- Keep offline behavior unchanged: processing requires online.
+   - Uses `idx_tx_pay_scan` for range scan.
+   - No `CAST(t.transdate AS DATE)` — pass `range.start` / `range.end + 1 day` and rely on the raw column.
+   - No `TRIM/UPPER` on `ccode` — depends on data already being canonical. `resolvePaymentsAccess` returns the canonical value; add a one-time `UPPER(TRIM(...))` in JS before the query if needed.
+3. If the row count is 0 → return `[]` immediately.
+4. Second query, small and bounded by the aggregated farmer list:
 
-### Version and documentation
-- Bump app version from `2.11.0` to `2.11.1` as a bug fix/backend integration correction.
-- Update comments/docs that currently say `users.can_access_payments` so they correctly say `user.can_access_payments`.
-- Do not touch Capacitor native Bluetooth code.
+   ```sql
+   SELECT mcode AS farmer_code, descript AS farmer_name, crbal
+     FROM cm_members
+    WHERE ccode = ? AND mcode IN (?, ?, …)
+   ```
 
-### Verification
-- Confirm `server.js` contains no Express-style payment route code.
-- Confirm `/api/auth/login` returns `can_access_payments`.
-- Confirm `/api/psettings` returns `payments_active`.
-- Confirm frontend calls include `uniquedevcode/device_fingerprint` and `userid`, so the backend can enforce company/user access.
+   Chunk `IN (...)` at 500 codes to keep the packet size safe.
+5. Merge in JS (existing gross/deductions/net math is fine; keep `parseCrbalTotal`).
+
+## 3. Short-lived response cache
+
+Use the existing `backend-api/lib/lruCache.js` (already in the repo).
+
+- Key: `payable:${ccode}:${period}:${range.start}:${range.end}:${pricePerKg}`
+- TTL: 60s.
+- Invalidate on successful `/api/payments/process` for that `ccode` — call `cache.delete` for every key prefixed `payable:${ccode}:`.
+
+This turns a burst of dashboard opens into one aggregate query per minute per company.
+
+## 4. Connection-loss resilience
+
+Wrap the two payable queries in a tiny retry helper (server.js local, ~10 lines):
+
+- Retry once on `PROTOCOL_CONNECTION_LOST` / `ECONNRESET` / `ER_QUERY_INTERRUPTED`.
+- Log `[PAY][PAYABLE][RETRY]` with `requestId` so the pattern is observable.
+- No retry on POST `/process`.
+
+## 5. Version + docs
+
+- `src/constants/appVersion.ts` → `2.11.3`, code `145`, tag `payments-perf`.
+- `android/app/build.gradle` → matching bump.
+- Update `docs/payments-backend-additions.md` with the migration file name, the new query shape, and the cache/retry notes.
+
+## Verification
+
+- `EXPLAIN` the new aggregate on production and confirm `idx_tx_pay_scan` is used with `Using index condition` and rows examined ≪ 200k.
+- Hit `/api/payments/payable?period=season` twice within 60s; second call logs a cache hit and returns <50ms.
+- Kill a MySQL connection mid-request in staging; endpoint retries once and returns 200.
+- Frontend Payments screen loads unchanged across all four periods.
+
+## Out of scope
+
+- No table partitioning, no materialized totals table, no background worker. Those are the next tier if index+cache is not enough; revisit after we see the `EXPLAIN` plan and p95 latency in production.
+- No changes to `/process` beyond cache invalidation.

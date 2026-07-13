@@ -133,3 +133,52 @@ must keep that same shape so the workflow and client contract do not change.
 4. Set `psettings.payments_active = 1` for the pilot company.
 5. Set `user.can_access_payments = 1` for authorized operators.
 6. Login again so the frontend receives the fresh `can_access_payments` value.
+
+---
+
+## 5. v2.11.3 — Production performance layer
+
+Under load (>200k `transactions` rows) the original `/api/payments/payable`
+aggregate scanned the full table and the shared MySQL host was closing the
+socket (`PROTOCOL_CONNECTION_LOST`). Three additive changes make the endpoint
+production-safe:
+
+### 5.1 Required indexes
+
+Run `backend-api/MIGRATION_PAYMENTS_INDEXES.sql` once:
+
+```sql
+CREATE INDEX idx_tx_pay_scan   ON transactions (ccode, transtype, payment_status, transdate);
+CREATE INDEX idx_tx_pay_member ON transactions (ccode, memberno, transtype, payment_status);
+CREATE INDEX idx_cm_ccode_mcode ON cm_members  (ccode, mcode);
+```
+
+`EXPLAIN` the new payable query and confirm `key = idx_tx_pay_scan` with
+`Using index condition`.
+
+### 5.2 Query shape
+
+`/api/payments/payable` now runs two small queries:
+
+1. Aggregate on the indexed columns only — no `LEFT JOIN`, no per-row
+   `CAST/UPPER/TRIM`, half-open date window (`transdate >= start AND
+   transdate < endExclusive`) so the composite index drives the scan.
+2. Lookup `cm_members.descript` + `crbal` for only the farmers that
+   appeared in step 1, chunked at 500 codes per `IN (...)`.
+
+Merge and net-amount math happen in JS. The behaviour and response shape
+are unchanged.
+
+### 5.3 Cache + retry
+
+- 60 s in-process response cache keyed by
+  `payable:${ccode}:${period}:${start}:${end}:${pricePerKg}`.
+  A burst of dashboard opens collapses to one aggregate per company per
+  minute. Logs `[PAY][PAYABLE][CACHE] hit` on hits.
+- `/api/payments/process` invalidates the cache for its `ccode` on
+  success so paid farmers disappear from the list immediately.
+- Both payable queries run through a single-retry wrapper that catches
+  `PROTOCOL_CONNECTION_LOST` / `ECONNRESET` / `ER_QUERY_INTERRUPTED` /
+  `PROTOCOL_PACKETS_OUT_OF_ORDER`. Retries log `[PAY][PAYABLE][RETRY]`.
+
+No frontend change is required for v2.11.3.

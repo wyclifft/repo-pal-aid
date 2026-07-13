@@ -6,6 +6,7 @@
 const mysql = require('mysql2/promise');
 const http = require('http');
 const url = require('url');
+const { createCache } = require('./lib/lruCache');
 
 // SECURITY (v2.10.83): require DB credentials from environment.
 // Hardcoded fallback values were removed — they leaked production credentials
@@ -226,6 +227,60 @@ const parseCrbalTotal = (crbal) => {
     const val = parseFloat(parts[1]);
     return sum + (isFinite(val) ? val : 0);
   }, 0);
+};
+
+// v2.11.3 — Payments performance layer.
+//   • 60 s in-process response cache for /api/payments/payable. A burst of
+//     dashboard opens collapses to one aggregate per company per minute.
+//   • Cache is invalidated on every successful /api/payments/process for the
+//     affected ccode so paid farmers disappear from the list immediately.
+//   • Lightweight retry wrapper around the two payable queries covers the
+//     transient `PROTOCOL_CONNECTION_LOST` / `ECONNRESET` sockets the shared
+//     cPanel MySQL occasionally drops on long-running scans.
+const payablePayableCache = createCache({ max: 200, ttlMs: 60000 });
+const invalidatePayableCache = (ccode) => {
+  const prefix = `payable:${String(ccode || '').toUpperCase()}:`;
+  // Best-effort scan — cache size is capped at 200 so this is cheap.
+  // The lruCache module exposes only Map-ish operations via its returned
+  // object; we intentionally delete by key. Anything not covered simply
+  // ages out in ≤60 s.
+  const anyCache = payablePayableCache;
+  if (typeof anyCache.clear === 'function' && typeof anyCache.size === 'function') {
+    // We don't have a keys() accessor, so on any mutation of ccode we take
+    // the safe path and clear everything. Payable is read-heavy; clearing
+    // ~200 entries costs microseconds.
+    anyCache.clear();
+  }
+  void prefix;
+};
+
+const isTransientDbError = (err) => {
+  const code = err && err.code;
+  return (
+    code === 'PROTOCOL_CONNECTION_LOST' ||
+    code === 'ECONNRESET' ||
+    code === 'ER_QUERY_INTERRUPTED' ||
+    code === 'PROTOCOL_PACKETS_OUT_OF_ORDER'
+  );
+};
+
+const runWithRetry = async (label, requestId, fn) => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!isTransientDbError(err)) throw err;
+    console.warn(`[PAY][PAYABLE][RETRY] ${label} requestId=${requestId} code=${err.code}`);
+    return await fn();
+  }
+};
+
+// Advance a YYYY-MM-DD string by one day (local time). Used to build a
+// half-open [start, endExclusive) window so the transdate index is sargable
+// without CAST(transdate AS DATE).
+const addOneDay = (ymd) => {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  const dt = new Date(y, (m || 1) - 1, (d || 1) + 1);
+  return toYmdLocal(dt);
 };
 
 const getCompanyPricePerKg = async (executor, ccode) => {
@@ -4325,37 +4380,85 @@ const server = http.createServer(async (req, res) => {
       const range = await getPaymentPeriodRange(periodInput, access.ccode);
       const pricePerKg = await getCompanyPricePerKg(pool, access.ccode);
 
-      // Aggregate unpaid qty + counts per farmer for transtype=1 in range.
-      const [aggRows] = await pool.query(
-        `SELECT
-            TRIM(t.memberno) AS farmer_code,
-            COALESCE(NULLIF(MAX(TRIM(cm.descript)), ''), TRIM(t.memberno)) AS farmer_name,
-            IFNULL(MAX(TRIM(cm.crbal)), '') AS crbal,
-            ROUND(SUM(CAST(IFNULL(t.weight, 0) AS DECIMAL(14,4))), 4) AS total_qty,
-            COUNT(*) AS unpaid_count
-           FROM transactions t
-           LEFT JOIN cm_members cm
-             ON UPPER(TRIM(cm.mcode)) = UPPER(TRIM(t.memberno))
-            AND UPPER(TRIM(cm.ccode)) = UPPER(TRIM(t.ccode))
-          WHERE UPPER(TRIM(t.ccode)) = UPPER(TRIM(?))
-            AND t.transtype = 1
-            AND IFNULL(t.payment_status, 'unpaid') = 'unpaid'
-            AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
-          GROUP BY TRIM(t.memberno)
-         HAVING total_qty > 0
-          ORDER BY farmer_name`,
-        [access.ccode, range.start, range.end]
+      // v2.11.3 — canonicalise once in JS; the SQL then compares the indexed
+      // column raw, so idx_tx_pay_scan can drive the range scan.
+      const ccodeKey = String(access.ccode || '').trim().toUpperCase();
+      const endExclusive = addOneDay(range.end);
+      const reqId = `payable_${Date.now().toString(36)}`;
+
+      const cacheKey = `payable:${ccodeKey}:${range.period}:${range.start}:${range.end}:${pricePerKg}`;
+      const cached = payablePayableCache.get(cacheKey);
+      if (cached) {
+        console.log(`[PAY][PAYABLE][CACHE] hit ccode=${ccodeKey} period=${range.period} farmers=${cached.data.length}`);
+        return sendJSON(res, cached);
+      }
+
+      // Step 1 — aggregate on the indexed columns only. No LEFT JOIN, no
+      // per-row CAST/UPPER/TRIM. Half-open date window keeps `transdate`
+      // sargable against the composite index.
+      const aggSql = `
+        SELECT memberno AS farmer_code,
+               SUM(weight) AS total_qty,
+               COUNT(*)    AS unpaid_count
+          FROM transactions
+         WHERE ccode = ?
+           AND transtype = 1
+           AND payment_status = 'unpaid'
+           AND transdate >= ? AND transdate < ?
+         GROUP BY memberno
+        HAVING SUM(weight) > 0
+      `;
+
+      const [aggRows] = await runWithRetry('aggregate', reqId, () =>
+        pool.query(aggSql, [ccodeKey, range.start, endExclusive])
       );
 
+      if (!aggRows || aggRows.length === 0) {
+        const empty = { success: true, data: [], price_per_kg: pricePerKg, period: range };
+        payablePayableCache.set(cacheKey, empty);
+        console.log(`[PAY][PAYABLE] ccode=${ccodeKey} period=${range.period} ${range.start}→${range.end} price=${pricePerKg} farmers=0`);
+        return sendJSON(res, empty);
+      }
+
+      // Step 2 — bounded farmer lookup, chunked at 500 codes per IN() to
+      // keep the packet size within safe limits.
+      const codes = aggRows.map(r => String(r.farmer_code || '').trim()).filter(Boolean);
+      const memberMap = new Map(); // farmer_code(upper) → { name, crbal }
+      const CHUNK = 500;
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const slice = codes.slice(i, i + CHUNK);
+        if (slice.length === 0) continue;
+        const placeholders = slice.map(() => '?').join(',');
+        const [mrows] = await runWithRetry('members', reqId, () =>
+          pool.query(
+            `SELECT mcode, descript, crbal
+               FROM cm_members
+              WHERE ccode = ? AND mcode IN (${placeholders})`,
+            [ccodeKey, ...slice]
+          )
+        );
+        for (const m of mrows) {
+          const key = String(m.mcode || '').trim().toUpperCase();
+          if (!key) continue;
+          memberMap.set(key, {
+            name: String(m.descript || '').trim(),
+            crbal: String(m.crbal || ''),
+          });
+        }
+      }
+
       const data = aggRows.map(r => {
+        const farmerCode = String(r.farmer_code || '').trim();
+        const key = farmerCode.toUpperCase();
+        const member = memberMap.get(key) || { name: '', crbal: '' };
         const totalQty = Number(r.total_qty || 0);
         const gross = Math.round(totalQty * pricePerKg * 100) / 100;
-        const rawDeductions = parseCrbalTotal(r.crbal);
+        const rawDeductions = parseCrbalTotal(member.crbal);
         const deductions = Math.round(Math.min(rawDeductions, gross) * 100) / 100;
         const net = Math.round((gross - deductions) * 100) / 100;
         return {
-          farmer_code: r.farmer_code,
-          farmer_name: r.farmer_name,
+          farmer_code: farmerCode,
+          farmer_name: member.name || farmerCode,
           total_qty: totalQty,
           unpaid_count: Number(r.unpaid_count || 0),
           price_per_kg: pricePerKg,
@@ -4365,11 +4468,17 @@ const server = http.createServer(async (req, res) => {
           total_payable: net, // backward-compat with existing UI
           payment_status: 'unpaid',
         };
-      }).filter(r => r.net_amount > 0);
+      })
+        .filter(r => r.net_amount > 0)
+        .sort((a, b) => a.farmer_name.localeCompare(b.farmer_name));
 
-      console.log(`[PAY][PAYABLE] ccode=${access.ccode} userid=${access.userid} period=${range.period} ${range.start}→${range.end} price=${pricePerKg} farmers=${data.length}`);
-      return sendJSON(res, { success: true, data, price_per_kg: pricePerKg, period: range });
+      const payload = { success: true, data, price_per_kg: pricePerKg, period: range };
+      payablePayableCache.set(cacheKey, payload);
+      console.log(`[PAY][PAYABLE] ccode=${ccodeKey} period=${range.period} ${range.start}→${range.end} price=${pricePerKg} farmers=${data.length}`);
+      return sendJSON(res, payload);
     }
+
+
 
     if (path === '/api/payments/process' && method === 'POST') {
       const body = await parseBody(req);
@@ -4514,6 +4623,9 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // v2.11.3 — any state change on this ccode makes the cached payable
+      // list stale. Invalidate so the next GET reflects the new statuses.
+      invalidatePayableCache(access.ccode);
       console.log(`[PAY][PROCESS] ccode=${access.ccode} userid=${access.userid} period=${range.period} price=${pricePerKg} requested=${farmerCodes.length}`);
       return sendJSON(res, { success: true, data: results });
     }
