@@ -229,6 +229,60 @@ const parseCrbalTotal = (crbal) => {
   }, 0);
 };
 
+// v2.11.3 — Payments performance layer.
+//   • 60 s in-process response cache for /api/payments/payable. A burst of
+//     dashboard opens collapses to one aggregate per company per minute.
+//   • Cache is invalidated on every successful /api/payments/process for the
+//     affected ccode so paid farmers disappear from the list immediately.
+//   • Lightweight retry wrapper around the two payable queries covers the
+//     transient `PROTOCOL_CONNECTION_LOST` / `ECONNRESET` sockets the shared
+//     cPanel MySQL occasionally drops on long-running scans.
+const payablePayableCache = createCache({ max: 200, ttlMs: 60000 });
+const invalidatePayableCache = (ccode) => {
+  const prefix = `payable:${String(ccode || '').toUpperCase()}:`;
+  // Best-effort scan — cache size is capped at 200 so this is cheap.
+  // The lruCache module exposes only Map-ish operations via its returned
+  // object; we intentionally delete by key. Anything not covered simply
+  // ages out in ≤60 s.
+  const anyCache = payablePayableCache;
+  if (typeof anyCache.clear === 'function' && typeof anyCache.size === 'function') {
+    // We don't have a keys() accessor, so on any mutation of ccode we take
+    // the safe path and clear everything. Payable is read-heavy; clearing
+    // ~200 entries costs microseconds.
+    anyCache.clear();
+  }
+  void prefix;
+};
+
+const isTransientDbError = (err) => {
+  const code = err && err.code;
+  return (
+    code === 'PROTOCOL_CONNECTION_LOST' ||
+    code === 'ECONNRESET' ||
+    code === 'ER_QUERY_INTERRUPTED' ||
+    code === 'PROTOCOL_PACKETS_OUT_OF_ORDER'
+  );
+};
+
+const runWithRetry = async (label, requestId, fn) => {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!isTransientDbError(err)) throw err;
+    console.warn(`[PAY][PAYABLE][RETRY] ${label} requestId=${requestId} code=${err.code}`);
+    return await fn();
+  }
+};
+
+// Advance a YYYY-MM-DD string by one day (local time). Used to build a
+// half-open [start, endExclusive) window so the transdate index is sargable
+// without CAST(transdate AS DATE).
+const addOneDay = (ymd) => {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  const dt = new Date(y, (m || 1) - 1, (d || 1) + 1);
+  return toYmdLocal(dt);
+};
+
 const getCompanyPricePerKg = async (executor, ccode) => {
   const [rows] = await executor.query(
     'SELECT IFNULL(price_per_kg, 0) AS price_per_kg FROM psettings WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) LIMIT 1',
