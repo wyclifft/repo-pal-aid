@@ -6,6 +6,7 @@
 const mysql = require('mysql2/promise');
 const http = require('http');
 const url = require('url');
+const { createCache } = require('./lib/lruCache');
 
 // SECURITY (v2.10.83): require DB credentials from environment.
 // Hardcoded fallback values were removed — they leaked production credentials
