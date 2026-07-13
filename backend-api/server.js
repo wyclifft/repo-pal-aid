@@ -4623,6 +4623,9 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // v2.11.3 — any state change on this ccode makes the cached payable
+      // list stale. Invalidate so the next GET reflects the new statuses.
+      invalidatePayableCache(access.ccode);
       console.log(`[PAY][PROCESS] ccode=${access.ccode} userid=${access.userid} period=${range.period} price=${pricePerKg} requested=${farmerCodes.length}`);
       return sendJSON(res, { success: true, data: results });
     }
