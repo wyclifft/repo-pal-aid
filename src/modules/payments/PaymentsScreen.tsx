@@ -364,7 +364,7 @@ export default function PaymentsScreen() {
           ) : (
             <div className="bg-white md:mt-3 md:rounded-lg md:border md:shadow-sm overflow-hidden">
               {/* Header row */}
-              <div className="grid grid-cols-[2rem_minmax(0,1fr)_6rem_5rem] sm:grid-cols-[2.5rem_minmax(0,1fr)_8rem_6rem] items-center px-3 sm:px-4 py-2 border-b bg-gray-50 text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wide">
+              <div className="grid grid-cols-[2rem_minmax(0,1fr)_6rem_5rem] sm:grid-cols-[2.5rem_minmax(0,1fr)_8rem_6rem] gap-x-3 items-center px-3 sm:px-4 py-2 border-b bg-gray-50 text-[11px] sm:text-xs font-semibold text-gray-600 uppercase tracking-wide">
                 <div>
                   <Checkbox
                     checked={allSelectedInFilter}
