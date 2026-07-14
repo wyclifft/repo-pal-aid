@@ -869,10 +869,10 @@
 //   and client payment calls include device fingerprint + userid for ccode-safe
 //   permission checks. Existing capture, sync, receipts, Bluetooth, and native
 //   plugin paths are untouched.
-export const APP_VERSION = '2.11.3';
-export const APP_VERSION_CODE = 145;
+export const APP_VERSION = '2.11.4';
+export const APP_VERSION_CODE = 146;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
 // Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'payments-perf';
+export const APP_FIX_TAG = 'payments-ui-responsive';
