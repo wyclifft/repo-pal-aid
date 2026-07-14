@@ -381,7 +381,7 @@ export default function PaymentsScreen() {
                 <div
                   key={r.farmer_code}
                   id={`pay-row-${r.farmer_code}`}
-                  className="grid grid-cols-[2rem_minmax(0,1fr)_6rem_5rem] sm:grid-cols-[2.5rem_minmax(0,1fr)_8rem_6rem] items-center px-3 sm:px-4 py-3 border-b hover:bg-gray-50 transition"
+                  className="grid grid-cols-[2rem_minmax(0,1fr)_6rem_5rem] sm:grid-cols-[2.5rem_minmax(0,1fr)_8rem_6rem] gap-x-3 items-center px-3 sm:px-4 py-3 border-b hover:bg-gray-50 transition"
                 >
                   <div>
                     <Checkbox
