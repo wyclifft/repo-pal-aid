@@ -4743,6 +4743,96 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, data: rows });
     }
 
+    // v2.11.6 — KCB Funds Transfer async callback.
+    // KCB posts the final status of a transfer here. Authenticated with a
+    // shared secret in the `x-kcb-callback-secret` header. Idempotent — a
+    // repeat delivery for a settled payment returns { already: true }.
+    if (path === '/api/payments/kcb/callback' && method === 'POST') {
+      const expectedSecret = process.env.KCB_CALLBACK_SECRET;
+      const providedSecret = req.headers['x-kcb-callback-secret'];
+      if (!expectedSecret || providedSecret !== expectedSecret) {
+        console.warn('[PAY][CALLBACK] unauthorized');
+        return sendJSON(res, { success: false, error: 'unauthorized' }, 401);
+      }
+
+      const body = await parseBody(req);
+      const ref = String(body.transactionReference || body.payment_reference || '').trim();
+      if (!ref) return sendJSON(res, { success: false, error: 'transactionReference required' }, 400);
+
+      const [rows] = await pool.query(
+        `SELECT payment_id, ccode, status FROM payments WHERE payment_reference = ? LIMIT 1`,
+        [ref]
+      );
+      if (rows.length === 0) {
+        console.warn(`[PAY][CALLBACK] unknown ref=${ref}`);
+        return sendJSON(res, { success: false, error: 'unknown reference' }, 404);
+      }
+      const row = rows[0];
+      if (row.status === 'success' || row.status === 'failed') {
+        console.log(`[PAY][CALLBACK] already ref=${ref} status=${row.status}`);
+        return sendJSON(res, { success: true, already: true });
+      }
+
+      const statusCodeIn = body.statusCode ?? body.responseCode ?? body.status;
+      const s = String(statusCodeIn ?? '').trim().toUpperCase();
+      const isSuccess = s === '0' || s === '00' || s === 'SUCCESS' || s === 'ACCEPTED' || s === 'PAID';
+      const paymentStatus = isSuccess ? 'success' : 'failed';
+      const txStatus = isSuccess ? 'paid' : 'failed';
+
+      const merchantID = body.merchantID ?? body.merchantId ?? null;
+      const retrievalRef = body.retrievalRefNumber ?? body.retrievalReference ?? null;
+      const ftReference = body.ftReference ?? null;
+      const txnMessage = body.transactionMessage ?? body.statusDescription ?? body.responseDescription ?? null;
+      const txnDateRaw = body.transactionDate ?? body.paymentDate ?? null;
+      let txnDate = null;
+      if (txnDateRaw) {
+        const d = new Date(txnDateRaw);
+        if (!isNaN(d.getTime())) txnDate = d.toISOString().slice(0, 19).replace('T', ' ');
+      }
+
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        await conn.query(
+          `UPDATE payments
+              SET status = ?,
+                  external_transaction_id = COALESCE(?, external_transaction_id),
+                  kcb_merchant_id = COALESCE(?, kcb_merchant_id),
+                  kcb_retrieval_ref = COALESCE(?, kcb_retrieval_ref),
+                  kcb_ft_reference = COALESCE(?, kcb_ft_reference),
+                  kcb_transaction_message = COALESCE(?, kcb_transaction_message),
+                  kcb_transaction_date = COALESCE(?, kcb_transaction_date)
+            WHERE payment_id = ?`,
+          [
+            paymentStatus,
+            retrievalRef || ftReference || null,
+            merchantID,
+            retrievalRef,
+            ftReference,
+            txnMessage ? String(txnMessage).slice(0, 255) : null,
+            txnDate,
+            row.payment_id,
+          ]
+        );
+        await conn.query(
+          `UPDATE transactions
+              SET payment_status = ?
+            WHERE payment_id = ? AND payment_status = 'pending'`,
+          [txStatus, row.payment_id]
+        );
+        await conn.commit();
+      } catch (e) {
+        await conn.rollback().catch(() => {});
+        throw e;
+      } finally {
+        conn.release();
+      }
+
+      invalidatePayableCache(row.ccode);
+      console.log(`[PAY][CALLBACK] ref=${ref} status=${paymentStatus} merchant=${merchantID || 'n/a'}`);
+      return sendJSON(res, { success: true, status: paymentStatus });
+    }
+
 
     // 404
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
