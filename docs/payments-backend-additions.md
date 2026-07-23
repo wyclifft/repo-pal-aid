@@ -182,3 +182,115 @@ are unchanged.
   `PROTOCOL_PACKETS_OUT_OF_ORDER`. Retries log `[PAY][PAYABLE][RETRY]`.
 
 No frontend change is required for v2.11.3.
+
+---
+
+## 6. v2.11.6 — KCB BUNI Funds Transfer integration
+
+The mock SACCO service is replaced by real KCB Funds Transfer. Isolated
+behind `backend-api/services/kcbPaymentService.js` so future providers
+(Co-op / Equity) can be added as sibling files without touching
+`server.js` beyond the require line.
+
+### 6.1 Environment variables (set on the host, never committed)
+
+```
+KCB_CONSUMER_KEY
+KCB_CONSUMER_SECRET
+KCB_TOKEN_URL          # default https://accounts.buni.kcbgroup.com/oauth2/token
+KCB_TRANSFER_URL       # default https://uat.buni.kcbgroup.com/fundstransfer/1.0.0/api/v1/transfer
+KCB_COMPANY_CODE
+KCB_DEBIT_ACCOUNT
+KCB_CALLBACK_SECRET    # shared secret required on inbound callbacks
+```
+
+### 6.2 Schema additions
+
+Additive columns on `payments` — run once on the production DB:
+
+```sql
+ALTER TABLE payments
+  ADD COLUMN IF NOT EXISTS kcb_merchant_id VARCHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS kcb_retrieval_ref VARCHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS kcb_ft_reference VARCHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS kcb_transaction_message VARCHAR(255) NULL,
+  ADD COLUMN IF NOT EXISTS kcb_transaction_date DATETIME NULL;
+```
+
+No changes to `cm_members` — the routing lookup uses existing columns
+(`descript`, `tel`, `bankcode`, `bnumber`, `payment_method`).
+
+### 6.3 Payout routing (derived server-side from `cm_members`)
+
+| payment_method | transactionType | beneficiaryBankCode | creditAccountNumber |
+|---|---|---|---|
+| `MPESA`        | `MO`  | `MPESA`   | `tel`     |
+| `BANK`, bankcode = `01` | `IF` | `01` | `bnumber` |
+| `BANK`, any other bankcode | `EF` | `bankcode` | `bnumber` |
+
+If a required field is missing (MPESA without `tel`, BANK without
+`bnumber`/`bankcode`, or an unknown `payment_method`) the payment is
+marked `failed` and the source transactions are rolled back to
+`payment_status='failed'` — no KCB call is made.
+
+### 6.4 `/api/payments/process` behaviour change
+
+- On KCB **accept** the payment row stays `status='pending'` with
+  `external_transaction_id = retrievalRefNumber`, and the source
+  transactions stay `payment_status='pending'`.
+- The frontend already renders `status: 'pending'` (existing UI state)
+  as "awaiting confirmation" — no client change.
+- On KCB **decline** (HTTP 4xx/5xx, timeout, or non-success statusCode)
+  behaviour matches today: payment `failed`, transactions `failed`.
+
+### 6.5 Callback endpoint
+
+```
+POST /api/payments/kcb/callback
+Header:  x-kcb-callback-secret: <KCB_CALLBACK_SECRET>
+Body:    {
+  transactionReference,   // must equal the payment_reference we sent
+  statusCode,             // "0" / "00" / "SUCCESS" / "PAID" → success; else failed
+  statusDescription,
+  merchantID,
+  retrievalRefNumber,
+  ftReference,
+  transactionMessage,
+  transactionDate
+}
+```
+
+- Wrong / missing header → `401 unauthorized`.
+- Unknown `transactionReference` → `404 unknown reference`.
+- Idempotent: replaying a callback for a settled payment returns
+  `200 { success: true, already: true }` with no writes.
+- On success flips `payments.status → success` and all locked
+  transactions to `payment_status = 'paid'`, invalidates the payable
+  cache for the ccode.
+- On failure flips `payments.status → failed` and transactions to
+  `payment_status = 'failed'` so operators can retry after fixing the
+  farmer's payout details.
+
+### 6.6 OAuth token cache
+
+`kcbPaymentService.getAccessToken()` caches the bearer token in-process
+until 60 s before its `expires_in`. Concurrent callers share a single
+in-flight token exchange (no stampede). On any `401` from the transfer
+call the token is invalidated and the request is retried once.
+
+### 6.7 Log tags
+
+- `[PAY][TOKEN] issued expiresIn=<sec>`
+- `[PAY][TRANSFER] farmer=<code> ref=<ref> type=<MO|IF|EF> amount=<net>`
+- `[PAY][TRANSFER] declined ref=<ref> http=<n> code=<s> desc=<...>`
+- `[PAY][CALLBACK] ref=<ref> status=<success|failed> merchant=<id>`
+- `[PAY][CALLBACK] unauthorized` / `unknown ref=<ref>` / `already ref=<ref>`
+
+Beneficiary PII (phone, account number, full name) is never logged.
+
+### 6.8 Out of scope for v2.11.6
+
+- No status-poll endpoint (callback-driven only). If KCB never calls
+  back, a stuck-pending sweeper is a future addition.
+- No change to `/payable`, `/history`, calculation, permissions, or the
+  frontend.
