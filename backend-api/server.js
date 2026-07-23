@@ -4550,12 +4550,83 @@ const server = http.createServer(async (req, res) => {
           );
           await conn.commit();
 
-          // Call the (mock) SACCO outside the DB transaction.
-          const sacco = await chargeFarmerMock({
+          // v2.11.6 — resolve KCB payout routing from cm_members.
+          const [benRows] = await pool.query(
+            `SELECT IFNULL(descript,'') AS descript,
+                    IFNULL(tel,'')      AS tel,
+                    IFNULL(bankcode,'') AS bankcode,
+                    IFNULL(bnumber,'')  AS bnumber,
+                    IFNULL(payment_method,'') AS payment_method
+               FROM cm_members
+              WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+                AND UPPER(TRIM(mcode)) = UPPER(TRIM(?))
+              LIMIT 1`,
+            [access.ccode, farmerCode]
+          );
+          const beneficiary = benRows[0] || {};
+          const payMethod = String(beneficiary.payment_method || '').trim().toUpperCase();
+          const bankCodeRaw = String(beneficiary.bankcode || '').trim();
+          const bnumber = String(beneficiary.bnumber || '').trim();
+          const tel = String(beneficiary.tel || '').trim();
+
+          let transactionType = null;
+          let beneficiaryBankCode = null;
+          let creditAccountNumber = null;
+          let missingReason = null;
+          if (payMethod === 'MPESA') {
+            transactionType = 'MO';
+            beneficiaryBankCode = 'MPESA';
+            creditAccountNumber = tel;
+            if (!tel) missingReason = 'Missing MPESA phone number';
+          } else if (payMethod === 'BANK') {
+            if (!bankCodeRaw) missingReason = 'Missing bank code';
+            else if (!bnumber) missingReason = 'Missing bank account number';
+            else {
+              transactionType = bankCodeRaw === '01' ? 'IF' : 'EF';
+              beneficiaryBankCode = bankCodeRaw;
+              creditAccountNumber = bnumber;
+            }
+          } else {
+            missingReason = payMethod
+              ? `Unsupported payment_method: ${payMethod}`
+              : 'Missing payment_method on cm_members';
+          }
+
+          if (missingReason) {
+            await conn.beginTransaction();
+            await conn.query(`UPDATE payments SET status = 'failed' WHERE payment_id = ?`, [paymentId]);
+            await conn.query(
+              `UPDATE transactions
+                  SET payment_status = 'failed'
+                WHERE payment_id = ? AND payment_status = 'pending'`,
+              [paymentId]
+            );
+            await conn.commit();
+            console.warn(`[PAY][TRANSFER] skipped ref=${ref} farmer=${farmerCode} reason=${missingReason}`);
+            results.push({
+              farmer_code: farmerCode,
+              payment_reference: ref,
+              amount: calc.net_amount,
+              gross_amount: calc.gross_amount,
+              deductions: calc.deductions,
+              net_amount: calc.net_amount,
+              total_qty: calc.total_qty,
+              status: 'failed',
+              error: missingReason,
+            });
+            continue;
+          }
+
+          console.log(`[PAY][TRANSFER] farmer=${farmerCode} ref=${ref} type=${transactionType} amount=${calc.net_amount}`);
+          const sacco = await chargeFarmerViaKCB({
             ref,
             amount: calc.net_amount,
-            farmer_code: farmerCode,
+            farmerName: beneficiary.descript || calc.farmer_name || farmerCode,
+            accountNumber: creditAccountNumber,
+            bankCode: beneficiaryBankCode,
+            transactionType,
             ccode: access.ccode,
+            requestId: ref,
           });
 
           if (!sacco?.success) {
@@ -4577,23 +4648,29 @@ const server = http.createServer(async (req, res) => {
               net_amount: calc.net_amount,
               total_qty: calc.total_qty,
               status: 'failed',
-              error: 'Payment declined',
+              error: sacco?.error || sacco?.statusDescription || 'Payment declined',
             });
             continue;
           }
 
+          // Accepted for processing by KCB. Do NOT mark as paid — the
+          // /api/payments/kcb/callback endpoint finalises the status.
+          // Persist the initial external reference for reconciliation.
           await conn.beginTransaction();
           await conn.query(
             `UPDATE payments
-                SET status = 'success', external_transaction_id = ?
+                SET external_transaction_id = ?,
+                    kcb_retrieval_ref = ?,
+                    kcb_ft_reference = ?,
+                    kcb_merchant_id = ?
               WHERE payment_id = ?`,
-            [sacco.external_transaction_id, paymentId]
-          );
-          const [updateResult] = await conn.query(
-            `UPDATE transactions
-                SET payment_status = 'paid'
-              WHERE payment_id = ? AND payment_status = 'pending'`,
-            [paymentId]
+            [
+              sacco.external_transaction_id,
+              sacco.retrievalRefNumber,
+              sacco.ftReference,
+              sacco.merchantID,
+              paymentId,
+            ]
           );
           await conn.commit();
 
@@ -4605,9 +4682,8 @@ const server = http.createServer(async (req, res) => {
             deductions: calc.deductions,
             net_amount: calc.net_amount,
             total_qty: calc.total_qty,
-            status: 'success',
+            status: 'pending',
             external_transaction_id: sacco.external_transaction_id,
-            paid_count: updateResult.affectedRows || 0,
           });
         } catch (e) {
           await conn.rollback().catch(() => {});
