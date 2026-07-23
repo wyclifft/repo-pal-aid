@@ -1,103 +1,162 @@
 
-# Payments module — production performance fix
+# KCB Funds Transfer integration
 
-## Problem
+Isolate the payment provider behind a new service module, keep the Payments module, frontend, calculation, permission, history, and status enum untouched. Only `chargeFarmerMock` is replaced, plus one new callback endpoint. Version bump to **v2.11.5** (backend + app).
 
-`GET /api/payments/payable` runs a single aggregate over `transactions` (>200k rows) with `CAST`, `TRIM`, `UPPER`, and a `LEFT JOIN cm_members`. On the shared MySQL host the query exceeds `wait_timeout`/packet limits and the pool reports `PROTOCOL_CONNECTION_LOST`. Every page load pays this full-scan cost.
+Nothing in `src/modules/payments/**` changes. `PaymentResult.status` already accepts `'pending'` so the frontend renders the new "awaiting callback" state without edits.
 
-Fix in three layers: (1) make the query index-friendly, (2) add the supporting indexes, (3) cache the result briefly and add a safe retry so a dropped socket does not surface as a 500.
+---
 
-Scope: `backend-api/server.js` payments endpoints only + one SQL migration file. No frontend behavior change, no schema-shape change. Version bumps to `v2.11.3`.
+## 1. New provider service — `backend-api/services/kcbPaymentService.js`
 
-## 1. SQL migration (new file `backend-api/MIGRATION_PAYMENTS_INDEXES.sql`)
+Provider-independent shape so Co-op/Equity/etc. can be added later as sibling files.
 
-Run once on the production DB. All additive, all `IF NOT EXISTS`-guarded via a small procedure wrapper (MySQL 5.7 compatible) or plain `CREATE INDEX` if already known missing.
+Exports:
 
-```sql
--- Hot path: unpaid transtype=1 rows per ccode within a date window
-CREATE INDEX idx_tx_pay_scan
-  ON transactions (ccode, transtype, payment_status, transdate);
+- `getAccessToken()` — OAuth2 client-credentials against `KCB_TOKEN_URL`. In-memory cache `{ token, expiresAt }`; refresh 60 s before `expires_in`. Concurrent callers await a single in-flight promise (no token stampede). Logs `[PAY][TOKEN] issued expiresIn=<sec>` — never logs the token or secret.
+- `transferFunds(payload, { requestId })` — `POST KCB_TRANSFER_URL` with `Authorization: Bearer <token>`, 20 s axios timeout. Returns raw KCB body + HTTP status. On `401`, invalidate cached token and retry once.
+- `chargeFarmerViaKCB({ ref, amount, farmerName, accountNumber, bankCode, transactionType, ccode, requestId })` — builds the KCB body, calls `transferFunds`, normalises the response to:
 
--- Farmer grouping / joins by memberno
-CREATE INDEX idx_tx_pay_member
-  ON transactions (ccode, memberno, transtype, payment_status);
+  ```js
+  {
+    success: boolean,       // true only when KCB accepted the request (HTTP 2xx + statusCode "0"/"Accepted")
+    external_transaction_id, // KCB retrievalRefNumber || ftReference || requestReference
+    statusCode,
+    statusDescription,
+    merchantID,
+    retrievalRefNumber,
+    raw,                     // full response, for audit
+  }
+  ```
 
--- cm_members lookup used by payable + history
-CREATE INDEX idx_cm_ccode_mcode
-  ON cm_members (ccode, mcode);
+`success: true` here means **accepted for processing**, not "paid" — the callback finalises status.
+
+Dependency: `axios` (add to `backend-api/package.json` if missing).
+
+## 2. Env / secrets
+
+Read from `process.env` in the service — no hardcoding, no logging:
+
+```
+KCB_CONSUMER_KEY
+KCB_CONSUMER_SECRET
+KCB_TOKEN_URL          # default https://accounts.buni.kcbgroup.com/oauth2/token
+KCB_TRANSFER_URL       # default https://uat.buni.kcbgroup.com/fundstransfer/1.0.0/api/v1/transfer
+KCB_COMPANY_CODE
+KCB_DEBIT_ACCOUNT
+KCB_CALLBACK_SECRET    # shared secret to authenticate inbound callbacks
 ```
 
-These are the only indexes needed. No column changes.
+Documented in `docs/payments-backend-additions.md §6`. Ops sets them on the production host.
 
-## 2. Rewrite `/api/payments/payable` (server.js ~4318)
+## 3. Rework `/api/payments/process` in `server.js` (~L4483)
 
-Goals: let MySQL use `idx_tx_pay_scan`, drop the `LEFT JOIN` from the aggregate, avoid per-row `CAST/UPPER/TRIM` on the driving table.
+Only the SACCO block changes. Per farmer, inside the existing loop:
 
-Steps in the handler:
-
-1. Resolve `ccode` once (already canonical from `resolvePaymentsAccess` — pass it through as-is, no `UPPER(TRIM(?))` on the indexed column).
-2. Aggregate first, join later:
+1. Compute payable + insert `payments` row (`status='pending'`, NET amount) + flip source transactions to `payment_status='pending'` (unchanged).
+2. **New lookup** — after commit, before calling KCB, fetch beneficiary from `cm_members`:
 
    ```sql
-   SELECT memberno AS farmer_code,
-          SUM(weight)         AS total_qty,
-          COUNT(*)            AS unpaid_count
-     FROM transactions
-    WHERE ccode = ?
-      AND transtype = 1
-      AND payment_status = 'unpaid'
-      AND transdate >= ? AND transdate < ?   -- half-open, sargable
-    GROUP BY memberno
-   HAVING total_qty > 0
-   ```
-
-   - Uses `idx_tx_pay_scan` for range scan.
-   - No `CAST(t.transdate AS DATE)` — pass `range.start` / `range.end + 1 day` and rely on the raw column.
-   - No `TRIM/UPPER` on `ccode` — depends on data already being canonical. `resolvePaymentsAccess` returns the canonical value; add a one-time `UPPER(TRIM(...))` in JS before the query if needed.
-3. If the row count is 0 → return `[]` immediately.
-4. Second query, small and bounded by the aggregated farmer list:
-
-   ```sql
-   SELECT mcode AS farmer_code, descript AS farmer_name, crbal
+   SELECT descript, tel, bankcode, bnumber, payment_method
      FROM cm_members
-    WHERE ccode = ? AND mcode IN (?, ?, …)
+    WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+      AND UPPER(TRIM(mcode)) = UPPER(TRIM(?))
+    LIMIT 1
    ```
 
-   Chunk `IN (...)` at 500 codes to keep the packet size safe.
-5. Merge in JS (existing gross/deductions/net math is fine; keep `parseCrbalTotal`).
+   Backend derives KCB routing (frontend sends nothing):
 
-## 3. Short-lived response cache
+   | payment_method | transactionType | beneficiaryBankCode | creditAccountNumber |
+   |---|---|---|---|
+   | `MPESA` | `MO` | `MPESA` | `tel` |
+   | `BANK`, bankcode=`01` | `IF` | `01` | `bnumber` |
+   | `BANK`, other bankcode | `EF` | `bankcode` | `bnumber` |
 
-Use the existing `backend-api/lib/lruCache.js` (already in the repo).
+   Guard: if the required field is missing (e.g. MPESA without `tel`, BANK without `bnumber`/`bankcode`), skip the KCB call, mark `payments.status='failed'` + transactions `failed`, push `{ status:'failed', error:'Missing payout details' }`.
 
-- Key: `payable:${ccode}:${period}:${range.start}:${range.end}:${pricePerKg}`
-- TTL: 60s.
-- Invalidate on successful `/api/payments/process` for that `ccode` — call `cache.delete` for every key prefixed `payable:${ccode}:`.
+3. Call `chargeFarmerViaKCB({ ref, amount: calc.net_amount, farmerName: descript, accountNumber, bankCode, transactionType, ccode: access.ccode, requestId })`.
 
-This turns a burst of dashboard opens into one aggregate query per minute per company.
+4. Result handling changes:
+   - `sacco.success === false` → same failure path as today (`payments.status='failed'`, transactions `failed`).
+   - `sacco.success === true` → **do NOT flip to `paid`**. Update `payments` with `external_transaction_id = retrievalRefNumber` (leave `status='pending'`). Push `{ status: 'pending', ... }` to the results array. Transactions stay `payment_status='pending'` until the callback lands.
 
-## 4. Connection-loss resilience
+5. Keep `invalidatePayableCache(access.ccode)` at the end (pending rows are already excluded from payable).
 
-Wrap the two payable queries in a tiny retry helper (server.js local, ~10 lines):
+Logs: `[PAY][TRANSFER] farmer=<code> ref=<ref> type=<MO|IF|EF> amount=<net>` (no beneficiary PII beyond farmer code).
 
-- Retry once on `PROTOCOL_CONNECTION_LOST` / `ECONNRESET` / `ER_QUERY_INTERRUPTED`.
-- Log `[PAY][PAYABLE][RETRY]` with `requestId` so the pattern is observable.
-- No retry on POST `/process`.
+## 4. New endpoint — `POST /api/payments/kcb/callback`
 
-## 5. Version + docs
+Native http route in the existing chain (same style as the other payment routes).
 
-- `src/constants/appVersion.ts` → `2.11.3`, code `145`, tag `payments-perf`.
-- `android/app/build.gradle` → matching bump.
-- Update `docs/payments-backend-additions.md` with the migration file name, the new query shape, and the cache/retry notes.
+- Auth: require header `x-kcb-callback-secret === process.env.KCB_CALLBACK_SECRET`; reject 401 otherwise. Log `[PAY][CALLBACK] unauthorized` (no body).
+- Parse JSON body via `parseBody(req)`. Expected fields: `transactionReference`, `statusCode`, `statusDescription`, `merchantID`, `retrievalRefNumber`, `ftReference`, `transactionMessage`, `transactionDate`.
+- Locate payment: `SELECT payment_id, ccode, status FROM payments WHERE payment_reference = ? LIMIT 1`. If not found → 404 `{success:false,error:'unknown reference'}`.
+- Idempotency: if `payments.status` already `success` or `failed`, respond `200 {success:true, already:true}` without further writes.
+- Map KCB status: `success` when `statusCode` is `0` / `00` / `SUCCESS` / `Success` (case-insensitive); otherwise `failed`.
+- Transaction: update `payments` row:
+
+  ```sql
+  UPDATE payments
+     SET status = ?,
+         external_transaction_id = COALESCE(?, external_transaction_id),
+         kcb_merchant_id = ?,
+         kcb_retrieval_ref = ?,
+         kcb_ft_reference = ?,
+         kcb_transaction_message = ?,
+         kcb_transaction_date = ?
+   WHERE payment_id = ?
+  ```
+
+  Then propagate to source transactions:
+
+  ```sql
+  UPDATE transactions
+     SET payment_status = ?          -- 'paid' or 'failed'
+   WHERE payment_id = ? AND payment_status = 'pending'
+  ```
+
+- On success invalidate `invalidatePayableCache(ccode)`.
+- Log `[PAY][CALLBACK] ref=<ref> status=<paid|failed> merchant=<id>` and return `{success:true}`.
+
+**Schema additions** (documented in `docs/payments-backend-additions.md`, run once):
+
+```sql
+ALTER TABLE payments
+  ADD COLUMN IF NOT EXISTS kcb_merchant_id VARCHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS kcb_retrieval_ref VARCHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS kcb_ft_reference VARCHAR(64) NULL,
+  ADD COLUMN IF NOT EXISTS kcb_transaction_message VARCHAR(255) NULL,
+  ADD COLUMN IF NOT EXISTS kcb_transaction_date DATETIME NULL;
+```
+
+No changes to `cm_members` (fields already exist under the documented names).
+
+## 5. Error normalisation
+
+`chargeFarmerViaKCB` returns `{ success:false, statusCode, statusDescription, error }` for: 401 after retry, timeout, network error, 4xx validation, duplicate `transactionReference`, "account not whitelisted", etc. `server.js` treats every `success:false` identically (existing failure branch). No crash, no unhandled promise.
+
+## 6. Preserved behaviour
+
+- Payment calculation (`computeFarmerPayment`), permission checks (`resolvePaymentsAccess`), `/payable` aggregate + cache + retry, `/history`, price lookup, reference format, cache invalidation — **untouched**.
+- `PaymentResult.status = 'pending'` is already a supported UI state; the screen keeps rendering results without change.
+- Capacitor APK: unchanged (backend-only change).
+
+## 7. Docs + version
+
+- Extend `docs/payments-backend-additions.md` with: env vars, callback contract, callback secret header, new columns, provider-swap notes.
+- `src/constants/appVersion.ts` → `2.11.5`, code `147`, tag `payments-kcb`.
+- `android/app/build.gradle` matching bump.
 
 ## Verification
 
-- `EXPLAIN` the new aggregate on production and confirm `idx_tx_pay_scan` is used with `Using index condition` and rows examined ≪ 200k.
-- Hit `/api/payments/payable?period=season` twice within 60s; second call logs a cache hit and returns <50ms.
-- Kill a MySQL connection mid-request in staging; endpoint retries once and returns 200.
-- Frontend Payments screen loads unchanged across all four periods.
+- Unit-level: hitting `/api/payments/process` with a test farmer returns `status:'pending'` (not `success`); `payments` row is `pending` with `external_transaction_id` set; source transactions remain `pending`.
+- Callback with `x-kcb-callback-secret` and `statusCode:"0"` flips payment + transactions to `paid`; wrong secret → 401; replay → `already:true`.
+- MPESA vs BANK-01 vs BANK-other route to the correct `transactionType`/`beneficiaryBankCode`/`creditAccountNumber` (verified by logging in a staging run).
+- Token cache: two back-to-back `/process` calls issue exactly one `[PAY][TOKEN]` log line.
+- Payments screen loads, lists, and submits unchanged; a submitted farmer shows the pending state until the callback lands.
 
 ## Out of scope
 
-- No table partitioning, no materialized totals table, no background worker. Those are the next tier if index+cache is not enough; revisit after we see the `EXPLAIN` plan and p95 latency in production.
-- No changes to `/process` beyond cache invalidation.
+- No status-poll endpoint (callback-driven only). If KCB never calls back, a stuck-pending sweeper is a follow-up.
+- No change to `/payable`, `/history`, or the frontend.
+- No refactor of the existing loop beyond the SACCO call and the post-success status handling.

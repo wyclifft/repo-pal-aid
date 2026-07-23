@@ -7,6 +7,7 @@ const mysql = require('mysql2/promise');
 const http = require('http');
 const url = require('url');
 const { createCache } = require('./lib/lruCache');
+const { chargeFarmerViaKCB } = require('./services/kcbPaymentService');
 
 // SECURITY (v2.10.83): require DB credentials from environment.
 // Hardcoded fallback values were removed — they leaked production credentials
@@ -4549,12 +4550,83 @@ const server = http.createServer(async (req, res) => {
           );
           await conn.commit();
 
-          // Call the (mock) SACCO outside the DB transaction.
-          const sacco = await chargeFarmerMock({
+          // v2.11.6 — resolve KCB payout routing from cm_members.
+          const [benRows] = await pool.query(
+            `SELECT IFNULL(descript,'') AS descript,
+                    IFNULL(tel,'')      AS tel,
+                    IFNULL(bankcode,'') AS bankcode,
+                    IFNULL(bnumber,'')  AS bnumber,
+                    IFNULL(payment_method,'') AS payment_method
+               FROM cm_members
+              WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+                AND UPPER(TRIM(mcode)) = UPPER(TRIM(?))
+              LIMIT 1`,
+            [access.ccode, farmerCode]
+          );
+          const beneficiary = benRows[0] || {};
+          const payMethod = String(beneficiary.payment_method || '').trim().toUpperCase();
+          const bankCodeRaw = String(beneficiary.bankcode || '').trim();
+          const bnumber = String(beneficiary.bnumber || '').trim();
+          const tel = String(beneficiary.tel || '').trim();
+
+          let transactionType = null;
+          let beneficiaryBankCode = null;
+          let creditAccountNumber = null;
+          let missingReason = null;
+          if (payMethod === 'MPESA') {
+            transactionType = 'MO';
+            beneficiaryBankCode = 'MPESA';
+            creditAccountNumber = tel;
+            if (!tel) missingReason = 'Missing MPESA phone number';
+          } else if (payMethod === 'BANK') {
+            if (!bankCodeRaw) missingReason = 'Missing bank code';
+            else if (!bnumber) missingReason = 'Missing bank account number';
+            else {
+              transactionType = bankCodeRaw === '01' ? 'IF' : 'EF';
+              beneficiaryBankCode = bankCodeRaw;
+              creditAccountNumber = bnumber;
+            }
+          } else {
+            missingReason = payMethod
+              ? `Unsupported payment_method: ${payMethod}`
+              : 'Missing payment_method on cm_members';
+          }
+
+          if (missingReason) {
+            await conn.beginTransaction();
+            await conn.query(`UPDATE payments SET status = 'failed' WHERE payment_id = ?`, [paymentId]);
+            await conn.query(
+              `UPDATE transactions
+                  SET payment_status = 'failed'
+                WHERE payment_id = ? AND payment_status = 'pending'`,
+              [paymentId]
+            );
+            await conn.commit();
+            console.warn(`[PAY][TRANSFER] skipped ref=${ref} farmer=${farmerCode} reason=${missingReason}`);
+            results.push({
+              farmer_code: farmerCode,
+              payment_reference: ref,
+              amount: calc.net_amount,
+              gross_amount: calc.gross_amount,
+              deductions: calc.deductions,
+              net_amount: calc.net_amount,
+              total_qty: calc.total_qty,
+              status: 'failed',
+              error: missingReason,
+            });
+            continue;
+          }
+
+          console.log(`[PAY][TRANSFER] farmer=${farmerCode} ref=${ref} type=${transactionType} amount=${calc.net_amount}`);
+          const sacco = await chargeFarmerViaKCB({
             ref,
             amount: calc.net_amount,
-            farmer_code: farmerCode,
+            farmerName: beneficiary.descript || calc.farmer_name || farmerCode,
+            accountNumber: creditAccountNumber,
+            bankCode: beneficiaryBankCode,
+            transactionType,
             ccode: access.ccode,
+            requestId: ref,
           });
 
           if (!sacco?.success) {
@@ -4576,23 +4648,29 @@ const server = http.createServer(async (req, res) => {
               net_amount: calc.net_amount,
               total_qty: calc.total_qty,
               status: 'failed',
-              error: 'Payment declined',
+              error: sacco?.error || sacco?.statusDescription || 'Payment declined',
             });
             continue;
           }
 
+          // Accepted for processing by KCB. Do NOT mark as paid — the
+          // /api/payments/kcb/callback endpoint finalises the status.
+          // Persist the initial external reference for reconciliation.
           await conn.beginTransaction();
           await conn.query(
             `UPDATE payments
-                SET status = 'success', external_transaction_id = ?
+                SET external_transaction_id = ?,
+                    kcb_retrieval_ref = ?,
+                    kcb_ft_reference = ?,
+                    kcb_merchant_id = ?
               WHERE payment_id = ?`,
-            [sacco.external_transaction_id, paymentId]
-          );
-          const [updateResult] = await conn.query(
-            `UPDATE transactions
-                SET payment_status = 'paid'
-              WHERE payment_id = ? AND payment_status = 'pending'`,
-            [paymentId]
+            [
+              sacco.external_transaction_id,
+              sacco.retrievalRefNumber,
+              sacco.ftReference,
+              sacco.merchantID,
+              paymentId,
+            ]
           );
           await conn.commit();
 
@@ -4604,9 +4682,8 @@ const server = http.createServer(async (req, res) => {
             deductions: calc.deductions,
             net_amount: calc.net_amount,
             total_qty: calc.total_qty,
-            status: 'success',
+            status: 'pending',
             external_transaction_id: sacco.external_transaction_id,
-            paid_count: updateResult.affectedRows || 0,
           });
         } catch (e) {
           await conn.rollback().catch(() => {});
@@ -4664,6 +4741,96 @@ const server = http.createServer(async (req, res) => {
 
       console.log(`[PAY][HISTORY] ccode=${access.ccode} userid=${access.userid} rows=${rows.length}`);
       return sendJSON(res, { success: true, data: rows });
+    }
+
+    // v2.11.6 — KCB Funds Transfer async callback.
+    // KCB posts the final status of a transfer here. Authenticated with a
+    // shared secret in the `x-kcb-callback-secret` header. Idempotent — a
+    // repeat delivery for a settled payment returns { already: true }.
+    if (path === '/api/payments/kcb/callback' && method === 'POST') {
+      const expectedSecret = process.env.KCB_CALLBACK_SECRET;
+      const providedSecret = req.headers['x-kcb-callback-secret'];
+      if (!expectedSecret || providedSecret !== expectedSecret) {
+        console.warn('[PAY][CALLBACK] unauthorized');
+        return sendJSON(res, { success: false, error: 'unauthorized' }, 401);
+      }
+
+      const body = await parseBody(req);
+      const ref = String(body.transactionReference || body.payment_reference || '').trim();
+      if (!ref) return sendJSON(res, { success: false, error: 'transactionReference required' }, 400);
+
+      const [rows] = await pool.query(
+        `SELECT payment_id, ccode, status FROM payments WHERE payment_reference = ? LIMIT 1`,
+        [ref]
+      );
+      if (rows.length === 0) {
+        console.warn(`[PAY][CALLBACK] unknown ref=${ref}`);
+        return sendJSON(res, { success: false, error: 'unknown reference' }, 404);
+      }
+      const row = rows[0];
+      if (row.status === 'success' || row.status === 'failed') {
+        console.log(`[PAY][CALLBACK] already ref=${ref} status=${row.status}`);
+        return sendJSON(res, { success: true, already: true });
+      }
+
+      const statusCodeIn = body.statusCode ?? body.responseCode ?? body.status;
+      const s = String(statusCodeIn ?? '').trim().toUpperCase();
+      const isSuccess = s === '0' || s === '00' || s === 'SUCCESS' || s === 'ACCEPTED' || s === 'PAID';
+      const paymentStatus = isSuccess ? 'success' : 'failed';
+      const txStatus = isSuccess ? 'paid' : 'failed';
+
+      const merchantID = body.merchantID ?? body.merchantId ?? null;
+      const retrievalRef = body.retrievalRefNumber ?? body.retrievalReference ?? null;
+      const ftReference = body.ftReference ?? null;
+      const txnMessage = body.transactionMessage ?? body.statusDescription ?? body.responseDescription ?? null;
+      const txnDateRaw = body.transactionDate ?? body.paymentDate ?? null;
+      let txnDate = null;
+      if (txnDateRaw) {
+        const d = new Date(txnDateRaw);
+        if (!isNaN(d.getTime())) txnDate = d.toISOString().slice(0, 19).replace('T', ' ');
+      }
+
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        await conn.query(
+          `UPDATE payments
+              SET status = ?,
+                  external_transaction_id = COALESCE(?, external_transaction_id),
+                  kcb_merchant_id = COALESCE(?, kcb_merchant_id),
+                  kcb_retrieval_ref = COALESCE(?, kcb_retrieval_ref),
+                  kcb_ft_reference = COALESCE(?, kcb_ft_reference),
+                  kcb_transaction_message = COALESCE(?, kcb_transaction_message),
+                  kcb_transaction_date = COALESCE(?, kcb_transaction_date)
+            WHERE payment_id = ?`,
+          [
+            paymentStatus,
+            retrievalRef || ftReference || null,
+            merchantID,
+            retrievalRef,
+            ftReference,
+            txnMessage ? String(txnMessage).slice(0, 255) : null,
+            txnDate,
+            row.payment_id,
+          ]
+        );
+        await conn.query(
+          `UPDATE transactions
+              SET payment_status = ?
+            WHERE payment_id = ? AND payment_status = 'pending'`,
+          [txStatus, row.payment_id]
+        );
+        await conn.commit();
+      } catch (e) {
+        await conn.rollback().catch(() => {});
+        throw e;
+      } finally {
+        conn.release();
+      }
+
+      invalidatePayableCache(row.ccode);
+      console.log(`[PAY][CALLBACK] ref=${ref} status=${paymentStatus} merchant=${merchantID || 'n/a'}`);
+      return sendJSON(res, { success: true, status: paymentStatus });
     }
 
 
