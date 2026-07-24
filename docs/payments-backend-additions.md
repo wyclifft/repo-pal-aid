@@ -188,7 +188,7 @@ No frontend change is required for v2.11.3.
 ## 6. v2.11.6 — KCB BUNI Funds Transfer integration
 
 The mock SACCO service is replaced by real KCB Funds Transfer. Isolated
-behind `backend-api/services/kcbPaymentService.js` so future providers
+behind `backend-api/services/kcbPaymentService.js` /home/maddasys/public_html/sync-service/kcbPaymentService.jsso future providers
 (Co-op / Equity) can be added as sibling files without touching
 `server.js` beyond the require line.
 

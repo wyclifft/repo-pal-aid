@@ -70,9 +70,9 @@ npx cap sync android
 
 ```cmd
 cd android
-gradlew.bat assembleDebug
+.\gradlew.bat assembleDebug
 ```
-
+cd
 Wait for the build to complete. Your APK will be at:
 ```
 android\app\build\outputs\apk\debug\app-debug.apk

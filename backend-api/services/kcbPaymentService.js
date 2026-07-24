@@ -146,59 +146,95 @@ const chargeFarmerViaKCB = async ({
 }) => {
   const companyCode = process.env.KCB_COMPANY_CODE || '';
   const debitAccount = process.env.KCB_DEBIT_ACCOUNT || '';
-  const payload = {
-    transactionReference: ref,
+const payload = {
+    beneficiaryDetails: String(farmerName || '').substring(0, 35),
+
     companyCode,
-    transactionType,          // 'MO' | 'IF' | 'EF'
-    debitAccountNumber: debitAccount,
-    beneficiaryBankCode: bankCode,
+
     creditAccountNumber: String(accountNumber || ''),
-    beneficiaryName: String(farmerName || '').slice(0, 60),
-    amount: Number(amount),
+
     currency: 'KES',
-    narration: `PAYOUT ${ccode} ${ref}`.slice(0, 60),
-  };
+
+    debitAccountNumber: debitAccount,
+
+    debitAmount: Number(amount),
+
+    paymentDetails: `PAYOUT ${ref}`.substring(0, 35),
+
+    transactionReference: ref,
+
+    transactionType,
+
+    beneficiaryBankCode: bankCode
+};
   try {
     const { status, body, raw } = await transferFunds(payload, { requestId });
+
     const statusCode = body?.statusCode ?? body?.responseCode ?? body?.status;
     const statusDescription = body?.statusDescription ?? body?.responseDescription ?? body?.message ?? '';
     const merchantID = body?.merchantID ?? body?.merchantId ?? null;
     const retrievalRefNumber = body?.retrievalRefNumber ?? body?.retrievalReference ?? null;
     const ftReference = body?.ftReference ?? body?.transactionReference ?? null;
-    const success = status >= 200 && status < 300 && isAcceptedStatusCode(statusCode);
-    const externalId = retrievalRefNumber || ftReference || (success ? ref : null);
-    if (!success) {
-      console.warn(`[PAY][TRANSFER] declined ref=${ref} http=${status} code=${statusCode} desc=${String(statusDescription).slice(0, 120)}`);
-    }
-    return {
-      success,
-      external_transaction_id: externalId,
-      statusCode: statusCode != null ? String(statusCode) : null,
-      statusDescription: String(statusDescription || ''),
-      merchantID,
-      retrievalRefNumber,
-      ftReference,
-      httpStatus: status,
-      raw: body || raw || null,
-      error: success ? null : (String(statusDescription || `HTTP ${status}`) || 'KCB declined'),
-    };
-  } catch (e) {
-    console.error(`[PAY][TRANSFER] error ref=${ref}:`, e?.message || e);
-    return {
-      success: false,
-      external_transaction_id: null,
-      statusCode: null,
-      statusDescription: e?.message || 'Transport error',
-      merchantID: null,
-      retrievalRefNumber: null,
-      ftReference: null,
-      httpStatus: 0,
-      raw: null,
-      error: e?.message || 'Transport error',
-    };
-  }
-};
 
+    const success =
+        status >= 200 &&
+        status < 300 &&
+        isAcceptedStatusCode(statusCode);
+
+    const externalId =
+        retrievalRefNumber ||
+        ftReference ||
+        (success ? ref : null);
+
+    if (!success) {
+        console.error(`
+================ KCB TRANSFER FAILED ================
+Reference : ${ref}
+HTTP      : ${status}
+Response  :
+${JSON.stringify(body || raw, null, 2)}
+=====================================================
+`);
+    }
+
+    console.log(
+        "[PAY][TRANSFER][BODY]",
+        JSON.stringify(body, null, 2)
+    );
+
+    return {
+        success,
+        external_transaction_id: externalId,
+        statusCode: statusCode != null ? String(statusCode) : null,
+        statusDescription: String(statusDescription || ''),
+        merchantID,
+        retrievalRefNumber,
+        ftReference,
+        httpStatus: status,
+        raw: body || raw || null,
+        error: success
+            ? null
+            : (String(statusDescription || `HTTP ${status}`) || 'KCB declined'),
+    };
+
+} catch (e) {
+    console.error(`[PAY][TRANSFER] error ref=${ref}:`, e?.message || e);
+
+    return {
+        success: false,
+        external_transaction_id: null,
+        statusCode: null,
+        statusDescription: e?.message || 'Transport error',
+        merchantID: null,
+        retrievalRefNumber: null,
+        ftReference: null,
+        httpStatus: 0,
+        raw: null,
+        error: e?.message || 'Transport error',
+    };
+}
+
+};
 module.exports = {
   getAccessToken,
   transferFunds,
