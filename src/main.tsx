@@ -1,13 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App.tsx";
-import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
-import { initializeNativePlatform } from "./utils/nativeInit";
 import "./index.css";
-import "./utils/errorHandler";
-import { installPersistentLogger, _setLoggerAppVersion } from "./utils/persistentLogger";
 import { APP_VERSION } from "./constants/appVersion";
-import { installAutoReconnect as installBtAutoReconnect } from "./services/btConnectionManager";
 import { Capacitor } from "@capacitor/core";
 
 declare global {
@@ -31,15 +25,19 @@ if (window.__DELICOOP_BOOT) {
 
 console.info('[BOOT] main.tsx module started', { version: APP_VERSION });
 
-// Install persistent debug logger BEFORE anything else so we capture early errors
-_setLoggerAppVersion(APP_VERSION);
+// Install low-risk startup utilities after the boot marker so failures are visible.
+import("./utils/errorHandler").catch((error) => {
+  console.error('[BOOT] Failed to load error handler:', error);
+});
 
- //installPersistentLogger();
- //initializeNativePlatform().catch(console.error);
-
- //if (Capacitor.isNativePlatform()) {
- //    installBtAutoReconnect();
- //}
+import("./utils/persistentLogger")
+  .then(({ _setLoggerAppVersion }) => {
+    _setLoggerAppVersion(APP_VERSION);
+    // installPersistentLogger intentionally remains disabled during native boot diagnosis.
+  })
+  .catch((error) => {
+    console.error('[BOOT] Failed to load persistent logger module:', error);
+  });
 
 // Prevent zoom on double tap for native feel
 document.addEventListener('touchstart', (e) => {
@@ -57,28 +55,7 @@ document.addEventListener('touchend', (e) => {
   lastTouchEnd = now;
 }, { passive: false });
 
-// Render app. If this never runs, index.html replaces the endless pre-React spinner
-// with a diagnostic message after a short timeout.
-const rootElement = document.getElementById("root");
-
-try {
-  if (!rootElement) {
-    throw new Error('Root element #root was not found');
-  }
-
-  if (window.__DELICOOP_BOOT) {
-    window.__DELICOOP_BOOT.renderRequested = true;
-    window.__DELICOOP_BOOT.renderRequestedAt = Date.now();
-  }
-
-  createRoot(rootElement).render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>
-  );
-
-  console.info('[BOOT] React render requested');
-} catch (error) {
+const renderStartupFailure = (rootElement: HTMLElement | null, error: unknown) => {
   const message = error instanceof Error ? error.message : 'Unknown React startup error';
   console.error('[BOOT] React render failed before first paint:', error);
 
@@ -89,7 +66,38 @@ try {
   if (rootElement) {
     rootElement.innerHTML = `<div style="min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif;background:#f9fafb;color:#111827;"><div style="max-width:420px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;padding:20px;box-shadow:0 16px 40px #1118271a;"><strong style="display:block;font-size:18px;margin-bottom:8px;">App startup failed</strong><span style="display:block;font-size:14px;line-height:1.45;color:#4b5563;">${message}</span></div></div>`;
   }
-}
+};
+
+// Render app. Local app modules are dynamically imported only after the boot
+// marker is set, so import-time failures no longer masquerade as a spinner.
+const renderApp = async () => {
+  const rootElement = document.getElementById("root");
+
+  try {
+    if (!rootElement) {
+      throw new Error('Root element #root was not found');
+    }
+
+    const { default: App } = await import("./App.tsx");
+
+    if (window.__DELICOOP_BOOT) {
+      window.__DELICOOP_BOOT.renderRequested = true;
+      window.__DELICOOP_BOOT.renderRequestedAt = Date.now();
+    }
+
+    createRoot(rootElement).render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>
+    );
+
+    console.info('[BOOT] React render requested');
+  } catch (error) {
+    renderStartupFailure(rootElement, error);
+  }
+};
+
+renderApp();
 
 // Advanced Service Worker registration - skip in Capacitor native apps
 // Use multiple checks for reliable Capacitor detection (bridge may not be ready immediately)
