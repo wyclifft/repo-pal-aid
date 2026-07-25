@@ -168,57 +168,20 @@ const AppContent = () => {
     return () => window.removeEventListener('backgroundSync', handleBackgroundSync);
   }, []);
   
-  return (
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <ServiceWorkerUpdateBanner />
-      <BackendStatusBanner />
-      {/* OfflineIndicator now rendered inside Dashboard for proper layout positioning */}
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />
-          <Route path="/z-report" element={<PageWrapper><ZReport /></PageWrapper>} />
-          <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
-          <Route path="/ai" element={<PageWrapper><AIPage /></PageWrapper>} />
-          <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
-          <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
-          <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
-          <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
-          <Route path="/payments" element={<PageWrapper><PaymentsScreen /></PageWrapper>} />
-          <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
-        </Routes>
-      </Suspense>
-    </BrowserRouter>
-  );
+  return <h1>APP CONTENT</h1>;
 };
 
 const App = () => {
-  const [showSplash, setShowSplash] = useState(true);
-  const [isReady, setIsReady] = useState(false);
+ const [showSplash, setShowSplash] = useState(false);
+ const [isReady, setIsReady] = useState(true);
   const [hasError, setHasError] = useState(false);
   const mountedRef = useRef(true);
   const initTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Preload critical assets and request permissions on mount
   useEffect(() => {
-    try {
-      preloadCriticalAssets();
-    } catch (error) {
-      console.warn('Failed to preload assets:', error);
-    }
-    
-    // Request Bluetooth and Camera permissions on app startup
-    const requestPermissionsOnStartup = async () => {
-      try {
-        const permissions = await requestAllPermissions();
-        console.log('📱 Permissions requested on startup:', permissions);
-      } catch (error) {
-        console.warn('Failed to request permissions:', error);
-      }
-    };
-    // Defensive .catch on the IIFE so an unimplemented native plugin can never bubble as an unhandled rejection.
-    requestPermissionsOnStartup().catch(() => {});
-  }, []);
-
+  console.log("DEBUG: Startup initialization disabled");
+}, []);
   // Check if splash has been shown in this session with timeout safety
   useEffect(() => {
     mountedRef.current = true;
@@ -226,13 +189,13 @@ const App = () => {
     try {
       const splashShown = sessionStorage.getItem('splashShown');
       if (splashShown) {
-        setShowSplash(false);
+      
         setIsReady(true);
       }
     } catch (error) {
       // sessionStorage may fail in some browsers
       console.warn('sessionStorage access failed:', error);
-      setShowSplash(false);
+      
       setIsReady(true);
     }
     
@@ -324,9 +287,11 @@ const App = () => {
     );
   }
 
-  if (showSplash) {
-    return <SplashScreen onComplete={handleSplashComplete} />;
-  }
+  // Skip splash for debugging
+  // if (showSplash) {
+  //     return <SplashScreen onComplete={handleSplashComplete} />;
+  // }
+
 
   if (!isReady) {
     return <PageLoader />;
@@ -346,7 +311,17 @@ const App = () => {
           <ReprintProvider>
             <Toaster />
             <Sonner position="top-center" richColors closeButton />
-            <AppContent />
+            <div
+  style={{
+    height: "100vh",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    fontSize: "24px",
+  }}
+>
+  APP STARTED
+</div>
           </ReprintProvider>
         </ReprintErrorBoundary>
       </AuthProvider>
