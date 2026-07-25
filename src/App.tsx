@@ -168,7 +168,27 @@ const AppContent = () => {
     return () => window.removeEventListener('backgroundSync', handleBackgroundSync);
   }, []);
   
-  return <h1>APP CONTENT</h1>;
+  return (
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <ServiceWorkerUpdateBanner />
+      <BackendStatusBanner />
+      {/* OfflineIndicator now rendered inside Dashboard for proper layout positioning */}
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />
+          <Route path="/z-report" element={<PageWrapper><ZReport /></PageWrapper>} />
+          <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
+          <Route path="/ai" element={<PageWrapper><AIPage /></PageWrapper>} />
+          <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
+          <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
+          <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
+          <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
+          <Route path="/payments" element={<PageWrapper><PaymentsScreen /></PageWrapper>} />
+          <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
+        </Routes>
+      </Suspense>
+    </BrowserRouter>
+  );
 };
 
 const App = () => {
@@ -311,17 +331,7 @@ const App = () => {
           <ReprintProvider>
             <Toaster />
             <Sonner position="top-center" richColors closeButton />
-            <div
-  style={{
-    height: "100vh",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    fontSize: "24px",
-  }}
->
-  APP STARTED
-</div>
+            <AppContent />
           </ReprintProvider>
         </ReprintErrorBoundary>
       </AuthProvider>
