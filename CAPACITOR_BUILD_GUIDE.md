@@ -145,6 +145,35 @@ After successful build, find your APK at:
 
 ---
 
+## Mandatory Native Asset Verification
+
+Before building or installing an APK, confirm the Vite build was copied into Capacitor. If these files are missing, Android can show the pre-React spinner forever or navigate to `https://app//offline.html`.
+
+```cmd
+npm run build
+npx cap sync android
+
+dir android\app\src\main\assets\public
+dir android\app\src\main\assets\public\assets
+type android\app\src\main\assets\public\index.html
+```
+
+Required checks:
+
+- `android\app\src\main\assets\public\index.html` exists.
+- `android\app\src\main\assets\public\assets\*.js` exists.
+- The `<script type="module" ...>` path in packaged `index.html` points to a JavaScript file that exists in `assets`.
+
+If any check fails, do not build the APK yet. Run `npm run build`, then `npx cap sync android`, then build the APK.
+
+To inspect pre-React startup failures on a device:
+
+```cmd
+adb logcat | findstr /i "BOOT Chromium Capacitor Uncaught SyntaxError ERR_ offline.html sw.js"
+```
+
+---
+
 ## Project Structure
 
 ```

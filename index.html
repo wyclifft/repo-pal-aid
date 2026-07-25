@@ -109,6 +109,41 @@
       ::selection {
         background: #10b98133;
       }
+
+      /* Native startup diagnostic shown only if the JS bundle never mounts React. */
+      #root.boot-timeout {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100%;
+        padding: 24px;
+        background: #f9fafb;
+      }
+
+      .boot-timeout-panel {
+        max-width: 420px;
+        width: 100%;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        background: #ffffff;
+        color: #111827;
+        padding: 20px;
+        box-shadow: 0 16px 40px #1118271a;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      .boot-timeout-panel strong {
+        display: block;
+        font-size: 18px;
+        margin-bottom: 8px;
+      }
+
+      .boot-timeout-panel span {
+        display: block;
+        font-size: 14px;
+        line-height: 1.45;
+        color: #4b5563;
+      }
     </style>
     
     <!-- OG Tags -->
@@ -119,16 +154,34 @@
   </head>
 
   <body>
+    <script>
+      window.__DELICOOP_BOOT = {
+        htmlLoadedAt: Date.now(),
+        moduleStarted: false,
+        renderRequested: false
+      };
+
+      window.addEventListener('DOMContentLoaded', function () {
+        window.setTimeout(function () {
+          var root = document.getElementById('root');
+          var boot = window.__DELICOOP_BOOT || {};
+
+          if (!root || root.hasChildNodes() || boot.renderRequested) {
+            return;
+          }
+
+          var message = boot.moduleStarted
+            ? 'The JavaScript bundle loaded, but React render was not requested. Check main.tsx startup logs.'
+            : 'The JavaScript bundle did not start. Check Android asset sync, WebView console errors, and packaged JS files.';
+
+          root.className = (root.className ? root.className + ' ' : '') + 'boot-timeout';
+          root.innerHTML = '<div class="boot-timeout-panel"><strong>App startup blocked</strong><span>' + message + '</span></div>';
+          console.error('[BOOT] React did not render before timeout:', message);
+        }, 8000);
+      });
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
-    
-    <!-- Register SW early for faster caching -->
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js', { scope: '/' });
-        });
-      }
-    </script>
+    <!-- Service Worker registration is guarded in src/main.tsx so native Capacitor never registers /sw.js. -->
   </body>
 </html>

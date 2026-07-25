@@ -10,6 +10,27 @@ import { APP_VERSION } from "./constants/appVersion";
 import { installAutoReconnect as installBtAutoReconnect } from "./services/btConnectionManager";
 import { Capacitor } from "@capacitor/core";
 
+declare global {
+  interface Window {
+    __DELICOOP_BOOT?: {
+      htmlLoadedAt?: number;
+      moduleStarted?: boolean;
+      moduleStartedAt?: number;
+      renderRequested?: boolean;
+      renderRequestedAt?: number;
+      renderError?: string;
+    };
+    __swRegistration?: ServiceWorkerRegistration;
+  }
+}
+
+if (window.__DELICOOP_BOOT) {
+  window.__DELICOOP_BOOT.moduleStarted = true;
+  window.__DELICOOP_BOOT.moduleStartedAt = Date.now();
+}
+
+console.info('[BOOT] main.tsx module started', { version: APP_VERSION });
+
 // Install persistent debug logger BEFORE anything else so we capture early errors
 _setLoggerAppVersion(APP_VERSION);
 
@@ -36,14 +57,55 @@ document.addEventListener('touchend', (e) => {
   lastTouchEnd = now;
 }, { passive: false });
 
-// Render app
+// Render app. If this never runs, index.html replaces the endless pre-React spinner
+// with a diagnostic message after a short timeout.
+const rootElement = document.getElementById("root");
+
+try {
+  if (!rootElement) {
+    throw new Error('Root element #root was not found');
+  }
+
+  if (window.__DELICOOP_BOOT) {
+    window.__DELICOOP_BOOT.renderRequested = true;
+    window.__DELICOOP_BOOT.renderRequestedAt = Date.now();
+  }
+
+  createRoot(rootElement).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+
+  console.info('[BOOT] React render requested');
+} catch (error) {
+  const message = error instanceof Error ? error.message : 'Unknown React startup error';
+  console.error('[BOOT] React render failed before first paint:', error);
+
+  if (window.__DELICOOP_BOOT) {
+    window.__DELICOOP_BOOT.renderError = message;
+  }
+
+  if (rootElement) {
+    rootElement.innerHTML = `<div style="min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,sans-serif;background:#f9fafb;color:#111827;"><div style="max-width:420px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;padding:20px;box-shadow:0 16px 40px #1118271a;"><strong style="display:block;font-size:18px;margin-bottom:8px;">App startup failed</strong><span style="display:block;font-size:14px;line-height:1.45;color:#4b5563;">${message}</span></div></div>`;
+  }
+}
 
 // Advanced Service Worker registration - skip in Capacitor native apps
 // Use multiple checks for reliable Capacitor detection (bridge may not be ready immediately)
 const isCapacitorApp = (): boolean => {
   try {
+    if (Capacitor.isNativePlatform()) {
+      return true;
+    }
+
+    const capacitorPlatform = Capacitor.getPlatform();
+    if (capacitorPlatform === 'android' || capacitorPlatform === 'ios') {
+      return true;
+    }
+
     // Check for Capacitor global object
-    const capGlobal = (window as any).Capacitor;
+    const capGlobal = (window as typeof window & { Capacitor?: { isNativePlatform?: () => boolean; platform?: string; getPlatform?: () => string } }).Capacitor;
     if (!capGlobal) return false;
     
     // Check isNativePlatform if available
@@ -55,13 +117,63 @@ const isCapacitorApp = (): boolean => {
     const platform = capGlobal.platform || capGlobal.getPlatform?.();
     return platform === 'android' || platform === 'ios';
   } catch {
-    return false;
+    return window.location.protocol === 'capacitor:' || window.location.hostname === 'app';
   }
 };
 
 const isCapacitor = isCapacitorApp();
 
-if ('serviceWorker' in navigator && !isCapacitor) {
+const isInsideIframe = (): boolean => {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+};
+
+const isLovablePreviewHost = (hostname: string): boolean => {
+  return hostname.startsWith('id-preview--') ||
+    hostname.startsWith('preview--') ||
+    hostname === 'lovableproject.com' ||
+    hostname.endsWith('.lovableproject.com') ||
+    hostname === 'lovableproject-dev.com' ||
+    hostname.endsWith('.lovableproject-dev.com') ||
+    hostname === 'beta.lovable.dev' ||
+    hostname.endsWith('.beta.lovable.dev');
+};
+
+const unregisterAppShellServiceWorkers = async (reason: string) => {
+  if (!('serviceWorker' in navigator)) {
+    return;
+  }
+
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.allSettled(
+      registrations
+        .filter((registration) => {
+          const scriptURL = registration.active?.scriptURL || registration.installing?.scriptURL || registration.waiting?.scriptURL || '';
+          return scriptURL.endsWith('/sw.js') || registration.scope === `${window.location.origin}/`;
+        })
+        .map((registration) => registration.unregister())
+    );
+    console.info('[BOOT] Service Worker disabled for this context:', reason);
+  } catch (error) {
+    console.warn('[BOOT] Failed to unregister Service Worker:', error);
+  }
+};
+
+const shouldRegisterServiceWorker = (): boolean => {
+  if (!('serviceWorker' in navigator)) return false;
+  if (isCapacitor) return false;
+  if (!import.meta.env.PROD) return false;
+  if (isInsideIframe()) return false;
+  if (window.location.search.includes('sw=off')) return false;
+  if (isLovablePreviewHost(window.location.hostname)) return false;
+  return true;
+};
+
+if (shouldRegisterServiceWorker()) {
   window.addEventListener('load', async () => {
     try {
       const registration = await navigator.serviceWorker.register('/sw.js', {
@@ -72,7 +184,7 @@ if ('serviceWorker' in navigator && !isCapacitor) {
       console.log('✅ Service Worker registered');
       
       // Store registration globally
-      (window as any).__swRegistration = registration;
+      window.__swRegistration = registration;
       
       // Check for updates immediately
       registration.update().catch(() => {});
@@ -121,7 +233,7 @@ if ('serviceWorker' in navigator && !isCapacitor) {
       // Request background sync permission
       if ('sync' in registration) {
         try {
-          await (registration as any).sync.register('sync-milk-data');
+          await (registration as ServiceWorkerRegistration & { sync?: { register: (tag: string) => Promise<void> } }).sync?.register('sync-milk-data');
         } catch (e) {
           console.log('Background sync not available');
         }
@@ -132,7 +244,7 @@ if ('serviceWorker' in navigator && !isCapacitor) {
         try {
           const status = await navigator.permissions.query({ name: 'periodic-background-sync' as any });
           if (status.state === 'granted') {
-            await (registration as any).periodicSync.register('sync-data', {
+              await (registration as ServiceWorkerRegistration & { periodicSync?: { register: (tag: string, options: { minInterval: number }) => Promise<void> } }).periodicSync?.register('sync-data', {
               minInterval: 60 * 60 * 1000 // 1 hour
             });
           }
@@ -152,8 +264,19 @@ if ('serviceWorker' in navigator && !isCapacitor) {
       console.error('❌ Service Worker registration failed:', error);
     }
   });
-} else if (isCapacitor) {
-  console.log('📱 Capacitor native app - skipping Service Worker registration');
+} else {
+  const reason = isCapacitor
+    ? 'Capacitor native app'
+    : !import.meta.env.PROD
+      ? 'development build'
+      : isInsideIframe()
+        ? 'iframe preview'
+        : isLovablePreviewHost(window.location.hostname)
+          ? 'Lovable preview host'
+          : window.location.search.includes('sw=off')
+            ? 'sw=off kill switch'
+            : 'unsupported context';
+  unregisterAppShellServiceWorkers(reason);
 }
 
 // Handle online/offline status

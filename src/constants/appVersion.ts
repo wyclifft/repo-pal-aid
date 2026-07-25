@@ -1,4 +1,16 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.11.8: NATIVE STARTUP BOOT FIX — restored the missing React root render
+//   request in src/main.tsx so Capacitor can move past the pre-React
+//   index.html spinner. Removed the duplicate inline /sw.js registration
+//   from index.html because it bypassed the Capacitor-native guard and could
+//   send WebView navigations to offline.html before React mounted. Added a
+//   boot-timeout diagnostic in index.html that replaces the endless spinner
+//   with an actionable native asset/WebView message if the JS bundle never
+//   starts or render is never requested. Hardened Android Theme.SplashScreen
+//   handoff with postSplashScreenTheme. Strictly startup/config only — no
+//   transaction, sync, IndexedDB schema, reference generation, receipt,
+//   photo, Bluetooth, auth, or payments business logic changes.
+//
 // v2.10.119: CUMULATIVE UNDER-COUNT PROTECTION — operators reported W3 batch
 //   prewarm intermittently returning `persisted − latest_delivery_weight`
 //   for select farmers (M03544, M01859, M00385 on C003/T001), even though
@@ -869,10 +881,10 @@
 //   and client payment calls include device fingerprint + userid for ccode-safe
 //   permission checks. Existing capture, sync, receipts, Bluetooth, and native
 //   plugin paths are untouched.
-export const APP_VERSION = '2.11.7';
-export const APP_VERSION_CODE = 149;
+export const APP_VERSION = '2.11.8';
+export const APP_VERSION_CODE = 150;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
 // Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'legacy-webview-52-support';
+export const APP_FIX_TAG = 'native-startup-boot-fix';
