@@ -51,8 +51,10 @@ export const collectHardwareBundle = async (): Promise<DeviceHardwareBundle> => 
       if (id?.identifier) bundle.ssaid = String(id.identifier);
     }
   } catch (e) {
-    console.warn('[HW-BUNDLE] Device.getId() failed:', e);
-  }
+    console.error(
+  '[HW-BUNDLE] Device.getId() failed:',
+  e instanceof Error ? e.message : e
+);  }
 
   try {
     const info = await Device.getInfo();

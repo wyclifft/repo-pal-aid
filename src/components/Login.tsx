@@ -285,11 +285,17 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         saveUser(userWithPassword);
         onLogin(userWithPassword, false, password); // Pass password to cache credentials
         toast.success('Login successful');
-      } catch (err) {
-        console.error('Login error', err);
-        toast.error('Login failed. Check credentials.');
-      }
-    } else {
+      } catch (err: any) {
+  console.error("=================================");
+  console.error("LOGIN ERROR");
+  console.error("message:", err?.message);
+  console.error("stack:", err?.stack);
+  console.error("full:", JSON.stringify(err));
+  console.error(err);
+  console.error("=================================");
+
+  toast.error("Login failed. Check credentials.");
+}    } else {
       console.log('[OFFLINE] Offline login attempt for user:', userId);
       
       // Check cached credentials from localStorage (stored on first online login)

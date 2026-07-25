@@ -46,23 +46,27 @@ async function apiRequest<T>(
   }
 
   // Create abort controller for timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const controller =
+  typeof AbortController !== "undefined"
+    ? new AbortController()
+    : null;
 
+const timeoutId = controller
+  ? setTimeout(() => controller.abort(), timeoutMs)
+  : null;
   try {
     // v2.10.64: use resilientFetch — falls back to XHR for non-GETs when
     // window.fetch is wrapped/broken (Lovable preview, legacy WebViews).
     const response = await resilientFetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
-      signal: controller.signal,
+      signal: controller?.signal,
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
       },
     });
 
-    clearTimeout(timeoutId);
-
+    if (timeoutId) clearTimeout(timeoutId);
     // Check if response is JSON
     const contentType = response.headers.get('content-type');
     if (!contentType || !contentType.includes('application/json')) {
@@ -106,7 +110,7 @@ async function apiRequest<T>(
 
     return data;
   } catch (error) {
-    clearTimeout(timeoutId);
+    if (timeoutId) clearTimeout(timeoutId);
     
     // Handle timeout specifically
     if (error instanceof Error && error.name === 'AbortError') {
@@ -117,12 +121,24 @@ async function apiRequest<T>(
       };
     }
     
-    console.error(`API request failed: ${endpoint}`, error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
+    console.error("================================");
+console.error(`API request failed: ${endpoint}`);
+console.error("Error object:", error);
+
+if (error instanceof Error) {
+  console.error("Message:", error.message);
+  console.error("Stack:", error.stack);
+  console.error("Name:", error.name);
+} else {
+  console.error("Raw:", JSON.stringify(error));
+}
+
+console.error("================================");
+
+return {
+  success: false,
+  error: error instanceof Error ? error.message : 'Unknown error',
+};  }
 }
 
 // ==================== SESSIONS API ====================
@@ -646,7 +662,7 @@ export const devicesApi = {
    * occurs, returns null and the caller falls through to the existing
    * registration / getByFingerprint flow. Strictly additive.
    */
-  resolveIdentity: async (bundle: {
+    resolveIdentity: async (bundle: {
     ssaid?: string;
     model?: string;
     manufacturer?: string;
@@ -660,14 +676,21 @@ export const devicesApi = {
         method: 'POST',
         body: JSON.stringify(bundle),
       }, 4000);
+
       if (!response.success || !response.data) return null;
+
       return response.data;
+
     } catch (e) {
-      console.warn('[DEVICE][RESOLVE] resolveIdentity failed:', e);
+      console.error(
+        '[DEVICE][RESOLVE] resolveIdentity failed:',
+        e instanceof Error ? e.message : e
+      );
+
       return null;
     }
   },
-};
+  };
 
 // ==================== Z-REPORT API ====================
 
