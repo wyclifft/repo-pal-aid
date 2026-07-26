@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v2.11.9 — Android SSL trust anchor for legacy Android 7 / WebView 51 devices.
+
+  The backend host 2backend.maddasystems.co.ke serves a Let's Encrypt certificate
+  chaining to ISRG Root X1. Android 7.0 (API 24) predates the inclusion of that
+  root in the system trust store (added in 7.1.1 / API 25), so WebView 51 on
+  CS10-class POS devices rejects the chain with SSLHandshakeError:-202.
+
+  We bundle isrg_root_x1.pem as a domain-scoped trust anchor. All other origins
+  keep the default system-only trust store — do NOT widen this to <base-config>.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+
+    <domain-config>
+        <domain includeSubdomains="true">maddasystems.co.ke</domain>
+        <trust-anchors>
+            <certificates src="system"/>
+            <certificates src="@raw/isrg_root_x1"/>
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

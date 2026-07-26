@@ -383,3 +383,31 @@ gradlew.bat assembleDebug
 - **Capacitor Docs**: https://capacitorjs.com/docs
 - **Android Studio**: Check logs in Logcat tab
 - **Bluetooth Issues**: See `SCALE_CONNECTION_GUIDE.md`
+
+## Android 7 / WebView 51 — SSL Trust Anchor (v2.11.9)
+
+Legacy CS10-class POS devices ship Android 7.0 (API 24) with WebView 51. That
+Android build's system trust store does **not** include ISRG Root X1, so it
+rejects any Let's Encrypt certificate chained to that root (observed on
+`2backend.maddasystems.co.ke`) with:
+
+```
+X509Util: Failed to validate the certificate chain, error:
+  java.security.cert.CertPathValidatorException:
+  Trust anchor for certification path not found.
+chromium: SSLHandshakeError:-202
+```
+
+Fix (already committed in v2.11.9):
+
+- `android/app/src/main/res/raw/isrg_root_x1.pem` — bundled ISRG Root X1 (self-
+  signed, valid until 2035-06-04).
+- `android/app/src/main/res/xml/network_security_config.xml` — domain-scoped
+  trust anchor for `*.maddasystems.co.ke` only.
+- `AndroidManifest.xml` — `<application android:networkSecurityConfig="…"/>`.
+
+Rotation: if the backend host is ever migrated to a certificate chaining to a
+different root (e.g. ISRG Root X2 / ECDSA), download the new root PEM from
+<https://letsencrypt.org/certificates/> and either replace or add a second
+`<certificates src="@raw/…"/>` entry inside the same `<domain-config>` block.
+Do NOT move the trust anchor into `<base-config>` — keep it host-scoped.
