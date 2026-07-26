@@ -155,11 +155,42 @@
 
   <body>
     <script>
+      // v2.11.10 — Capacitor bridge JS-API polyfill.
+      // On Android 7 / WebView 51-52 the injected native-bridge.js can attach
+      // AFTER the legacy bundle has already begun evaluating, so calls made by
+      // Bridge.java via evaluateJavascript() ("window.Capacitor.triggerEvent(...)"
+      // and friends) throw TypeError, poisoning plugin registration (BluetoothLe
+      // then reports "not implemented on android" and psettings never populates).
+      // We install harmless no-op stubs BEFORE anything else runs. If the real
+      // native-bridge.js loads later it overwrites these; if it never loads the
+      // stubs keep the bridge eval calls from crashing.
+      (function () {
+        try {
+          if (!window.Capacitor) {
+            window.Capacitor = { platform: 'web', isNative: false };
+          }
+          var cap = window.Capacitor;
+          if (typeof cap.triggerEvent !== 'function') {
+            cap.triggerEvent = function () { /* no-op fallback */ return false; };
+          }
+          if (typeof cap.fromNative !== 'function') {
+            cap.fromNative = function () { /* no-op fallback */ };
+          }
+          if (typeof cap.handleWindowError !== 'function') {
+            cap.handleWindowError = function () { /* no-op fallback */ };
+          }
+        } catch (e) {
+          // Never let the polyfill block boot.
+        }
+      })();
+
       window.__DELICOOP_BOOT = {
         htmlLoadedAt: Date.now(),
         moduleStarted: false,
         renderRequested: false
       };
+
+
 
       window.addEventListener('DOMContentLoaded', function () {
         window.setTimeout(function () {
