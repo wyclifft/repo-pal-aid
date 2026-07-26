@@ -1,82 +1,74 @@
-## Diagnosis (confirmed from logs + cert probe)
+# v2.11.10 — Native Boot & Bluetooth Recovery (CS10 / Android 7 / WebView 51.0.2704.81)
 
-The APK actually loads and React mounts fine on the CS10:
-- `[BOOT] main.tsx module started`
-- `[BOOT] React render requested`
-- Login screen renders (favicon fetched, login-bg image loaded)
+## What the logs actually show
 
-The user's real symptom is that **every API call fails**:
-```
-X509Util: Failed to validate the certificate chain, error:
-  java.security.cert.CertPathValidatorException:
-  Trust anchor for certification path not found.
-chromium: SSLHandshakeError:-202
-```
-…on `/api/version`, `/api/routes/by-device/…`, `/api/sessions/…`, `/api/farmers/…`, `/api/items`, `/api/z-report`, `/api/periodic-report`.
+From the attached logcat (unedited timeline):
 
-Cert probe of `2backend.maddasystems.co.ke`:
-```
-issuer  = C=US, O=Let's Encrypt, CN=YR1
-subject = CN=2backend.maddasystems.co.ke
-```
-`YR1` chains to **ISRG Root X1**. Android 7.0 (API 24) / WebView 51 does **not** ship ISRG Root X1 in its system trust store (it was added in 7.1.1/API 25). That is why every HTTPS call to the backend fails on this specific device while working on newer devices and the browser.
+1. **First error fired at 15:32:35.831** — before any user action:
+  `Uncaught TypeError: window.Capacitor.triggerEvent is not a function`
+   This comes from Capacitor Android's `Bridge.java` (verified in `node_modules/@capacitor/android/.../Bridge.java` L885/889) which evaluates
+   `window.Capacitor.triggerEvent("appStateChange", "window", …)` on every lifecycle event. On WebView 52 the injected `native-bridge.js` executes **after** the legacy Vite bundle has already begun evaluating, so `window.Capacitor` exists as a stub without `triggerEvent`. Every subsequent `appStateChange` / `resume` / `pause` eval throws — this is the "Critical app error" line 32 of the log.
+2. **Cascade** — because the bridge event evaluator throws, plugin proxies registered via `registerPlugin()` never receive their native handles. Calls like `BluetoothLe.requestDevice` and `BluetoothClassic.isAvailable` then fall through to the web shim, producing:
+  - `"BluetoothLe plugin is not implemented on android"` (user-visible toast)
+  - `"Classic Bluetooth: Native plugin not yet implemented"` (log line 121)
+  - `Failed to connect to printer` and `Bluetooth connection error` (lines 113, 128)
+3. `**Settings fetch failed` / `Network error - waiting for retry**` starts at 15:32:35.833 and repeats. Because the visible page still says *"Company code not assigned"*, `psettings` never populated — the loop is `useAppSettings` retrying on the very first foreground tick before the bridge/network is ready. Same root cause: bridge init errored, so `Network.getStatus()` returned a fallback and the offline path never resolved.
+4. Backend TLS is fine now — `getaddrinfo … gai_error = 0` and later `Handling local request: https://app/…` succeed. v2.11.9's trust anchor is holding.
 
-Nothing in the endless-spinner theory turned out to be right for this device — the app started; it just couldn't talk to the backend, so it sits on the login/sync screen with no data.
+## Fix strategy
 
-Side note (not the cause, still worth logging): Capacitor prints `Specified minimum webview version is too low, defaulting to 55` — Capacitor floors it to 55 internally, but it still let the app boot, so the v2.11.7 lowering is effectively a no-op on this Capacitor version. We can leave that for a later cleanup; it is not what is breaking API calls.
+Address the root cause (bridge JS API mismatch on WebView 51.0.2704.81) first; the Bluetooth and "company code" symptoms disappear once the bridge stops throwing.
 
-## What to change
+### 1. Polyfill missing bridge JS APIs in `index.html`
 
-Ship a bundled trust anchor for ISRG Root X1 via Android Network Security Config so WebView 51 on Android 7.0 can validate the Let's Encrypt chain. Scope the trust anchor to the API host only.
+Add a **tiny inline script that runs before `/src/main.tsx**` (and before the legacy bundle) that guarantees `window.Capacitor.triggerEvent` exists as a no-op fallback. When the real native-bridge.js later attaches its own implementation, that one wins; when it never attaches (WebView 52 race), our stub keeps `Bridge.java`'s `evaluateJavascript` calls from throwing and poisoning plugin registration.
 
-### 1. Add `android/app/src/main/res/raw/isrg_root_x1.pem`
-The published ISRG Root X1 PEM (self-signed root, expires 2035). Bundled as a raw resource.
-
-### 2. Add `android/app/src/main/res/xml/network_security_config.xml`
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<network-security-config>
-    <base-config cleartextTrafficPermitted="false">
-        <trust-anchors>
-            <certificates src="system"/>
-        </trust-anchors>
-    </base-config>
-
-    <!-- Backend uses a Let's Encrypt cert chaining to ISRG Root X1,
-         which Android 7.0 (API 24) / WebView 51 does not ship. -->
-    <domain-config>
-        <domain includeSubdomains="true">maddasystems.co.ke</domain>
-        <trust-anchors>
-            <certificates src="system"/>
-            <certificates src="@raw/isrg_root_x1"/>
-        </trust-anchors>
-    </domain-config>
-</network-security-config>
+```text
+if (!window.Capacitor) window.Capacitor = {};
+if (typeof window.Capacitor.triggerEvent !== 'function') {
+  window.Capacitor.triggerEvent = function () { /* no-op fallback */ };
+}
 ```
 
-### 3. Reference it from `AndroidManifest.xml`
-Add `android:networkSecurityConfig="@xml/network_security_config"` to the `<application>` element. Nothing else in the manifest changes.
+Same guard for `Capacitor.fromNative` and `Capacitor.handleWindowError` (both called from `Bridge.java`) — verified as the only other JS-side entry points invoked via `evaluateJavascript`.
 
-### 4. Version bump (per project rule)
-- `src/constants/appVersion.ts` → `2.11.9`, tag `android-ssl-trust-anchor`.
-- `android/app/build.gradle` → versionName `2.11.9`, versionCode `151`.
+### 2. Register `BluetoothLe` explicitly in `MainActivity.kt`
 
-### 5. Docs
-Append a short "Android 7 / WebView 51 SSL trust" section to `CAPACITOR_BUILD_GUIDE.md` noting that the ISRG Root X1 PEM is bundled and where to rotate it if Let's Encrypt migrates the API host to a different root in the future.
+`@capacitor-community/bluetooth-le` is present in `capacitor.build.gradle` and auto-registers, **but** auto-registration in Capacitor 7 depends on the bridge JS bootstrap completing. Adding an explicit `registerPlugin(BluetoothLe::class.java)` call in `MainActivity.onCreate` (mirroring how we register `BluetoothClassicPlugin`) makes registration order deterministic on WebView 52.
 
-## What I am NOT changing
+### 3. Guard `useAppSettings` first-tick storm
 
-- No changes to backend, server.js, KCB payment code, cumulative logic, IndexedDB, or any React/business logic.
-- No changes to `capacitor.config.ts` (min WebView remains 52; Capacitor floors internally, and the app already boots).
-- No changes to service worker or startup boot diagnostics — logs prove those are already fine.
-- Trust anchor is scoped to `maddasystems.co.ke` only; all other origins keep the default system-only trust store.
+`useAppSettings` fires `👁️ App visible - refreshing psettings` 8+ times inside the first second because our `visibilitychange` listener in `src/main.tsx` and `AppPlugin.appStateChange` both dispatch on boot, and each retry logs `Network error - waiting for retry`. Add a 500 ms in-flight debounce so the initial storm collapses into a single request. This is a UX fix only — no business-logic change.
 
-## Verification checklist (after build)
+### 4. Verify no other symptoms need code
 
-1. `npm run build && npx cap sync android`
-2. Rebuild APK, install on the CS10 (Android 7.0, WebView 51).
-3. Open app, watch `adb logcat`:
-   - Expect **no more** `SSLHandshakeError:-202` on `2backend.maddasystems.co.ke`.
-   - Expect `/api/version`, `/api/routes/by-device/…`, `/api/farmers/…` to return `200`.
-4. Confirm login screen accepts credentials and dashboard loads farmer/route data.
-5. Confirm receipt sync no longer sits in "pending" from the SSL failure.
+- The two stacked toasts in `image-7.png` (green "Company data refreshed: DAIRY COLLECTION" + blue "Refreshing company data…") are expected and clear on their own — nothing to change.
+- The blue background on the dashboard is the normal theme, not a "black UI". Once `psettings` returns after fix #1, the header and dashboard render normally as shown in `image-8.png`.
+
+## Files touched
+
+- `index.html` — inline pre-bundle polyfill block (≈10 lines) before the `<script type="module">`.
+- `android/app/src/main/java/app/delicoop101/MainActivity.kt` — add `registerPlugin(BluetoothLe::class.java)` and matching import.
+- `src/hooks/useAppSettings.ts` — add 500 ms debounce around the `appVisible` refresh handler.
+- `src/constants/appVersion.ts` — bump to `2.11.10` (code 152, tag `native-boot-bridge-polyfill`).
+- `android/app/build.gradle` — matching versionCode/versionName bump.
+
+No changes to: server.js, payments module, cumulative logic, reference generator, IndexedDB schema, or any sync path.
+
+## Verification checklist (after rebuild + reinstall)
+
+1. Fresh app launch on CS10 → logcat shows **no** `triggerEvent is not a function`.
+2. Settings → **Search Printer** and **Search Scale** open the picker without `"BluetoothLe plugin is not implemented on android"`.
+3. Dashboard header shows the real company name (not "Company code not assigned") within 5 s of first launch on Wi-Fi.
+4. `useAppSettings` logs a single `Settings fetch` on visibility change, not a burst.
+5. No regression: milk transaction creation, receipt print, farmer sync, cumulative correctness (v2.10.121 hold still active).
+
+## Rebuild command for the user
+
+```
+npm run build
+npx cap sync android
+# reinstall APK on CS10
+```
+
+&nbsp;
