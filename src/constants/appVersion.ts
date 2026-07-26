@@ -888,11 +888,35 @@
 //   call. Scoped to *.maddasystems.co.ke only; all other origins keep the
 //   default system trust store. Native-only change — no React, backend, sync,
 //   IndexedDB, reference generator, receipt, photo, Bluetooth, or auth logic.
-export const APP_VERSION = '2.11.9';
-export const APP_VERSION_CODE = 151;
+// v2.11.10: NATIVE BOOT & BLUETOOTH RECOVERY (CS10 / Android 7 / WebView 51-52).
+//   Root cause in the 2026-07-26 CS10 logcat: Bridge.java fires
+//   `window.Capacitor.triggerEvent(...)` on every appStateChange/resume, but
+//   on WebView 51/52 the injected native-bridge.js can attach AFTER the
+//   legacy Vite bundle begins evaluating, so triggerEvent is undefined and
+//   the eval throws TypeError before any plugin proxy binds. Cascade:
+//   BluetoothLe / BluetoothClassic fall through to their web shims
+//   ("BluetoothLe plugin is not implemented on android"), psettings loops
+//   with "Network error - waiting for retry", dashboard shows
+//   "Company code not assigned". Three additive fixes:
+//   (1) index.html — inline polyfill (before the module script) that stubs
+//       window.Capacitor.triggerEvent / fromNative / handleWindowError as
+//       no-ops when missing. Real native-bridge.js still overwrites them
+//       when it loads.
+//   (2) android/.../MainActivity.kt — explicit registerPlugin(BluetoothLe)
+//       so BLE binding does not race the JS bridge bootstrap on WebView 51/52.
+//   (3) src/hooks/useAppSettings.ts — 500 ms trailing debounce on the
+//       visibilitychange refresh so the boot-time burst of
+//       visibilitychange + appStateChange + resume collapses into one
+//       psettings fetch instead of 8+ overlapping failed retries.
+//   Strictly boot/plugin plumbing — no changes to transaction creation,
+//   receipts, cumulative logic (v2.10.121 downward-hold still active),
+//   reference generator, IndexedDB schema, sync engine, payments, or auth.
+export const APP_VERSION = '2.11.10';
+export const APP_VERSION_CODE = 152;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
 // Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'android-ssl-trust-anchor';
+export const APP_FIX_TAG = 'native-boot-bridge-polyfill';
+
 

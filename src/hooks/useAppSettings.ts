@@ -489,21 +489,31 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   }, [refreshSettings]);
 
   // Refresh when app becomes visible (foreground)
+  // v2.11.10: debounce the first-tick storm. On native boot the
+  // visibilitychange + Capacitor appStateChange + AppPlugin resume all fire
+  // within ~5 ms, previously producing 8+ overlapping "Settings fetch failed"
+  // retries. A 500 ms trailing debounce collapses that burst into a single
+  // request without changing offline/online behaviour.
   useEffect(() => {
+    let debounceTimer: number | undefined;
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && navigator.onLine) {
-        // Only refresh if last refresh was more than 30 seconds ago
-        const now = Date.now();
-        if (now - lastRefresh > 30000) {
-          console.log('👁️ App visible - refreshing psettings');
-          refreshSettings();
-        }
-      }
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+      const now = Date.now();
+      if (now - lastRefresh <= 30000) return;
+      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        console.log('👁️ App visible - refreshing psettings');
+        refreshSettings();
+      }, 500);
     };
-    
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
+    };
   }, [refreshSettings, lastRefresh]);
+
 
   // Listen for manual settings refresh request
   useEffect(() => {
