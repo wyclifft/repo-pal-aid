@@ -5,6 +5,8 @@ import android.util.Log
 import com.getcapacitor.BridgeActivity
 import app.delicoop101.bluetooth.BluetoothClassicPlugin
 import app.delicoop101.storage.OfflineStoragePlugin
+import com.capacitorjs.community.plugins.bluetoothle.BluetoothLe
+
 import app.delicoop101.sync.SyncWorker
 import app.delicoop101.database.DelicoopDatabase
 import app.delicoop101.database.DatabaseLogger
