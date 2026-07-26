@@ -881,10 +881,18 @@
 //   and client payment calls include device fingerprint + userid for ccode-safe
 //   permission checks. Existing capture, sync, receipts, Bluetooth, and native
 //   plugin paths are untouched.
-export const APP_VERSION = '2.11.8';
-export const APP_VERSION_CODE = 150;
+// v2.11.9: ANDROID SSL TRUST ANCHOR — bundle ISRG Root X1 via
+//   android/app/src/main/res/xml/network_security_config.xml so Android 7.0 /
+//   WebView 51 devices (CS10) can validate the Let's Encrypt chain on
+//   2backend.maddasystems.co.ke. Fixes SSLHandshakeError:-202 on every API
+//   call. Scoped to *.maddasystems.co.ke only; all other origins keep the
+//   default system trust store. Native-only change — no React, backend, sync,
+//   IndexedDB, reference generator, receipt, photo, Bluetooth, or auth logic.
+export const APP_VERSION = '2.11.9';
+export const APP_VERSION_CODE = 151;
 // Short kebab-case slug describing the headline fix shipped in this build.
 // Parsed at build time by android/app/build.gradle to name the APK as:
 //   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
 // Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'native-startup-boot-fix';
+export const APP_FIX_TAG = 'android-ssl-trust-anchor';
+
