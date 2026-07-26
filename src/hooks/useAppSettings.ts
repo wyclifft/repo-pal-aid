@@ -465,15 +465,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         setIsPendingApproval(false);
         console.log('📴 Network error - using cached authorization');
       } else {
-        // Not authorized or unknown - block access, clear any stale data
-        setIsDeviceAuthorized(false);
-        setIsPendingApproval(false);
-        localStorage.setItem('device_authorized', 'false');
-        localStorage.removeItem(SETTINGS_STORAGE_KEY);
-        localStorage.removeItem(SETTINGS_CCODE_KEY);
-        setSettings(DEFAULT_SETTINGS);
-        console.log('📴 Network error - device not authorized, blocking access');
-      }
+  console.warn("Network error - waiting for retry");
+  return;
+}
     } finally {
       setIsLoading(false);
     }
