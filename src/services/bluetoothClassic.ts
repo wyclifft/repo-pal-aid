@@ -162,14 +162,26 @@ export const isClassicBluetoothAvailable = async (): Promise<boolean> => {
     return false;
   }
 
+  // Diagnostic: Check if plugin is registered in the bridge
+  const plugins = (window as any).Capacitor?.Plugins;
+  if (plugins && !plugins.BluetoothClassic) {
+    console.warn('⚠️ [BRIDGE] BluetoothClassic plugin NOT found in window.Capacitor.Plugins');
+    console.log('Available plugins:', Object.keys(plugins).join(', '));
+  } else if (plugins) {
+    console.log('✅ [BRIDGE] BluetoothClassic plugin found in bridge');
+  }
+
   try {
     const result = await BluetoothClassic.isAvailable();
-    console.log(`ℹ️ Classic Bluetooth available: ${result.available}`);
-    return result.available;
-  } catch (error) {
-    // Native plugin not implemented yet
-    console.log('ℹ️ Classic Bluetooth: Native plugin not yet implemented');
-    console.log('💡 TODO: Implement BluetoothClassicPlugin for Capacitor 7');
+    console.log(`ℹ️ Classic Bluetooth available check: ${JSON.stringify(result)}`);
+    return !!result.available;
+  } catch (error: any) {
+    // Native plugin not implemented yet or bridge failure
+    console.error('❌ Classic Bluetooth availability check FAILED:', error);
+    const msg = error?.message || String(error);
+    if (msg.includes('not implemented') || msg.includes('plugin')) {
+      console.log('💡 Bridge issue detected: Plugin registration failed or race condition on WebView 51.');
+    }
     return false;
   }
 };

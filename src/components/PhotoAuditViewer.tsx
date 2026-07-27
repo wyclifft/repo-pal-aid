@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { X, Search, ChevronLeft, ChevronRight, Image, Calendar, User, FileText, Loader2, Package } from 'lucide-react';
 import { API_CONFIG } from '@/config/api';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { getTimeoutSignal } from '../utils/abortUtils';
 
 interface TransactionPhoto {
   ID: number;
@@ -76,7 +77,7 @@ const PhotoAuditViewer = ({ open, onClose }: PhotoAuditViewerProps) => {
       }
       
       const response = await fetch(`${apiUrl}/api/transaction-photos?${params}`, {
-        signal: AbortSignal.timeout(10000),
+        signal: getTimeoutSignal(10000),
       });
       
       if (!response.ok) {

@@ -9,7 +9,7 @@ const config: CapacitorConfig = {
   
   // Android configuration
   android: {
-    minWebViewVersion: 52, // v2.11.7: support legacy Android 7 POS (CS10, WebView 52)
+    minWebViewVersion: 50, // v2.11.12: support legacy Android 7 POS (CS10, WebView 51)
     allowMixedContent: false, // Disabled for production security
     captureInput: true,
     backgroundColor: '#1a1a2e',

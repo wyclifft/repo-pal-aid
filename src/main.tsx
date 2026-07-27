@@ -4,6 +4,20 @@ import "./index.css";
 import { APP_VERSION } from "./constants/appVersion";
 import { Capacitor } from "@capacitor/core";
 
+// WebView Compatibility Polyfills / Checks
+if (typeof AbortController === 'undefined') {
+  console.warn('[COMPAT] AbortController is not defined. Network request timeouts will be disabled.');
+  // Minimal no-op polyfill for safety if needed by 3rd party libs
+  (window as any).AbortController = class AbortController {
+    signal = { aborted: false, addEventListener: () => {}, removeEventListener: () => {} };
+    abort() { (this.signal as any).aborted = true; }
+  };
+}
+
+if (typeof AbortSignal === 'undefined') {
+  (window as any).AbortSignal = class AbortSignal {};
+}
+
 declare global {
   interface Window {
     __DELICOOP_BOOT?: {
@@ -24,6 +38,22 @@ if (window.__DELICOOP_BOOT) {
 }
 
 console.info('[BOOT] main.tsx module started', { version: APP_VERSION });
+
+// v2.11.12 — Bridge & Plugin Diagnostics
+if (Capacitor.isNativePlatform()) {
+  setTimeout(() => {
+    const cap = (window as any).Capacitor;
+    console.log('🔍 [BRIDGE] Platform:', Capacitor.getPlatform());
+    console.log('🔍 [BRIDGE] window.Capacitor present:', !!cap);
+    if (cap?.Plugins) {
+      const p = Object.keys(cap.Plugins);
+      console.log(`🔍 [BRIDGE] Found ${p.length} plugins:`, p.join(', '));
+      if (!p.includes('BluetoothClassic')) {
+        console.error('❌ [BRIDGE] BluetoothClassic is MISSING from the bridge plugins!');
+      }
+    }
+  }, 5000);
+}
 
 // Install low-risk startup utilities after the boot marker so failures are visible.
 import("./utils/errorHandler").catch((error) => {

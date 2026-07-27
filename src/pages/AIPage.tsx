@@ -18,6 +18,7 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { saveToLocalDB } from '@/services/offlineStorage';
+import { getTimeoutSignal } from '@/utils/abortUtils';
 import { resolveSessionMetadata, resolveDashboardActiveSession } from '@/utils/sessionMetadata';
 
 interface CartItem {
@@ -157,7 +158,7 @@ const AIPage = () => {
     try {
       if (navigator.onLine) {
         const apiUrl = API_CONFIG.MYSQL_API_URL;
-        const response = await fetch(`${apiUrl}/api/credits`, { signal: AbortSignal.timeout(5000) });
+        const response = await fetch(`${apiUrl}/api/credits`, { signal: getTimeoutSignal(5000) });
         if (response.ok) {
           const data = await response.json();
           if (data.success && Array.isArray(data.data)) {
@@ -211,7 +212,7 @@ const AIPage = () => {
           const apiUrl = API_CONFIG.MYSQL_API_URL;
           const response = await fetch(
             `${apiUrl}/api/routes/by-device/${encodeURIComponent(deviceFingerprint)}`,
-            { signal: AbortSignal.timeout(5000) }
+            { signal: getTimeoutSignal(5000) }
           );
           
           if (response.status === 404) {

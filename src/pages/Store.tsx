@@ -18,6 +18,7 @@ import { TransactionReceipt, createStoreReceiptData, type ReceiptData } from '@/
 import { useAppSettings } from '@/hooks/useAppSettings';
 import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 import { useReprint } from '@/contexts/ReprintContext';
+import { getTimeoutSignal } from '@/utils/abortUtils';
 import { resolveSessionMetadata, resolveDashboardActiveSession } from '@/utils/sessionMetadata';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
@@ -183,7 +184,7 @@ const Store = () => {
     try {
       if (navigator.onLine) {
         const apiUrl = API_CONFIG.MYSQL_API_URL;
-        const response = await fetch(`${apiUrl}/api/credits`, { signal: AbortSignal.timeout(5000) });
+        const response = await fetch(`${apiUrl}/api/credits`, { signal: getTimeoutSignal(5000) });
         if (response.ok) {
           const data = await response.json();
           if (data.success && Array.isArray(data.data)) {
@@ -240,7 +241,7 @@ const Store = () => {
           const apiUrl = API_CONFIG.MYSQL_API_URL;
           const response = await fetch(
             `${apiUrl}/api/routes/by-device/${encodeURIComponent(deviceFingerprint)}`,
-            { signal: AbortSignal.timeout(5000) }
+            { signal: getTimeoutSignal(5000) }
           );
           
           if (response.status === 404) {

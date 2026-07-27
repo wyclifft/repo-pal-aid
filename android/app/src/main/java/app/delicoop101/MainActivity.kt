@@ -32,10 +32,7 @@ class MainActivity : BridgeActivity() {
         // Register custom plugins before calling super.onCreate
         registerPlugin(BluetoothClassicPlugin::class.java)
         registerPlugin(OfflineStoragePlugin::class.java)
-        // v2.11.10 — register BluetoothLe explicitly so plugin binding does not
-        // rely on the JS bridge bootstrap winning the race on WebView 51/52.
         registerPlugin(BluetoothLe::class.java)
-
         
         super.onCreate(savedInstanceState)
         

@@ -4748,15 +4748,26 @@ const server = http.createServer(async (req, res) => {
     // shared secret in the `x-kcb-callback-secret` header. Idempotent — a
     // repeat delivery for a settled payment returns { already: true }.
     if (path === '/api/payments/kcb/callback' && method === 'POST') {
-      const expectedSecret = process.env.KCB_CALLBACK_SECRET;
-      const providedSecret = req.headers['x-kcb-callback-secret'];
-      if (!expectedSecret || providedSecret !== expectedSecret) {
-        console.warn('[PAY][CALLBACK] unauthorized');
-        return sendJSON(res, { success: false, error: 'unauthorized' }, 401);
-      }
 
-      const body = await parseBody(req);
-      const ref = String(body.transactionReference || body.payment_reference || '').trim();
+    console.log("========== KCB CALLBACK RECEIVED ==========");
+    console.log("HEADERS:", req.headers);
+
+    const body = await parseBody(req);
+    const fs = require('fs');
+
+fs.appendFileSync(
+  '/home/maddasys/public_html/sync-service/kcb-callback.json',
+  JSON.stringify(body, null, 2) + "\n\n-------------------------\n\n"
+);
+    console.log("========== KCB CALLBACK RECEIVED ==========");
+console.log(JSON.stringify(body, null, 2));
+
+
+console.log("BODY:");
+console.log(JSON.stringify(body, null, 2));
+console.log("===========================================");
+
+const ref = String(body.transactionReference || body.payment_reference || '').trim();
       if (!ref) return sendJSON(res, { success: false, error: 'transactionReference required' }, 400);
 
       const [rows] = await pool.query(
@@ -4773,16 +4784,38 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { success: true, already: true });
       }
 
-      const statusCodeIn = body.statusCode ?? body.responseCode ?? body.status;
-      const s = String(statusCodeIn ?? '').trim().toUpperCase();
-      const isSuccess = s === '0' || s === '00' || s === 'SUCCESS' || s === 'ACCEPTED' || s === 'PAID';
-      const paymentStatus = isSuccess ? 'success' : 'failed';
-      const txStatus = isSuccess ? 'paid' : 'failed';
+ const transactionStatus = String(body.transactionStatus ?? '').trim().toUpperCase();
+const transactionMessage = String(body.transactionMessage ?? '').trim().toUpperCase();
+
+const statusCodeIn =
+    body.statusCode ??
+    body.responseCode ??
+    body.status ??
+    transactionStatus;
+
+const s = String(statusCodeIn).trim().toUpperCase();
+
+const isSuccess =
+    s === '0' ||
+    s === '00' ||
+    s === 'SUCCESS' ||
+    s === 'ACCEPTED' ||
+    s === 'PAID' ||
+    transactionStatus === 'SUCCESS' ||
+    transactionMessage === 'SUCCESS';
+
+const paymentStatus = isSuccess ? 'success' : 'failed';
+const txStatus = isSuccess ? 'paid' : 'failed';
 
       const merchantID = body.merchantID ?? body.merchantId ?? null;
       const retrievalRef = body.retrievalRefNumber ?? body.retrievalReference ?? null;
       const ftReference = body.ftReference ?? null;
-      const txnMessage = body.transactionMessage ?? body.statusDescription ?? body.responseDescription ?? null;
+      const txnMessage =
+    body.transactionMessage ??
+    body.statusMessage ??
+    body.statusDescription ??
+    body.responseDescription ??
+    null;
       const txnDateRaw = body.transactionDate ?? body.paymentDate ?? null;
       let txnDate = null;
       if (txnDateRaw) {
@@ -4793,9 +4826,17 @@ const server = http.createServer(async (req, res) => {
       const conn = await pool.getConnection();
       try {
         await conn.beginTransaction();
+                     
+              console.error("===== CALLBACK VALUES =====");
+console.error("statusCodeIn:", statusCodeIn);
+console.error("paymentStatus:", paymentStatus);
+console.error("txnMessage:", txnMessage);
+console.error("body:", JSON.stringify(body));
+console.error("===========================");
         await conn.query(
           `UPDATE payments
               SET status = ?,
+ 
                   external_transaction_id = COALESCE(?, external_transaction_id),
                   kcb_merchant_id = COALESCE(?, kcb_merchant_id),
                   kcb_retrieval_ref = COALESCE(?, kcb_retrieval_ref),

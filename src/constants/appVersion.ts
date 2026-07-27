@@ -911,12 +911,12 @@
 //   Strictly boot/plugin plumbing — no changes to transaction creation,
 //   receipts, cumulative logic (v2.10.121 downward-hold still active),
 //   reference generator, IndexedDB schema, sync engine, payments, or auth.
-export const APP_VERSION = '2.11.11';
-export const APP_VERSION_CODE = 153;
+// v2.11.12: PRINTER DIALOG + CLASSIC SPP SUPPORT. Added connection selector
+//   for internal CS10 printers. Hardened bridge polyfills and native plugin
+//   registration to fix "MISSING" errors on WebView 51.
+export const APP_VERSION = '2.11.12';
+export const APP_VERSION_CODE = 154;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-// v2.11.11: force ES5 output + drop modern chunks so WebView 51 (Chromium 51)
-// on Android 7 can parse the bundle. Fixes cascading SyntaxError that killed
-// the Capacitor bridge, Bluetooth, camera, and IndexedDB reads on CS10.
-export const APP_FIX_TAG = 'webview51-es5';
+export const APP_FIX_TAG = 'webview51-printer-v2';
 
 

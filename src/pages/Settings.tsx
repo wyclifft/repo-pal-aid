@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
 import { ArrowLeft, Bluetooth, Printer, CheckCircle2, XCircle, Zap, Bug, RefreshCw, Building2, Loader2, Settings2, Trash2, Terminal } from "lucide-react";
 import { BluetoothConnectionDialog } from "@/components/BluetoothConnectionDialog";
+import { PrinterConnectionDialog } from "@/components/PrinterConnectionDialog";
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -65,7 +66,8 @@ const Settings = () => {
   
   // Bluetooth connection dialog state
   const [showConnectionDialog, setShowConnectionDialog] = useState(false);
-  
+  const [showPrinterDialog, setShowPrinterDialog] = useState(false);
+
   // Device identification
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>('');
   const [devcode, setDevcode] = useState<string>(() => {
@@ -244,17 +246,13 @@ const Settings = () => {
   };
 
   const handleConnectPrinter = async () => {
-    setIsConnectingPrinter(true);
-    const result = await connectBluetoothPrinter();
+    setShowPrinterDialog(true);
+  };
 
-    setIsConnectingPrinter(false);
-    if (result.success) {
-      setPrinterConnected(true);
-      setPrinterName(result.deviceName || "Bluetooth Printer");
-      toast.success(`Connected to ${result.deviceName || "printer"}`);
-    } else {
-      toast.error(result.error || "Failed to connect to printer");
-    }
+  const handlePrinterConnected = (name: string, type: 'ble' | 'classic') => {
+    setPrinterConnected(true);
+    setPrinterName(name);
+    setStoredPrinter(getStoredPrinterInfo());
   };
 
   const handleDisconnectPrinter = async () => {
@@ -755,6 +753,12 @@ Date: ${new Date().toLocaleString()}
         onOpenChange={setShowConnectionDialog}
         onConnected={handleScaleConnected}
         onWeightUpdate={handleDialogWeightUpdate}
+      />
+
+      <PrinterConnectionDialog
+        open={showPrinterDialog}
+        onOpenChange={setShowPrinterDialog}
+        onConnected={handlePrinterConnected}
       />
     </div>
   );
