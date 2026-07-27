@@ -914,9 +914,9 @@
 // v2.11.12: PRINTER DIALOG + CLASSIC SPP SUPPORT. Added connection selector
 //   for internal CS10 printers. Hardened bridge polyfills and native plugin
 //   registration to fix "MISSING" errors on WebView 51.
-export const APP_VERSION = '2.11.12';
-export const APP_VERSION_CODE = 154;
+export const APP_VERSION = '2.11.19';
+export const APP_VERSION_CODE = 161;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'webview51-printer-v2';
+export const APP_FIX_TAG = 'webview51-boot-restore';
 
 

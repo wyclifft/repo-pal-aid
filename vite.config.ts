@@ -18,13 +18,35 @@ export default defineConfig(({ mode }) => ({
     react(),
     legacy({
       targets: ["chrome >= 51", "Android >= 5.0"],
-      // Emit ONLY the legacy nomodule bundle. This also removes the inline
-      // module/dynamic-import detection block that WebView 51 cannot parse
-      // (the "Uncaught SyntaxError: Unexpected token (" at index.html:54).
       renderModernChunks: false,
       modernPolyfills: true,
       additionalLegacyPolyfills: ["regenerator-runtime/runtime"],
     }),
+    {
+      name: 'webview-51-hardened-fix',
+      transformIndexHtml(html) {
+        // WebView 51 crashes on modern module scripts and detection logic.
+        // 1. Remove ALL module and preload tags
+        var cleanHtml = html
+          .replace(/<script type="module".*?><\/script>/g, '')
+          .replace(/<script async type="module".*?><\/script>/g, '')
+          .replace(/<link rel="modulepreload".*?>/g, '')
+          .replace(/<link rel="preload".*?as="script".*?>/g, '');
+
+        // 2. Remove Vite's modern browser detection block (nomodule fix)
+        cleanHtml = cleanHtml.replace(/<script nomodule>.*?<\/script>/gs, function(match) {
+           if (match.indexOf('System.import') !== -1) {
+             return match.replace('nomodule', 'type="text/javascript"');
+           }
+           return '';
+        });
+
+        // 3. Force all remaining scripts to be plain text/javascript
+        cleanHtml = cleanHtml.replace(/nomodule/g, '');
+
+        return cleanHtml;
+      }
+    },
     mode === "development" && componentTagger(),
   ].filter(Boolean),
   resolve: {
