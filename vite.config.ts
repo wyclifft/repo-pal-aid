@@ -33,19 +33,17 @@ export default defineConfig(({ mode }) => ({
     },
   },
   esbuild: {
-    // Belt & braces: refuse to keep syntax Chromium 51 can't parse, even in
-    // third-party dependencies that ship pre-transpiled ESM.
-    target: "es5",
-    supported: {
-      "async-await": false,
-      "object-rest-spread": false,
-      "optional-chain": false,
-      "nullish-coalescing": false,
-    },
+    // esbuild cannot downlevel to ES5 (no async/const/let/destructuring transforms).
+    // Emit ES2015 here; @vitejs/plugin-legacy (Babel) handles the final ES5 pass
+    // for the nomodule bundle that WebView 51 actually loads.
+    target: "es2015",
   },
   build: {
-    target: "es5",
+    // plugin-legacy overrides this for the legacy bundle anyway; keep aligned
+    // with esbuild target for the intermediate transform.
+    target: "es2015",
     minify: "esbuild",
+
     cssCodeSplit: true,
     cssMinify: true,
     sourcemap: false,
