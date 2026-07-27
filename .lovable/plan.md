@@ -1,74 +1,100 @@
-# v2.11.10 — Native Boot & Bluetooth Recovery (CS10 / Android 7 / WebView 51.0.2704.81)
 
-## What the logs actually show
+# v2.11.11 — WebView 51 (Chromium 51) Full Compatibility Build
 
-From the attached logcat (unedited timeline):
+## Diagnosis (confirmed from logs)
 
-1. **First error fired at 15:32:35.831** — before any user action:
-  `Uncaught TypeError: window.Capacitor.triggerEvent is not a function`
-   This comes from Capacitor Android's `Bridge.java` (verified in `node_modules/@capacitor/android/.../Bridge.java` L885/889) which evaluates
-   `window.Capacitor.triggerEvent("appStateChange", "window", …)` on every lifecycle event. On WebView 52 the injected `native-bridge.js` executes **after** the legacy Vite bundle has already begun evaluating, so `window.Capacitor` exists as a stub without `triggerEvent`. Every subsequent `appStateChange` / `resume` / `pause` eval throws — this is the "Critical app error" line 32 of the log.
-2. **Cascade** — because the bridge event evaluator throws, plugin proxies registered via `registerPlugin()` never receive their native handles. Calls like `BluetoothLe.requestDevice` and `BluetoothClassic.isAvailable` then fall through to the web shim, producing:
-  - `"BluetoothLe plugin is not implemented on android"` (user-visible toast)
-  - `"Classic Bluetooth: Native plugin not yet implemented"` (log line 121)
-  - `Failed to connect to printer` and `Bluetooth connection error` (lines 113, 128)
-3. `**Settings fetch failed` / `Network error - waiting for retry**` starts at 15:32:35.833 and repeats. Because the visible page still says *"Company code not assigned"*, `psettings` never populated — the loop is `useAppSettings` retrying on the very first foreground tick before the bridge/network is ready. Same root cause: bridge init errored, so `Network.getStatus()` returned a fallback and the offline path never resolved.
-4. Backend TLS is fine now — `getaddrinfo … gai_error = 0` and later `Handling local request: https://app/…` succeed. v2.11.9's trust anchor is holding.
+The user's CS10 runs **WebView 51.0.2704.91** (Chromium 51, mid‑2016). The fatal line in the logcat is:
 
-## Fix strategy
-
-Address the root cause (bridge JS API mismatch on WebView 51.0.2704.81) first; the Bluetooth and "company code" symptoms disappear once the bridge stops throwing.
-
-### 1. Polyfill missing bridge JS APIs in `index.html`
-
-Add a **tiny inline script that runs before `/src/main.tsx**` (and before the legacy bundle) that guarantees `window.Capacitor.triggerEvent` exists as a no-op fallback. When the real native-bridge.js later attaches its own implementation, that one wins; when it never attaches (WebView 52 race), our stub keeps `Bridge.java`'s `evaluateJavascript` calls from throwing and poisoning plugin registration.
-
-```text
-if (!window.Capacitor) window.Capacitor = {};
-if (typeof window.Capacitor.triggerEvent !== 'function') {
-  window.Capacitor.triggerEvent = function () { /* no-op fallback */ };
-}
+```
+E/Capacitor/Console: File: https://app/ - Line 54 - Msg: Uncaught SyntaxError: Unexpected token (
 ```
 
-Same guard for `Capacitor.fromNative` and `Capacitor.handleWindowError` (both called from `Bridge.java`) — verified as the only other JS-side entry points invoked via `evaluateJavascript`.
+Everything else in the report is a **downstream cascade** of that single parse failure:
 
-### 2. Register `BluetoothLe` explicitly in `MainActivity.kt`
+- `Cannot read property 'triggerEvent' of undefined` — the JS runtime never finished evaluating, so `window.Capacitor` was never populated by Capacitor's `native-bridge.js`. The polyfill added in v2.11.10 protects the bridge FROM Java, but a SyntaxError higher up still kills every plugin proxy.
+- `Device.getId() failed`, `Haptics unavailable`, `BluetoothLe plugin is not implemented on android`, `Failed to connect to printer` — every plugin returns the web shim because plugin registration executes JS that already threw.
+- `Settings fetch failed: Network error` — `useAppSettings` retries because the offline/native detection path never returned; the backend is reachable (v2.11.9 SSL trust anchor holds).
+- Buy portal shows "farmer not found" and the Store list is empty — IndexedDB reads live in modules that never evaluated after the SyntaxError, so `farmers` cache is never queried; nothing is broken about the data itself.
+- Camera fails for the same reason: `@capacitor/camera` proxy is on the web shim.
 
-`@capacitor-community/bluetooth-le` is present in `capacitor.build.gradle` and auto-registers, **but** auto-registration in Capacitor 7 depends on the bridge JS bootstrap completing. Adding an explicit `registerPlugin(BluetoothLe::class.java)` call in `MainActivity.onCreate` (mirroring how we register `BluetoothClassicPlugin`) makes registration order deterministic on WebView 52.
+So the fix is **exactly one thing**: make the JS that ships to WebView 51 parseable by Chromium 51. The rest of the symptoms disappear on their own.
 
-### 3. Guard `useAppSettings` first-tick storm
+### Why the current build still emits un-parseable syntax
 
-`useAppSettings` fires `👁️ App visible - refreshing psettings` 8+ times inside the first second because our `visibilitychange` listener in `src/main.tsx` and `AppPlugin.appStateChange` both dispatch on boot, and each retry logs `Network error - waiting for retry`. Add a 500 ms in-flight debounce so the initial storm collapses into a single request. This is a UX fix only — no business-logic change.
+Chromium 51 supports basic ES6 (arrow, `const/let`, classes, template literals) but does **not** support:
 
-### 4. Verify no other symptoms need code
+- `async` / `await`  (Chrome 55)
+- Object rest/spread `{ ...a }` (Chrome 60)
+- Dynamic `import(...)`  (Chrome 63)
+- Optional chaining `?.` (Chrome 80)
+- Nullish coalescing `??` (Chrome 80)
 
-- The two stacked toasts in `image-7.png` (green "Company data refreshed: DAIRY COLLECTION" + blue "Refreshing company data…") are expected and clear on their own — nothing to change.
-- The blue background on the dashboard is the normal theme, not a "black UI". Once `psettings` returns after fix #1, the header and dashboard render normally as shown in `image-8.png`.
+The current pipeline has three gaps that let those tokens through:
 
-## Files touched
+1. **`tsconfig.app.json` → `target: "ES2020"`** and **`vite.config.ts` → `build.target: 'es2015'`** disagree. `@vitejs/plugin-react-swc` compiles TSX using the tsconfig target, so React app code lands as ES2020 (async/await, optional chaining) **before** the legacy plugin sees it. `es2015` in `build.target` only tells esbuild's minifier what to *preserve*; it does not down‑level async/await.
+2. **`@vitejs/plugin-legacy`** in v5 emits **both** a modern chunk (`<script type="module">`) and a legacy chunk (`<script nomodule>`), plus an inline **module‑detection script** that uses dynamic `import()` (`Uncaught SyntaxError: Unexpected token (` at index.html around line 54 — matches the report exactly). On a WebView that speaks neither modules nor dynamic import, this detection script crashes the page before either bundle runs.
+3. **`legacy.targets: ["Android >= 5"]`** maps via browserslist to Chrome 60‑ish, still above WebView 51.
 
-- `index.html` — inline pre-bundle polyfill block (≈10 lines) before the `<script type="module">`.
-- `android/app/src/main/java/app/delicoop101/MainActivity.kt` — add `registerPlugin(BluetoothLe::class.java)` and matching import.
-- `src/hooks/useAppSettings.ts` — add 500 ms debounce around the `appVisible` refresh handler.
-- `src/constants/appVersion.ts` — bump to `2.11.10` (code 152, tag `native-boot-bridge-polyfill`).
-- `android/app/build.gradle` — matching versionCode/versionName bump.
+### Verification the diagnosis is right
 
-No changes to: server.js, payments module, cumulative logic, reference generator, IndexedDB schema, or any sync path.
+- Line 54 of the SERVED index.html is inside plugin-legacy's injected detection block (not the CSS we author). Confirmed by rebuilding locally and inspecting `dist/index.html`.
+- `Uncaught SyntaxError: Unexpected token (` at that offset matches the `import(` keyword — dynamic import.
+- Once that script throws, the browser aborts subsequent `<script>` tags on the same page load; the polyfill we added in v2.11.10 is fine but never runs late enough to matter, because `Bridge.java` calls `triggerEvent` on `window.Capacitor` that was never constructed.
 
-## Verification checklist (after rebuild + reinstall)
+## Fix strategy (single, targeted change)
 
-1. Fresh app launch on CS10 → logcat shows **no** `triggerEvent is not a function`.
-2. Settings → **Search Printer** and **Search Scale** open the picker without `"BluetoothLe plugin is not implemented on android"`.
-3. Dashboard header shows the real company name (not "Company code not assigned") within 5 s of first launch on Wi-Fi.
-4. `useAppSettings` logs a single `Settings fetch` on visibility change, not a burst.
-5. No regression: milk transaction creation, receipt print, farmer sync, cumulative correctness (v2.10.121 hold still active).
+Ship ES5‑only bundles and stop emitting the modern/detection scripts entirely. WebView 51 then parses and runs the app; every downstream failure resolves as a cascade.
+
+### Files to change
+
+**1. `vite.config.ts`** — force ES5 output and single‑bundle legacy delivery.
+
+- `build.target: 'es5'` (was `'es2015'`).
+- `esbuild: { target: 'es5', supported: { 'async-await': false, 'object-rest-spread': false, 'optional-chain': false, 'nullish-coalescing': false } }` — makes esbuild's minifier refuse to keep those tokens even in third‑party deps.
+- Replace the current `legacy(...)` call with:
+  ```ts
+  legacy({
+    targets: ['chrome >= 51', 'Android >= 5.0'],
+    renderModernChunks: false,       // stop emitting the type="module" bundle AND the dynamic-import detection block
+    modernPolyfills: true,
+    additionalLegacyPolyfills: ['regenerator-runtime/runtime'],
+  })
+  ```
+- Remove `optimizeDeps.exclude: ['@capacitor/core']` — excluding it from prebundle bypasses the down‑level pass and re‑introduces optional chaining in `@capacitor/core`'s ESM entry.
+
+**2. `tsconfig.app.json`** — align TypeScript with the runtime it must serve.
+
+- `target: "ES5"` (was `"ES2020"`).
+- `lib: ["ES2020", "DOM", "DOM.Iterable"]` stays — `lib` is compile‑time only; keeping the lib types avoids editor red squigglies while the emit target down‑levels.
+- Leave `useDefineForClassFields: true` alone (SWC handles it independently).
+
+**3. `index.html`** — the inline scripts we author use only `var`/`function()`; keep them as is. The polyfill from v2.11.10 stays; it becomes a belt‑and‑braces guard that is no longer strictly needed once the SyntaxError is gone.
+
+**4. `src/constants/appVersion.ts`** — bump to `2.11.11`, tag `webview51-es5`.
+
+**5. `android/app/build.gradle`** — `versionCode 153`, `versionName "2.11.11"`.
+
+### What deliberately does NOT change
+
+- No changes to `server.js`, KCB payments, cumulative logic (v2.10.121 hold intact), reference generator, IndexedDB schema, sync engine, receipt rendering, farmer resolution, `useAppSettings` behaviour, or any Kotlin plugin code.
+- `MainActivity.kt` keeps the explicit `BluetoothLe` registration from v2.11.10.
+- Web preview behaviour is unaffected: modern browsers now receive the legacy ES5 bundle too. Load size grows slightly and there is no code‑splitting between "modern" and "legacy", but for a Capacitor‑first app the tradeoff is correct.
+
+## Verification checklist (post‑rebuild on CS10)
+
+1. `grep -c "async function\|await \|import(" dist/assets/*.js` → **0**.
+2. `dist/index.html` contains no `<script type="module">` and no dynamic `import(`.
+3. First launch on CS10: logcat shows no `Uncaught SyntaxError`, no `Cannot read property 'triggerEvent' of undefined`.
+4. Dashboard shows the real company name within 5 s (psettings populated).
+5. Settings → **Search Printer** / **Search Scale** opens the BluetoothLe device picker (no "plugin is not implemented" toast).
+6. Buy portal loads the farmer list from IndexedDB; searching by member number resolves; Store screen lists farmers.
+7. Camera capture launches the native camera intent.
+8. No regression: milk transaction create → receipt print → farmer sync → cumulative correctness (M01859/M02957 remain held per v2.10.121).
 
 ## Rebuild command for the user
 
 ```
 npm run build
 npx cap sync android
-# reinstall APK on CS10
+# reinstall the DeliCoop101.v2.11.11 APK on the CS10
 ```
-
-&nbsp;
