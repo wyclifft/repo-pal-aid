@@ -911,12 +911,12 @@
 //   Strictly boot/plugin plumbing — no changes to transaction creation,
 //   receipts, cumulative logic (v2.10.121 downward-hold still active),
 //   reference generator, IndexedDB schema, sync engine, payments, or auth.
-export const APP_VERSION = '2.11.10';
-export const APP_VERSION_CODE = 152;
-// Short kebab-case slug describing the headline fix shipped in this build.
-// Parsed at build time by android/app/build.gradle to name the APK as:
-//   DeliCoop101.v<versionName>-fix<versionCode>-<APP_FIX_TAG>.apk
-// Update this each release alongside APP_VERSION / APP_VERSION_CODE.
-export const APP_FIX_TAG = 'native-boot-bridge-polyfill';
+export const APP_VERSION = '2.11.11';
+export const APP_VERSION_CODE = 153;
+// Short slug embedded in the built APK filename (see android/app/build.gradle).
+// v2.11.11: force ES5 output + drop modern chunks so WebView 51 (Chromium 51)
+// on Android 7 can parse the bundle. Fixes cascading SyntaxError that killed
+// the Capacitor bridge, Bluetooth, camera, and IndexedDB reads on CS10.
+export const APP_FIX_TAG = 'webview51-es5';
 
 
