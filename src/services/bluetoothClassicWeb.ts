@@ -38,6 +38,22 @@ export class BluetoothClassicWeb extends WebPlugin implements BluetoothClassicPl
     return { connected: false };
   }
 
+  async connectScale(_options: { address: string }): Promise<{ connected: boolean }> {
+    return this.connect(_options);
+  }
+
+  async connectPrinter(_options: { address: string }): Promise<{ connected: boolean }> {
+    return this.connect(_options);
+  }
+
+  async connectInsecure(_options: { address: string }): Promise<{ connected: boolean }> {
+    return this.connect(_options);
+  }
+
+  async connectPrinterInsecure(_options: { address: string }): Promise<{ connected: boolean }> {
+    return this.connect(_options);
+  }
+
   async disconnect(): Promise<void> {
     // No-op on web
   }
@@ -48,6 +64,14 @@ export class BluetoothClassicWeb extends WebPlugin implements BluetoothClassicPl
 
   async write(_options: { data: string }): Promise<void> {
     console.warn('⚠️ Cannot write: Classic Bluetooth not available on web');
+  }
+
+  async writePrinter(_options: { data: string }): Promise<void> {
+    return this.write(_options);
+  }
+
+  async writeScale(_options: { data: string }): Promise<void> {
+    return this.write(_options);
   }
 
   async addListener(
