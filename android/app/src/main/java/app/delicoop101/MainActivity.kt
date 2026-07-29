@@ -7,7 +7,7 @@ import com.getcapacitor.BridgeActivity
 import com.getcapacitor.WebViewListener
 import app.delicoop101.bluetooth.BluetoothClassicPlugin
 import app.delicoop101.bluetooth.BluetoothClassicJsBridge
-import app.delicoop101.bluetooth.Cs10PrinterJsBridge
+import app.delicoop101.posapi.PosApiPlugin
 import app.delicoop101.storage.OfflineStoragePlugin
 
 
@@ -32,7 +32,6 @@ class MainActivity : BridgeActivity() {
     
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var bluetoothClassicJsBridge: BluetoothClassicJsBridge? = null
-    private var cs10PrinterJsBridge: Cs10PrinterJsBridge? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         // v2.11.22: Install direct JS bridges as early as Capacitor exposes the
@@ -53,6 +52,10 @@ class MainActivity : BridgeActivity() {
         registerPlugin(BluetoothClassicPlugin::class.java)
         Log.d(TAG, "[INIT] Registering native OfflineStorage plugin")
         registerPlugin(OfflineStoragePlugin::class.java)
+        // v2.11.27: PosApiPlugin wraps vendor SDK (vpos.apipackage.PosApiHelper +
+        // com.cspos.PaySys) via reflection; replaces the retired CS10 printer bridge.
+        Log.d(TAG, "[INIT] Registering native PosApi plugin")
+        registerPlugin(PosApiPlugin::class.java)
         // v2.11.21: BluetoothLe is auto-registered by Capacitor via
         // capacitor.plugins.json — a second manual registerPlugin() call
         // corrupts the bridge plugin map on WebView 51 and caused
@@ -130,13 +133,8 @@ class MainActivity : BridgeActivity() {
             webView.addJavascriptInterface(bridgeInstance, "BluetoothClassicAndroid")
             Log.d(TAG, "[INIT] Registered BluetoothClassicAndroid JS fallback bridge")
         }
-
-        if (cs10PrinterJsBridge == null) {
-            val printerBridge = Cs10PrinterJsBridge(applicationContext)
-            cs10PrinterJsBridge = printerBridge
-            webView.addJavascriptInterface(printerBridge, "Cs10PrinterAndroid")
-            Log.d(TAG, "[INIT] Registered Cs10PrinterAndroid JS bridge")
-        }
+        // v2.11.27: Cs10PrinterAndroid JS bridge retired. Internal printing now
+        // flows through the PosApi Capacitor plugin registered above.
     }
 }
 
