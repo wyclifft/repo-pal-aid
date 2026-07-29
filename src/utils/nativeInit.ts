@@ -276,7 +276,7 @@ const initStatusBar = async (): Promise<void> => {
     const { StatusBar, Style } = await import('@capacitor/status-bar');
     
     await StatusBar.setStyle({ style: Style.Dark });
-    await StatusBar.setBackgroundColor({ color: '#1a1a2e' });
+    await StatusBar.setBackgroundColor({ color: '#ffffff' });
     
     // Make status bar overlay content on iOS for edge-to-edge design
     if (Capacitor.getPlatform() === 'ios') {

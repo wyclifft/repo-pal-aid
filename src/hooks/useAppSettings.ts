@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, createContext, useContext } from 'react';
+import { useState, useEffect, useCallback, createContext, useContext, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { generateDeviceFingerprint, getDeviceName, getDeviceInfo } from '@/utils/deviceFingerprint';
 import { API_CONFIG } from '@/config/api';
@@ -267,8 +267,15 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const [isPendingApproval, setIsPendingApproval] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<number>(0);
+  const refreshInFlightRef = useRef(false);
 
   const refreshSettings = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      console.log('⏳ psettings refresh already running - skipped duplicate request');
+      return;
+    }
+
+    refreshInFlightRef.current = true;
     if (!navigator.onLine) {
       // Offline - check if we have cached authorization
       const cachedAuth = localStorage.getItem('device_authorized');
@@ -285,6 +292,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
         console.log('📴 Offline - device not authorized, blocking access');
       }
       setIsLoading(false);
+      refreshInFlightRef.current = false;
       return;
     }
 
@@ -469,6 +477,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   return;
 }
     } finally {
+      refreshInFlightRef.current = false;
       setIsLoading(false);
     }
   }, []);

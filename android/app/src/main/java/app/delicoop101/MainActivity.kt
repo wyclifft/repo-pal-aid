@@ -30,8 +30,11 @@ class MainActivity : BridgeActivity() {
     
     override fun onCreate(savedInstanceState: Bundle?) {
         // Register custom plugins before calling super.onCreate
+        Log.d(TAG, "[INIT] Registering native BluetoothClassic plugin")
         registerPlugin(BluetoothClassicPlugin::class.java)
+        Log.d(TAG, "[INIT] Registering native OfflineStorage plugin")
         registerPlugin(OfflineStoragePlugin::class.java)
+        Log.d(TAG, "[INIT] Registering native BluetoothLe plugin")
         registerPlugin(BluetoothLe::class.java)
         
         super.onCreate(savedInstanceState)

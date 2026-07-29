@@ -24,7 +24,7 @@ export default defineConfig(({ mode }) => ({
     }),
     {
       name: 'webview-51-hardened-fix',
-      transformIndexHtml(html) {
+      transformIndexHtml(html: string) {
         // WebView 51 crashes on modern module scripts and detection logic.
         // 1. Remove ALL module and preload tags
         var cleanHtml = html
@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => ({
           .replace(/<link rel="preload".*?as="script".*?>/g, '');
 
         // 2. Remove Vite's modern browser detection block (nomodule fix)
-        cleanHtml = cleanHtml.replace(/<script nomodule>.*?<\/script>/gs, function(match) {
+        cleanHtml = cleanHtml.replace(/<script nomodule>.*?<\/script>/gs, function(match: string) {
            if (match.indexOf('System.import') !== -1) {
              return match.replace('nomodule', 'type="text/javascript"');
            }
