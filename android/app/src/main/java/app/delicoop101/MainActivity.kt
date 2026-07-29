@@ -132,7 +132,7 @@ class MainActivity : BridgeActivity() {
         }
 
         if (cs10PrinterJsBridge == null) {
-            val printerBridge = Cs10PrinterJsBridge()
+            val printerBridge = Cs10PrinterJsBridge(applicationContext)
             cs10PrinterJsBridge = printerBridge
             webView.addJavascriptInterface(printerBridge, "Cs10PrinterAndroid")
             Log.d(TAG, "[INIT] Registered Cs10PrinterAndroid JS bridge")

@@ -1,86 +1,98 @@
-## Actual issue
 
-The internal CS10 printer crash is fixed: the app now correctly reports `CS10 internal printer available: false` and does not load the incompatible vendor SDK.
+# v2.11.25 — CS10 Internal Printer: Real Initialization, No Silent Disable
 
-The new failure is separate: the external Classic Bluetooth printer socket is closing before/during print:
+## Goal
 
-```text
-[BT][JS][printer] Read error: bt socket closed, read return: -1
-java.io.IOException: Broken pipe
-BluetoothClassicJsBridge.write(...)
+Selecting **Internal CS10 Printer** must actually try to initialize the built-in thermal printer on the CS10 A26 (Android 7, WebView 51) and print. If it cannot, the user must see a precise diagnostic (which class/library/service is missing), not a silent `available:false`. The app must never crash, and we must never fall back to Bluetooth when the user explicitly picked the internal printer.
+
+Transaction, sync, Bluetooth, receipt formatting, IndexedDB, and UI logic are **out of scope**.
+
+## Current state (verified)
+
+- Bundled SDK: `android/app/libs/cs10-posapi.jar` — package `vpos.apipackage.*` (generic Ciontek/VPOS SDK, `PosApiHelper` present).
+- Bundled native libs: `libPosApi.so`, `libPaypassApi.so`, `libVisaLib.so` for `armeabi-v7a` and `arm64-v8a` under `android/app/src/main/jniLibs/`.
+- `Cs10PrinterJsBridge.kt` currently gates on the presence of `/vendor/lib*/libcustom_jni.so` **and** `com.android.server.bcr.IBCRService$Stub`. On the CS10 A26 firmware these probes fail, so `available:false` is returned and the class is never loaded. This gate is the reason the user sees the feature permanently disabled.
+- The previous SIGSEGV happened inside `libPosApi.so` during `PosApiHelper.<clinit>` / `getInstance()`, so a plain in-process try/catch cannot save us — but a crash in a **separate probe process** can.
+
+The assumption that "libcustom_jni.so + IBCRService are required" is **not verified against vendor docs** for this exact firmware; it was a heuristic from the crash trace. The plan treats it as unverified and replaces it with a real init attempt plus a proper diagnostic.
+
+## Plan
+
+### 1. Remove the permanent gate; add a real, crash-safe init probe
+
+Rewrite `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterJsBridge.kt` so it:
+
+- Stops using `libcustom_jni.so` / `IBCRService` presence as a hard block.
+- On first `isAvailable()` / `status()` / `printText()` call, runs a **one-shot native init probe in a separate Android process** (`android:process=":posprobe"` service). The probe:
+  1. `System.loadLibrary("PosApi")` and reports success/failure + `UnsatisfiedLinkError` message (missing symbol / dependent `.so`).
+  2. `Class.forName("vpos.apipackage.PosApiHelper")` + `getInstance()` + `PrintInit()` + `PrintCheckStatus()`.
+  3. Writes the structured result (ok / stage-that-failed / exception class / message / missing library name) to a small file the main process reads.
+- If the probe process dies (SIGSEGV, killed by zygote), the parent detects the missing result file and records `crash-at-<stage>` with the last logcat line captured via `Runtime.exec("logcat -d -t 200 *:E")` filtered for `libPosApi|PosApiHelper|DEBUG|SIGSEGV`.
+- If the probe succeeds, the main process performs the real `PosApiHelper.getInstance()` normally (safe now) and caches the helper for the app session.
+- If the probe fails, `isAvailable()` returns `available:false` **with a structured diagnostic** (`stage`, `missingLibrary`, `exception`, `logcatTail`) so the UI can show the exact reason.
+
+### 2. Expose a rich diagnostic to the WebView
+
+Update the JSON returned by `isAvailable()` / `status()` / `printText()` to always include:
+
+```json
+{
+  "available": false,
+  "stage": "loadLibrary|getInstance|printInit|printCheckStatus|print",
+  "exception": "java.lang.UnsatisfiedLinkError",
+  "missingLibrary": "libcustom_jni.so",
+  "logcatTail": "…",
+  "sdkBuild": "cs10-posapi.jar sha=…",
+  "firmware": "full_a26_6737m/NRD90M/1608967428",
+  "model": "CS10", "sdk": 24
+}
 ```
 
-On Android, `BluetoothSocket.isConnected` can remain `true` even after the remote printer has closed the RFCOMM stream. The bridge then keeps stale printer state, and the next write hits `Broken pipe`.
+### 3. Do not fall back to Bluetooth when the user picked Internal
 
-## Plan (v2.11.24, versionCode 166, fixTag `classic-printer-broken-pipe-recovery`)
+In `src/services/bluetoothClassic.ts` and `src/components/PrinterConnectionDialog.tsx`:
 
-### 1. Fix stale socket state in the direct Android bridge
+- When the selected printer is `internal-cs10`, do not silently switch to Classic Bluetooth on failure.
+- Show the structured diagnostic (stage / missing library / logcat tail) in the dialog so the user can report it verbatim.
+- Keep a manual "Try Classic Bluetooth instead" button — never an automatic fallback.
 
-`android/app/src/main/java/app/delicoop101/bluetooth/BluetoothClassicJsBridge.kt`
+No changes to receipt formatting, transaction, or sync code.
 
-- When the reader gets `IOException` or `read()` returns `< 0`, clear only that role's socket/input stream/device immediately.
-- Emit `BluetoothClassic:connectionStateChanged` with `connected:false`, role, address, and error.
-- In `write()`:
-  - Catch `IOException` such as `Broken pipe`.
-  - Close and clear only the `printer` role connection.
-  - Return structured JSON error like `{ error: "printer socket closed: Broken pipe", disconnected: true, role: "printer" }` instead of leaving stale state.
-- Preserve the scale role and existing paired-device behavior.
+### 4. SDK-swap path (only if the probe proves the bundled SDK is wrong)
 
-### 2. Apply the same safety to the Capacitor plugin path
+If step 1 reports `UnsatisfiedLinkError: dlopen failed: library "libcustom_jni.so" not found` or similar, that is proof the bundled generic VPOS SDK does not match the CS10 A26 firmware. In that case:
 
-`android/app/src/main/java/app/delicoop101/bluetooth/BluetoothClassicPlugin.kt`
+- Document the exact missing dependency in the diagnostic.
+- Add `android/app/libs/README-CS10-SDK.md` describing which vendor SDK variant to obtain from Ciontek for firmware `full_a26_6737m` and how to drop it in (`cs10-posapi.jar` + matching `libPosApi.so` / `libcustom_jni.so`).
+- Once the correct SDK is provided by the user (Ciontek ships per-firmware SDKs), swapping the JAR + `.so` files is a file replacement — no code change beyond bumping the SDK hash in `Cs10PrinterJsBridge.kt`.
 
-- In both `write()` and `writeWithRole()` catch blocks, call `disconnectRole(role, notify = true)` before rejecting the call.
-- In `startReading()`, treat `read() < 0` as a connection loss and clear the role.
-- This keeps the fallback bridge and normal plugin behavior consistent.
+This plan does **not** commit to bundling a specific replacement SDK sight unseen; it commits to producing the diagnostic that tells us whether a swap is needed, and — if it is — to accept the vendor drop.
 
-### 3. Reconnect once automatically before retrying print
+### 5. Crash protection stays
 
-`src/services/bluetoothClassic.ts`
+- The isolated `:posprobe` process guarantees a native crash cannot terminate the main app.
+- The main process wraps every subsequent SDK call in `try { … } catch (Throwable)` + `Thread.setDefaultUncaughtExceptionHandler` scoped to the printer worker thread.
 
-- Update the printer connection-loss listener so a verified `printer` disconnect immediately clears `classicPrinter` state.
-- Add a guarded helper for `printToClassicPrinter()`:
-  - If a chunk write fails with `Broken pipe`, `socket closed`, or `not connected`, disconnect/clear the printer role.
-  - Reconnect once using the saved printer address/name.
-  - Restart the print from the beginning once, not from the failed chunk, to avoid partial receipt corruption.
-  - If retry fails, return a clear error: `Printer connection lost. Reconnect the Bluetooth printer and retry.`
-- Keep receipt content and ESC/POS formatting unchanged.
+### 6. Version bump
 
-### 4. Make the unavailable internal printer obvious
+- `src/constants/appVersion.ts`: `v2.11.25`, `APP_FIX_TAG = 'cs10-internal-printer-real-init'`.
+- `android/app/build.gradle`: `versionCode 167`, `versionName "2.11.25"`.
 
-`src/services/bluetoothClassic.ts`
+## Files to change
 
-- Add `getInternalPrinterStatus()` that returns the full `Cs10PrinterAndroid.isAvailable()` payload, including `reason`, while keeping `isInternalPrinterAvailable()` as a boolean wrapper.
+- `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterJsBridge.kt` — remove gate, add probe orchestration + diagnostics.
+- `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterProbeService.kt` — **new**, runs in `:posprobe`.
+- `android/app/src/main/AndroidManifest.xml` — declare the probe service with `android:process=":posprobe"`.
+- `src/services/bluetoothClassic.ts` — surface structured diagnostic; no auto-fallback for `internal-cs10`.
+- `src/components/PrinterConnectionDialog.tsx` — render diagnostic (stage, missing lib, logcat tail) when internal init fails; keep manual BT switch.
+- `src/constants/appVersion.ts`, `android/app/build.gradle` — version bump.
+- `android/app/libs/README-CS10-SDK.md` — **new**, SDK swap instructions.
 
-`src/components/PrinterConnectionDialog.tsx`
+## Acceptance criteria
 
-- When internal printer status is unavailable:
-  - Show the internal printer button as clearly unsupported, not a silent green disabled button.
-  - Show a direct explanation for `cs10-sdk-incompatible`: this CS10 Android 7 firmware does not include the required POS printer service, so the operator must use a paired Classic Bluetooth printer.
-  - Add a `Use Bluetooth Printer Instead` button that switches to the CLASSIC tab.
-- Do not change the behavior for devices where the internal SDK is actually available.
-
-### 5. Version bump
-
-`src/constants/appVersion.ts`
-
-- `APP_VERSION = '2.11.24'`
-- `APP_VERSION_CODE = 166`
-- `APP_FIX_TAG = 'classic-printer-broken-pipe-recovery'`
-
-`android/app/build.gradle`
-
-- `versionName "2.11.24"`
-- `versionCode 166`
-
-## Not changed
-
-No changes to transaction creation, receipt content, sync, IndexedDB, cumulative logic, farmer search, company settings, Bluetooth paired-device listing, or scale parsing.
-
-## Verification
-
-- Opening printer selector on CS10 shows 3 paired devices as before.
-- Tapping unavailable internal printer gives visible guidance instead of appearing to do nothing.
-- Printing to an external Classic printer no longer leaves stale connected state after `bt socket closed` / `Broken pipe`.
-- On first broken-pipe print failure, the app reconnects once and retries the whole receipt once.
-- If the printer is off/out of range, the app shows a clean recoverable error instead of repeated broken-pipe logs.
+1. Tapping **Internal CS10 Printer** actually calls into the native SDK on the device (verifiable in logcat by `PosApiHelper` / `libPosApi` entries), instead of being blocked by the pre-check.
+2. If the SDK initializes, a receipt prints on the built-in thermal head.
+3. If it fails, the dialog shows a precise stage + missing dependency + logcat snippet.
+4. The app never crashes, regardless of what the SDK does.
+5. No automatic fallback to Bluetooth when Internal was selected.
+6. No changes to receipts, transactions, sync, Bluetooth pairing, IndexedDB, or unrelated UI.

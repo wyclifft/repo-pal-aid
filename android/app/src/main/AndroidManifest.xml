@@ -35,6 +35,14 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- v2.11.25: Isolated CS10 POS SDK init probe. Runs in its own
+             process so a SIGSEGV inside libPosApi.so cannot take down the
+             main app. See Cs10PrinterProbeService / Cs10PrinterJsBridge. -->
+        <service
+            android:name=".bluetooth.Cs10PrinterProbeService"
+            android:exported="false"
+            android:process=":posprobe" />
     </application>
 
     <!-- Permissions -->

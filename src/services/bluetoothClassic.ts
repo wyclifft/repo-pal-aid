@@ -229,7 +229,22 @@ export interface ClassicBluetoothDevice {
 export interface InternalPrinterStatus {
   available: boolean;
   reason?: string;
+  /** Stage that failed inside the native probe (loadLibrary|classForName|getInstance|printInit|printCheckStatus|printStart|printStr|startProbeService|parseProbeResult|bridge). */
+  stage?: string;
+  /** Native exception class (e.g. java.lang.UnsatisfiedLinkError). */
+  exception?: string;
+  /** Raw exception message from the native probe. */
+  message?: string;
+  /** Missing .so file name if the failure was a dlopen failure. */
+  missingLibrary?: string;
+  /** Filtered logcat tail captured when the probe failed. */
+  logcatTail?: string;
+  initStatus?: number | null;
+  checkStatus?: number | null;
   model?: string;
+  manufacturer?: string;
+  device?: string;
+  fingerprint?: string;
   sdk?: number;
 }
 
@@ -868,26 +883,60 @@ let classicPrinter: {
 const CLASSIC_PRINTER_KEY = 'lastClassicBluetoothPrinter';
 const INTERNAL_PRINTER_ADDRESS = 'CS10-INTERNAL-PRINTER';
 
-const parseCs10PrinterResult = <T,>(action: string, raw: string): T => {
-  const parsed = JSON.parse(raw || '{}');
-  if (parsed?.error) {
-    throw new Error(`[CS10-PRINTER] ${action} failed: ${parsed.error}`);
-  }
-  return parsed as T;
-};
+
+
 
 export const getInternalPrinterStatus = async (): Promise<InternalPrinterStatus> => {
   if (!Capacitor.isNativePlatform()) return { available: false, reason: 'not-native' };
   const bridge = cs10PrinterBridge();
   if (!bridge) return { available: false, reason: 'bridge-missing' };
   try {
-    const result = parseCs10PrinterResult<InternalPrinterStatus>('isAvailable', bridge.isAvailable());
-    console.log(`🖨️ CS10 internal printer available: ${!!result.available}`);
-    return { ...result, available: !!result.available };
+    const raw = bridge.isAvailable();
+    const parsed = JSON.parse(raw || '{}');
+    const status: InternalPrinterStatus = {
+      available: !!parsed.available,
+      reason: parsed.available ? 'ok' : (parsed.error || parsed.stage || 'init-failed'),
+      stage: parsed.stage,
+      exception: parsed.exception,
+      message: parsed.message,
+      missingLibrary: parsed.missingLibrary,
+      logcatTail: parsed.logcatTail,
+      initStatus: parsed.initStatus ?? null,
+      checkStatus: parsed.checkStatus ?? null,
+      model: parsed.model,
+      manufacturer: parsed.manufacturer,
+      device: parsed.device,
+      fingerprint: parsed.fingerprint,
+      sdk: parsed.sdk,
+    };
+    console.log(
+      `🖨️ CS10 internal printer available: ${status.available}` +
+        (status.available ? '' : ` — stage=${status.stage} exc=${status.exception} msg=${status.message} missing=${status.missingLibrary}`),
+    );
+    return status;
   } catch (error) {
     console.warn('⚠️ CS10 internal printer availability check failed:', error);
-    return { available: false, reason: 'status-check-failed' };
+    return {
+      available: false,
+      reason: 'status-check-failed',
+      message: error instanceof Error ? error.message : String(error),
+      stage: 'bridge',
+    };
   }
+};
+
+/**
+ * Force the native side to discard its cached probe result and run the
+ * isolated SDK init probe again. Used by the "Retry" button in the printer
+ * dialog when the user wants to attempt initialization after e.g. changing
+ * device state.
+ */
+export const retryInternalPrinterProbe = async (): Promise<InternalPrinterStatus> => {
+  const bridge = cs10PrinterBridge();
+  if (bridge && typeof (bridge as any).retryProbe === 'function') {
+    try { (bridge as any).retryProbe(); } catch (e) { console.warn('retryProbe failed', e); }
+  }
+  return getInternalPrinterStatus();
 };
 
 export const isInternalPrinterAvailable = async (): Promise<boolean> => {
@@ -895,14 +944,25 @@ export const isInternalPrinterAvailable = async (): Promise<boolean> => {
   return status.available;
 };
 
-export const connectInternalPrinter = async (): Promise<{ success: boolean; error?: string }> => {
+const formatInternalError = (status: InternalPrinterStatus): string => {
+  const parts: string[] = [];
+  if (status.stage) parts.push(`stage=${status.stage}`);
+  if (status.exception) parts.push(status.exception);
+  if (status.missingLibrary) parts.push(`missing=${status.missingLibrary}`);
+  if (status.message) parts.push(status.message);
+  return parts.length ? `CS10 internal printer init failed (${parts.join(' | ')})` : 'CS10 internal printer unavailable';
+};
+
+export const connectInternalPrinter = async (): Promise<{ success: boolean; error?: string; status?: InternalPrinterStatus }> => {
   if (!Capacitor.isNativePlatform()) {
     return { success: false, error: 'Internal printer only available on native' };
   }
 
   try {
     const status = await getInternalPrinterStatus();
-    if (!status.available) return { success: false, error: status.reason || 'CS10 internal printer bridge unavailable' };
+    if (!status.available) {
+      return { success: false, error: formatInternalError(status), status };
+    }
 
     const device: ClassicBluetoothDevice = {
       address: INTERNAL_PRINTER_ADDRESS,
@@ -924,7 +984,7 @@ export const connectInternalPrinter = async (): Promise<{ success: boolean; erro
     }));
     window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true, type: 'classic', internal: true } }));
     console.log('✅ Connected to CS10 internal printer bridge');
-    return { success: true };
+    return { success: true, status };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('❌ CS10 internal printer connection error:', error);
@@ -937,9 +997,18 @@ export const printToInternalPrinter = async (content: string): Promise<{ success
   if (!bridge) return { success: false, error: 'CS10 internal printer bridge unavailable' };
 
   try {
-    parseCs10PrinterResult('printText', bridge.printText(content + '\n\n\n'));
-    console.log('✅ CS10 internal printer print completed');
-    return { success: true };
+    const raw = bridge.printText(content + '\n\n\n');
+    const parsed = JSON.parse(raw || '{}');
+    if (parsed?.success) {
+      console.log('✅ CS10 internal printer print completed');
+      return { success: true };
+    }
+    const details = [parsed?.stage, parsed?.exception, parsed?.message, parsed?.error]
+      .filter(Boolean).join(' | ');
+    // v2.11.25: NEVER auto-fall-back to Bluetooth here — the user explicitly
+    // picked Internal. Surface the diagnostic and let them retry or manually
+    // switch to CLASSIC.
+    return { success: false, error: details || 'Internal print failed' };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Internal print failed';
     console.error('❌ CS10 internal printer print error:', error);
