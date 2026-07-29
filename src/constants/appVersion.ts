@@ -993,10 +993,21 @@
 //   transaction, sync, IndexedDB schema, reference generator, receipt
 //   content, cumulative, Bluetooth discovery/connect, KCB payments, or
 //   auth logic changes.
-export const APP_VERSION = '2.11.23';
-export const APP_VERSION_CODE = 165;
+// v2.11.24: CLASSIC PRINTER BROKEN-PIPE RECOVERY.
+//   Android 7 CS10 external Bluetooth printers can close the RFCOMM stream while
+//   BluetoothSocket.isConnected still reports true; the next write then throws
+//   java.io.IOException: Broken pipe. Both native Classic BT paths now clear the
+//   stale role socket on read EOF/write IOException and emit a disconnected
+//   state. The web print path reconnects the saved printer once and restarts the
+//   whole receipt print once, avoiding partial chunk continuation. The printer
+//   dialog also explains why the incompatible CS10 internal POS SDK is disabled
+//   on this firmware and routes operators to the CLASSIC tab. No receipt content,
+//   transaction, sync, IndexedDB, cumulative, scale parsing, or business logic
+//   changes.
+export const APP_VERSION = '2.11.24';
+export const APP_VERSION_CODE = 166;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'cs10-android7-hardening';
+export const APP_FIX_TAG = 'classic-printer-broken-pipe-recovery';
 
 
 

@@ -484,8 +484,21 @@ class BluetoothClassicPlugin : Plugin() {
     }
 
     private suspend fun handleRoleConnectionLost(role: String, error: String) {
-        val address = connections[role]?.device?.address
-        disconnectRole(role, notify = false)
+        val connection = connections.getOrPut(role) { RoleConnection() }
+        val address = connection.device?.address
+        if (connection.socket == null && connection.inputStream == null && connection.device == null) {
+            return
+        }
+        try {
+            connection.inputStream?.close()
+            connection.socket?.close()
+        } catch (e: IOException) {
+            Log.e(TAG, "[BT][$role] Error closing stale connection: ${e.message}")
+        }
+        connection.inputStream = null
+        connection.socket = null
+        connection.device = null
+        connection.readJob = null
         withContext(Dispatchers.Main) {
             val event = JSObject()
             event.put("error", error)
