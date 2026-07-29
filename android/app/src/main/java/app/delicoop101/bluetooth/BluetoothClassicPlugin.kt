@@ -390,13 +390,11 @@ class BluetoothClassicPlugin : Plugin() {
 
     @PluginMethod
     fun writePrinter(call: PluginCall) {
-        call.setKeepAlive(false)
         writeWithRole(call, "printer")
     }
 
     @PluginMethod
     fun writeScale(call: PluginCall) {
-        call.setKeepAlive(false)
         writeWithRole(call, "scale")
     }
 
