@@ -6,7 +6,7 @@ import com.getcapacitor.BridgeActivity
 import app.delicoop101.bluetooth.BluetoothClassicPlugin
 import app.delicoop101.bluetooth.BluetoothClassicJsBridge
 import app.delicoop101.storage.OfflineStoragePlugin
-import com.capacitorjs.community.plugins.bluetoothle.BluetoothLe
+
 
 import app.delicoop101.sync.SyncWorker
 import app.delicoop101.database.DelicoopDatabase
@@ -36,10 +36,30 @@ class MainActivity : BridgeActivity() {
         registerPlugin(BluetoothClassicPlugin::class.java)
         Log.d(TAG, "[INIT] Registering native OfflineStorage plugin")
         registerPlugin(OfflineStoragePlugin::class.java)
-        Log.d(TAG, "[INIT] Registering native BluetoothLe plugin")
-        registerPlugin(BluetoothLe::class.java)
-        
+        // v2.11.21: BluetoothLe is auto-registered by Capacitor via
+        // capacitor.plugins.json — a second manual registerPlugin() call
+        // corrupts the bridge plugin map on WebView 51 and caused
+        // BluetoothClassic to return UNIMPLEMENTED. Removed intentionally.
+
         super.onCreate(savedInstanceState)
+
+        // v2.11.21: log the full plugin map that the bridge published so we
+        // can verify BluetoothClassic / OfflineStorage / BluetoothLe are all
+        // present at runtime on legacy WebViews. Uses reflection because the
+        // Bridge#plugins map is not part of the public Capacitor API surface.
+        try {
+            val b: Any? = bridge
+            if (b != null) {
+                val field = b.javaClass.getDeclaredField("plugins")
+                field.isAccessible = true
+                val map = field.get(b) as? Map<*, *>
+                val names = map?.keys?.joinToString(", ") ?: "none"
+                Log.d(TAG, "[BRIDGE] Registered plugins: $names")
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "[BRIDGE] Failed to enumerate plugins: ${e.message}")
+        }
+
 
         // v2.11.20: Direct WebView bridge fallback for WebView 51 devices where
         // Capacitor's plugin header export can omit local Kotlin plugins, causing
@@ -49,6 +69,7 @@ class MainActivity : BridgeActivity() {
             webView.addJavascriptInterface(bluetoothClassicJsBridge, "BluetoothClassicAndroid")
             Log.d(TAG, "[INIT] Registered BluetoothClassicAndroid JS fallback bridge")
         }
+
         
         // Initialize encrypted database on a background thread.
         // getInstance() now forces the DB file open eagerly (not lazily),
@@ -84,8 +105,12 @@ class MainActivity : BridgeActivity() {
     override fun onDestroy() {
         // Flush all pending logs SYNCHRONOUSLY before process exit
         // This is now a blocking call that waits for writes to complete
-        bluetoothClassicJsBridge?.shutdown()
+        // v2.11.21: copy the mutable field into a local val to satisfy
+        // Kotlin's smart-cast rules (mutable properties cannot be smart-cast).
+        val jsBridge = bluetoothClassicJsBridge
+        jsBridge?.shutdown()
         DatabaseLogger.flush()
         super.onDestroy()
     }
 }
+

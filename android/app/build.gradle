@@ -23,8 +23,9 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 162
-        versionName "2.11.20"
+        versionCode 163
+        versionName "2.11.21"
+
 
 
 

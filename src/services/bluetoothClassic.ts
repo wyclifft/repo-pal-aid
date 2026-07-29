@@ -298,12 +298,24 @@ export const isClassicBluetoothAvailable = async (): Promise<boolean> => {
     return false;
   }
 
-  // Diagnostic: Check if plugin is registered in the bridge
+  // v2.11.21: bounded retry — on WebView 51 the Capacitor bridge occasionally
+  // publishes its plugin map a few hundred ms after the first JS call. Wait up
+  // to 4s (in 250ms slices) for BluetoothClassic to appear before failing.
+  const waitForBridge = async (maxMs = 4000): Promise<boolean> => {
+    const start = Date.now();
+    while (Date.now() - start < maxMs) {
+      const plugins = (window as any).Capacitor?.Plugins;
+      if (plugins?.BluetoothClassic) return true;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return false;
+  };
+  const ready = await waitForBridge();
   const plugins = (window as any).Capacitor?.Plugins;
-  if (plugins && !plugins.BluetoothClassic) {
-    console.warn('⚠️ [BRIDGE] BluetoothClassic plugin NOT found in window.Capacitor.Plugins');
-    console.log('Available plugins:', Object.keys(plugins).join(', '));
-  } else if (plugins) {
+  if (!ready) {
+    console.warn('⚠️ [BRIDGE] BluetoothClassic not published after 4s wait');
+    if (plugins) console.log('Available plugins:', Object.keys(plugins).join(', '));
+  } else {
     console.log('✅ [BRIDGE] BluetoothClassic plugin found in bridge');
   }
 
@@ -318,7 +330,7 @@ export const isClassicBluetoothAvailable = async (): Promise<boolean> => {
     const stack = error?.stack;
     console.error(`❌ Classic Bluetooth availability check FAILED: code=${code} msg=${msg}`);
     if (stack) console.error(`   stack: ${stack}`);
-    if (msg.includes('not implemented') || msg.includes('plugin')) {
+    if (msg.includes('not implemented') || msg.includes('plugin') || !ready) {
       console.log('💡 Bridge issue detected: Plugin registration failed or race condition on WebView 51.');
       if (androidClassicBridge()) {
         useAndroidClassicFallback = true;
@@ -338,6 +350,7 @@ export const isClassicBluetoothAvailable = async (): Promise<boolean> => {
   }
 
 };
+
 
 /**
  * Request Bluetooth permissions for Classic Bluetooth

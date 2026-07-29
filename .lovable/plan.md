@@ -1,58 +1,69 @@
-## Problem
+## Goal
 
-On the CS10 (Android 7 / WebView 51) the app logs:
+Get the APK to compile again and make the `BluetoothClassic` plugin reliably discoverable by the JS bridge on WebView 51 (CS10). Business logic untouched — Bluetooth pipeline only.
 
-```
-✅ [BRIDGE] BluetoothClassic plugin found in bridge
-❌ Classic Bluetooth availability check FAILED:
-💡 Bridge issue detected: Plugin registration failed ...
-ℹ️ Classic Bluetooth: getPairedDevices requires native plugin
-```
+## Root causes
 
-The JS-side `registerPlugin('BluetoothClassic', ...)` proxy exists, but every native method call rejects as "not implemented". No paired devices show up. Bluetooth works at the OS level (scale is paired), so this is a plugin dispatch problem, not a hardware or permission problem.
+1. **Build failure** — `MainActivity.kt:49` calls `bluetoothClassicJsBridge.shutdown()` on a `var` in `onDestroy()`. Kotlin refuses to smart-cast a mutable field, so compilation fails.
+2. **Duplicate `BluetoothLe` registration** — `BluetoothLe` is a community plugin auto-discovered from `node_modules` via the generated `capacitor.plugins.json`. Manually calling `registerPlugin(BluetoothLe::class.java)` in `MainActivity.onCreate` registers it a second time. On WebView 51 that overwrite can leave the bridge's plugin map in an inconsistent state; the "Found 6 plugins" JS report and the `UNIMPLEMENTED` responses for `BluetoothClassic` are consistent with a corrupted registration pass.
+3. **Boot-time JS syntax error** — an `Unexpected token (` early in boot may abort the JS-side bridge init before diagnostics run.
+4. **Bridge race on legacy WebView 51** — `isAvailable()` fires before the native plugin map is fully published, returning `UNIMPLEMENTED` once and never retrying.
 
-## Root cause (unconfirmed until we run the fix, but strongly supported by evidence)
+## Changes
 
-In `android/app/src/main/java/app/delicoop101/bluetooth/BluetoothClassicPlugin.kt`:
+### 1. `android/app/src/main/java/app/delicoop101/MainActivity.kt`
+- Fix the smart-cast error in `onDestroy()` using a local `val`:
+  ```kotlin
+  override fun onDestroy() {
+      bluetoothClassicJsBridge?.let { it.shutdown() }
+      DatabaseLogger.flush()
+      super.onDestroy()
+  }
+  ```
+- Remove the manual `registerPlugin(BluetoothLe::class.java)` line and its import — Capacitor auto-registers it from `capacitor.plugins.json`.
+- After `super.onCreate(...)`, log the actual plugin map so we can see what the bridge published:
+  ```kotlin
+  bridge?.let { b ->
+      val names = b.plugins?.keys?.joinToString(", ") ?: "none"
+      Log.d(TAG, "[BRIDGE] Registered plugins: $names")
+  }
+  ```
+- Keep `BluetoothClassicPlugin` and `OfflineStoragePlugin` manual registrations (they live in the app module and aren't in `capacitor.plugins.json`).
 
-- `fun disconnect(call: PluginCall? = null)` uses a **Kotlin default parameter** and a **nullable `PluginCall?`**. Capacitor's Android bridge scans `@PluginMethod` methods expecting exactly `(PluginCall)` non-null. A non-conforming signature can throw during plugin init and cause the whole plugin's method table to be dropped — which matches the "plugin found, all methods not implemented" symptom.
-- Secondary risk: any unchecked exception thrown while Capacitor introspects `@PluginMethod` handlers has the same effect.
+### 2. `src/main.tsx`
+- Enhance the existing 5 s bridge diagnostic to print the full plugin name list and to flag missing `BluetoothClassic` / `OfflineStorage` explicitly (already partly there — extend to log the full array with `JSON.stringify` so WebView 51's console preserves it).
+- Wrap the top-level boot code that likely emits `Unexpected token (` — the current file uses optional chaining / template literals fine because Vite transpiles `src/**`, but the inline snippet in `index.html` is not transpiled. Audit `index.html` for any ES2017+ syntax (arrow default params, `??`, etc.) and rewrite to ES5.
 
-## Fix plan
+### 3. `index.html`
+- Scan the inline `<script>` blocks for ES2016+ syntax that WebView 51 rejects (`??`, `?.`, `async`, arrow functions with default destructuring). Convert to ES5-safe equivalents. Keep behaviour identical.
 
-1. **Normalize every `@PluginMethod` signature** in `BluetoothClassicPlugin.kt`
-   - Change `fun disconnect(call: PluginCall? = null)` → `fun disconnect(call: PluginCall)` (non-null, no default). Move the "disconnect both roles when role missing" logic inside the body — behavior unchanged.
-   - Audit every other `@PluginMethod` to ensure the signature is exactly `fun name(call: PluginCall)` with no defaults, no nullable, no extra params. Fix any that deviate.
+### 4. `src/services/bluetoothClassic.ts`
+- Add a bounded retry to the availability check to cover the WebView 51 bridge race:
+  ```ts
+  async function ensureBridgeReady(maxMs = 4000): Promise<boolean> {
+    const start = Date.now();
+    while (Date.now() - start < maxMs) {
+      const plugins = (window as any).Capacitor?.Plugins;
+      if (plugins?.BluetoothClassic) return true;
+      await new Promise(r => setTimeout(r, 250));
+    }
+    return false;
+  }
+  ```
+  Call it before `BluetoothClassic.isAvailable()`. If still absent, fall back to the existing `BluetoothClassicAndroid` JS-interface bridge already installed in `MainActivity` (v2.11.20 fallback). No change to public API.
 
-2. **Wrap `load()` in try/catch** so a failed adapter lookup can never abort plugin initialization silently. Log the failure but still let Capacitor finish registering the method table. `isAvailable()` will then honestly return `{ available: false }` instead of the whole plugin looking dead.
+### 5. Version bump
+- `src/constants/appVersion.ts` → `2.11.19` (tag `bt-bridge-fix`).
+- `android/app/build.gradle` → `versionCode 161`, `versionName "2.11.19"`.
 
-3. **Add a first-call self-test log**
-   - At the top of `isAvailable()` log `"[BT] isAvailable invoked, adapter=..., enabled=..., sdk=..."` so the next CS10 logcat immediately shows whether the method is being reached.
+## Verification
 
-4. **Verify AndroidManifest permissions** in `android/app/src/main/AndroidManifest.xml`
-   - Confirm `BLUETOOTH`, `BLUETOOTH_ADMIN`, and (for API 31+) `BLUETOOTH_CONNECT` / `BLUETOOTH_SCAN` are declared. Add any that are missing. On Android 7 the first two are install-time and must be present for `bondedDevices` to return anything.
+- `./gradlew :app:compileDebugKotlin` succeeds.
+- On CS10 after `npm run build && npx cap sync android` + reinstall:
+  - Logcat shows `[BRIDGE] Registered plugins: ...BluetoothClassic, OfflineStorage, BluetoothLe...`.
+  - JS console shows the full plugin list (not just "Found 6 plugins").
+  - Printer/Scale dialog no longer returns `UNIMPLEMENTED`; `getPairedDevices` returns bonded devices.
 
-5. **JS-side diagnostics upgrade** in `src/services/bluetoothClassic.ts`
-   - In the `isClassicBluetoothAvailable` catch, log the raw error's `code`, `message`, and `stack` (currently only the object is dumped, which stringifies to empty on WebView 51). Same in `getPairedDevices`. This gives us a real error string next round if the fix doesn't fully land.
+## Non-goals
 
-6. **Version + verification**
-   - Bump to `v2.11.19` (code 160), `APP_FIX_TAG = 'bt-plugin-dispatch-fix'`.
-   - Update `src/constants/appVersion.ts` and `android/app/build.gradle`.
-   - Run `bunx tsgo` — TS-only surface; Kotlin compile happens on the user's `npx cap sync android` + APK rebuild.
-   - No changes to transactions, receipts, sync, IndexedDB, reference generator, cumulative logic, or Payments.
-
-## Files touched
-
-- `android/app/src/main/java/app/delicoop101/bluetooth/BluetoothClassicPlugin.kt` (signature + load try/catch + isAvailable log)
-- `android/app/src/main/AndroidManifest.xml` (verify/add BT perms if missing)
-- `src/services/bluetoothClassic.ts` (better error logging only)
-- `src/constants/appVersion.ts` and `android/app/build.gradle` (version bump)
-
-## After you pull
-
-```bash
-npm run build && npx cap sync android
-# rebuild APK, reinstall on CS10
-```
-
-Then open the Printer/Scale dialog once and share the logcat lines starting with `[BT]` and the JS `❌ Classic Bluetooth availability check FAILED` line — if the fix works you'll see `[BT] isAvailable invoked ...` in logcat and paired devices in the dialog.
+- No changes to `BluetoothClassicPlugin.kt` internals, connection logic, printer/scale flows, UI, farmers/store code, sync, or backend. Only build fix + registration cleanup + diagnostics + retry guard.

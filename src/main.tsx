@@ -51,21 +51,36 @@ if (window.__DELICOOP_BOOT) {
 
 console.info('[BOOT] main.tsx module started', { version: APP_VERSION });
 
-// v2.11.12 — Bridge & Plugin Diagnostics
+// v2.11.21 — Bridge & Plugin Diagnostics (verbose for WebView 51 triage)
 if (Capacitor.isNativePlatform()) {
   setTimeout(() => {
-    const cap = (window as any).Capacitor;
-    console.log('🔍 [BRIDGE] Platform:', Capacitor.getPlatform());
-    console.log('🔍 [BRIDGE] window.Capacitor present:', !!cap);
-    if (cap?.Plugins) {
-      const p = Object.keys(cap.Plugins);
-      console.log(`🔍 [BRIDGE] Found ${p.length} plugins:`, p.join(', '));
-      if (!p.includes('BluetoothClassic')) {
-        console.error('❌ [BRIDGE] BluetoothClassic is MISSING from the bridge plugins!');
+    try {
+      const cap = (window as any).Capacitor;
+      console.log('🔍 [BRIDGE] Platform:', Capacitor.getPlatform());
+      console.log('🔍 [BRIDGE] window.Capacitor present:', !!cap);
+      if (cap?.Plugins) {
+        const names = Object.keys(cap.Plugins);
+        // JSON.stringify so WebView 51 console preserves the array intact
+        console.log('🔍 [BRIDGE] Plugin count:', names.length, 'names:', JSON.stringify(names));
+        const required = ['BluetoothClassic', 'OfflineStorage', 'BluetoothLe'];
+        required.forEach((r) => {
+          if (!names.includes(r)) {
+            console.error('❌ [BRIDGE] Required plugin MISSING from bridge:', r);
+          } else {
+            console.log('✅ [BRIDGE] Plugin present:', r);
+          }
+        });
+      } else {
+        console.error('❌ [BRIDGE] window.Capacitor.Plugins is not present');
       }
+      const hasJsFallback = !!(window as any).BluetoothClassicAndroid;
+      console.log('🔍 [BRIDGE] BluetoothClassicAndroid JS fallback present:', hasJsFallback);
+    } catch (e) {
+      console.error('❌ [BRIDGE] Diagnostic failed:', e);
     }
   }, 5000);
 }
+
 
 // Install low-risk startup utilities after the boot marker so failures are visible.
 import("./utils/errorHandler").catch((error) => {
