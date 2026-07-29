@@ -253,6 +253,7 @@ let classicScale: ClassicScaleConnection = {
 
 let dataListenerHandle: PluginListenerHandle | null = null;
 let connectionListenerHandle: PluginListenerHandle | null = null;
+let printerConnectionListenerHandle: PluginListenerHandle | null = null;
 
 // Storage keys
 const CLASSIC_DEVICE_KEY = 'lastClassicBluetoothDevice';
@@ -984,7 +985,11 @@ export const connectClassicPrinter = async (
     // when the event genuinely belongs to this printer AND the native socket
     // confirms it is gone.
     const printerAddress = device.address;
-    await BluetoothClassic.addListener('connectionStateChanged', async (state: any) => {
+    if (printerConnectionListenerHandle) {
+      await printerConnectionListenerHandle.remove();
+      printerConnectionListenerHandle = null;
+    }
+    printerConnectionListenerHandle = await BluetoothClassic.addListener('connectionStateChanged', async (state: any) => {
       if (state.role && state.role !== 'printer') return;
       if (state.connected) return;
       const eventAddress: string | undefined = state.address;
@@ -1046,6 +1051,10 @@ export const disconnectClassicPrinter = async (): Promise<void> => {
     }
   } catch (error) {
     console.warn('⚠️ Error disconnecting Classic BT printer:', error);
+  }
+  if (printerConnectionListenerHandle) {
+    await printerConnectionListenerHandle.remove();
+    printerConnectionListenerHandle = null;
   }
   clearClassicPrinterState();
 };

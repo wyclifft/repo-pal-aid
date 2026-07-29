@@ -20,7 +20,6 @@ import {
   type ClassicBluetoothDevice,
   isInternalPosPrinter,
   connectDirectToAddress,
-  isInternalPrinterAvailable,
   getInternalPrinterStatus,
   connectInternalPrinter,
   type InternalPrinterStatus,
