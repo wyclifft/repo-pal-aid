@@ -377,6 +377,9 @@ export const connectClassicScale = async (
 
     // Set up data listener - uses global broadcast as primary, callback as secondary
     dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (event: any) => {
+      if (event.role && event.role !== 'scale') {
+        return;
+      }
       // v2.10.68: Drop inbound bytes when our scale role is not active.
       // The native plugin shares ONE RFCOMM socket across scale & printer roles,
       // and the dataReceived event has no device-address tag. Without this guard,
