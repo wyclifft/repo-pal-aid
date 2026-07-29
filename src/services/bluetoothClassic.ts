@@ -883,13 +883,8 @@ let classicPrinter: {
 const CLASSIC_PRINTER_KEY = 'lastClassicBluetoothPrinter';
 const INTERNAL_PRINTER_ADDRESS = 'CS10-INTERNAL-PRINTER';
 
-const parseCs10PrinterResult = <T,>(action: string, raw: string): T => {
-  const parsed = JSON.parse(raw || '{}');
-  if (parsed?.error) {
-    throw new Error(`[CS10-PRINTER] ${action} failed: ${parsed.error}`);
-  }
-  return parsed as T;
-};
+
+
 
 export const getInternalPrinterStatus = async (): Promise<InternalPrinterStatus> => {
   if (!Capacitor.isNativePlatform()) return { available: false, reason: 'not-native' };
