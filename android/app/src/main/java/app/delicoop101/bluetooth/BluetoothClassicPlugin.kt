@@ -331,8 +331,8 @@ class BluetoothClassicPlugin : Plugin() {
     }
 
     @PluginMethod
-    fun disconnect(call: PluginCall? = null) {
-        val role = call?.getString("role")
+    fun disconnect(call: PluginCall) {
+        val role = call.getString("role")
         if (role == "scale" || role == "printer") {
             disconnectRole(role, notify = true)
         } else {
@@ -340,14 +340,20 @@ class BluetoothClassicPlugin : Plugin() {
             disconnectRole("printer", notify = true)
         }
 
-        Log.d(TAG, "[BT] Disconnected")
+        Log.d(TAG, "[BT] Disconnected (role=${role ?: "all"})")
 
-        call?.let {
-            val result = JSObject()
-            result.put("disconnected", true)
-            it.resolve(result)
-        }
+        val result = JSObject()
+        result.put("disconnected", true)
+        call.resolve(result)
     }
+
+    /** Internal disconnect (no PluginCall). Used from handleOnDestroy. */
+    private fun disconnectAllInternal() {
+        disconnectRole("scale", notify = true)
+        disconnectRole("printer", notify = true)
+        Log.d(TAG, "[BT] Disconnected (internal, all roles)")
+    }
+
 
     @PluginMethod
     fun isConnected(call: PluginCall) {
