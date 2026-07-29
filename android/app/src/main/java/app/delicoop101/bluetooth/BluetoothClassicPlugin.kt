@@ -521,8 +521,9 @@ class BluetoothClassicPlugin : Plugin() {
     }
 
     override fun handleOnDestroy() {
-        disconnect()
+        disconnectAllInternal()
         scope.cancel()
         super.handleOnDestroy()
     }
+
 }
