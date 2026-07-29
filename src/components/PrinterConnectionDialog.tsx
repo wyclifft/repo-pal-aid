@@ -9,7 +9,6 @@ import {
   RefreshCw,
   AlertCircle,
   CheckCircle2,
-  Bluetooth
 } from 'lucide-react';
 import {
   connectBluetoothPrinter,
@@ -21,7 +20,6 @@ import {
   type ClassicBluetoothDevice,
   isInternalPosPrinter,
   connectDirectToAddress,
-  INTERNAL_PRINTER_ADDRESSES,
 } from '@/services/bluetoothClassic';
 
 export type PrinterConnectionType = 'ble' | 'classic' | 'direct';
@@ -50,7 +48,7 @@ export const PrinterConnectionDialog = ({
   const [pairedDevices, setPairedDevices] = useState<DeviceWithResolvedName[]>([]);
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<DeviceWithResolvedName | null>(null);
-  const [directAddress, setDirectAddress] = useState(INTERNAL_PRINTER_ADDRESSES[0]);
+  const [directAddress, setDirectAddress] = useState('');
 
   const isNative = Capacitor.isNativePlatform();
 
@@ -232,7 +230,7 @@ export const PrinterConnectionDialog = ({
             <div className="space-y-4 py-2">
               <div className="bg-amber-50 border border-amber-200 p-2 rounded text-[10px] text-amber-800 flex gap-2">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                <p>Use this if your internal printer doesn't show up in the paired list. This forces a direct insecure connection to a specific address.</p>
+                <p>Use this only after pairing fails and you know the real printer MAC address. Placeholder addresses are no longer offered.</p>
               </div>
 
               <div className="space-y-1">
@@ -246,24 +244,9 @@ export const PrinterConnectionDialog = ({
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-gray-500 uppercase">Presets</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {INTERNAL_PRINTER_ADDRESSES.map((addr) => (
-                    <button
-                      key={addr}
-                      onClick={() => setDirectAddress(addr)}
-                      className={"p-2 text-[10px] border rounded transition-colors " + (directAddress === addr ? "bg-primary text-white border-primary" : "bg-gray-50 hover:bg-gray-100")}
-                    >
-                      {addr}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               <Button
                 onClick={() => handleDirectConnect(directAddress)}
-                disabled={isConnecting}
+                disabled={isConnecting || !directAddress.trim()}
                 className="w-full h-12 bg-green-600 hover:bg-green-700"
               >
                 {isConnecting ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Wifi className="h-4 w-4 mr-2" />}
