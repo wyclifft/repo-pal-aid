@@ -12,7 +12,7 @@ const config: CapacitorConfig = {
     minWebViewVersion: 50, // v2.11.12: support legacy Android 7 POS (CS10, WebView 51)
     allowMixedContent: false, // Disabled for production security
     captureInput: true,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#ffffff',
     // Disable WebView debugging in production
     webContentsDebuggingEnabled: !isProduction,
     // Build type for optimizations
@@ -24,7 +24,7 @@ const config: CapacitorConfig = {
   
   // iOS configuration
   ios: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#ffffff',
     contentInset: 'automatic',
     allowsLinkPreview: false,
     scrollEnabled: true,
@@ -48,7 +48,7 @@ const config: CapacitorConfig = {
     SplashScreen: {
       launchShowDuration: 2000,
       launchAutoHide: true,
-      backgroundColor: '#1a1a2e',
+      backgroundColor: '#ffffff',
       showSpinner: true,
       spinnerColor: '#22c55e',
       androidSplashResourceName: 'splash',
@@ -62,7 +62,7 @@ const config: CapacitorConfig = {
     // Status bar
     StatusBar: {
       style: 'DARK',
-      backgroundColor: '#1a1a2e',
+      backgroundColor: '#ffffff',
       overlaysWebView: false,
     },
     

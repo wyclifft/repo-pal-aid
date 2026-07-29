@@ -23,8 +23,8 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 158
-        versionName "2.11.16"
+        versionCode 159
+        versionName "2.11.17"
 
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
