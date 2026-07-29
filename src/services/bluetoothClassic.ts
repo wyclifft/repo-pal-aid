@@ -229,7 +229,22 @@ export interface ClassicBluetoothDevice {
 export interface InternalPrinterStatus {
   available: boolean;
   reason?: string;
+  /** Stage that failed inside the native probe (loadLibrary|classForName|getInstance|printInit|printCheckStatus|printStart|printStr|startProbeService|parseProbeResult|bridge). */
+  stage?: string;
+  /** Native exception class (e.g. java.lang.UnsatisfiedLinkError). */
+  exception?: string;
+  /** Raw exception message from the native probe. */
+  message?: string;
+  /** Missing .so file name if the failure was a dlopen failure. */
+  missingLibrary?: string;
+  /** Filtered logcat tail captured when the probe failed. */
+  logcatTail?: string;
+  initStatus?: number | null;
+  checkStatus?: number | null;
   model?: string;
+  manufacturer?: string;
+  device?: string;
+  fingerprint?: string;
   sdk?: number;
 }
 
