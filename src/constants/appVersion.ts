@@ -946,13 +946,24 @@
 //   refreshes to reduce boot-time request storms. No transaction, receipt,
 //   cumulative, reference generator, IndexedDB schema, sync engine, KCB
 //   payments, or auth logic changes.
+// v2.11.20: BLUETOOTH CLASSIC JS-INTERFACE FALLBACK. CS10/WebView 51 logs
+//   showed window.Capacitor.Plugins.BluetoothClassic existed but calls still
+//   rejected as UNIMPLEMENTED and native `[BT] Plugin loaded` never appeared,
+//   proving Capacitor omitted native method headers before the Kotlin plugin
+//   was reached. Added a direct Android WebView bridge
+//   (`BluetoothClassicAndroid`) that mirrors the Classic SPP operations for
+//   paired devices, scale/printer role sockets, reads, writes, and connection
+//   events. The normal Capacitor plugin remains primary; JS only switches to
+//   the fallback after the UNIMPLEMENTED bridge failure is detected. Strictly
+//   Bluetooth plumbing — no transaction, receipt, cumulative, reference
+//   generator, IndexedDB schema, sync engine, KCB payments, or auth changes.
 // v2.11.12: PRINTER DIALOG + CLASSIC SPP SUPPORT. Added connection selector
 //   for internal CS10 printers. Hardened bridge polyfills and native plugin
 //   registration to fix "MISSING" errors on WebView 51.
-export const APP_VERSION = '2.11.19';
-export const APP_VERSION_CODE = 161;
+export const APP_VERSION = '2.11.20';
+export const APP_VERSION_CODE = 162;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'bt-plugin-dispatch-fix';
+export const APP_FIX_TAG = 'bt-jsinterface-fallback';
 
 
 

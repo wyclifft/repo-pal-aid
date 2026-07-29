@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.util.Log
 import com.getcapacitor.BridgeActivity
 import app.delicoop101.bluetooth.BluetoothClassicPlugin
+import app.delicoop101.bluetooth.BluetoothClassicJsBridge
 import app.delicoop101.storage.OfflineStoragePlugin
 import com.capacitorjs.community.plugins.bluetoothle.BluetoothLe
 
@@ -27,6 +28,7 @@ class MainActivity : BridgeActivity() {
     }
     
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var bluetoothClassicJsBridge: BluetoothClassicJsBridge? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         // Register custom plugins before calling super.onCreate
@@ -38,6 +40,15 @@ class MainActivity : BridgeActivity() {
         registerPlugin(BluetoothLe::class.java)
         
         super.onCreate(savedInstanceState)
+
+        // v2.11.20: Direct WebView bridge fallback for WebView 51 devices where
+        // Capacitor's plugin header export can omit local Kotlin plugins, causing
+        // JS to see UNIMPLEMENTED before BluetoothClassicPlugin.load() is reached.
+        bridge?.webView?.let { webView ->
+            bluetoothClassicJsBridge = BluetoothClassicJsBridge(applicationContext, webView)
+            webView.addJavascriptInterface(bluetoothClassicJsBridge, "BluetoothClassicAndroid")
+            Log.d(TAG, "[INIT] Registered BluetoothClassicAndroid JS fallback bridge")
+        }
         
         // Initialize encrypted database on a background thread.
         // getInstance() now forces the DB file open eagerly (not lazily),
@@ -73,6 +84,7 @@ class MainActivity : BridgeActivity() {
     override fun onDestroy() {
         // Flush all pending logs SYNCHRONOUSLY before process exit
         // This is now a blocking call that waits for writes to complete
+        bluetoothClassicJsBridge?.shutdown()
         DatabaseLogger.flush()
         super.onDestroy()
     }
