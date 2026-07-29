@@ -99,13 +99,9 @@ type AndroidClassicBridge = {
 
 const androidClassicBridge = (): AndroidClassicBridge | undefined => (window as any).BluetoothClassicAndroid;
 
-type Cs10PrinterBridge = {
-  isAvailable(): string;
-  status(): string;
-  printText(text: string): string;
-};
-
-const cs10PrinterBridge = (): Cs10PrinterBridge | undefined => (window as any).Cs10PrinterAndroid;
+// v2.11.27: legacy Cs10PrinterAndroid JS bridge retired. Internal printer
+// access flows through the new PosApi Capacitor plugin (see src/plugins/pos-api).
+import { PosApi } from '@/plugins/pos-api';
 
 const parseAndroidClassicResult = <T,>(action: string, raw: string): T => {
   const parsed = JSON.parse(raw || '{}');
@@ -888,54 +884,51 @@ const INTERNAL_PRINTER_ADDRESS = 'CS10-INTERNAL-PRINTER';
 
 export const getInternalPrinterStatus = async (): Promise<InternalPrinterStatus> => {
   if (!Capacitor.isNativePlatform()) return { available: false, reason: 'not-native' };
-  const bridge = cs10PrinterBridge();
-  if (!bridge) return { available: false, reason: 'bridge-missing' };
   try {
-    const raw = bridge.isAvailable();
-    const parsed = JSON.parse(raw || '{}');
-    const status: InternalPrinterStatus = {
-      available: !!parsed.available,
-      reason: parsed.available ? 'ok' : (parsed.error || parsed.stage || 'init-failed'),
-      stage: parsed.stage,
-      exception: parsed.exception,
-      message: parsed.message,
-      missingLibrary: parsed.missingLibrary,
-      logcatTail: parsed.logcatTail,
-      initStatus: parsed.initStatus ?? null,
-      checkStatus: parsed.checkStatus ?? null,
-      model: parsed.model,
-      manufacturer: parsed.manufacturer,
-      device: parsed.device,
-      fingerprint: parsed.fingerprint,
-      sdk: parsed.sdk,
-    };
-    console.log(
-      `🖨️ CS10 internal printer available: ${status.available}` +
-        (status.available ? '' : ` — stage=${status.stage} exc=${status.exception} msg=${status.message} missing=${status.missingLibrary}`),
-    );
-    return status;
+    const ready = await PosApi.isReady();
+    if (!ready.ready) {
+      return {
+        available: false,
+        reason: 'sdk-unavailable',
+        stage: 'PosApi.isReady',
+        message: ready.error || 'Vendor SDK not loaded',
+      };
+    }
+    // Probe the printer by opening + initializing. Any hardware/paper/heat/battery
+    // error surfaces here so the UI can show a real diagnostic.
+    try {
+      await PosApi.initializePrinter();
+      console.log('🖨️ CS10 internal printer available: true (PosApi)');
+      return { available: true, reason: 'ok' };
+    } catch (e: any) {
+      const code = e?.code || e?.errorMessage || 'init-failed';
+      const msg = e?.message || String(e);
+      console.warn(`🖨️ CS10 internal printer init failed: ${code} ${msg}`);
+      return {
+        available: false,
+        reason: code,
+        stage: 'PosApi.initializePrinter',
+        exception: code,
+        message: msg,
+      };
+    }
   } catch (error) {
     console.warn('⚠️ CS10 internal printer availability check failed:', error);
     return {
       available: false,
       reason: 'status-check-failed',
       message: error instanceof Error ? error.message : String(error),
-      stage: 'bridge',
+      stage: 'PosApi',
     };
   }
 };
 
 /**
- * Force the native side to discard its cached probe result and run the
- * isolated SDK init probe again. Used by the "Retry" button in the printer
- * dialog when the user wants to attempt initialization after e.g. changing
- * device state.
+ * v2.11.27: Re-run the PosApi initialize probe. There is no cached probe on
+ * the native side anymore — every call runs against the SDK — so this simply
+ * re-invokes getInternalPrinterStatus.
  */
 export const retryInternalPrinterProbe = async (): Promise<InternalPrinterStatus> => {
-  const bridge = cs10PrinterBridge();
-  if (bridge && typeof (bridge as any).retryProbe === 'function') {
-    try { (bridge as any).retryProbe(); } catch (e) { console.warn('retryProbe failed', e); }
-  }
   return getInternalPrinterStatus();
 };
 
