@@ -20,8 +20,11 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
-# Keep Capacitor plugin classes
--keep class app.lovable.a468e475ee6a4fda9a7e5e39ba8c375e.bluetooth.** { *; }
+# Keep native Bluetooth bridge classes (package was finalized as app.delicoop101)
+-keep class app.delicoop101.bluetooth.** { *; }
+-keepclassmembers class app.delicoop101.bluetooth.** {
+    @android.webkit.JavascriptInterface <methods>;
+}
 
 # Keep Capacitor annotations
 -keep @com.getcapacitor.annotation.CapacitorPlugin class * { *; }

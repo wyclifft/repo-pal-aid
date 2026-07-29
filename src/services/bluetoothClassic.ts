@@ -80,9 +80,127 @@ export interface BluetoothClassicPlugin {
   removeAllListeners(): Promise<void>;
 }
 
-// Register the plugin - uses native implementation on Android, web fallback elsewhere
-const BluetoothClassic = registerPlugin<BluetoothClassicPlugin>('BluetoothClassic', {
+// Register the plugin - uses native implementation on Android, web fallback elsewhere.
+// v2.11.20: Wrapped with an Android WebView JS-interface fallback for CS10/WebView 51
+// where Capacitor can expose the JS proxy but omit native method headers.
+const CapacitorBluetoothClassic = registerPlugin<BluetoothClassicPlugin>('BluetoothClassic', {
   web: () => import('./bluetoothClassicWeb').then(m => new m.BluetoothClassicWeb()),
+});
+
+type AndroidClassicBridge = {
+  isAvailable(): string;
+  requestBluetoothPermissions(): string;
+  getPairedDevices(): string;
+  connect(payload: string): string;
+  disconnect(payload: string): string;
+  isConnected(payload: string): string;
+  write(payload: string): string;
+};
+
+const androidClassicBridge = (): AndroidClassicBridge | undefined => (window as any).BluetoothClassicAndroid;
+
+const parseAndroidClassicResult = <T,>(action: string, raw: string): T => {
+  const parsed = JSON.parse(raw || '{}');
+  if (parsed?.error) {
+    throw new Error(`[BT][JS-FALLBACK] ${action} failed: ${parsed.error}`);
+  }
+  return parsed as T;
+};
+
+const androidFallbackBluetoothClassic: BluetoothClassicPlugin = {
+  async isAvailable() {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    return parseAndroidClassicResult('isAvailable', bridge.isAvailable());
+  },
+  async requestBluetoothPermissions() {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    return parseAndroidClassicResult('requestBluetoothPermissions', bridge.requestBluetoothPermissions());
+  },
+  async getPairedDevices() {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    return parseAndroidClassicResult('getPairedDevices', bridge.getPairedDevices());
+  },
+  async connect(options: { address: string; role?: 'scale' | 'printer' }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    return parseAndroidClassicResult('connect', bridge.connect(JSON.stringify(options)));
+  },
+  async connectScale(options: { address: string }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    return parseAndroidClassicResult('connectScale', bridge.connect(JSON.stringify({ ...options, role: 'scale' })));
+  },
+  async connectPrinter(options: { address: string }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    return parseAndroidClassicResult('connectPrinter', bridge.connect(JSON.stringify({ ...options, role: 'printer' })));
+  },
+  async connectInsecure(options: { address: string; role?: 'scale' | 'printer' }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    return parseAndroidClassicResult('connectInsecure', bridge.connect(JSON.stringify({ ...options, insecure: true })));
+  },
+  async connectPrinterInsecure(options: { address: string }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    return parseAndroidClassicResult('connectPrinterInsecure', bridge.connect(JSON.stringify({ ...options, role: 'printer', insecure: true })));
+  },
+  async disconnect(options?: { role?: 'scale' | 'printer' }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    parseAndroidClassicResult('disconnect', bridge.disconnect(JSON.stringify(options || {})));
+  },
+  async isConnected(options?: { role?: 'scale' | 'printer' }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    return parseAndroidClassicResult('isConnected', bridge.isConnected(JSON.stringify(options || {})));
+  },
+  async write(options: { data: string; role?: 'scale' | 'printer' }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    parseAndroidClassicResult('write', bridge.write(JSON.stringify(options)));
+  },
+  async writePrinter(options: { data: string }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    parseAndroidClassicResult('writePrinter', bridge.write(JSON.stringify({ ...options, role: 'printer' })));
+  },
+  async writeScale(options: { data: string }) {
+    const bridge = androidClassicBridge();
+    if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    parseAndroidClassicResult('writeScale', bridge.write(JSON.stringify({ ...options, role: 'scale' })));
+  },
+  async addListener(eventName: 'dataReceived' | 'connectionStateChanged', listenerFunc: (data: any) => void) {
+    const mappedEvent = `BluetoothClassic:${eventName}`;
+    const handler = (event: Event) => listenerFunc((event as CustomEvent).detail || {});
+    window.addEventListener(mappedEvent, handler as EventListener);
+    return {
+      remove: async () => window.removeEventListener(mappedEvent, handler as EventListener),
+    };
+  },
+  async removeAllListeners() {
+    // Listener handles remove themselves; no global registry needed for fallback.
+  },
+};
+
+let useAndroidClassicFallback = false;
+
+const resolveBluetoothClassic = (): BluetoothClassicPlugin => {
+  if (Capacitor.isNativePlatform() && androidClassicBridge() && useAndroidClassicFallback) {
+    return androidFallbackBluetoothClassic;
+  }
+  return CapacitorBluetoothClassic;
+};
+
+const BluetoothClassic = new Proxy({} as BluetoothClassicPlugin, {
+  get(_target, prop: keyof BluetoothClassicPlugin) {
+    const plugin = resolveBluetoothClassic() as any;
+    const value = plugin[prop];
+    return typeof value === 'function' ? value.bind(plugin) : value;
+  },
 });
 
 // ============================================================================
@@ -202,6 +320,19 @@ export const isClassicBluetoothAvailable = async (): Promise<boolean> => {
     if (stack) console.error(`   stack: ${stack}`);
     if (msg.includes('not implemented') || msg.includes('plugin')) {
       console.log('💡 Bridge issue detected: Plugin registration failed or race condition on WebView 51.');
+      if (androidClassicBridge()) {
+        useAndroidClassicFallback = true;
+        console.log('✅ [BT][JS-FALLBACK] Using BluetoothClassicAndroid direct bridge');
+        try {
+          const fallbackResult = await androidFallbackBluetoothClassic.isAvailable();
+          console.log(`ℹ️ Classic Bluetooth fallback available check: ${JSON.stringify(fallbackResult)}`);
+          return !!fallbackResult.available;
+        } catch (fallbackError) {
+          console.error('❌ Classic Bluetooth JS fallback availability failed:', fallbackError);
+        }
+      } else {
+        console.warn('⚠️ [BT][JS-FALLBACK] BluetoothClassicAndroid bridge not present');
+      }
     }
     return false;
   }
@@ -242,6 +373,16 @@ export const getPairedDevices = async (): Promise<ClassicBluetoothDevice[]> => {
     const code = error?.code;
     const msg = error?.message || String(error);
     console.log(`ℹ️ Classic Bluetooth: getPairedDevices failed code=${code} msg=${msg}`);
+    if ((msg.includes('not implemented') || msg.includes('plugin')) && androidClassicBridge()) {
+      useAndroidClassicFallback = true;
+      try {
+        const result = await androidFallbackBluetoothClassic.getPairedDevices();
+        console.log(`📱 Found ${result.devices.length} paired devices via JS fallback`);
+        return result.devices;
+      } catch (fallbackError) {
+        console.error('❌ Classic Bluetooth JS fallback getPairedDevices failed:', fallbackError);
+      }
+    }
     console.log('💡 Tip: DR/BTM series scales often work via BLE with FFE0/FFE1 services');
     return [];
   }
