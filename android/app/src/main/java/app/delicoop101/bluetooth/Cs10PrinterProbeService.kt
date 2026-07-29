@@ -9,18 +9,18 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * v2.11.25: Isolated CS10 POS SDK initialization probe.
+ * v2.11.26: Isolated Ciontek POS service discovery probe.
  *
- * Runs in the ":posprobe" child process (see AndroidManifest.xml). Attempts
- * every stage of the native SDK initialization sequence. Each stage writes a
- * JSON result file to internal storage BEFORE it runs the risky call, so that
- * if libPosApi.so crashes the JVM with SIGSEGV the main process can still tell
- * exactly which stage killed it. On success the final JSON is written and the
- * probe process exits cleanly. The main app never links against PosApiHelper
- * directly — it only reads the file this service produces.
+ * Previous versions (v2.11.25) loaded the wrong `vpos.apipackage` JNI SDK in
+ * this process, which SIGSEGV'd on CS10 A26 firmware. The active plan drops
+ * that path entirely — the correct integration is an AIDL bind to the
+ * `com.ciontek.posmanagerprovider` system service that owns the built-in
+ * thermal head.
  *
- * IMPORTANT: never call anything that touches vpos/apipackage classes from the
- * main process before this probe has returned success.
+ * This service now delegates to {@link CiontekServiceProbe}. It stays in
+ * the ":posprobe" child process so that if the vendor service happens to
+ * load misbehaving native code in-process during bind, only this child
+ * dies — the main app keeps running.
  */
 class Cs10PrinterProbeService : Service() {
 
@@ -30,9 +30,10 @@ class Cs10PrinterProbeService : Service() {
         val resultFile = File(filesDir, RESULT_FILE)
         val stageFile = File(filesDir, STAGE_FILE)
         try {
-            runProbe(resultFile, stageFile)
+            writeText(stageFile, "ciontek-service-probe")
+            val report = CiontekServiceProbe.run(applicationContext)
+            writeJson(resultFile, report)
         } catch (t: Throwable) {
-            // Any pure-Java failure: record and continue exiting cleanly.
             writeJson(resultFile, JSONObject()
                 .put("ok", false)
                 .put("stage", safeRead(stageFile) ?: "unknown")
@@ -40,59 +41,9 @@ class Cs10PrinterProbeService : Service() {
                 .put("message", t.message ?: "")
             )
         }
-        // Terminate the isolated process so the next probe starts fresh.
         stopSelf()
         Process.killProcess(Process.myPid())
         return START_NOT_STICKY
-    }
-
-    private fun runProbe(resultFile: File, stageFile: File) {
-        // Stage 1: load native library
-        writeText(stageFile, "loadLibrary")
-        try {
-            System.loadLibrary("PosApi")
-        } catch (t: UnsatisfiedLinkError) {
-            writeJson(resultFile, JSONObject()
-                .put("ok", false)
-                .put("stage", "loadLibrary")
-                .put("exception", t.javaClass.name)
-                .put("message", t.message ?: "")
-                .put("missingLibrary", extractMissingLibrary(t.message))
-            )
-            return
-        }
-
-        // Stage 2: class-load PosApiHelper (fires <clinit>, may native-crash)
-        writeText(stageFile, "classForName")
-        val cls = Class.forName("vpos.apipackage.PosApiHelper")
-
-        // Stage 3: getInstance
-        writeText(stageFile, "getInstance")
-        val instance = cls.getMethod("getInstance").invoke(null)
-            ?: run {
-                writeJson(resultFile, JSONObject()
-                    .put("ok", false)
-                    .put("stage", "getInstance")
-                    .put("message", "PosApiHelper.getInstance() returned null")
-                )
-                return
-            }
-
-        // Stage 4: PrintInit
-        writeText(stageFile, "printInit")
-        val initStatus = cls.getMethod("PrintInit").invoke(instance) as? Int ?: -1
-
-        // Stage 5: PrintCheckStatus
-        writeText(stageFile, "printCheckStatus")
-        val checkStatus = cls.getMethod("PrintCheckStatus").invoke(instance) as? Int ?: -1
-
-        writeJson(resultFile, JSONObject()
-            .put("ok", initStatus == 0)
-            .put("stage", "printCheckStatus")
-            .put("initStatus", initStatus)
-            .put("checkStatus", checkStatus)
-            .put("message", if (initStatus == 0) "ok" else "PrintInit returned $initStatus")
-        )
     }
 
     private fun writeJson(file: File, obj: JSONObject) {
@@ -111,16 +62,6 @@ class Cs10PrinterProbeService : Service() {
     private fun safeRead(file: File): String? = try {
         if (file.exists()) file.readText() else null
     } catch (_: Throwable) { null }
-
-    private fun extractMissingLibrary(msg: String?): String {
-        if (msg.isNullOrEmpty()) return ""
-        // Typical: dlopen failed: library "libcustom_jni.so" not found
-        val m = Regex("""library "([^"]+)" not found""").find(msg)
-        if (m != null) return m.groupValues[1]
-        val m2 = Regex("""cannot locate symbol "([^"]+)"""").find(msg)
-        if (m2 != null) return m2.groupValues[1]
-        return ""
-    }
 
     companion object {
         const val TAG = "CS10-PROBE"

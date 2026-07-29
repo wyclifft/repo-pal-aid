@@ -5,28 +5,30 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import android.webkit.JavascriptInterface
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
 /**
- * v2.11.25: CS10 internal printer JS bridge — REAL initialization, no permanent gate.
+ * v2.11.26: CS10 internal printer JS bridge.
+ *
+ * Retires the wrong `vpos.apipackage` JNI path. The real integration on
+ * this CS10 A26 firmware is an AIDL bind to `com.ciontek.posmanagerprovider`.
+ * See:
+ *   - Cs10PrinterProbeService (runs discovery in the isolated :posprobe process)
+ *   - CiontekServiceProbe     (queries PackageManager + attempts binds)
+ *   - CiontekPrinterBridge    (real printer bridge in-process)
  *
  * Previous versions (v2.11.23/24) probed for /vendor/lib[*] /libcustom_jni.so and
  * IBCRService$Stub and refused to touch the SDK if either was missing. Field
  * evidence shows other software prints successfully on the CS10 A26 firmware,
  * so a hard gate is wrong.
  *
- * The new design:
- *   1. Never load PosApiHelper in the main process before we've verified it.
- *   2. Run an isolated init probe in ":posprobe" (Cs10PrinterProbeService). If
- *      libPosApi.so SIGSEGVs, only that child process dies — the main app stays
- *      up and we still get the JSON diagnostic (stage/exception/missing lib).
- *   3. If the probe succeeds, load the SDK in-process on demand and cache it.
- *   4. On failure return a rich diagnostic to the WebView (stage, missing
- *      library, exception message, logcat tail) so the user sees the real
- *      reason instead of "not supported".
- *
- * Caller may retry: {@link #retryProbe()} clears the cached result.
+ * The JS-facing method surface (`isAvailable`, `status`, `printText`,
+ * `retryProbe`) is unchanged so PrinterConnectionDialog.tsx needs no edit.
+ * All returned JSON now includes a `provider` block with PosManagerProvider
+ * details and per-interface bind attempts, so /debug shows exactly why
+ * printing did/did-not work.
  */
 class Cs10PrinterJsBridge(private val context: Context) {
 
@@ -37,7 +39,7 @@ class Cs10PrinterJsBridge(private val context: Context) {
     }
 
     @Volatile private var cachedProbe: JSONObject? = null
-    @Volatile private var helper: Any? = null
+    private val printer: CiontekPrinterBridge by lazy { CiontekPrinterBridge(context) }
 
     @JavascriptInterface
     fun isAvailable(): String = safeJson {
@@ -50,77 +52,37 @@ class Cs10PrinterJsBridge(private val context: Context) {
         val probe = ensureProbe()
         val base = buildBase(probe)
         if (!probe.optBoolean("ok")) return@safeJson base
-        val h = getHelperOrLoad()
-        val checkStatus = try {
-            h.javaClass.getMethod("PrintCheckStatus").invoke(h) as? Int ?: -1
-        } catch (t: Throwable) {
-            base.put("stage", "printCheckStatus")
-                .put("exception", t.javaClass.name)
-                .put("message", t.message ?: "")
-            return@safeJson base.put("ready", false)
-        }
-        base.put("ready", checkStatus == 0).put("checkStatus", checkStatus)
+        val out = printer.checkStatus()
+        base.put("stage", out.stage)
+             .put("message", out.message)
+             .put("ready", out.ok)
+        out.extra.forEach { (k, v) -> base.put(k, v ?: JSONObject.NULL) }
+        base
     }
 
     @JavascriptInterface
     fun printText(text: String?): String = safeJson {
         val probe = ensureProbe()
         val base = buildBase(probe)
-        if (!probe.optBoolean("ok")) {
-            base.put("error", "cs10-sdk-init-failed")
-            return@safeJson base
-        }
         val content = text ?: ""
         if (content.isBlank()) throw IllegalArgumentException("Print text is empty")
-
-        val h = getHelperOrLoad()
-        val cls = h.javaClass
-
-        val initStatus = cls.getMethod("PrintInit").invoke(h) as? Int ?: -1
-        if (initStatus != 0) {
-            base.put("stage", "printInit").put("initStatus", initStatus)
-            base.put("error", "PrintInit failed: $initStatus")
+        if (!probe.optBoolean("ok")) {
+            base.put("error", "ciontek-bind-failed")
             return@safeJson base
         }
-
-        cls.getMethod("PrintSetAlign", Int::class.javaPrimitiveType).invoke(h, 0)
-        cls.getMethod(
-            "PrintSetFont",
-            Byte::class.javaPrimitiveType,
-            Byte::class.javaPrimitiveType,
-            Byte::class.javaPrimitiveType
-        ).invoke(h, 24.toByte(), 20.toByte(), 0.toByte())
-
-        val printStr = cls.getMethod("PrintStr", String::class.java)
-        val normalized = content.replace("\r\n", "\n").replace("\r", "\n")
-        for (line in normalized.split("\n")) {
-            val s = printStr.invoke(h, line + "\n") as? Int ?: -1
-            if (s != 0) {
-                base.put("stage", "printStr").put("error", "PrintStr failed: $s")
-                return@safeJson base
-            }
-        }
-        printStr.invoke(h, "\n\n\n")
-
-        val startStatus = cls.getMethod("PrintStart").invoke(h) as? Int ?: -1
-        if (startStatus != 0) {
-            base.put("stage", "printStart").put("error", "PrintStart failed: $startStatus")
-            return@safeJson base
-        }
-        try { cls.getMethod("PrintClose").invoke(h) } catch (t: Throwable) {
-            Log.w(TAG, "PrintClose warning: ${t.message}")
-        }
-        base.put("success", true)
+        val out = printer.printText(content)
+        base.put("stage", out.stage)
+            .put("message", out.message)
+            .put("success", out.ok)
+        if (!out.ok) base.put("error", out.message)
+        out.extra.forEach { (k, v) -> base.put(k, v ?: JSONObject.NULL) }
+        base
     }
 
-    /**
-     * Clear cached probe result and helper so the next isAvailable/print call
-     * re-runs the isolated probe. Exposed to JS for a manual "retry" button.
-     */
     @JavascriptInterface
     fun retryProbe(): String = safeJson {
         cachedProbe = null
-        helper = null
+        printer.reset()
         JSONObject().put("cleared", true)
     }
 
@@ -131,11 +93,10 @@ class Cs10PrinterJsBridge(private val context: Context) {
         val base = JSONObject()
             .put("available", ok)
             .put("stage", probe.optString("stage", "unknown"))
-            .put("exception", probe.optString("exception", ""))
             .put("message", probe.optString("message", ""))
-            .put("missingLibrary", probe.optString("missingLibrary", ""))
-            .put("initStatus", probe.opt("initStatus") ?: JSONObject.NULL)
-            .put("checkStatus", probe.opt("checkStatus") ?: JSONObject.NULL)
+            .put("boundInterface", probe.opt("boundInterface") ?: JSONObject.NULL)
+            .put("provider", probe.opt("provider") ?: JSONObject.NULL)
+            .put("bindAttempts", probe.opt("bindAttempts") ?: JSONArray())
             .put("model", Build.MODEL ?: "")
             .put("manufacturer", Build.MANUFACTURER ?: "")
             .put("device", Build.DEVICE ?: "")
@@ -160,7 +121,7 @@ class Cs10PrinterJsBridge(private val context: Context) {
         try { resultFile.delete() } catch (_: Throwable) {}
         try { stageFile.delete() } catch (_: Throwable) {}
 
-        Log.d(TAG, "Starting isolated init probe in :posprobe process")
+        Log.d(TAG, "Starting Ciontek service discovery probe in :posprobe")
         try {
             val intent = Intent(context, Cs10PrinterProbeService::class.java)
             context.startService(intent)
@@ -188,24 +149,13 @@ class Cs10PrinterJsBridge(private val context: Context) {
             try { Thread.sleep(PROBE_POLL_MS) } catch (_: InterruptedException) {}
         }
 
-        // Timeout OR probe process died before writing result.
         val lastStage = try { if (stageFile.exists()) stageFile.readText() else "unknown" } catch (_: Throwable) { "unknown" }
         Log.w(TAG, "Probe did not return in ${PROBE_TIMEOUT_MS}ms; last stage=$lastStage")
         return JSONObject()
             .put("ok", false)
             .put("stage", lastStage)
-            .put("exception", "NativeCrashOrTimeout")
-            .put("message", "Probe process exited before completing '$lastStage' (likely SIGSEGV in libPosApi.so or dependent .so)")
-    }
-
-    @Synchronized
-    private fun getHelperOrLoad(): Any {
-        helper?.let { return it }
-        val cls = Class.forName("vpos.apipackage.PosApiHelper")
-        val instance = cls.getMethod("getInstance").invoke(null)
-            ?: throw IllegalStateException("PosApiHelper.getInstance() returned null")
-        helper = instance
-        return instance
+            .put("exception", "ProbeTimeoutOrCrash")
+            .put("message", "Probe process exited before completing '$lastStage'")
     }
 
     private fun tailLogcat(): String {
@@ -213,10 +163,11 @@ class Cs10PrinterJsBridge(private val context: Context) {
             val p = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-t", "120"))
             val out = p.inputStream.bufferedReader().readText()
             val keep = out.lineSequence().filter {
-                it.contains("libPosApi") || it.contains("PosApiHelper") ||
-                it.contains("DEBUG") || it.contains("SIGSEGV") ||
+                it.contains("ciontek", ignoreCase = true) ||
+                it.contains("PosManagerProvider", ignoreCase = true) ||
+                it.contains("PosApiHelper") ||
                 it.contains("CS10-PROBE") || it.contains("CS10-PRINTER") ||
-                it.contains("dlopen") || it.contains("UnsatisfiedLinkError")
+                it.contains("SIGSEGV") || it.contains("DEBUG")
             }.toList()
             keep.takeLast(40).joinToString("\n")
         } catch (t: Throwable) {

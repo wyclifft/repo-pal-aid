@@ -1,36 +1,66 @@
-# CS10 POS SDK (vpos.apipackage / PosApiHelper)
+# CS10 Internal Printer SDK (Ciontek PosManagerProvider)
 
-The bundled `cs10-posapi.jar` + `jniLibs/*/libPosApi.so` are the **generic**
-Ciontek/VPOS SDK. Some CS10 firmwares — notably `full_a26_6737m` /
-Android 7.0 / build fingerprint `.../NRD90M/1608967428` — do **not** ship
-one of the runtime dependencies the generic SDK needs (typically
-`libcustom_jni.so` and/or the `com.android.server.bcr.IBCRService`
-system service). On those units the current SDK crashes with SIGSEGV
-inside `libPosApi.so` when `PosApiHelper.getInstance()` runs its
-`<clinit>`.
+Starting v2.11.26 the app no longer loads the generic `vpos.apipackage`
+JNI SDK. That SDK targets a different device family and SIGSEGVs on the
+CS10 A26 firmware. The correct integration — confirmed by the vendor
+SDK PDF (`CS30Pro-SDK_instructions_V1.0.1.pdf`) and by the presence of
+`/system/priv-app/PosManagerProvider/` on the device — is an **AIDL
+bind to the `com.ciontek.posmanagerprovider` system service**, which
+already ships pre-installed by Ciontek.
 
-Starting v2.11.25 the app runs a real init probe in an isolated
-`:posprobe` process and reports the exact failing stage + missing library
-to the WebView. If the diagnostic shows e.g.:
+The bundled `cs10-posapi.jar` and `jniLibs/*/libPosApi.so` files are
+retained for archival only. `cs10-posapi.jar` has been renamed to
+`cs10-posapi.jar.disabled` so Gradle's `fileTree(include: ['*.jar'])`
+no longer picks it up.
 
-```
-stage=loadLibrary  exception=java.lang.UnsatisfiedLinkError
-missingLibrary=libcustom_jni.so
-```
+## What the app does now
 
-it means the bundled SDK is wrong for this firmware. In that case:
+1. `Cs10PrinterProbeService` runs in an isolated `:posprobe` process.
+2. Inside that process, `CiontekServiceProbe` calls `PackageManager` to
+   describe the installed `com.ciontek.posmanagerprovider` (version,
+   services, exported flags) and tries to `bindService` to each known
+   Ciontek AIDL interface:
+   - `com.ciontek.ciontekposservice.ICiontekPosService`
+   - `com.ciontek.sdk.IPosService`
+   - `com.ctk.sdk.IPosService`
+   - `com.pos.device.IPosService`
+3. Whichever bind succeeds is reported back to the WebView with the
+   interface descriptor.
+4. In the main process, `CiontekPrinterBridge`:
+   - If `com.ctk.sdk.PosApiHelper` is on the classpath (vendor JAR
+     drop), uses it directly — `PrintInit`, `PrintStr`, `PrintStart`,
+     `PrintCheckStatus`.
+   - Otherwise reports `stage=missing-aidl` with the exact bound
+     interface + descriptor so support can hand it to Ciontek.
 
-1. Contact Ciontek support and request the **CS10-specific** SDK matching
-   your firmware fingerprint (share `Build.FINGERPRINT` from the diagnostic).
-2. Replace the following files with the vendor drop:
-   - `android/app/libs/cs10-posapi.jar`
-   - `android/app/src/main/jniLibs/armeabi-v7a/libPosApi.so`
-   - `android/app/src/main/jniLibs/arm64-v8a/libPosApi.so`
-   - Any additional `.so` the vendor ships (e.g. `libcustom_jni.so`) into
-     the same `jniLibs/<abi>/` folders.
-3. Rebuild the APK — no Kotlin/TypeScript changes are required; the bridge
-   loads the SDK reflectively.
+## Enabling real printing — drop the CS10 vendor SDK
 
-The probe will pick up the new SDK on the next launch. If the vendor SDK
-requires additional AIDL stubs or a bind to a system service, add them
-here and to `Cs10PrinterProbeService.kt`.
+Ciontek ships a per-device SDK zip. Ask them for:
+
+- `ciontek-cs10-SDK-v*.zip` matching your CS10 firmware
+  (share `Build.FINGERPRINT` from the /debug diagnostic).
+
+The zip mirrors the CS30Pro one and contains:
+
+- `com/ctk/sdk/PosApiHelper.java` (wrapper)
+- `aidl/com/ciontek/ciontekposservice/ICiontekPosService.aidl`
+
+Drop them into the project like this:
+
+- `android/app/libs/ciontek-cs10-sdk.jar` — compile the JAR from the
+  vendor `.java` sources OR use the pre-built JAR they ship.
+- `android/app/src/main/aidl/com/ciontek/ciontekposservice/ICiontekPosService.aidl`
+  (exact path matters — AIDL generator is folder-driven).
+
+Rebuild — no Kotlin/TypeScript change required. `CiontekPrinterBridge`
+detects `PosApiHelper` reflectively and switches to the official path
+on next launch.
+
+## Deprecated files (kept on disk, not built)
+
+- `android/app/libs/cs10-posapi.jar.disabled` — generic VPOS SDK,
+  wrong for CS10.
+- `android/app/src/main/jniLibs/*/libPosApi.so`,
+  `libPaypassApi.so`, `libVisaLib.so` — no longer loaded. Safe to
+  delete in a follow-up commit if the vendor drop confirms no `.so`
+  dependency.

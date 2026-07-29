@@ -1,98 +1,113 @@
 
-# v2.11.25 — CS10 Internal Printer: Real Initialization, No Silent Disable
+# v2.11.26 — CS10 Internal Printer: Bind to `com.ciontek.posmanagerprovider`, drop the wrong JNI SDK
 
-## Goal
+## Why the current bundle can never work
 
-Selecting **Internal CS10 Printer** must actually try to initialize the built-in thermal printer on the CS10 A26 (Android 7, WebView 51) and print. If it cannot, the user must see a precise diagnostic (which class/library/service is missing), not a silent `available:false`. The app must never crash, and we must never fall back to Bluetooth when the user explicitly picked the internal printer.
+The Ciontek SDK PDF you uploaded (`CS30Pro-SDK_instructions_V1.0.1.pdf`) and the system app you found on the CS10 (`com.ciontek.posmanagerprovider` in `/system/priv-app/PosManagerProvider/`) together prove the integration pattern:
 
-Transaction, sync, Bluetooth, receipt formatting, IndexedDB, and UI logic are **out of scope**.
+- The real Ciontek SDK is **`com.ctk.sdk.PosApiHelper`**, which is a thin wrapper. It does NOT talk to the printer via JNI. It calls into `com.ciontek.ciontekposservice.ICiontekPosService` — an AIDL interface exported by the `PosManagerProvider` system app. That system app owns the hardware (printer, scanner, IC card, serial port).
+- What we currently ship (`android/app/libs/cs10-posapi.jar`, package `vpos.apipackage.PosApiHelper`, plus `libPosApi.so` + `libcustom_jni.so` expectations) is the **generic VPOS/Ciontek reference SDK** for a different device family. It tries to load its own `.so` and expects a different system service (`IBCRService`). That is why every attempt SIGSEGVs or fails with `ClassNotFoundException: com.android.server.bcr.IBCRService$Stub` on this CS10 A26 firmware.
 
-## Current state (verified)
-
-- Bundled SDK: `android/app/libs/cs10-posapi.jar` — package `vpos.apipackage.*` (generic Ciontek/VPOS SDK, `PosApiHelper` present).
-- Bundled native libs: `libPosApi.so`, `libPaypassApi.so`, `libVisaLib.so` for `armeabi-v7a` and `arm64-v8a` under `android/app/src/main/jniLibs/`.
-- `Cs10PrinterJsBridge.kt` currently gates on the presence of `/vendor/lib*/libcustom_jni.so` **and** `com.android.server.bcr.IBCRService$Stub`. On the CS10 A26 firmware these probes fail, so `available:false` is returned and the class is never loaded. This gate is the reason the user sees the feature permanently disabled.
-- The previous SIGSEGV happened inside `libPosApi.so` during `PosApiHelper.<clinit>` / `getInstance()`, so a plain in-process try/catch cannot save us — but a crash in a **separate probe process** can.
-
-The assumption that "libcustom_jni.so + IBCRService are required" is **not verified against vendor docs** for this exact firmware; it was a heuristic from the crash trace. The plan treats it as unverified and replaces it with a real init attempt plus a proper diagnostic.
+Trying harder to load `vpos.apipackage` on this device is a dead end. The fix is to stop using the bundled JAR and instead bind to the Ciontek service that is already installed on the device.
 
 ## Plan
 
-### 1. Remove the permanent gate; add a real, crash-safe init probe
+### 1. Add a native-side discovery probe (no vendor SDK required)
 
-Rewrite `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterJsBridge.kt` so it:
+New `CiontekServiceProbe.kt` that runs in the isolated `:posprobe` process (same pattern as v2.11.25) and writes a JSON report the WebView can display:
 
-- Stops using `libcustom_jni.so` / `IBCRService` presence as a hard block.
-- On first `isAvailable()` / `status()` / `printText()` call, runs a **one-shot native init probe in a separate Android process** (`android:process=":posprobe"` service). The probe:
-  1. `System.loadLibrary("PosApi")` and reports success/failure + `UnsatisfiedLinkError` message (missing symbol / dependent `.so`).
-  2. `Class.forName("vpos.apipackage.PosApiHelper")` + `getInstance()` + `PrintInit()` + `PrintCheckStatus()`.
-  3. Writes the structured result (ok / stage-that-failed / exception class / message / missing library name) to a small file the main process reads.
-- If the probe process dies (SIGSEGV, killed by zygote), the parent detects the missing result file and records `crash-at-<stage>` with the last logcat line captured via `Runtime.exec("logcat -d -t 200 *:E")` filtered for `libPosApi|PosApiHelper|DEBUG|SIGSEGV`.
-- If the probe succeeds, the main process performs the real `PosApiHelper.getInstance()` normally (safe now) and caches the helper for the app session.
-- If the probe fails, `isAvailable()` returns `available:false` **with a structured diagnostic** (`stage`, `missingLibrary`, `exception`, `logcatTail`) so the UI can show the exact reason.
+- `PackageManager.getPackageInfo("com.ciontek.posmanagerprovider", GET_SERVICES | GET_META_DATA)` → dump versionName, versionCode, uid, installed path, list every `<service>` component + its declared actions/permissions.
+- Try `bindService(Intent("com.ciontek.ciontekposservice.ICiontekPosService").setPackage("com.ciontek.posmanagerprovider"))`. Report bind result: `success`, `SecurityException`, `not-found`, or timeout.
+- If bind succeeds, use reflection to enumerate the returned `IBinder`'s `getInterfaceDescriptor()` and any published Stub class name found via `ServiceManager.getService`/`Binder.queryLocalInterface`. That tells us the exact AIDL FQN for this firmware.
+- Also probe alternate known Ciontek interface names in case A26 uses a different one: `com.ciontek.sdk.IPosService`, `com.ctk.sdk.IPosService`, `com.pos.device.IPosService`.
 
-### 2. Expose a rich diagnostic to the WebView
+This step can ship without any vendor drop and immediately tells us which interface to code against.
 
-Update the JSON returned by `isAvailable()` / `status()` / `printText()` to always include:
+### 2. Retire the wrong JNI SDK from the active path
+
+- Remove the `System.loadLibrary("PosApi")` + `Class.forName("vpos.apipackage.PosApiHelper")` code path from `Cs10PrinterProbeService.kt` and `Cs10PrinterJsBridge.kt`.
+- Do NOT delete `android/app/libs/cs10-posapi.jar` or the `jniLibs/*/libPosApi.so` files yet — leave them on disk behind a `.disabled` rename so we don't lose the artifacts, and so the APK size drop is a separate reviewable change.
+- The isolated `:posprobe` process stays (crash containment), but its job changes from "load libPosApi" to "bind PosManagerProvider and report".
+
+### 3. Add a real Ciontek printer bridge (AIDL-based)
+
+New `CiontekPrinterBridge.kt` that:
+- Binds to `com.ciontek.posmanagerprovider` using the interface name confirmed by step 1.
+- Caches the `IBinder` for the app session; auto-rebinds on `onServiceDisconnected`.
+- Calls the printer methods (`PrintInit`, `PrintSetFont`, `PrintStr`, `PrintStart`, `PrintCheckStatus`) via the AIDL proxy generated from the Ciontek `.aidl`.
+- Exposes the same `@JavascriptInterface` surface the WebView already calls (`isAvailable`, `status`, `printText`, `retryProbe`) so **no frontend change is needed**.
+
+This requires the vendor `.aidl` file. Two paths, in order of preference:
+
+**a. Preferred — you provide the CS10 SDK drop from Ciontek.** Ask Ciontek for the "CS10 / A26 firmware" SDK zip (they ship one per device family, exactly like the CS30Pro one you attached). We drop:
+- `android/app/src/main/aidl/com/ciontek/ciontekposservice/ICiontekPosService.aidl`
+- `android/app/libs/ciontek-cs10-sdk.jar` (contains `com.ctk.sdk.PosApiHelper` for CS10)
+
+Then `CiontekPrinterBridge.kt` calls `PosApiHelper.getInstance().PrintStr(...)` exactly as the PDF shows. No JNI, no `.so`.
+
+**b. Fallback if the vendor drop is delayed — reflective AIDL.** After step 1 confirms the interface FQN and method signatures, hand-write the minimal AIDL locally (only the Print* methods we need) and invoke it via `android.os.Parcel` + `IBinder.transact`. This is uglier but unblocks printing without waiting on Ciontek. If method transaction codes differ per firmware, the diagnostic from step 1 tells us; we don't guess.
+
+The plan implements path (b) as a stub with clear TODOs, and path (a) becomes a JAR/AIDL drop-in with no further code change — mirroring how we already handle the SDK swap in `README-CS10-SDK.md`.
+
+### 4. Rich diagnostic surfaces
+
+Extend the JSON returned to the WebView with the PosManagerProvider discovery result:
 
 ```json
 {
   "available": false,
-  "stage": "loadLibrary|getInstance|printInit|printCheckStatus|print",
-  "exception": "java.lang.UnsatisfiedLinkError",
-  "missingLibrary": "libcustom_jni.so",
-  "logcatTail": "…",
-  "sdkBuild": "cs10-posapi.jar sha=…",
-  "firmware": "full_a26_6737m/NRD90M/1608967428",
-  "model": "CS10", "sdk": 24
+  "provider": {
+    "package": "com.ciontek.posmanagerprovider",
+    "versionName": "…", "versionCode": …,
+    "services": [
+      { "name": "…PosService", "actions": ["com.ciontek.ciontekposservice.ICiontekPosService"], "permission": null }
+    ],
+    "bind": { "interface": "com.ciontek.ciontekposservice.ICiontekPosService", "result": "success|not-found|security|timeout" }
+  },
+  "stage": "bind|print|checkStatus",
+  "exception": "…", "message": "…",
+  "sdk": 24, "fingerprint": "…"
 }
 ```
 
-### 3. Do not fall back to Bluetooth when the user picked Internal
+`PrinterConnectionDialog.tsx` renders the provider block under "Show diagnostic" — no other UI changes.
 
-In `src/services/bluetoothClassic.ts` and `src/components/PrinterConnectionDialog.tsx`:
+### 5. Manifest permission
 
-- When the selected printer is `internal-cs10`, do not silently switch to Classic Bluetooth on failure.
-- Show the structured diagnostic (stage / missing library / logcat tail) in the dialog so the user can report it verbatim.
-- Keep a manual "Try Classic Bluetooth instead" button — never an automatic fallback.
+Add `<queries><package android:name="com.ciontek.posmanagerprovider" /></queries>` to `AndroidManifest.xml` so `getPackageInfo` and explicit `bindService` work on Android 11+ builds (harmless on Android 7). No dangerous permission needed for the bind itself; the Ciontek service is exported.
 
-No changes to receipt formatting, transaction, or sync code.
+### 6. No fallback to Bluetooth when Internal is selected
 
-### 4. SDK-swap path (only if the probe proves the bundled SDK is wrong)
+Unchanged from v2.11.25.
 
-If step 1 reports `UnsatisfiedLinkError: dlopen failed: library "libcustom_jni.so" not found` or similar, that is proof the bundled generic VPOS SDK does not match the CS10 A26 firmware. In that case:
+### 7. Version bump
 
-- Document the exact missing dependency in the diagnostic.
-- Add `android/app/libs/README-CS10-SDK.md` describing which vendor SDK variant to obtain from Ciontek for firmware `full_a26_6737m` and how to drop it in (`cs10-posapi.jar` + matching `libPosApi.so` / `libcustom_jni.so`).
-- Once the correct SDK is provided by the user (Ciontek ships per-firmware SDKs), swapping the JAR + `.so` files is a file replacement — no code change beyond bumping the SDK hash in `Cs10PrinterJsBridge.kt`.
-
-This plan does **not** commit to bundling a specific replacement SDK sight unseen; it commits to producing the diagnostic that tells us whether a swap is needed, and — if it is — to accept the vendor drop.
-
-### 5. Crash protection stays
-
-- The isolated `:posprobe` process guarantees a native crash cannot terminate the main app.
-- The main process wraps every subsequent SDK call in `try { … } catch (Throwable)` + `Thread.setDefaultUncaughtExceptionHandler` scoped to the printer worker thread.
-
-### 6. Version bump
-
-- `src/constants/appVersion.ts`: `v2.11.25`, `APP_FIX_TAG = 'cs10-internal-printer-real-init'`.
-- `android/app/build.gradle`: `versionCode 167`, `versionName "2.11.25"`.
+- `src/constants/appVersion.ts`: `v2.11.26`, `APP_FIX_TAG = 'cs10-pos-manager-provider-aidl'`.
+- `android/app/build.gradle`: `versionCode 168`, `versionName "2.11.26"`.
 
 ## Files to change
 
-- `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterJsBridge.kt` — remove gate, add probe orchestration + diagnostics.
-- `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterProbeService.kt` — **new**, runs in `:posprobe`.
-- `android/app/src/main/AndroidManifest.xml` — declare the probe service with `android:process=":posprobe"`.
-- `src/services/bluetoothClassic.ts` — surface structured diagnostic; no auto-fallback for `internal-cs10`.
-- `src/components/PrinterConnectionDialog.tsx` — render diagnostic (stage, missing lib, logcat tail) when internal init fails; keep manual BT switch.
+- `android/app/src/main/java/app/delicoop101/bluetooth/CiontekServiceProbe.kt` — **new**, discovery probe (runs in `:posprobe`).
+- `android/app/src/main/java/app/delicoop101/bluetooth/CiontekPrinterBridge.kt` — **new**, AIDL binder + `@JavascriptInterface` surface.
+- `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterProbeService.kt` — swap payload from `loadLibrary("PosApi")` to `CiontekServiceProbe.run(this)`.
+- `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterJsBridge.kt` — delegate print calls to `CiontekPrinterBridge`; keep the JS-facing method names so `PrinterConnectionDialog.tsx` needs no change.
+- `android/app/src/main/AndroidManifest.xml` — add `<queries>` entry for `com.ciontek.posmanagerprovider`.
+- `android/app/libs/cs10-posapi.jar` → renamed to `cs10-posapi.jar.disabled` (kept for archival).
+- `android/app/libs/README-CS10-SDK.md` — rewrite: explain that CS10 uses the AIDL provider `com.ciontek.posmanagerprovider`, list what to request from Ciontek, and how to drop in the CS10 `.aidl` + `PosApiHelper.jar`.
 - `src/constants/appVersion.ts`, `android/app/build.gradle` — version bump.
-- `android/app/libs/README-CS10-SDK.md` — **new**, SDK swap instructions.
+
+**Not touched**: any transaction, sync, IndexedDB, receipt formatting, Bluetooth, or unrelated UI code. `PrinterConnectionDialog.tsx` gets zero logic changes; the "Show diagnostic" panel already renders whatever JSON the bridge returns.
 
 ## Acceptance criteria
 
-1. Tapping **Internal CS10 Printer** actually calls into the native SDK on the device (verifiable in logcat by `PosApiHelper` / `libPosApi` entries), instead of being blocked by the pre-check.
-2. If the SDK initializes, a receipt prints on the built-in thermal head.
-3. If it fails, the dialog shows a precise stage + missing dependency + logcat snippet.
-4. The app never crashes, regardless of what the SDK does.
-5. No automatic fallback to Bluetooth when Internal was selected.
-6. No changes to receipts, transactions, sync, Bluetooth pairing, IndexedDB, or unrelated UI.
+1. On the CS10 A26 device, tapping **Internal CS10 Printer** attempts an AIDL bind to `com.ciontek.posmanagerprovider` (verifiable in logcat).
+2. The diagnostic panel shows the PosManagerProvider version, exported services, and the bind result — no matter what.
+3. If bind succeeds and the AIDL methods are available (either from the vendor drop or the reflective fallback), a receipt prints on the built-in thermal head.
+4. If bind fails, the exact reason (permission denied / interface not found / security exception) is shown; nothing crashes and no silent fallback to Bluetooth happens.
+5. `vpos.apipackage.PosApiHelper` is no longer loaded at runtime.
+
+## What I need from you to complete path (a)
+
+The CS10-specific SDK from Ciontek — they ship it exactly like the CS30Pro zip you attached (`ciontek-cs10-SDK-v*.zip`, containing `com/ctk/sdk/PosApiHelper.java` and `aidl/com/ciontek/ciontekposservice/ICiontekPosService.aidl`). Share your CS10 `Build.FINGERPRINT` (already captured in v2.11.25's diagnostic) so their support gives the matching version.
+
+Path (b) — the reflective AIDL fallback — will still ship in v2.11.26 so you have working printing to test with even before Ciontek responds; the vendor drop then becomes a pure JAR+AIDL replacement, no further code change.
