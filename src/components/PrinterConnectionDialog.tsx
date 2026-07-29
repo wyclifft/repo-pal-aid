@@ -19,9 +19,12 @@ import {
   getPairedDevices,
   connectClassicPrinter,
   type ClassicBluetoothDevice,
+  isInternalPosPrinter,
+  connectDirectToAddress,
+  INTERNAL_PRINTER_ADDRESSES,
 } from '@/services/bluetoothClassic';
 
-export type PrinterConnectionType = 'ble' | 'classic';
+export type PrinterConnectionType = 'ble' | 'classic' | 'direct';
 
 interface PrinterConnectionDialogProps {
   open: boolean;
@@ -47,6 +50,7 @@ export const PrinterConnectionDialog = ({
   const [pairedDevices, setPairedDevices] = useState<DeviceWithResolvedName[]>([]);
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<DeviceWithResolvedName | null>(null);
+  const [directAddress, setDirectAddress] = useState(INTERNAL_PRINTER_ADDRESSES[0]);
 
   const isNative = Capacitor.isNativePlatform();
 
@@ -120,6 +124,23 @@ export const PrinterConnectionDialog = ({
     setSelectedDevice(null);
   };
 
+  const handleDirectConnect = async (address: string) => {
+    setIsConnecting(true);
+    try {
+      const result = await connectDirectToAddress(address);
+      if (result.success) {
+        toast.success("Directly Connected: " + address);
+        onConnected("Internal Printer (" + address.slice(-5) + ")", 'classic');
+        onOpenChange(false);
+      } else {
+        toast.error(result.error || 'Direct connect failed');
+      }
+    } catch (error) {
+      toast.error('Direct connect failed');
+    }
+    setIsConnecting(false);
+  };
+
   const isLikelyPrinter = (name: string) => {
     const patterns = ['PRINT', 'POS', 'THERMAL', 'RECEIPT', 'CS10', 'SUNMI'];
     const u = name.toUpperCase();
@@ -142,16 +163,23 @@ export const PrinterConnectionDialog = ({
           <div className="flex border rounded-md overflow-hidden">
             <button
               onClick={function() { setConnectionType('ble'); }}
-              className={"flex-1 py-3 font-bold " + (connectionType === 'ble' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600')}
+              className={"flex-1 py-2 text-xs font-bold " + (connectionType === 'ble' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600')}
             >
               BLE
             </button>
             <button
               onClick={function() { setConnectionType('classic'); }}
               disabled={!classicAvailable && isNative}
-              className={"flex-1 py-3 font-bold " + (connectionType === 'classic' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600')}
+              className={"flex-1 py-2 text-xs font-bold " + (connectionType === 'classic' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600')}
             >
               CLASSIC
+            </button>
+            <button
+              onClick={function() { setConnectionType('direct'); }}
+              disabled={!isNative}
+              className={"flex-1 py-2 text-xs font-bold " + (connectionType === 'direct' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-600')}
+            >
+              DIRECT
             </button>
           </div>
 
@@ -161,7 +189,7 @@ export const PrinterConnectionDialog = ({
                 {isScanning ? "Scanning..." : "Scan for BLE Printer"}
               </Button>
             </div>
-          ) : (
+          ) : connectionType === 'classic' ? (
             <div className="space-y-3">
               <div className="flex justify-between items-center px-1">
                 <span className="text-sm font-bold">Paired Devices</span>
@@ -176,13 +204,20 @@ export const PrinterConnectionDialog = ({
                     <button
                       key={device.address}
                       onClick={function() { handleClassicConnect(device); }}
-                      className={"w-full text-left p-3 border rounded-md " + (selectedDevice?.address === device.address ? "border-primary bg-primary/5" : "border-gray-200")}
+                      className={"w-full text-left p-3 border rounded-md transition-colors " +
+                        (selectedDevice?.address === device.address ? "border-primary bg-primary/5 " : "border-gray-200 ") +
+                        (isInternalPosPrinter(device.name || '') ? "bg-green-50/50 border-green-200 " : "")
+                      }
                     >
                       <div className="flex justify-between items-center">
                         <div>
                           <div className="font-bold text-sm flex items-center gap-1">
                             {device.name || device.resolvedName}
-                            {isLikelyPrinter(device.name || '') && <CheckCircle2 className="h-3 w-3 text-green-500" />}
+                            {isInternalPosPrinter(device.name || '') ? (
+                              <span className="text-[10px] bg-green-500 text-white px-1.5 py-0.5 rounded-full font-normal">Internal</span>
+                            ) : isLikelyPrinter(device.name || '') && (
+                              <CheckCircle2 className="h-3 w-3 text-green-500" />
+                            )}
                           </div>
                           <div className="text-[10px] text-gray-400">{device.address}</div>
                         </div>
@@ -192,6 +227,48 @@ export const PrinterConnectionDialog = ({
                   );
                 })}
               </div>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="bg-amber-50 border border-amber-200 p-2 rounded text-[10px] text-amber-800 flex gap-2">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <p>Use this if your internal printer doesn't show up in the paired list. This forces a direct insecure connection to a specific address.</p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-gray-500">MANUAL MAC ADDRESS</label>
+                <input
+                  type="text"
+                  value={directAddress}
+                  onChange={(e) => setDirectAddress(e.target.value)}
+                  className="w-full border p-2 rounded text-sm font-mono"
+                  placeholder="00:00:00:00:00:00"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-gray-500 uppercase">Presets</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {INTERNAL_PRINTER_ADDRESSES.map((addr) => (
+                    <button
+                      key={addr}
+                      onClick={() => setDirectAddress(addr)}
+                      className={"p-2 text-[10px] border rounded transition-colors " + (directAddress === addr ? "bg-primary text-white border-primary" : "bg-gray-50 hover:bg-gray-100")}
+                    >
+                      {addr}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <Button
+                onClick={() => handleDirectConnect(directAddress)}
+                disabled={isConnecting}
+                className="w-full h-12 bg-green-600 hover:bg-green-700"
+              >
+                {isConnecting ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Wifi className="h-4 w-4 mr-2" />}
+                Force Connect Internal
+              </Button>
             </div>
           )}
         </div>

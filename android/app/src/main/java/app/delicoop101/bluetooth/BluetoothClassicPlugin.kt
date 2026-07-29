@@ -159,6 +159,15 @@ class BluetoothClassicPlugin : Plugin() {
 
     @PluginMethod
     fun connect(call: PluginCall) {
+        connectToDevice(call, insecure = false)
+    }
+
+    @PluginMethod
+    fun connectInsecure(call: PluginCall) {
+        connectToDevice(call, insecure = true)
+    }
+
+    private fun connectToDevice(call: PluginCall, insecure: Boolean) {
         val address = call.getString("address")
         if (address.isNullOrBlank()) {
             call.reject("Device address is required")
@@ -166,7 +175,7 @@ class BluetoothClassicPlugin : Plugin() {
         }
 
         if (!hasBluetoothPermissions()) {
-            requestAllPermissions(call, "connectCallback")
+            requestAllPermissions(call, if (insecure) "connectInsecureCallback" else "connectCallback")
             return
         }
 
@@ -181,9 +190,14 @@ class BluetoothClassicPlugin : Plugin() {
                     return@launch
                 }
 
-                Log.d(TAG, "[BT] Connecting to ${device.name} ($address)")
+                Log.d(TAG, "[BT] Connecting (${if (insecure) "insecure" else "secure"}) to ${device.name} ($address)")
 
-                val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                val socket = if (insecure) {
+                    device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
+                } else {
+                    device.createRfcommSocketToServiceRecord(SPP_UUID)
+                }
+                
                 socket.connect()
 
                 connectedSocket = socket
@@ -197,6 +211,7 @@ class BluetoothClassicPlugin : Plugin() {
                 result.put("connected", true)
                 result.put("name", device.name)
                 result.put("address", device.address)
+                result.put("insecure", insecure)
 
                 withContext(Dispatchers.Main) {
                     call.resolve(result)
@@ -206,8 +221,17 @@ class BluetoothClassicPlugin : Plugin() {
 
             } catch (e: IOException) {
                 Log.e(TAG, "[BT] Connection failed: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    call.reject("Connection failed: ${e.message}")
+                
+                // v2.11.16: Auto-fallback to insecure if secure fails
+                if (!insecure) {
+                    Log.d(TAG, "[BT] Secure connection failed, attempting insecure fallback...")
+                    withContext(Dispatchers.Main) {
+                        connectToDevice(call, insecure = true)
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        call.reject("Connection failed: ${e.message}")
+                    }
                 }
             } catch (e: SecurityException) {
                 withContext(Dispatchers.Main) {
@@ -221,6 +245,15 @@ class BluetoothClassicPlugin : Plugin() {
     private fun connectCallback(call: PluginCall) {
         if (hasBluetoothPermissions()) {
             connect(call)
+        } else {
+            call.reject("Bluetooth permissions not granted")
+        }
+    }
+
+    @PermissionCallback
+    private fun connectInsecureCallback(call: PluginCall) {
+        if (hasBluetoothPermissions()) {
+            connectInsecure(call)
         } else {
             call.reject("Bluetooth permissions not granted")
         }

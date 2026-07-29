@@ -22,6 +22,9 @@ import {
   getPairedPrinters,
   quickReconnectClassicPrinter,
   getStoredClassicPrinter,
+  isInternalPosPrinter,
+  connectDirectToAddress,
+  INTERNAL_PRINTER_ADDRESSES,
 } from './bluetoothClassic';
 
 // Re-export Classic Bluetooth functions for convenience
@@ -46,6 +49,9 @@ export {
   getPairedPrinters,
   quickReconnectClassicPrinter,
   getStoredClassicPrinter,
+  isInternalPosPrinter,
+  connectDirectToAddress,
+  INTERNAL_PRINTER_ADDRESSES,
 };
 
 export type ScaleType = 'HC-05' | 'HM-10' | 'DR-Series' | 'BTM-Series' | 'Classic-SPP' | 'Unknown';

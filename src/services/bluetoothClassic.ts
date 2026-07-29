@@ -37,6 +37,9 @@ export interface BluetoothClassicPlugin {
   /** Connect to a Classic Bluetooth device via SPP/RFCOMM */
   connect(options: { address: string }): Promise<{ connected: boolean }>;
 
+  /** Connect using insecure method (bypasses standard pairing) */
+  connectInsecure(options: { address: string }): Promise<{ connected: boolean }>;
+
   /** Disconnect from currently connected device */
   disconnect(): Promise<void>;
 
@@ -846,7 +849,7 @@ export const getPairedPrinters = async (): Promise<ClassicBluetoothDevice[]> => 
   const printerPatterns = [
     'PRINT', 'POS', 'THERMAL', 'RECEIPT', 'EPSON', 'STAR', 
     'BIXOLON', 'ZEBRA', 'TSP', 'TM-', 'CS10', 'SUNMI', 'IMIN',
-    'PP-', 'RPP', 'PT-', 'MPT-', 'MP-',
+    'PP-', 'RPP', 'PT-', 'MPT-', 'MP-', 'Q2', 'V2', 'INNER',
   ];
   
   return devices.filter(d => {
@@ -854,4 +857,86 @@ export const getPairedPrinters = async (): Promise<ClassicBluetoothDevice[]> => 
     const upperName = d.name.toUpperCase();
     return printerPatterns.some(pattern => upperName.includes(pattern));
   });
+};
+
+/**
+ * Check if a device name matches known internal POS printer patterns (CS10, etc.)
+ */
+export const isInternalPosPrinter = (name: string | undefined): boolean => {
+  if (!name) return false;
+  const upper = name.toUpperCase();
+  return ['CS10', 'SUNMI', 'IMIN', 'INNER', 'Q2', 'V2', 'TP2'].some(p => upper.includes(p));
+};
+
+/**
+ * Common internal POS printer MAC addresses
+ */
+export const INTERNAL_PRINTER_ADDRESSES = [
+  '00:11:22:33:44:55', // Standard CS10 Bridge
+  '11:22:33:44:55:66', // CS10 Alternate
+  '00:00:00:00:00:00', // Internal Loopback
+  'FE:DC:BA:98:76:54', // Sunmi Internal
+];
+
+/**
+ * Connect directly to a specific MAC address (manual entry)
+ */
+export const connectDirectToAddress = async (
+  address: string,
+  name: string = 'Internal Printer'
+): Promise<{ success: boolean; error?: string }> => {
+  if (!Capacitor.isNativePlatform()) {
+    return { success: false, error: 'Direct connect only available on native' };
+  }
+
+  // Validate MAC address format
+  if (!/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(address)) {
+    return { success: false, error: 'Invalid MAC address format' };
+  }
+
+  try {
+    console.log(`🔌 Direct connecting to address: ${address}`);
+
+    // Disconnect any existing printer connection first
+    if (classicPrinter.isConnected) {
+      await disconnectClassicPrinter();
+    }
+
+    // Attempt insecure connect first for direct addresses
+    const result = await BluetoothClassic.connectInsecure({ address });
+
+    if (!result.connected) {
+      return { success: false, error: 'Failed to connect directly' };
+    }
+
+    // Update state
+    const device: ClassicBluetoothDevice = {
+      address,
+      name,
+      bonded: false, // We connected directly, might not be bonded
+    };
+
+    classicPrinter = {
+      device,
+      address,
+      isConnected: true,
+    };
+
+    // Save device for quick reconnect
+    localStorage.setItem(CLASSIC_PRINTER_KEY, JSON.stringify({
+      ...device,
+      timestamp: Date.now(),
+    }));
+
+    // Broadcast connection change
+    window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true, type: 'classic' } }));
+
+    console.log(`✅ Directly connected to: ${name} (${address})`);
+    return { success: true };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('❌ Direct connection error:', error);
+    return { success: false, error: errorMessage };
+  }
 };

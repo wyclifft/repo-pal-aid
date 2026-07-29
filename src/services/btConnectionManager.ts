@@ -47,6 +47,8 @@ import {
   getStoredClassicDevice,
   getStoredClassicPrinter,
   clearStoredClassicDevice,
+  isInternalPosPrinter,
+  getPairedPrinters,
 } from "./bluetooth";
 
 export type BtRole = "scale" | "printer";
@@ -255,7 +257,25 @@ async function ensureConnected(role: BtRole): Promise<void> {
   if (s.forgotten) return;
   if (s.pausedForGesture) return; // wait for next user gesture / manual pair
 
-  const saved = getSavedDevice(role);
+  let saved = getSavedDevice(role);
+
+  // v2.11.15: Auto-discovery for internal POS printers (CS10 etc)
+  // If we are on native, role is printer, and no device is saved, look for a paired CS10.
+  if (!saved && role === 'printer' && Capacitor.isNativePlatform()) {
+    try {
+      const paired = await getPairedPrinters();
+      const internal = paired.find(d => isInternalPosPrinter(d.name));
+      if (internal) {
+        btlog("info", "printer", `auto-discovery: found internal POS printer "${internal.name}" (${internal.address})`);
+        // Map to a SavedDevice structure for the connector below
+        saved = { deviceId: internal.address, deviceName: internal.name, type: "classic" };
+        // We don't write to localStorage here — let the first successful connection handle persistence.
+      }
+    } catch (e) {
+      btlog("warn", "printer", "auto-discovery failed", e);
+    }
+  }
+
   if (!saved) {
     setStatus(role, "idle", { deviceName: null, lastError: null, retryAt: null, attempt: 0 });
     return;

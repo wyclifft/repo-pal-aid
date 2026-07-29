@@ -39,17 +39,6 @@
       };
     </script>
     <div id="root"></div>
-    <script crossorigin id="vite-legacy-polyfill" src="/assets/polyfills-legacy-T-4Fe4dA.js"></script>
-    <script crossorigin id="vite-legacy-entry" data-src="/assets/index-legacy-mEPzcvZJ.js">
-      (function() {
-        var s = document.getElementById("vite-legacy-entry");
-        var src = s.getAttribute("data-src");
-        if (window.System && typeof window.System.import === "function") {
-          window.System.import(src);
-        } else {
-          console.error("SystemJS missing");
-        }
-      })();
-    </script>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
