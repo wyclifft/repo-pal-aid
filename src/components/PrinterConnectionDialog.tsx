@@ -20,6 +20,8 @@ import {
   type ClassicBluetoothDevice,
   isInternalPosPrinter,
   connectDirectToAddress,
+  isInternalPrinterAvailable,
+  connectInternalPrinter,
 } from '@/services/bluetoothClassic';
 
 export type PrinterConnectionType = 'ble' | 'classic' | 'direct';
@@ -49,6 +51,7 @@ export const PrinterConnectionDialog = ({
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<DeviceWithResolvedName | null>(null);
   const [directAddress, setDirectAddress] = useState('');
+  const [internalAvailable, setInternalAvailable] = useState(false);
 
   const isNative = Capacitor.isNativePlatform();
 
@@ -56,6 +59,9 @@ export const PrinterConnectionDialog = ({
     if (open && isNative) {
       isClassicBluetoothAvailable().then(function(avail) {
         setClassicAvailable(avail);
+      });
+      isInternalPrinterAvailable().then(function(avail) {
+        setInternalAvailable(avail);
       });
     }
   }, [open, isNative]);
@@ -135,6 +141,23 @@ export const PrinterConnectionDialog = ({
       }
     } catch (error) {
       toast.error('Direct connect failed');
+    }
+    setIsConnecting(false);
+  };
+
+  const handleInternalConnect = async () => {
+    setIsConnecting(true);
+    try {
+      const result = await connectInternalPrinter();
+      if (result.success) {
+        toast.success('Connected: CS10 Internal Printer');
+        onConnected('CS10 Internal Printer', 'classic');
+        onOpenChange(false);
+      } else {
+        toast.error(result.error || 'Internal printer unavailable');
+      }
+    } catch (error) {
+      toast.error('Internal printer failed');
     }
     setIsConnecting(false);
   };
@@ -228,9 +251,18 @@ export const PrinterConnectionDialog = ({
             </div>
           ) : (
             <div className="space-y-4 py-2">
+              <Button
+                onClick={handleInternalConnect}
+                disabled={isConnecting || !internalAvailable}
+                className="w-full h-12 bg-green-600 hover:bg-green-700"
+              >
+                {isConnecting ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Printer className="h-4 w-4 mr-2" />}
+                CS10 Internal Printer
+              </Button>
+
               <div className="bg-amber-50 border border-amber-200 p-2 rounded text-[10px] text-amber-800 flex gap-2">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                <p>Use this only after pairing fails and you know the real printer MAC address. Placeholder addresses are no longer offered.</p>
+                <p>{internalAvailable ? 'Use manual MAC only for an external Bluetooth printer.' : 'Internal printer bridge not detected. Use manual MAC only if you know a real external printer address.'}</p>
               </div>
 
               <div className="space-y-1">

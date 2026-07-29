@@ -24,6 +24,9 @@ import {
   getStoredClassicPrinter,
   isInternalPosPrinter,
   connectDirectToAddress,
+  isInternalPrinterAvailable,
+  connectInternalPrinter,
+  printToInternalPrinter,
   INTERNAL_PRINTER_ADDRESSES,
 } from './bluetoothClassic';
 
@@ -51,6 +54,9 @@ export {
   getStoredClassicPrinter,
   isInternalPosPrinter,
   connectDirectToAddress,
+  isInternalPrinterAvailable,
+  connectInternalPrinter,
+  printToInternalPrinter,
   INTERNAL_PRINTER_ADDRESSES,
 };
 
@@ -1987,6 +1993,11 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
     if (isClassicPrinterConnected()) {
       console.log('🖨️ Using Classic Bluetooth printer...');
       return await printToClassicPrinter(content);
+    }
+
+    if (Capacitor.isNativePlatform() && !printer.isConnected && await isInternalPrinterAvailable()) {
+      console.log('🖨️ Using CS10 internal printer bridge...');
+      return await printToInternalPrinter(content);
     }
     
     // Check BLE printer connection

@@ -1,69 +1,64 @@
-## Goal
+## What is happening
 
-Get the APK to compile again and make the `BluetoothClassic` plugin reliably discoverable by the JS bridge on WebView 51 (CS10). Business logic untouched — Bluetooth pipeline only.
+- The Android 7 warnings for `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT` are not the main failure. Those permissions only exist on newer Android versions, so Android 7 logs them as unknown and ignores them.
+- The paired scale list is empty because the app is still calling the Capacitor `BluetoothClassic` proxy first. On the CS10 WebView 51 device, that proxy exists in JavaScript but dispatches native calls as `UNIMPLEMENTED`, so `getPairedDevices()` never reaches Android's bonded-device list.
+- The internal CS10 printer is not a normal Bluetooth printer. It uses the device vendor POS printer SDK (`PosApiHelper` / `libPosApi.so`), so looking for it in paired Bluetooth devices or connecting to placeholder MAC addresses cannot print to the built-in printer.
 
-## Root causes
+## Plan
 
-1. **Build failure** — `MainActivity.kt:49` calls `bluetoothClassicJsBridge.shutdown()` on a `var` in `onDestroy()`. Kotlin refuses to smart-cast a mutable field, so compilation fails.
-2. **Duplicate `BluetoothLe` registration** — `BluetoothLe` is a community plugin auto-discovered from `node_modules` via the generated `capacitor.plugins.json`. Manually calling `registerPlugin(BluetoothLe::class.java)` in `MainActivity.onCreate` registers it a second time. On WebView 51 that overwrite can leave the bridge's plugin map in an inconsistent state; the "Found 6 plugins" JS report and the `UNIMPLEMENTED` responses for `BluetoothClassic` are consistent with a corrupted registration pass.
-3. **Boot-time JS syntax error** — an `Unexpected token (` early in boot may abort the JS-side bridge init before diagnostics run.
-4. **Bridge race on legacy WebView 51** — `isAvailable()` fires before the native plugin map is fully published, returning `UNIMPLEMENTED` once and never retrying.
+1. **Make Android 7 use the direct Bluetooth bridge first**
+   - On native Android, prefer the existing `BluetoothClassicAndroid` WebView JS interface immediately instead of waiting for the broken Capacitor plugin call to fail.
+   - Keep the Capacitor plugin as a secondary path for newer devices.
+   - This makes `isAvailable()` and `getPairedDevices()` read directly from `BluetoothAdapter.bondedDevices` on CS10.
 
-## Changes
+2. **Fix paired scale/printer visibility**
+   - Keep the JS-interface fallback active for connect, disconnect, write, and connection status.
+   - Improve logs so the APK shows whether bonded devices were loaded through the direct bridge or Capacitor.
+   - Do not change transaction, sync, cumulative, receipt, or IndexedDB logic.
 
-### 1. `android/app/src/main/java/app/delicoop101/MainActivity.kt`
-- Fix the smart-cast error in `onDestroy()` using a local `val`:
-  ```kotlin
-  override fun onDestroy() {
-      bluetoothClassicJsBridge?.let { it.shutdown() }
-      DatabaseLogger.flush()
-      super.onDestroy()
-  }
-  ```
-- Remove the manual `registerPlugin(BluetoothLe::class.java)` line and its import — Capacitor auto-registers it from `capacitor.plugins.json`.
-- After `super.onCreate(...)`, log the actual plugin map so we can see what the bridge published:
-  ```kotlin
-  bridge?.let { b ->
-      val names = b.plugins?.keys?.joinToString(", ") ?: "none"
-      Log.d(TAG, "[BRIDGE] Registered plugins: $names")
-  }
-  ```
-- Keep `BluetoothClassicPlugin` and `OfflineStoragePlugin` manual registrations (they live in the app module and aren't in `capacitor.plugins.json`).
+3. **Add a real CS10 internal printer bridge**
+   - Add the CS10 vendor printer SDK jar/native library files to the Android app.
+   - Create a small native `Cs10PrinterJsBridge` that exposes:
+     - `isAvailable()`
+     - `printText(text)`
+     - `status()`
+   - Register it as `window.Cs10PrinterAndroid` in `MainActivity` before the app uses printer functions.
 
-### 2. `src/main.tsx`
-- Enhance the existing 5 s bridge diagnostic to print the full plugin name list and to flag missing `BluetoothClassic` / `OfflineStorage` explicitly (already partly there — extend to log the full array with `JSON.stringify` so WebView 51's console preserves it).
-- Wrap the top-level boot code that likely emits `Unexpected token (` — the current file uses optional chaining / template literals fine because Vite transpiles `src/**`, but the inline snippet in `index.html` is not transpiled. Audit `index.html` for any ES2017+ syntax (arrow default params, `??`, etc.) and rewrite to ES5.
+4. **Route print jobs correctly**
+   - In `bluetoothClassic.ts`, add `printToInternalPrinter()` and auto-detect the CS10 internal printer bridge before Bluetooth print output.
+   - If the internal printer is available, print receipts through the vendor SDK path.
+   - If not available, fall back to the existing Classic Bluetooth printer path.
 
-### 3. `index.html`
-- Scan the inline `<script>` blocks for ES2016+ syntax that WebView 51 rejects (`??`, `?.`, `async`, arrow functions with default destructuring). Convert to ES5-safe equivalents. Keep behaviour identical.
+5. **Update the printer dialog**
+   - Change the “Direct” printer option so it no longer asks for fake/placeholder MAC addresses as the normal path.
+   - Add an “Internal CS10 Printer” action that uses the native printer bridge.
+   - Keep manual MAC entry only as a fallback for real external Bluetooth printers.
 
-### 4. `src/services/bluetoothClassic.ts`
-- Add a bounded retry to the availability check to cover the WebView 51 bridge race:
-  ```ts
-  async function ensureBridgeReady(maxMs = 4000): Promise<boolean> {
-    const start = Date.now();
-    while (Date.now() - start < maxMs) {
-      const plugins = (window as any).Capacitor?.Plugins;
-      if (plugins?.BluetoothClassic) return true;
-      await new Promise(r => setTimeout(r, 250));
-    }
-    return false;
-  }
-  ```
-  Call it before `BluetoothClassic.isAvailable()`. If still absent, fall back to the existing `BluetoothClassicAndroid` JS-interface bridge already installed in `MainActivity` (v2.11.20 fallback). No change to public API.
-
-### 5. Version bump
-- `src/constants/appVersion.ts` → `2.11.19` (tag `bt-bridge-fix`).
-- `android/app/build.gradle` → `versionCode 161`, `versionName "2.11.19"`.
+6. **Version bump and notes**
+   - Bump app version to `2.11.22`, Android `versionCode` to `164`, and set the fix tag to `cs10-bt-printer-native`.
+   - Add a short changelog comment stating this is a Bluetooth/printer plumbing fix only.
 
 ## Verification
 
-- `./gradlew :app:compileDebugKotlin` succeeds.
-- On CS10 after `npm run build && npx cap sync android` + reinstall:
-  - Logcat shows `[BRIDGE] Registered plugins: ...BluetoothClassic, OfflineStorage, BluetoothLe...`.
-  - JS console shows the full plugin list (not just "Found 6 plugins").
-  - Printer/Scale dialog no longer returns `UNIMPLEMENTED`; `getPairedDevices` returns bonded devices.
+- Confirm the code compiles for Android after adding the native bridge.
+- Expected CS10 logcat after reinstall:
+  - `[BT][JS] Found N paired devices`
+  - `[INIT] Registered BluetoothClassicAndroid JS fallback bridge`
+  - `[INIT] Registered Cs10PrinterAndroid JS bridge`
+  - `[CS10-PRINTER] Print started successfully` when printing internally
 
-## Non-goals
+## After implementation
 
-- No changes to `BluetoothClassicPlugin.kt` internals, connection logic, printer/scale flows, UI, farmers/store code, sync, or backend. Only build fix + registration cleanup + diagnostics + retry guard.
+You will need to rebuild and sync native files before installing the APK:
+
+```bash
+npm run build
+npx cap sync android
+```
+
+Then reinstall the APK on the CS10 and test:
+
+1. Open printer/scale selector.
+2. Confirm paired scale devices appear.
+3. Select the scale via Classic.
+4. Print a receipt using the internal CS10 printer option.

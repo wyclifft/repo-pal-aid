@@ -23,8 +23,8 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 163
-        versionName "2.11.21"
+        versionCode 164
+        versionName "2.11.22"
 
 
 
@@ -106,6 +106,10 @@ dependencies {
     
     // Lifecycle for coroutines
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0"
+
+    // v2.11.22: CS10/Z100 PosApiHelper exposes barcode methods whose public
+    // signatures reference ZXing types, so keep ZXing on the compile classpath.
+    implementation "com.google.zxing:core:3.5.1"
     
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
