@@ -65,8 +65,9 @@ class MainActivity : BridgeActivity() {
         // Capacitor's plugin header export can omit local Kotlin plugins, causing
         // JS to see UNIMPLEMENTED before BluetoothClassicPlugin.load() is reached.
         bridge?.webView?.let { webView ->
-            bluetoothClassicJsBridge = BluetoothClassicJsBridge(applicationContext, webView)
-            webView.addJavascriptInterface(bluetoothClassicJsBridge, "BluetoothClassicAndroid")
+            val bridgeInstance = BluetoothClassicJsBridge(applicationContext, webView)
+            bluetoothClassicJsBridge = bridgeInstance
+            webView.addJavascriptInterface(bridgeInstance, "BluetoothClassicAndroid")
             Log.d(TAG, "[INIT] Registered BluetoothClassicAndroid JS fallback bridge")
         }
 
