@@ -75,19 +75,28 @@ class BluetoothClassicPlugin : Plugin() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun load() {
-        val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        bluetoothAdapter = bluetoothManager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
-        Log.d(TAG, "[BT] Plugin loaded, adapter available: ${bluetoothAdapter != null}, enabled: ${bluetoothAdapter?.isEnabled == true}, sdk: ${Build.VERSION.SDK_INT}")
+        try {
+            val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            bluetoothAdapter = bluetoothManager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
+            Log.d(TAG, "[BT] Plugin loaded, adapter available: ${bluetoothAdapter != null}, enabled: ${bluetoothAdapter?.isEnabled == true}, sdk: ${Build.VERSION.SDK_INT}")
+        } catch (t: Throwable) {
+            // Never let load() throw — a thrown load() causes Capacitor to drop
+            // the plugin's method table so every JS call resolves to "not implemented".
+            Log.e(TAG, "[BT] Plugin load failed: ${t.message}", t)
+            bluetoothAdapter = null
+        }
     }
 
     @PluginMethod
     fun isAvailable(call: PluginCall) {
+        Log.d(TAG, "[BT] isAvailable invoked, adapter=${bluetoothAdapter != null}, enabled=${bluetoothAdapter?.isEnabled == true}, sdk=${Build.VERSION.SDK_INT}")
         val result = JSObject()
         result.put("available", bluetoothAdapter != null)
         result.put("enabled", bluetoothAdapter?.isEnabled == true)
         result.put("sdk", Build.VERSION.SDK_INT)
         call.resolve(result)
     }
+
 
     @PluginMethod
     fun isEnabled(call: PluginCall) {
