@@ -96,6 +96,11 @@ import("./utils/persistentLogger")
     console.error('[BOOT] Failed to load persistent logger module:', error);
   });
 
+// v2.11.23: hardware Back button on native (exit on root, navigate back otherwise)
+import("./utils/nativeBackButton")
+  .then(({ installNativeBackButton }) => { installNativeBackButton(); })
+  .catch((error) => { console.warn('[BOOT] Failed to install back button:', error); });
+
 // Prevent zoom on double tap for native feel
 document.addEventListener('touchstart', (e) => {
   if (e.touches.length > 1) {

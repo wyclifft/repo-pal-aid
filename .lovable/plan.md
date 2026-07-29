@@ -1,64 +1,81 @@
-## What is happening
+## Root cause (native printer SIGSEGV)
 
-- The Android 7 warnings for `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT` are not the main failure. Those permissions only exist on newer Android versions, so Android 7 logs them as unknown and ignores them.
-- The paired scale list is empty because the app is still calling the Capacitor `BluetoothClassic` proxy first. On the CS10 WebView 51 device, that proxy exists in JavaScript but dispatches native calls as `UNIMPLEMENTED`, so `getPairedDevices()` never reaches Android's bonded-device list.
-- The internal CS10 printer is not a normal Bluetooth printer. It uses the device vendor POS printer SDK (`PosApiHelper` / `libPosApi.so`), so looking for it in paired Bluetooth devices or connecting to placeholder MAC addresses cannot print to the built-in printer.
+Confirmed from logcat:
 
-## Plan
+1. `PosApiHelper.<clinit>` calls `getBCRService()` which looks up `com.android.server.bcr.IBCRService$Stub` → `ClassNotFoundException`. That AIDL stub only ships in Ciontek firmware that exposes the BCR (barcode) system service. The CS10 A26 (Android 7, build `full_a26_6737m/NRD90M`) firmware installed on this unit does not export it.
+2. `libPosApi.so` then `dlopen`s `/vendor/lib64/libcustom_jni.so`. That file does not exist in our APK's `jniLibs/arm64-v8a/` (we only ship `libPosApi.so`, `libPaypassApi.so`, `libVisaLib.so`) and Android 7's linker namespace refuses to load third-party vendor `.so`s from `/vendor/lib64` for a non-system app. The linker error is followed immediately by `SIGSEGV` inside the SDK's static init because it dereferences a NULL function pointer that was supposed to come from `libcustom_jni.so`.
 
-1. **Make Android 7 use the direct Bluetooth bridge first**
-   - On native Android, prefer the existing `BluetoothClassicAndroid` WebView JS interface immediately instead of waiting for the broken Capacitor plugin call to fail.
-   - Keep the Capacitor plugin as a secondary path for newer devices.
-   - This makes `isAvailable()` and `getPairedDevices()` read directly from `BluetoothAdapter.bondedDevices` on CS10.
+Conclusion: the `cs10-posapi.jar` / `libPosApi.so` we bundled is the **generic Ciontek POS SDK** (built for CS30Pro-class Android 10 firmware that ships `libcustom_jni.so` and the BCR system service). It is **binary-incompatible with the CS10 A26 Android 7 firmware** on this device. No amount of Java-side guarding can prevent the crash once `PosApiHelper.getInstance()` triggers the SDK's static initializer, because JNI `dlopen` failure + static init NPE happen inside the vendor native code.
 
-2. **Fix paired scale/printer visibility**
-   - Keep the JS-interface fallback active for connect, disconnect, write, and connection status.
-   - Improve logs so the APK shows whether bonded devices were loaded through the direct bridge or Capacitor.
-   - Do not change transaction, sync, cumulative, receipt, or IndexedDB logic.
+The correct fix is (a) never call into a vendor SDK we cannot prove is loadable, and (b) obtain the CS10-A26–specific SDK from Ciontek. Until (b) is available, the app must degrade gracefully to the existing Bluetooth print path and never load `libPosApi.so`.
 
-3. **Add a real CS10 internal printer bridge**
-   - Add the CS10 vendor printer SDK jar/native library files to the Android app.
-   - Create a small native `Cs10PrinterJsBridge` that exposes:
-     - `isAvailable()`
-     - `printText(text)`
-     - `status()`
-   - Register it as `window.Cs10PrinterAndroid` in `MainActivity` before the app uses printer functions.
+## Plan (v2.11.23, versionCode 165, fixTag `cs10-android7-hardening`)
 
-4. **Route print jobs correctly**
-   - In `bluetoothClassic.ts`, add `printToInternalPrinter()` and auto-detect the CS10 internal printer bridge before Bluetooth print output.
-   - If the internal printer is available, print receipts through the vendor SDK path.
-   - If not available, fall back to the existing Classic Bluetooth printer path.
+### 1. Stop the native printer crash — probe before loading
 
-5. **Update the printer dialog**
-   - Change the “Direct” printer option so it no longer asks for fake/placeholder MAC addresses as the normal path.
-   - Add an “Internal CS10 Printer” action that uses the native printer bridge.
-   - Keep manual MAC entry only as a fallback for real external Bluetooth printers.
+`android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterJsBridge.kt`
 
-6. **Version bump and notes**
-   - Bump app version to `2.11.22`, Android `versionCode` to `164`, and set the fix tag to `cs10-bt-printer-native`.
-   - Add a short changelog comment stating this is a Bluetooth/printer plumbing fix only.
+- Add a static `sdkUsable` gate computed **once**, before any reference to `PosApiHelper`, that checks:
+  - `File("/vendor/lib64/libcustom_jni.so").exists()` OR `File("/system/vendor/lib64/libcustom_jni.so").exists()`
+  - `Class.forName("com.android.server.bcr.IBCRService$Stub", false, classLoader)` in a `try/catch`
+  - `Build.MANUFACTURER`/`Build.MODEL` allow-list for known-working Ciontek variants
+- Only if `sdkUsable == true` do we ever touch `PosApiHelper` (import stays, but resolved lazily via `Class.forName("vpos.apipackage.PosApiHelper")` + reflection so the class loader never triggers `<clinit>` on unsupported firmware).
+- `isAvailable()` returns `{available:false, reason:"cs10-sdk-incompatible", model, sdk}` when the gate is false — no crash, structured JSON to JS.
+- `printText()` returns `{error:"cs10-sdk-unavailable"}` instead of throwing when the gate is false.
+- Wrap the actual `PosApiHelper` calls in an inner class that is only class-loaded after the gate passes, so a mis-shipped SDK cannot ever run its static initializer on unsupported firmware.
 
-## Verification
+### 2. Route around the internal printer when it is unusable
 
-- Confirm the code compiles for Android after adding the native bridge.
-- Expected CS10 logcat after reinstall:
-  - `[BT][JS] Found N paired devices`
-  - `[INIT] Registered BluetoothClassicAndroid JS fallback bridge`
-  - `[INIT] Registered Cs10PrinterAndroid JS bridge`
-  - `[CS10-PRINTER] Print started successfully` when printing internally
+`src/services/bluetoothClassic.ts` (printer routing only — no receipt/formatting changes)
 
-## After implementation
+- Before choosing the CS10 internal path, call `Cs10PrinterAndroid.isAvailable()` and parse `available`. Only prefer internal if `available === true`.
+- If unavailable, fall through to the existing Classic Bluetooth printer path exactly as before.
+- Log `[CS10-PRINTER] Internal SDK unavailable (reason=…), using Bluetooth printer` once per session.
 
-You will need to rebuild and sync native files before installing the APK:
+### 3. Hardware Back button
 
-```bash
-npm run build
-npx cap sync android
-```
+`src/main.tsx` (or new `src/utils/nativeBackButton.ts` imported from `main.tsx`)
 
-Then reinstall the APK on the CS10 and test:
+- On native only, `import('@capacitor/app')` and register `App.addListener('backButton', …)`:
+  - If `window.history.length > 1` and current route ≠ `/` → `window.history.back()`.
+  - Else call `App.exitApp()`.
+- Log `[BACK] Hardware back button pressed route=<pathname>`.
+- No React Router or UI changes.
 
-1. Open printer/scale selector.
-2. Confirm paired scale devices appear.
-3. Select the scale via Classic.
-4. Print a receipt using the internal CS10 printer option.
+### 4. Native camera on Android 7
+
+`src/components/PhotoCapture.tsx` capture path only (no UI/business logic changes)
+
+- On native, always try Capacitor `Camera.getPhoto({ source: CameraSource.Camera, … })` first. Do **not** fall through to `getUserMedia` on native unless Capacitor throws a non-permission error.
+- Before calling, explicitly `Camera.checkPermissions()` → `Camera.requestPermissions({ permissions: ['camera'] })` and abort with a toast if denied (matching existing pattern in `permissionRequests.ts`).
+- Ensure `AndroidManifest.xml` declares `android.permission.CAMERA` and `<uses-feature android:name="android.hardware.camera" android:required="false" />` (add if missing — currently absent from the manifest shown).
+- Structured logs: `[CAMERA] permission=granted|denied`, `[CAMERA] native capture ok`, `[CAMERA] native failed reason=… falling back to web`.
+
+### 5. Haptics graceful degrade
+
+`src/hooks/useHaptics.ts`
+
+- Wrap every `Haptics.*` call in `try/catch`. On the first `UNIMPLEMENTED`/`Not implemented on android` error, set a module-level `hapticsSupported = false` and short-circuit all subsequent calls.
+- Log `[HAPTICS] unsupported on this device, disabling` once.
+- No behavior change beyond suppressing the noise.
+
+### 6. Manifest + logging tidy
+
+- Add `CAMERA` permission and camera `uses-feature` if missing.
+- Bump `versionCode` to 165, `versionName` to 2.11.23, `APP_FIX_TAG` to `cs10-android7-hardening` in `src/constants/appVersion.ts`.
+
+## What is explicitly NOT changed
+
+Transactions, sync, IndexedDB, cumulative logic, receipt formatting/content, Bluetooth discovery/connect logic, existing plugin registration for `BluetoothClassic` / `OfflineStorage` / `BluetoothLe`, UI/theming, and printer receipt content. Only the printer *routing decision* and the native crash guard are touched in the print stack.
+
+## Verification (after `npm run build && npx cap sync android` and reinstall)
+
+- Tapping print no longer crashes; logcat shows `[CS10-PRINTER] Internal SDK unavailable` and the receipt prints over Bluetooth via the existing classic path.
+- `Cs10PrinterAndroid.isAvailable()` from JS returns `{available:false, reason:"cs10-sdk-incompatible", …}` on this A26 unit.
+- Hardware Back on the dashboard exits the app; on any inner route it navigates back.
+- Camera capture opens the native camera intent, permission prompt appears once, photo returns to the app.
+- No `Haptics ... not implemented` spam after the first suppressed log.
+
+## Follow-up (out of scope for this build, needs the vendor)
+
+Request the **CS10 A26 / Android 7 firmware-matched** POS SDK from Ciontek (the jar + `libPosApi.so` + `libcustom_jni.so` built against `full_a26_6737m/NRD90M`). Once received, drop them into `android/app/libs/` and `android/app/src/main/jniLibs/arm64-v8a/` and the gate above will start returning `available:true` on this hardware with no further code changes.
