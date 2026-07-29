@@ -968,10 +968,35 @@
 // v2.11.12: PRINTER DIALOG + CLASSIC SPP SUPPORT. Added connection selector
 //   for internal CS10 printers. Hardened bridge polyfills and native plugin
 //   registration to fix "MISSING" errors on WebView 51.
-export const APP_VERSION = '2.11.22';
-export const APP_VERSION_CODE = 164;
+// v2.11.23: CS10 A26 / ANDROID 7 HARDENING.
+//   (1) Native crash guard for the CS10 internal printer. The bundled Ciontek
+//       POS SDK (libPosApi.so) needs /vendor/lib*/libcustom_jni.so and the
+//       system AIDL class com.android.server.bcr.IBCRService$Stub, both of
+//       which are MISSING on the CS10 A26 firmware (full_a26_6737m/NRD90M).
+//       PosApiHelper.<clinit> dereferences a NULL native function pointer and
+//       the process dies with SIGSEGV — unrecoverable from Java once class
+//       loading starts. Fix: Cs10PrinterJsBridge.kt now runs a one-time
+//       compatibility probe (vendor .so present + AIDL stub present) BEFORE
+//       any reference to PosApiHelper. PosApiHelper is only resolved via
+//       reflection after the gate passes, so its <clinit> never fires on
+//       unsupported firmware. isAvailable()/printText() return structured
+//       JSON {available:false, reason} instead of crashing. Print pipeline
+//       falls back to the existing Bluetooth SPP path unchanged.
+//   (2) Hardware Back button now exits the app on the root route and
+//       navigates back through history otherwise (src/utils/nativeBackButton.ts,
+//       wired from src/main.tsx). Native only.
+//   (3) Haptics: silently disable after the first UNIMPLEMENTED error so
+//       Android 7 units without vibrator plugin support don't spam logcat.
+//   (4) AndroidManifest: added CAMERA permission and camera uses-feature
+//       so the native Capacitor camera can start on Android 7.
+//   Strictly native-plugin, permission and printer-routing changes — no
+//   transaction, sync, IndexedDB schema, reference generator, receipt
+//   content, cumulative, Bluetooth discovery/connect, KCB payments, or
+//   auth logic changes.
+export const APP_VERSION = '2.11.23';
+export const APP_VERSION_CODE = 165;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'cs10-bt-printer-native';
+export const APP_FIX_TAG = 'cs10-android7-hardening';
 
 
 

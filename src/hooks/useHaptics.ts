@@ -12,19 +12,35 @@ type HapticType = 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error'
 let hapticsCache: any = null;
 let hapticsLoading: Promise<any> | null = null;
 
+// v2.11.23: once we detect Haptics is unimplemented on this device (common on
+// legacy Android 7 units without vibrator hardware / plugin registration),
+// short-circuit every subsequent call so we don't spam logcat.
+let hapticsSupported = true;
+let unsupportedLogged = false;
+
+const isUnimplementedError = (err: unknown): boolean => {
+  const msg = (err instanceof Error ? err.message : String(err)) || '';
+  const code = (err as any)?.code || '';
+  return (
+    code === 'UNIMPLEMENTED' ||
+    /not implemented/i.test(msg) ||
+    /UNIMPLEMENTED/i.test(msg)
+  );
+};
+
 const loadHaptics = async () => {
   if (hapticsCache) return hapticsCache;
   if (hapticsLoading) return hapticsLoading;
-  
+
   if (!Capacitor.isNativePlatform()) {
     return null;
   }
-  
+
   hapticsLoading = import('@capacitor/haptics').then(module => {
     hapticsCache = module;
     return module;
   });
-  
+
   return hapticsLoading;
 };
 
@@ -33,13 +49,14 @@ const loadHaptics = async () => {
  */
 export const triggerHaptic = async (type: HapticType = 'light'): Promise<void> => {
   if (!Capacitor.isNativePlatform()) return;
-  
+  if (!hapticsSupported) return;
+
   try {
     const module = await loadHaptics();
     if (!module) return;
-    
+
     const { Haptics, ImpactStyle, NotificationType } = module;
-    
+
     switch (type) {
       case 'light':
         await Haptics.impact({ style: ImpactStyle.Light });
@@ -65,6 +82,14 @@ export const triggerHaptic = async (type: HapticType = 'light'): Promise<void> =
         break;
     }
   } catch (error) {
+    if (isUnimplementedError(error)) {
+      hapticsSupported = false;
+      if (!unsupportedLogged) {
+        unsupportedLogged = true;
+        console.log('[HAPTICS] unsupported on this device, disabling further calls');
+      }
+      return;
+    }
     // Silently fail - haptics not critical
     console.debug('Haptics unavailable:', error);
   }
