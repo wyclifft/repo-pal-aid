@@ -82,9 +82,9 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
   };
 
   return (
-    <div className="relative">
-      <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-        <MapPin className="h-4 w-4 text-[#667eea]" />
+    <div className="relative p-2">
+      <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1 flex items-center gap-2">
+        <MapPin className="h-4 w-4 text-[#667eea] flex-shrink-0" />
         Select {routeLabel} <span className="text-red-500">*</span>
       </label>
       <div className="relative">
@@ -92,9 +92,9 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
           value={selectedRoute}
           onChange={handleChange}
           disabled={disabled || isLoading}
-          className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:border-[#667eea] appearance-none ${
-            selectedRoute ? 'border-green-500 bg-green-50' : 'border-gray-300'
-          } ${disabled || isLoading ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+          className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:border-[#667eea] appearance-none bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 ${
+            selectedRoute ? 'border-green-500 bg-green-50 dark:bg-green-950/20' : 'border-gray-300 dark:border-gray-700'
+          } ${disabled || isLoading ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
         >
           <option value="">-- Select a {routeLabel} --</option>
           {routes.map((route) => (
@@ -110,12 +110,12 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
         )}
       </div>
       {routes.length === 0 && !isLoading && (
-        <p className="text-xs text-amber-600 mt-1">
+        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
           No {routeLabel.toLowerCase()}s available. Check device authorization.
         </p>
       )}
       {!selectedRoute && routes.length > 0 && (
-        <p className="text-xs text-red-500 mt-1">
+        <p className="text-[10px] text-red-500 dark:text-red-400 mt-0.5">
           Please select a {routeLabel.toLowerCase()} before searching farmers
         </p>
       )}

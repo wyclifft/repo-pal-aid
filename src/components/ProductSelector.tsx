@@ -129,12 +129,12 @@ export const ProductSelector = ({
   // Don't render dropdown if only one product (it's auto-selected)
   if (hasLoaded && products.length === 1) {
     return (
-      <div className="mb-4">
-        <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-          <Package className="h-4 w-4 text-[#667eea]" />
+      <div className="mb-2 p-2">
+        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1 flex items-center gap-2">
+          <Package className="h-4 w-4 text-[#667eea] flex-shrink-0" />
           {produceLabel} Type
         </label>
-        <div className="w-full px-4 py-3 border border-green-500 bg-green-50 rounded-lg text-gray-800 font-medium">
+        <div className="w-full px-3 py-2.5 border border-green-500 dark:border-green-800 bg-green-50 dark:bg-green-950/20 rounded-lg text-gray-800 dark:text-gray-200 font-medium">
           {products[0].descript} ({products[0].icode})
         </div>
       </div>
@@ -142,9 +142,9 @@ export const ProductSelector = ({
   }
 
   return (
-    <div className="mb-4">
-      <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-        <Package className="h-4 w-4 text-[#667eea]" />
+    <div className="mb-2 p-2">
+      <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1 flex items-center gap-2">
+        <Package className="h-4 w-4 text-[#667eea] flex-shrink-0" />
         Select {produceLabel} Type <span className="text-red-500">*</span>
       </label>
       <div className="relative">
@@ -152,13 +152,13 @@ export const ProductSelector = ({
           value={selectedProduct?.icode || ''}
           onChange={handleChange}
           disabled={disabled || isLoading}
-          className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:border-[#667eea] appearance-none bg-white ${
-            selectedProduct ? 'border-green-500 bg-green-50' : 'border-gray-300'
-          } ${disabled || isLoading ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+          className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:border-[#667eea] appearance-none bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 ${
+            selectedProduct ? 'border-green-500 bg-green-50 dark:bg-green-950/20' : 'border-gray-300 dark:border-gray-700'
+          } ${disabled || isLoading ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
         >
           <option value="">-- Select a {produceLabel.toLowerCase()} type --</option>
           {products.map((product) => (
-            <option key={product.icode} value={product.icode}>
+            <option key={product.icode} value={product.icode} className="dark:bg-gray-900">
               {product.descript} ({product.icode})
             </option>
           ))}
@@ -170,7 +170,7 @@ export const ProductSelector = ({
         )}
       </div>
       {!selectedProduct && products.length > 0 && (
-        <p className="text-xs text-red-500 mt-1">
+        <p className="text-[10px] text-red-500 dark:text-red-400 mt-1">
           Please select a {produceLabel.toLowerCase()} type
         </p>
       )}

@@ -314,7 +314,7 @@ export const Dashboard = ({
 
 
   return (
-    <div className="h-screen h-[100dvh] flex flex-col overflow-y-auto overflow-x-hidden bg-white">
+    <div className="min-h-screen flex flex-col bg-white dark:bg-background">
       {/* Member Sync Banner */}
       <MemberSyncBanner 
         isVisible={isSyncingMembers} 
@@ -403,29 +403,29 @@ export const Dashboard = ({
         <OfflineIndicator />
 
         {/* User Info & Session Status */}
-        <div className="text-center px-3 pb-1">
-          <h2 className="text-white font-bold" style={{ fontSize: 'clamp(1.125rem, 5vw, 1.5rem)' }}>{userName}</h2>
+        <div className="text-center px-3 pb-0.5">
+          <h2 className="text-white font-bold" style={{ fontSize: 'clamp(1rem, 4.5vw, 1.25rem)' }}>{userName}</h2>
           {sessionActive && selectedSession && selectedRoute ? (
-            <div className="mt-1">
-              <div className="inline-flex items-center gap-1.5 bg-white/15 px-3 py-1.5 rounded-full flex-wrap justify-center">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-                <span className="text-white font-medium" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.875rem)' }}>
+            <div className="mt-0.5">
+              <div className="inline-flex items-center gap-1 bg-white/15 px-2.5 py-1 rounded-full flex-wrap justify-center">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <span className="text-white font-medium" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.8rem)' }}>
                   Active {selectedSession.descript?.trim()} • {selectedRoute.descript?.trim()}
                 </span>
               </div>
             </div>
           ) : (
-            <p className="text-white/80 mt-0.5" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.875rem)' }}>Welcome back</p>
+            <p className="text-white/80" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.8rem)' }}>Welcome back</p>
           )}
         </div>
 
         {/* Date Display */}
-        <div className="text-center py-1.5">
-          <span className="text-white font-semibold" style={{ fontSize: 'clamp(0.75rem, 3vw, 1rem)' }}>{currentDate}</span>
+        <div className="text-center py-1">
+          <span className="text-white font-semibold" style={{ fontSize: 'clamp(0.7rem, 2.5vw, 0.9rem)' }}>{currentDate}</span>
         </div>
 
         {/* Quick Action Icons */}
-        <div className="flex justify-center gap-4 pb-3 flex-wrap px-2">
+        <div className="flex justify-center gap-3 pb-2 flex-wrap px-2">
           <button 
             onClick={() => {
               // Only allow Store navigation when a route is selected
@@ -444,10 +444,10 @@ export const Dashboard = ({
               !selectedRoute || selectedRoute.allowStore === false ? 'opacity-50' : ''
             }`}
           >
-            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
-              <Store className="h-6 w-6 sm:h-7 sm:w-7 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-teal-100/80 dark:bg-teal-900/30 border-2 border-teal-200 dark:border-teal-800 flex items-center justify-center shadow-sm flex-shrink-0">
+              <Store className="h-5 w-5 sm:h-6 sm:w-6 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
-            <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>Store</span>
+            <span className="mt-0.5 font-medium text-gray-700 dark:text-gray-200" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>Store</span>
           </button>
 
           <button 
@@ -468,17 +468,17 @@ export const Dashboard = ({
               !selectedRoute || selectedRoute.allowAI === false ? 'opacity-50' : ''
             }`}
           >
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
+            <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-teal-100/80 dark:bg-teal-900/30 border-2 border-teal-200 dark:border-teal-800 flex items-center justify-center shadow-sm flex-shrink-0">
               <Cpu className="h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
-            <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>AI</span>
+            <span className="mt-0.5 font-medium text-gray-700 dark:text-gray-200" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>AI</span>
           </button>
 
           <button onClick={() => toast.info(`MADDA SYSTEMS LTD - Milk Collection App v${APP_VERSION}`)} className="flex flex-col items-center active:scale-95 transition-transform">
-            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-teal-100/80 border-2 border-teal-200 flex items-center justify-center shadow-sm flex-shrink-0">
-              <BarChart3 className="h-6 w-6 sm:h-7 sm:w-7 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-teal-100/80 dark:bg-teal-900/30 border-2 border-teal-200 dark:border-teal-800 flex items-center justify-center shadow-sm flex-shrink-0">
+              <BarChart3 className="h-5 w-5 sm:h-6 sm:w-6 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
             </div>
-            <span className="mt-1 font-medium text-gray-700" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>About</span>
+            <span className="mt-0.5 font-medium text-gray-700 dark:text-gray-200" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>About</span>
           </button>
         </div>
       </div>
@@ -491,55 +491,53 @@ export const Dashboard = ({
       </div>
 
       {/* ============ BOTTOM SECTION - WHITE ACTION AREA ============ */}
-      <div className="flex-1 bg-white flex flex-col px-3 py-2" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+      <div className="flex-1 bg-white dark:bg-background flex flex-col px-3 py-2" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
         
-        {/* Sync Status */}
-        <div className="text-center py-1.5 flex items-center justify-center gap-3 flex-wrap">
-          <span className="text-gray-800 font-bold tracking-wide" style={{ fontSize: 'clamp(0.7rem, 2.5vw, 0.8rem)' }}>
-            {produceLabel}: {pendingMilkCount}
-          </span>
-          <span className="text-gray-400">|</span>
-          <span className="text-gray-800 font-bold tracking-wide" style={{ fontSize: 'clamp(0.7rem, 2.5vw, 0.8rem)' }}>
-            Store/AI: {pendingSalesCount}
-          </span>
-          {/* v2.10.60: stuck multOpt=0 conflicts (kept locally, awaiting review) */}
-          {conflictedReceiptsCount > 0 && (
-            <span
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-semibold"
-              style={{ fontSize: 'clamp(0.65rem, 2.3vw, 0.75rem)' }}
-              title="One or more offline receipts could not be uploaded because the server already has a delivery for that farmer in this session. Open Recent Receipts to review."
-            >
-              ⚠ {conflictedReceiptsCount} stuck
-            </span>
-          )}
-        </div>
-
-        {/* Reconnect Button */}
-        <div className="flex justify-center mb-2">
-          <button
-            onClick={handleReconnect}
-            disabled={isReconnecting}
-            className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-50 shadow-md min-h-[2.75rem]"
-            style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
-          >
-            {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
-          </button>
-        </div>
-
-        {/* Status Indicators */}
-        <div className="flex justify-center gap-4 mb-2 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
-            <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{printerConnected ? 'Printer connected' : 'Printer disconnected'}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
-            <span className="text-gray-600" style={{ fontSize: 'clamp(0.625rem, 2.5vw, 0.75rem)' }}>{scaleConnected ? 'Scale connected' : 'Scale disconnected'}</span>
-          </div>
-        </div>
-
         {/* Dynamic Content Area */}
-        <div className="flex-1 flex flex-col justify-center">
+        <div className="flex-1 flex flex-col justify-start pt-1">
+
+          {/* Reconnect and Status Row - Integrated into flow */}
+          <div className="flex flex-col items-center gap-2 mb-4">
+            <button
+              onClick={handleReconnect}
+              disabled={isReconnecting}
+              className="px-6 py-2 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors disabled:opacity-50 shadow-md min-h-[2.5rem] w-full max-w-[12rem]"
+              style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
+            >
+              {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
+            </button>
+
+            <div className="flex justify-center gap-4 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
+                <span className="text-gray-600 dark:text-gray-400" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>{printerConnected ? 'Printer' : 'Printer'}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
+                <span className="text-gray-600 dark:text-gray-400" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>{scaleConnected ? 'Scale' : 'Scale'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Sync Totals - Moved here for visibility during work */}
+          <div className="text-center py-1 flex items-center justify-center gap-3 flex-wrap mb-2">
+            <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.65rem, 2.3vw, 0.75rem)' }}>
+              {produceLabel}: {pendingMilkCount}
+            </span>
+            <span className="text-gray-400">|</span>
+            <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.65rem, 2.3vw, 0.75rem)' }}>
+              Store/AI: {pendingSalesCount}
+            </span>
+            {conflictedReceiptsCount > 0 && (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-semibold"
+                style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}
+                title="One or more offline receipts could not be uploaded because the server already has a delivery for that farmer in this session. Open Recent Receipts to review."
+              >
+                ⚠ {conflictedReceiptsCount} stuck
+              </span>
+            )}
+          </div>
           {sessionActive ? (
             <div className="space-y-3">
               {/* Sync Warning Banner when sessPrint=1 and sync incomplete */}
@@ -594,7 +592,7 @@ export const Dashboard = ({
           ) : (
             <div className="space-y-2.5 max-w-sm mx-auto w-full">
               {/* Route Selector */}
-              <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden min-h-[2.75rem]">
+              <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden min-h-[2.75rem]">
                 <RouteSelector
                   selectedRoute={selectedRoute?.tcode || ''}
                   onRouteChange={handleRouteChange}
@@ -603,7 +601,7 @@ export const Dashboard = ({
               </div>
 
               {/* Session Selector */}
-              <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden min-h-[2.75rem]">
+              <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden min-h-[2.75rem]">
                 <SessionSelector
                   selectedSession={selectedSession?.descript || ''}
                   onSessionChange={handleSessionChange}
@@ -614,7 +612,7 @@ export const Dashboard = ({
 
               {/* Product Selector - only shows if route has invtype=01 products */}
               {selectedRoute && (
-                <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
                   <ProductSelector
                     selectedProduct={selectedProduct}
                     onProductChange={handleProductChange}

@@ -405,8 +405,8 @@ export const SessionSelector = ({
   }
 
   return (
-    <div className="mb-4">
-      <label className="block text-sm font-semibold text-gray-700 mb-2">
+    <div className="mb-2 p-2">
+      <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
         {orgtype === 'C' ? <Calendar className="h-4 w-4 inline mr-1" /> : <Clock className="h-4 w-4 inline mr-1" />}
         {periodLabel}
       </label>
@@ -423,10 +423,10 @@ export const SessionSelector = ({
           }
         }}
         disabled={disabled}
-        className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:border-[#667eea] ${
+        className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:border-[#667eea] bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 ${
           activeSession 
-            ? 'border-green-300 bg-green-50' 
-            : 'border-red-300 bg-red-50'
+            ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/10'
+            : 'border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/10'
         } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
         <option value="">Select {periodLabel.toLowerCase()}...</option>
@@ -437,6 +437,7 @@ export const SessionSelector = ({
               key={session.id ? `season-${session.id}` : session.descript} 
               value={session.descript}
               disabled={!selectable}
+              className="dark:bg-gray-900"
             >
               {session.descript} ({formatTime(session.time_from)} - {formatTime(session.time_to)})
               {session.datefrom && session.dateto && ` [${formatDate(session.datefrom)} - ${formatDate(session.dateto)}]`}
@@ -447,33 +448,28 @@ export const SessionSelector = ({
       </select>
       
       {/* Session Status Indicator */}
-      <div className="mt-2">
+      <div className="mt-1">
         {activeSession ? (
-          <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
-            <CheckCircle className="h-4 w-4 flex-shrink-0" />
-            <span>
+          <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg p-1.5">
+            <CheckCircle className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="leading-tight">
               <strong>{activeSession.descript}</strong> is open 
-              ({formatTime(activeSession.time_from)} - {formatTime(activeSession.time_to)})
-              {activeSession.datefrom && activeSession.dateto && (
-                <span className="text-xs ml-1">
-                  [{formatDate(activeSession.datefrom)} - {formatDate(activeSession.dateto)}]
-                </span>
-              )}
+              <span className="hidden sm:inline"> ({formatTime(activeSession.time_from)} - {formatTime(activeSession.time_to)})</span>
             </span>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">
-            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          <div className="flex items-center gap-2 text-xs text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900 rounded-lg p-1.5">
+            <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
             <span>
-              No {periodLabel.toLowerCase()} is currently open. Data entry is not allowed.
+              No {periodLabel.toLowerCase()} is currently open.
             </span>
           </div>
         )}
       </div>
       
       {/* Current Time Display */}
-      <p className="text-xs text-gray-500 mt-1">
-        Current time: {currentTime.toLocaleTimeString()} | Date: {currentTime.toLocaleDateString()}
+      <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
+        {currentTime.toLocaleTimeString()} | {currentTime.toLocaleDateString()}
       </p>
     </div>
   );
