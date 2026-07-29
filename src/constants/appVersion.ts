@@ -911,12 +911,32 @@
 //   Strictly boot/plugin plumbing — no changes to transaction creation,
 //   receipts, cumulative logic (v2.10.121 downward-hold still active),
 //   reference generator, IndexedDB schema, sync engine, payments, or auth.
+// v2.11.14: WEBVIEW 51 CSS COMPATIBILITY LAYER + CLASSIC-BT DEFAULT.
+//   Root cause of the "dark dashboard / overlapping text / transparent
+//   modals / broken photo tiles" reported on the CS10 (WebView 51.0.2704.91)
+//   was purely rendering: flex `gap` (Chrome 84), `backdrop-filter`
+//   (Chrome 76), `aspect-ratio` (Chrome 88), `dvh` unit (Chrome 108), and
+//   inherited `prefers-color-scheme: dark`. Fix layers, all additive:
+//   (1) index.html + main.tsx: force LIGHT theme at first paint, strip the
+//       `.dark` class synchronously, meta color-scheme=light.
+//   (2) src/index.css: neutralize the `.dark` CSS variable overrides via
+//       !important, drop `100dvh`, and append @supports-guarded fallbacks
+//       for `gap` (margin `> * + *`), `backdrop-filter` (opaque tint),
+//       `aspect-ratio` (padding-bottom trick), and `position: sticky`.
+//   (3) Bluetooth: printer role in btConnectionManager now prefers Classic
+//       (SPP) over BLE when both are stored; scale connection dialog
+//       defaults to the Classic tab on native.
+//   Strictly rendering + BT default routing — no changes to transaction
+//   creation, receipts, cumulative logic (v2.10.121 downward-hold still
+//   active), reference generator, IndexedDB schema, sync engine, KCB
+//   payments, or auth.
 // v2.11.12: PRINTER DIALOG + CLASSIC SPP SUPPORT. Added connection selector
 //   for internal CS10 printers. Hardened bridge polyfills and native plugin
 //   registration to fix "MISSING" errors on WebView 51.
-export const APP_VERSION = '2.11.19';
-export const APP_VERSION_CODE = 161;
+export const APP_VERSION = '2.11.14';
+export const APP_VERSION_CODE = 156;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'webview51-boot-restore';
+export const APP_FIX_TAG = 'webview51-css-compat';
+
 
 

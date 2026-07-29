@@ -3,18 +3,53 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#ffffff" />
     <title>Milk Collection App</title>
     <style>
-      html, body, #root { margin: 0; padding: 0; height: 100%; background: #f9fafb; overflow: hidden; position: fixed; width: 100%; top: 0; left: 0; }
+      /* v2.11.14 WebView 51 first-paint: force LIGHT theme + white bg.
+         The .dark class must NEVER apply on legacy WebViews — the dashboard
+         was rendering navy on CS10 because of an inherited prefers-color-
+         scheme:dark propagation. This overrides both :root and .dark. */
+      html { color-scheme: light !important; background: #ffffff; }
+      html.dark { color-scheme: light !important; }
+      html, body, #root {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #ffffff;
+        color: #0b1220;
+        overflow: hidden;
+        position: fixed;
+        width: 100%;
+        top: 0;
+        left: 0;
+      }
+      #root:empty { display: block; background: #ffffff; }
     </style>
+
   </head>
   <body>
     <script>
-      /* v2.11.16 - Explicit Manual Loader */
       window.Capacitor = window.Capacitor || { platform: "web", isNative: false };
-      window.__DELICOOP_BOOT = { htmlLoadedAt: Date.now(), moduleStarted: false, renderRequested: false };
+      window.__DELICOOP_BOOT = {
+        htmlLoadedAt: Date.now(),
+        moduleStarted: false,
+        renderRequested: false
+      };
     </script>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script crossorigin id="vite-legacy-polyfill" src="/assets/polyfills-legacy-T-4Fe4dA.js"></script>
+    <script crossorigin id="vite-legacy-entry" data-src="/assets/index-legacy-mEPzcvZJ.js">
+      (function() {
+        var s = document.getElementById("vite-legacy-entry");
+        var src = s.getAttribute("data-src");
+        if (window.System && typeof window.System.import === "function") {
+          window.System.import(src);
+        } else {
+          console.error("SystemJS missing");
+        }
+      })();
+    </script>
   </body>
 </html>

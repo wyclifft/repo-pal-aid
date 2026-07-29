@@ -4,6 +4,18 @@ import "./index.css";
 import { APP_VERSION } from "./constants/appVersion";
 import { Capacitor } from "@capacitor/core";
 
+// v2.11.14: force LIGHT theme on every launch. WebView 51 on Android 7 was
+// inheriting prefers-color-scheme:dark from the host OS which flipped the
+// dashboard to the navy `.dark` palette. Strip the class synchronously so
+// nothing renders in dark mode.
+try {
+  const html = document.documentElement;
+  html.classList.remove("dark");
+  html.style.colorScheme = "light";
+  html.setAttribute("data-theme", "light");
+} catch {}
+
+
 // WebView Compatibility Polyfills / Checks
 if (typeof AbortController === 'undefined') {
   console.warn('[COMPAT] AbortController is not defined. Network request timeouts will be disabled.');
