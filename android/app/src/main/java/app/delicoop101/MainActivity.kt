@@ -2,9 +2,12 @@ package app.delicoop101
 
 import android.os.Bundle
 import android.util.Log
+import android.webkit.WebView
 import com.getcapacitor.BridgeActivity
+import com.getcapacitor.WebViewListener
 import app.delicoop101.bluetooth.BluetoothClassicPlugin
 import app.delicoop101.bluetooth.BluetoothClassicJsBridge
+import app.delicoop101.bluetooth.Cs10PrinterJsBridge
 import app.delicoop101.storage.OfflineStoragePlugin
 
 
@@ -29,8 +32,22 @@ class MainActivity : BridgeActivity() {
     
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var bluetoothClassicJsBridge: BluetoothClassicJsBridge? = null
+    private var cs10PrinterJsBridge: Cs10PrinterJsBridge? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
+        // v2.11.22: Install direct JS bridges as early as Capacitor exposes the
+        // WebView. WebView 51 can execute app JS before post-super setup wins
+        // the race, which left BluetoothClassicAndroid missing at first call.
+        bridgeBuilder.addWebViewListener(object : WebViewListener() {
+            override fun onPageStarted(webView: WebView) {
+                installDirectJsBridges(webView)
+            }
+
+            override fun onPageLoaded(webView: WebView) {
+                installDirectJsBridges(webView)
+            }
+        })
+
         // Register custom plugins before calling super.onCreate
         Log.d(TAG, "[INIT] Registering native BluetoothClassic plugin")
         registerPlugin(BluetoothClassicPlugin::class.java)
@@ -61,15 +78,7 @@ class MainActivity : BridgeActivity() {
         }
 
 
-        // v2.11.20: Direct WebView bridge fallback for WebView 51 devices where
-        // Capacitor's plugin header export can omit local Kotlin plugins, causing
-        // JS to see UNIMPLEMENTED before BluetoothClassicPlugin.load() is reached.
-        bridge?.webView?.let { webView ->
-            val bridgeInstance = BluetoothClassicJsBridge(applicationContext, webView)
-            bluetoothClassicJsBridge = bridgeInstance
-            webView.addJavascriptInterface(bridgeInstance, "BluetoothClassicAndroid")
-            Log.d(TAG, "[INIT] Registered BluetoothClassicAndroid JS fallback bridge")
-        }
+        bridge?.webView?.let { webView -> installDirectJsBridges(webView) }
 
         
         // Initialize encrypted database on a background thread.
@@ -112,6 +121,22 @@ class MainActivity : BridgeActivity() {
         jsBridge?.shutdown()
         DatabaseLogger.flush()
         super.onDestroy()
+    }
+
+    private fun installDirectJsBridges(webView: WebView) {
+        if (bluetoothClassicJsBridge == null) {
+            val bridgeInstance = BluetoothClassicJsBridge(applicationContext, webView)
+            bluetoothClassicJsBridge = bridgeInstance
+            webView.addJavascriptInterface(bridgeInstance, "BluetoothClassicAndroid")
+            Log.d(TAG, "[INIT] Registered BluetoothClassicAndroid JS fallback bridge")
+        }
+
+        if (cs10PrinterJsBridge == null) {
+            val printerBridge = Cs10PrinterJsBridge()
+            cs10PrinterJsBridge = printerBridge
+            webView.addJavascriptInterface(printerBridge, "Cs10PrinterAndroid")
+            Log.d(TAG, "[INIT] Registered Cs10PrinterAndroid JS bridge")
+        }
     }
 }
 
