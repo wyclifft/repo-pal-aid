@@ -195,13 +195,17 @@ export const isClassicBluetoothAvailable = async (): Promise<boolean> => {
     return !!result.available;
   } catch (error: any) {
     // Native plugin not implemented yet or bridge failure
-    console.error('❌ Classic Bluetooth availability check FAILED:', error);
+    const code = error?.code;
     const msg = error?.message || String(error);
+    const stack = error?.stack;
+    console.error(`❌ Classic Bluetooth availability check FAILED: code=${code} msg=${msg}`);
+    if (stack) console.error(`   stack: ${stack}`);
     if (msg.includes('not implemented') || msg.includes('plugin')) {
       console.log('💡 Bridge issue detected: Plugin registration failed or race condition on WebView 51.');
     }
     return false;
   }
+
 };
 
 /**
@@ -234,11 +238,14 @@ export const getPairedDevices = async (): Promise<ClassicBluetoothDevice[]> => {
     const result = await BluetoothClassic.getPairedDevices();
     console.log(`📱 Found ${result.devices.length} paired devices`);
     return result.devices;
-  } catch (error) {
-    console.log('ℹ️ Classic Bluetooth: getPairedDevices requires native plugin');
+  } catch (error: any) {
+    const code = error?.code;
+    const msg = error?.message || String(error);
+    console.log(`ℹ️ Classic Bluetooth: getPairedDevices failed code=${code} msg=${msg}`);
     console.log('💡 Tip: DR/BTM series scales often work via BLE with FFE0/FFE1 services');
     return [];
   }
+
 };
 
 /**
