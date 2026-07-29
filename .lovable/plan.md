@@ -1,100 +1,109 @@
 
-# v2.11.11 — WebView 51 (Chromium 51) Full Compatibility Build
+# v2.11.12 — WebView 51 Full UI Compatibility + Classic-BT Default
 
-## Diagnosis (confirmed from logs)
+Scope confirmed with user: **targeted compatibility pass** (no rewrite), **force light theme everywhere**, **Classic Bluetooth default for both scale and printer**. No changes to business logic, APIs, DB, sync engine, cumulative logic, reference generator, or receipt content — only rendering layer + BT default routing.
 
-The user's CS10 runs **WebView 51.0.2704.91** (Chromium 51, mid‑2016). The fatal line in the logcat is:
+## Why the CS10 renders broken (root cause)
 
-```
-E/Capacitor/Console: File: https://app/ - Line 54 - Msg: Uncaught SyntaxError: Unexpected token (
-```
+WebView 51.0.2704.91 (mid-2016 Chromium) is missing several CSS features that the current build uses everywhere:
 
-Everything else in the report is a **downstream cascade** of that single parse failure:
+| Feature | Added in Chrome | Where we use it |
+|---|---|---|
+| `gap` on flexbox | 84 | ~60+ components (`gap-2`, `gap-4`, …) |
+| `gap` on grid | 66 | grid layouts |
+| `backdrop-filter` | 76 | modals, splash overlay |
+| `aspect-ratio` | 88 | photo capture, audit viewer |
+| `dvh` / `svh` units | 108 | `src/index.css:111` |
+| `:is()` / `:where()` | 88 | Tailwind reset |
+| `color-mix()`, `oklch()` | 111 | (none currently — safe) |
+| `prefers-color-scheme` | 76 | `.dark` auto-applied → **dark dashboard on CS10** |
+| `position: sticky` | 56 | headers |
+| CSS logical props (`inset-*`, `-inline-*`) | 87 | Tailwind utilities |
 
-- `Cannot read property 'triggerEvent' of undefined` — the JS runtime never finished evaluating, so `window.Capacitor` was never populated by Capacitor's `native-bridge.js`. The polyfill added in v2.11.10 protects the bridge FROM Java, but a SyntaxError higher up still kills every plugin proxy.
-- `Device.getId() failed`, `Haptics unavailable`, `BluetoothLe plugin is not implemented on android`, `Failed to connect to printer` — every plugin returns the web shim because plugin registration executes JS that already threw.
-- `Settings fetch failed: Network error` — `useAppSettings` retries because the offline/native detection path never returned; the backend is reachable (v2.11.9 SSL trust anchor holds).
-- Buy portal shows "farmer not found" and the Store list is empty — IndexedDB reads live in modules that never evaluated after the SyntaxError, so `farmers` cache is never queried; nothing is broken about the data itself.
-- Camera fails for the same reason: `@capacitor/camera` proxy is on the web shim.
+The v2.11.11 build already parses JS correctly on WebView 51 (SyntaxError gone). What remains is purely CSS/layout: `gap` silently becomes 0 so flex children collide (visible in the Z-Report modal where "SUMMARY", "COFFEE", "SEASON" overlap), `backdrop-filter` leaves modals transparent (visible in Photo Audit Viewer and menu overlay), and `prefers-color-scheme: dark` on the CS10 firmware triggers the `.dark` class making the dashboard black.
 
-So the fix is **exactly one thing**: make the JS that ships to WebView 51 parseable by Chromium 51. The rest of the symptoms disappear on their own.
+## The fix — 5 layers, all additive, zero business-logic touch
 
-### Why the current build still emits un-parseable syntax
+### 1. Force light theme on native + web (user's choice)
 
-Chromium 51 supports basic ES6 (arrow, `const/let`, classes, template literals) but does **not** support:
+- `src/App.tsx`: on mount, `document.documentElement.classList.remove('dark')` and set `color-scheme: light` on `<html>`. Remove any `prefers-color-scheme` listener.
+- `index.html` `<head>`: add `<meta name="color-scheme" content="light">` and inline `<style>html{color-scheme:light !important;background:#fff}</style>` so the very first paint on WebView 51 is white, not the OS default.
+- `src/index.css`: keep `.dark` block for future use but stop auto-applying it via `@media (prefers-color-scheme: dark)` (currently inherited from shadcn defaults through Tailwind — verify and neutralize).
 
-- `async` / `await`  (Chrome 55)
-- Object rest/spread `{ ...a }` (Chrome 60)
-- Dynamic `import(...)`  (Chrome 63)
-- Optional chaining `?.` (Chrome 80)
-- Nullish coalescing `??` (Chrome 80)
+### 2. Replace CSS `gap` with a Tailwind-compatible polyfill
 
-The current pipeline has three gaps that let those tokens through:
+Two-part fix, no component edits needed:
 
-1. **`tsconfig.app.json` → `target: "ES2020"`** and **`vite.config.ts` → `build.target: 'es2015'`** disagree. `@vitejs/plugin-react-swc` compiles TSX using the tsconfig target, so React app code lands as ES2020 (async/await, optional chaining) **before** the legacy plugin sees it. `es2015` in `build.target` only tells esbuild's minifier what to *preserve*; it does not down‑level async/await.
-2. **`@vitejs/plugin-legacy`** in v5 emits **both** a modern chunk (`<script type="module">`) and a legacy chunk (`<script nomodule>`), plus an inline **module‑detection script** that uses dynamic `import()` (`Uncaught SyntaxError: Unexpected token (` at index.html around line 54 — matches the report exactly). On a WebView that speaks neither modules nor dynamic import, this detection script crashes the page before either bundle runs.
-3. **`legacy.targets: ["Android >= 5"]`** maps via browserslist to Chrome 60‑ish, still above WebView 51.
-
-### Verification the diagnosis is right
-
-- Line 54 of the SERVED index.html is inside plugin-legacy's injected detection block (not the CSS we author). Confirmed by rebuilding locally and inspecting `dist/index.html`.
-- `Uncaught SyntaxError: Unexpected token (` at that offset matches the `import(` keyword — dynamic import.
-- Once that script throws, the browser aborts subsequent `<script>` tags on the same page load; the polyfill we added in v2.11.10 is fine but never runs late enough to matter, because `Bridge.java` calls `triggerEvent` on `window.Capacitor` that was never constructed.
-
-## Fix strategy (single, targeted change)
-
-Ship ES5‑only bundles and stop emitting the modern/detection scripts entirely. WebView 51 then parses and runs the app; every downstream failure resolves as a cascade.
-
-### Files to change
-
-**1. `vite.config.ts`** — force ES5 output and single‑bundle legacy delivery.
-
-- `build.target: 'es5'` (was `'es2015'`).
-- `esbuild: { target: 'es5', supported: { 'async-await': false, 'object-rest-spread': false, 'optional-chain': false, 'nullish-coalescing': false } }` — makes esbuild's minifier refuse to keep those tokens even in third‑party deps.
-- Replace the current `legacy(...)` call with:
-  ```ts
-  legacy({
-    targets: ['chrome >= 51', 'Android >= 5.0'],
-    renderModernChunks: false,       // stop emitting the type="module" bundle AND the dynamic-import detection block
-    modernPolyfills: true,
-    additionalLegacyPolyfills: ['regenerator-runtime/runtime'],
-  })
+- **`tailwind.config.ts`**: add a Tailwind plugin that overrides the `gap`, `gap-x`, `gap-y` utilities to emit equivalent `margin` on children using the classic `> * + *` selector (works in every browser since IE10):
   ```
-- Remove `optimizeDeps.exclude: ['@capacitor/core']` — excluding it from prebundle bypasses the down‑level pass and re‑introduces optional chaining in `@capacitor/core`'s ESM entry.
+  .gap-4 > * + * { margin-left: 1rem; }   /* flex-row */
+  .flex-col.gap-4 > * + * { margin-top: 1rem; margin-left: 0; }
+  ```
+  Emitted for the same spacing scale Tailwind already uses (0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 8, 10, 12). For CSS Grid layouts the plugin keeps the native `gap` property (grid `gap` works in WebView 51 — it's only flex-`gap` that's missing).
+- Load the plugin only when `process.env.WEBVIEW_LEGACY !== 'false'` so a future modern build can opt out.
 
-**2. `tsconfig.app.json`** — align TypeScript with the runtime it must serve.
+This single change fixes every overlapping-text bug visible in the Z Report, Recent Receipts menu, Periodic Report menu, and Device Settings screenshots without editing any component.
 
-- `target: "ES5"` (was `"ES2020"`).
-- `lib: ["ES2020", "DOM", "DOM.Iterable"]` stays — `lib` is compile‑time only; keeping the lib types avoids editor red squigglies while the emit target down‑levels.
-- Leave `useDefineForClassFields: true` alone (SWC handles it independently).
+### 3. Strip / polyfill remaining unsupported CSS via PostCSS
 
-**3. `index.html`** — the inline scripts we author use only `var`/`function()`; keep them as is. The polyfill from v2.11.10 stays; it becomes a belt‑and‑braces guard that is no longer strictly needed once the SyntaxError is gone.
+Add two PostCSS plugins to `postcss.config.js`:
 
-**4. `src/constants/appVersion.ts`** — bump to `2.11.11`, tag `webview51-es5`.
+- `postcss-preset-env` with `stage: 2` and `browsers: 'chrome >= 51'` — down-levels `:is()`, `:where()`, logical properties, `inset` shorthand, `clamp()`/`min()`/`max()` where possible.
+- A tiny custom plugin (or `postcss-discard-unsupported`) that strips declarations WebView 51 can't parse and would otherwise invalidate the whole rule: `backdrop-filter`, `aspect-ratio`, `content-visibility`, `container-type`, unit `dvh`/`svh`/`dvw`/`svw` (replace with `vh`/`vw`).
+- Manual edit `src/index.css:111`: `100dvh` → `100vh`.
+- Modal backdrops: replace `backdrop-blur-*` classes with a solid `bg-black/60` fallback (drop-in Tailwind swap, no layout change).
 
-**5. `android/app/build.gradle`** — `versionCode 153`, `versionName "2.11.11"`.
+### 4. `aspect-ratio` polyfill for photo capture / audit viewer
 
-### What deliberately does NOT change
+Replace the ~6 usages of `aspect-square` / `aspect-video` / `aspect-[4/3]` with the padding-bottom trick wrapped in a `.aspect-fixed` utility that already exists at `src/index.css:270`. One utility class swap per file; no component logic changes.
 
-- No changes to `server.js`, KCB payments, cumulative logic (v2.10.121 hold intact), reference generator, IndexedDB schema, sync engine, receipt rendering, farmer resolution, `useAppSettings` behaviour, or any Kotlin plugin code.
-- `MainActivity.kt` keeps the explicit `BluetoothLe` registration from v2.11.10.
-- Web preview behaviour is unaffected: modern browsers now receive the legacy ES5 bundle too. Load size grows slightly and there is no code‑splitting between "modern" and "legacy", but for a Capacitor‑first app the tradeoff is correct.
+### 5. Bluetooth Classic as default (both roles)
 
-## Verification checklist (post‑rebuild on CS10)
+- `src/services/btConnectionManager.ts`: change the connection strategy order in `ensureConnected(role)` from `BLE → Classic fallback` to `Classic → BLE fallback` for both `scale` and `printer`. The plugin (`BluetoothClassicPlugin.kt`) is already registered and working on native.
+- `src/hooks/useScaleConnection.ts` + `src/hooks/useDirectPrint.ts`: same reorder — try `quickReconnectClassicScale` / `quickReconnectClassicPrinter` first, fall back to BLE only if Classic returns `unavailable`.
+- `src/components/BluetoothConnectionDialog.tsx` + `PrinterConnectionDialog.tsx`: default the dialog tab to "Classic (SPP)" instead of "BLE". User can still switch tabs manually.
+- Web build: keep the v2.11.1 behavior (no auto-connect on web). No change needed.
+- Persistence: existing `getStoredClassicDevice` / `getStoredClassicPrinter` already survive reload. No storage schema change.
 
-1. `grep -c "async function\|await \|import(" dist/assets/*.js` → **0**.
-2. `dist/index.html` contains no `<script type="module">` and no dynamic `import(`.
-3. First launch on CS10: logcat shows no `Uncaught SyntaxError`, no `Cannot read property 'triggerEvent' of undefined`.
-4. Dashboard shows the real company name within 5 s (psettings populated).
-5. Settings → **Search Printer** / **Search Scale** opens the BluetoothLe device picker (no "plugin is not implemented" toast).
-6. Buy portal loads the farmer list from IndexedDB; searching by member number resolves; Store screen lists farmers.
-7. Camera capture launches the native camera intent.
-8. No regression: milk transaction create → receipt print → farmer sync → cumulative correctness (M01859/M02957 remain held per v2.10.121).
+### 6. Versioning
 
-## Rebuild command for the user
+- `src/constants/appVersion.ts`: `2.11.12`, `APP_FIX_TAG='webview51-css-compat'`.
+- `android/app/build.gradle`: `versionCode 154`, `versionName "2.11.12"`.
+
+## What does NOT change
+
+- `server.js`, KCB payments, cumulative logic (v2.10.121 hold intact), reference generator (`transrefno = devcode + clientFetch + padded_trnid`), IndexedDB schema, farmer sync engine, receipt content, Z-Report/Periodic Report SQL, `psettings` handling, offline-first flow, session/route/product selectors' behavior.
+- No component is rewritten. Screenshots will look identical on modern browsers; only WebView 51 rendering is repaired.
+- BluetoothClassicPlugin.kt is untouched — only the JS-side default preference flips.
+
+## Verification checklist (post-rebuild on CS10)
+
+1. Dashboard renders **light mint** background matching your other screenshots — no black theme.
+2. Z Report modal: "SUMMARY / COFFEE / SEASON / DATE / CENTER / PRODUCE" render on separate rows with visible whitespace between them (proves gap polyfill worked).
+3. Recent Receipts and Periodic Report menus: dropdown items no longer overlap the dashboard content behind them (proves solid backdrop replaced `backdrop-filter`).
+4. Photo Audit Viewer: photo tile is a proper square (proves `aspect-ratio` polyfill).
+5. Device Settings → "Connect Scale (BLE/Classic)" and "Connect Printer": tapping opens the Classic (SPP) picker by default and lists the paired ACS-SB1 / thermal printer; connection succeeds and captures weight / prints a test receipt.
+6. Regression: milk transaction create → receipt print → farmer sync → cumulative correctness (M01859 / M02957 remain held per v2.10.121); farmer search in Buy portal returns results; Store list populated; camera intent still launches.
+7. `grep -c "flex.*gap-" dist/assets/*.css` → still present (fine), but `dist/assets/*.css` also contains the `> * + *` margin fallbacks.
+
+## Rebuild command
 
 ```
 npm run build
 npx cap sync android
-# reinstall the DeliCoop101.v2.11.11 APK on the CS10
+# reinstall DeliCoop101.v2.11.12 on CS10
 ```
+
+## Technical file list (for reference)
+
+- `tailwind.config.ts` — add gap-polyfill plugin
+- `postcss.config.js` — add `postcss-preset-env` + strip-unsupported plugin
+- `src/index.css` — remove `100dvh`, remove any dark auto-media
+- `index.html` — light color-scheme meta + inline first-paint style
+- `src/App.tsx` — remove `.dark` on mount
+- `src/services/btConnectionManager.ts` — Classic-first strategy
+- `src/hooks/useScaleConnection.ts`, `src/hooks/useDirectPrint.ts` — Classic-first reconnect order
+- `src/components/BluetoothConnectionDialog.tsx`, `src/components/PrinterConnectionDialog.tsx` — default tab = Classic
+- ~6 files using `aspect-*` — swap to `.aspect-fixed` wrapper
+- Modal wrappers using `backdrop-blur-*` — swap to solid `bg-black/60`
+- `src/constants/appVersion.ts`, `android/app/build.gradle` — version bump
