@@ -21,6 +21,7 @@ import {
   isInternalPosPrinter,
   connectDirectToAddress,
   getInternalPrinterStatus,
+  retryInternalPrinterProbe,
   connectInternalPrinter,
   type InternalPrinterStatus,
 } from '@/services/bluetoothClassic';
@@ -53,6 +54,8 @@ export const PrinterConnectionDialog = ({
   const [selectedDevice, setSelectedDevice] = useState<DeviceWithResolvedName | null>(null);
   const [directAddress, setDirectAddress] = useState('');
   const [internalStatus, setInternalStatus] = useState<InternalPrinterStatus>({ available: false, reason: 'checking' });
+  const [isRetryingProbe, setIsRetryingProbe] = useState(false);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
 
   const isNative = Capacitor.isNativePlatform();
 
@@ -147,10 +150,9 @@ export const PrinterConnectionDialog = ({
   };
 
   const handleInternalConnect = async () => {
-    if (!internalStatus.available) {
-      toast.info(getInternalUnavailableMessage());
-      return;
-    }
+    // v2.11.25: always attempt real initialization — no early return based on
+    // the cached status. If it fails we show the structured diagnostic instead
+    // of silently disabling.
     setIsConnecting(true);
     try {
       const result = await connectInternalPrinter();
@@ -159,6 +161,8 @@ export const PrinterConnectionDialog = ({
         onConnected('CS10 Internal Printer', 'classic');
         onOpenChange(false);
       } else {
+        if (result.status) setInternalStatus(result.status);
+        setShowDiagnostic(true);
         toast.error(result.error || 'Internal printer unavailable');
       }
     } catch (error) {
@@ -167,17 +171,19 @@ export const PrinterConnectionDialog = ({
     setIsConnecting(false);
   };
 
-  const internalAvailable = internalStatus.available;
-
-  const getInternalUnavailableMessage = () => {
-    if (internalStatus.reason === 'cs10-sdk-incompatible') {
-      return 'This CS10 Android 7 firmware does not include the required POS printer service. Use a paired Bluetooth printer from CLASSIC.';
+  const handleRetryProbe = async () => {
+    setIsRetryingProbe(true);
+    try {
+      const status = await retryInternalPrinterProbe();
+      setInternalStatus(status);
+      if (status.available) toast.success('CS10 printer initialized');
+      else toast.info('Still failing — see diagnostic');
+    } finally {
+      setIsRetryingProbe(false);
     }
-    if (internalStatus.reason === 'bridge-missing') {
-      return 'Internal printer bridge not detected. Use CLASSIC to connect a Bluetooth printer.';
-    }
-    return 'Internal printer is not available on this device. Use CLASSIC to connect a Bluetooth printer.';
   };
+
+  const internalAvailable = internalStatus.available;
 
   const isLikelyPrinter = (name: string) => {
     const patterns = ['PRINT', 'POS', 'THERMAL', 'RECEIPT', 'CS10', 'SUNMI'];
@@ -267,39 +273,80 @@ export const PrinterConnectionDialog = ({
               </div>
             </div>
           ) : (
-            <div className="space-y-4 py-2">
+            <div className="space-y-3 py-2">
               <Button
                 onClick={handleInternalConnect}
                 disabled={isConnecting}
-                aria-disabled={!internalAvailable}
-                variant={internalAvailable ? 'default' : 'outline'}
-                className={"w-full min-h-12 " + (internalAvailable ? "" : "border-dashed text-muted-foreground")}
+                className="w-full min-h-12"
               >
                 {isConnecting ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Printer className="h-4 w-4 mr-2" />}
                 <span className="flex flex-col items-start leading-tight">
                   <span>CS10 Internal Printer</span>
-                  {!internalAvailable && <span className="text-[10px] font-normal">Not supported on this device</span>}
+                  <span className="text-[10px] font-normal">
+                    {internalAvailable ? 'SDK ready' : 'Try to initialize'}
+                  </span>
                 </span>
               </Button>
 
-              <div className="bg-amber-50 border border-amber-200 p-2 rounded text-[10px] text-amber-800 flex gap-2">
-                <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                <p>{internalAvailable ? 'Use manual MAC only for an external Bluetooth printer.' : getInternalUnavailableMessage()}</p>
-              </div>
-
-              {!internalAvailable && (
+              <div className="flex gap-2">
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={function() { setConnectionType('classic'); }}
-                  className="w-full h-10"
+                  size="sm"
+                  onClick={handleRetryProbe}
+                  disabled={isRetryingProbe || isConnecting}
+                  className="flex-1"
                 >
-                  Use Bluetooth Printer Instead
+                  {isRetryingProbe ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                  Retry probe
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={function() { setShowDiagnostic(function(prev) { return !prev; }); }}
+                  className="flex-1"
+                >
+                  {showDiagnostic ? 'Hide' : 'Show'} diagnostic
+                </Button>
+              </div>
+
+              {(showDiagnostic || (!internalAvailable && internalStatus.reason && internalStatus.reason !== 'checking')) && (
+                <div className="bg-slate-50 border border-slate-200 p-2 rounded text-[10px] text-slate-800 space-y-1">
+                  <div className="flex gap-2">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-600" />
+                    <div className="flex-1">
+                      <div><strong>Available:</strong> {String(internalAvailable)}</div>
+                      {internalStatus.stage && <div><strong>Stage:</strong> {internalStatus.stage}</div>}
+                      {internalStatus.exception && <div><strong>Exception:</strong> {internalStatus.exception}</div>}
+                      {internalStatus.missingLibrary && <div><strong>Missing:</strong> {internalStatus.missingLibrary}</div>}
+                      {internalStatus.message && <div><strong>Message:</strong> {internalStatus.message}</div>}
+                      {(internalStatus.model || internalStatus.fingerprint) && (
+                        <div className="text-[9px] text-slate-500 mt-1">
+                          {internalStatus.manufacturer} {internalStatus.model} · SDK {internalStatus.sdk} · {internalStatus.fingerprint}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {internalStatus.logcatTail && (
+                    <pre className="max-h-32 overflow-auto bg-black text-green-300 text-[9px] p-1 rounded font-mono">
+{internalStatus.logcatTail}
+                    </pre>
+                  )}
+                </div>
               )}
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-500">MANUAL MAC ADDRESS</label>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={function() { setConnectionType('classic'); }}
+                className="w-full h-10"
+              >
+                Try Classic Bluetooth instead
+              </Button>
+
+              <div className="space-y-1 pt-2 border-t">
+                <label className="text-[10px] font-bold text-gray-500">MANUAL MAC ADDRESS (external SPP printer)</label>
                 <input
                   type="text"
                   value={directAddress}
@@ -315,7 +362,7 @@ export const PrinterConnectionDialog = ({
                 className="w-full h-12 bg-green-600 hover:bg-green-700"
               >
                 {isConnecting ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Wifi className="h-4 w-4 mr-2" />}
-                Force Connect Internal
+                Force Connect by MAC
               </Button>
             </div>
           )}

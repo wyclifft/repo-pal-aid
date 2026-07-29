@@ -1004,10 +1004,23 @@
 //   on this firmware and routes operators to the CLASSIC tab. No receipt content,
 //   transaction, sync, IndexedDB, cumulative, scale parsing, or business logic
 //   changes.
-export const APP_VERSION = '2.11.24';
-export const APP_VERSION_CODE = 166;
+// v2.11.25: CS10 INTERNAL PRINTER — REAL INIT, ISOLATED-PROCESS PROBE.
+//   Removed the permanent libcustom_jni.so / IBCRService compatibility gate
+//   that caused the built-in CS10 thermal printer to silently report
+//   available=false. The native bridge now runs a one-shot POS SDK
+//   initialization probe inside a dedicated ":posprobe" Android process, so a
+//   SIGSEGV inside libPosApi.so can no longer kill the main app while we
+//   still capture the failing stage, exception class, missing .so name and a
+//   filtered logcat tail. On success, PosApiHelper is loaded in-process and
+//   receipts print on the built-in head. On failure the printer dialog now
+//   shows the structured diagnostic (stage / missingLibrary / logcat) and
+//   offers a manual "Retry probe" — it NEVER auto-falls-back to Bluetooth
+//   when the user explicitly picked Internal. No transaction, sync,
+//   IndexedDB, receipt content, Bluetooth pairing, or business logic changes.
+export const APP_VERSION = '2.11.25';
+export const APP_VERSION_CODE = 167;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'classic-printer-broken-pipe-recovery';
+export const APP_FIX_TAG = 'cs10-internal-printer-real-init';
 
 
 
