@@ -35,19 +35,34 @@ export interface BluetoothClassicPlugin {
   getPairedDevices(): Promise<{ devices: ClassicBluetoothDevice[] }>;
 
   /** Connect to a Classic Bluetooth device via SPP/RFCOMM */
-  connect(options: { address: string }): Promise<{ connected: boolean }>;
+  connect(options: { address: string; role?: 'scale' | 'printer' }): Promise<{ connected: boolean }>;
+
+  /** Role-specific scale connection, supported by v2.11.17+ native plugin */
+  connectScale?(options: { address: string }): Promise<{ connected: boolean }>;
+
+  /** Role-specific printer connection, supported by v2.11.17+ native plugin */
+  connectPrinter?(options: { address: string }): Promise<{ connected: boolean }>;
 
   /** Connect using insecure method (bypasses standard pairing) */
-  connectInsecure(options: { address: string }): Promise<{ connected: boolean }>;
+  connectInsecure(options: { address: string; role?: 'scale' | 'printer' }): Promise<{ connected: boolean }>;
+
+  /** Role-specific insecure printer connection, supported by v2.11.17+ native plugin */
+  connectPrinterInsecure?(options: { address: string }): Promise<{ connected: boolean }>;
 
   /** Disconnect from currently connected device */
-  disconnect(): Promise<void>;
+  disconnect(options?: { role?: 'scale' | 'printer' }): Promise<void>;
 
   /** Check if currently connected */
-  isConnected(): Promise<{ connected: boolean }>;
+  isConnected(options?: { role?: 'scale' | 'printer' }): Promise<{ connected: boolean }>;
 
   /** Write data to the connected device */
-  write(options: { data: string }): Promise<void>;
+  write(options: { data: string; role?: 'scale' | 'printer' }): Promise<void>;
+
+  /** Role-specific printer write, supported by v2.11.17+ native plugin */
+  writePrinter?(options: { data: string }): Promise<void>;
+
+  /** Role-specific scale write, supported by v2.11.17+ native plugin */
+  writeScale?(options: { data: string }): Promise<void>;
 
   /** Add listener for incoming data from the scale */
   addListener(
@@ -352,7 +367,9 @@ export const connectClassicScale = async (
     console.log(`🔗 Connecting to Classic BT device: ${device.name} (${device.address})`);
 
     // Connect to device
-    const result = await BluetoothClassic.connect({ address: device.address });
+    const result = BluetoothClassic.connectScale
+      ? await BluetoothClassic.connectScale({ address: device.address })
+      : await BluetoothClassic.connect({ address: device.address, role: 'scale' });
     
     if (!result.connected) {
       return { success: false, error: 'Failed to connect to device' };
@@ -400,6 +417,7 @@ export const connectClassicScale = async (
     //    transient false-disconnects emitted by some POS firmwares between writes.
     const scaleAddress = device.address;
     connectionListenerHandle = await BluetoothClassic.addListener('connectionStateChanged', async (state: any) => {
+      if (state.role && state.role !== 'scale') return;
       if (state.connected) return;
       const eventAddress: string | undefined = state.address;
       if (eventAddress && eventAddress !== scaleAddress) {
@@ -412,7 +430,7 @@ export const connectClassicScale = async (
       }
       // Verify with native before clearing
       try {
-        const check = await BluetoothClassic.isConnected();
+        const check = await BluetoothClassic.isConnected({ role: 'scale' });
         if (check?.connected) {
           console.warn('⚠️ Classic BT scale: spurious disconnect event — native still connected, preserving state');
           return;
@@ -478,7 +496,7 @@ export const disconnectClassicScale = async (): Promise<void> => {
     }
 
     // Disconnect
-    await BluetoothClassic.disconnect();
+    await BluetoothClassic.disconnect({ role: 'scale' });
   } catch (error) {
     console.warn('⚠️ Error disconnecting Classic BT:', error);
   }
@@ -614,7 +632,11 @@ export const sendScaleCommand = async (command: string): Promise<boolean> => {
   }
 
   try {
-    await BluetoothClassic.write({ data: command });
+    if (BluetoothClassic.writeScale) {
+      await BluetoothClassic.writeScale({ data: command });
+    } else {
+      await BluetoothClassic.write({ data: command, role: 'scale' });
+    }
     return true;
   } catch (error) {
     console.error('❌ Failed to send command:', error);
@@ -660,7 +682,9 @@ export const connectClassicPrinter = async (
     }
 
     // Connect to device
-    const result = await BluetoothClassic.connect({ address: device.address });
+    const result = BluetoothClassic.connectPrinter
+      ? await BluetoothClassic.connectPrinter({ address: device.address })
+      : await BluetoothClassic.connect({ address: device.address, role: 'printer' });
     
     if (!result.connected) {
       return { success: false, error: 'Failed to connect to printer' };
@@ -675,6 +699,7 @@ export const connectClassicPrinter = async (
     // confirms it is gone.
     const printerAddress = device.address;
     await BluetoothClassic.addListener('connectionStateChanged', async (state: any) => {
+      if (state.role && state.role !== 'printer') return;
       if (state.connected) return;
       const eventAddress: string | undefined = state.address;
       if (eventAddress && eventAddress !== printerAddress) {
@@ -687,7 +712,7 @@ export const connectClassicPrinter = async (
       }
       // Verify with native before clearing — protects against spurious mid-print events
       try {
-        const check = await BluetoothClassic.isConnected();
+        const check = await BluetoothClassic.isConnected({ role: 'printer' });
         if (check?.connected) {
           console.warn('⚠️ Classic BT printer: spurious disconnect event — native still connected, preserving state');
           return;
@@ -730,7 +755,7 @@ export const connectClassicPrinter = async (
  */
 export const disconnectClassicPrinter = async (): Promise<void> => {
   try {
-    await BluetoothClassic.disconnect();
+    await BluetoothClassic.disconnect({ role: 'printer' });
   } catch (error) {
     console.warn('⚠️ Error disconnecting Classic BT printer:', error);
   }
@@ -825,7 +850,11 @@ export const printToClassicPrinter = async (content: string): Promise<{ success:
     const chunkSize = 200;
     for (let i = 0; i < printData.length; i += chunkSize) {
       const chunk = printData.slice(i, i + chunkSize);
-      await BluetoothClassic.write({ data: chunk });
+      if (BluetoothClassic.writePrinter) {
+        await BluetoothClassic.writePrinter({ data: chunk });
+      } else {
+        await BluetoothClassic.write({ data: chunk, role: 'printer' });
+      }
       // Small delay between chunks
       if (i + chunkSize < printData.length) {
         await new Promise(resolve => setTimeout(resolve, 50));
@@ -871,12 +900,7 @@ export const isInternalPosPrinter = (name: string | undefined): boolean => {
 /**
  * Common internal POS printer MAC addresses
  */
-export const INTERNAL_PRINTER_ADDRESSES = [
-  '00:11:22:33:44:55', // Standard CS10 Bridge
-  '11:22:33:44:55:66', // CS10 Alternate
-  '00:00:00:00:00:00', // Internal Loopback
-  'FE:DC:BA:98:76:54', // Sunmi Internal
-];
+export const INTERNAL_PRINTER_ADDRESSES: string[] = [];
 
 /**
  * Connect directly to a specific MAC address (manual entry)
@@ -903,7 +927,9 @@ export const connectDirectToAddress = async (
     }
 
     // Attempt insecure connect first for direct addresses
-    const result = await BluetoothClassic.connectInsecure({ address });
+    const result = BluetoothClassic.connectPrinterInsecure
+      ? await BluetoothClassic.connectPrinterInsecure({ address })
+      : await BluetoothClassic.connectInsecure({ address, role: 'printer' });
 
     if (!result.connected) {
       return { success: false, error: 'Failed to connect directly' };
