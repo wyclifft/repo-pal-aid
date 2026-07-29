@@ -85,34 +85,46 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
   const captureWithNativeCamera = async () => {
     setIsLoading(true);
     setCameraError(null);
-    
+
     try {
       // Lazy-load native camera plugin (returns null on web / when unavailable)
       const cam = await loadCapacitorCamera();
       if (!cam) {
-        console.warn('📷 Native camera plugin unavailable, falling back to web camera');
-        toast.info('Using in-app camera');
+        // v2.11.23: on native we must NOT silently drop to getUserMedia — WebView 51
+        // on Android 7 cannot serve getUserMedia over the capacitor:// origin, so the
+        // fallback fails too. Surface a clear error instead.
+        console.error('[CAMERA] native plugin unavailable on native platform');
+        setCameraError('Native camera plugin unavailable. Please reinstall the app.');
         nativeCaptureInProgress = false;
-        setUseNativeCamera(false);
         setIsLoading(false);
         return;
       }
       const { Camera: CapacitorCamera } = cam;
 
-      // First, request camera permissions explicitly
-      const permStatus = await CapacitorCamera.requestPermissions({ permissions: ['camera'] });
-      console.log('Camera permission status:', permStatus);
-      
+      // Check permissions first, only request if not granted (avoids repeated prompts)
+      let permStatus;
+      try {
+        permStatus = await CapacitorCamera.checkPermissions();
+      } catch (e) {
+        console.warn('[CAMERA] checkPermissions failed, requesting directly:', e);
+        permStatus = { camera: 'prompt' } as any;
+      }
+      console.log('[CAMERA] initial permission status:', permStatus);
+
+      if (permStatus.camera !== 'granted' && permStatus.camera !== 'limited') {
+        permStatus = await CapacitorCamera.requestPermissions({ permissions: ['camera'] });
+        console.log('[CAMERA] permission after request:', permStatus);
+      }
+
       if (permStatus.camera === 'denied') {
-        // Native permission denied — fall back to web camera instead of blocking
-        console.warn('📷 Native camera permission denied, falling back to web camera');
-        toast.info('Using in-app camera');
+        console.warn('[CAMERA] permission=denied');
+        setCameraError('Camera permission denied. Please enable Camera in device Settings for this app.');
+        toast.error('Camera permission denied');
         nativeCaptureInProgress = false;
-        setUseNativeCamera(false);
         setIsLoading(false);
         return;
       }
-      
+
       // Take photo using native camera
       const photo = await CapacitorCamera.getPhoto({
         quality: 70,
@@ -123,20 +135,22 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
         correctOrientation: true,
         saveToGallery: false,
       });
-      
+
+      console.log('[CAMERA] native capture ok');
+
       if (photo.dataUrl) {
         // Process the photo — separate try/catch so camera errors vs processing errors are distinct
         try {
           // Memory-efficient: use fetch() to convert dataUrl to blob (single native allocation)
           const fetchResponse = await fetch(photo.dataUrl);
           const originalBlob = await fetchResponse.blob();
-          
+
           if (originalBlob.size === 0) {
             console.error('Empty photo captured');
             setCameraError('Empty photo captured. Please try again.');
             return;
           }
-          
+
           // Compress the image to target size with memory-safe fallback
           setIsCompressing(true);
           try {
@@ -168,17 +182,16 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
         }
       }
     } catch (error: any) {
-      console.error('Native camera error:', error);
-      if (error.message?.includes('cancelled') || error.message?.includes('canceled')) {
+      const msg = error?.message || String(error);
+      if (msg.includes('cancelled') || msg.includes('canceled') || msg.includes('User cancelled')) {
+        console.log('[CAMERA] user cancelled native capture');
         nativeCaptureInProgress = false;
         onClose();
         return;
       }
-      // No system camera app or intent failure — fall back to web camera
-      console.warn('📷 Native camera unavailable, falling back to web camera:', error.message);
-      toast.info('Using in-app camera');
-      nativeCaptureInProgress = false;
-      setUseNativeCamera(false);
+      // v2.11.23: keep the native path — do not slide to a broken getUserMedia on Android 7.
+      console.error('[CAMERA] native capture failed reason=', msg);
+      setCameraError('Camera failed to open. Please try again or check device permissions.');
     } finally {
       setIsLoading(false);
       nativeCaptureInProgress = false;
