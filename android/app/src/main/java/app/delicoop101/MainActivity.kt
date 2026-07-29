@@ -36,10 +36,22 @@ class MainActivity : BridgeActivity() {
         registerPlugin(BluetoothClassicPlugin::class.java)
         Log.d(TAG, "[INIT] Registering native OfflineStorage plugin")
         registerPlugin(OfflineStoragePlugin::class.java)
-        Log.d(TAG, "[INIT] Registering native BluetoothLe plugin")
-        registerPlugin(BluetoothLe::class.java)
-        
+        // v2.11.21: BluetoothLe is auto-registered by Capacitor via
+        // capacitor.plugins.json — a second manual registerPlugin() call
+        // corrupts the bridge plugin map on WebView 51 and caused
+        // BluetoothClassic to return UNIMPLEMENTED. Removed intentionally.
+
         super.onCreate(savedInstanceState)
+
+        // v2.11.21: log the full plugin map that the bridge published so we
+        // can verify BluetoothClassic / OfflineStorage / BluetoothLe are all
+        // present at runtime on legacy WebViews.
+        try {
+            val names = bridge?.plugins?.keys?.joinToString(", ") ?: "none"
+            Log.d(TAG, "[BRIDGE] Registered plugins: $names")
+        } catch (e: Exception) {
+            Log.w(TAG, "[BRIDGE] Failed to enumerate plugins: ${e.message}")
+        }
 
         // v2.11.20: Direct WebView bridge fallback for WebView 51 devices where
         // Capacitor's plugin header export can omit local Kotlin plugins, causing
@@ -49,6 +61,7 @@ class MainActivity : BridgeActivity() {
             webView.addJavascriptInterface(bluetoothClassicJsBridge, "BluetoothClassicAndroid")
             Log.d(TAG, "[INIT] Registered BluetoothClassicAndroid JS fallback bridge")
         }
+
         
         // Initialize encrypted database on a background thread.
         // getInstance() now forces the DB file open eagerly (not lazily),
