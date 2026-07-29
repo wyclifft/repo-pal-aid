@@ -46,7 +46,12 @@ export const BluetoothConnectionDialog = ({
   onConnected,
   onWeightUpdate,
 }: BluetoothConnectionDialogProps) => {
-  const [connectionType, setConnectionType] = useState<BluetoothConnectionType>('ble');
+  // v2.11.14: Classic (SPP) is the default on native — matches printer
+  // behaviour and covers the CS10 / ACS-SB1 pairing that BLE cannot serve.
+  const [connectionType, setConnectionType] = useState<BluetoothConnectionType>(
+    Capacitor.isNativePlatform() ? 'classic' : 'ble'
+  );
+
   const [classicAvailable, setClassicAvailable] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
