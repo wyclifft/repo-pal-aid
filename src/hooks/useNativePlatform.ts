@@ -202,7 +202,7 @@ export const useNativePlatform = () => {
       if (!StatusBar) return;
       
       const { Style } = await import('@capacitor/status-bar');
-      await StatusBar.setStyle({ style: dark ? Style.Light : Style.Dark });
+      await StatusBar.setStyle({ style: Style.Dark });
       await StatusBar.setBackgroundColor({ color: '#ffffff' });
     } catch (error) {
       console.warn('StatusBar style change failed:', error);
