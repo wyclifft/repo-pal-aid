@@ -195,13 +195,17 @@ export const isClassicBluetoothAvailable = async (): Promise<boolean> => {
     return !!result.available;
   } catch (error: any) {
     // Native plugin not implemented yet or bridge failure
-    console.error('❌ Classic Bluetooth availability check FAILED:', error);
+    const code = error?.code;
     const msg = error?.message || String(error);
+    const stack = error?.stack;
+    console.error(`❌ Classic Bluetooth availability check FAILED: code=${code} msg=${msg}`);
+    if (stack) console.error(`   stack: ${stack}`);
     if (msg.includes('not implemented') || msg.includes('plugin')) {
       console.log('💡 Bridge issue detected: Plugin registration failed or race condition on WebView 51.');
     }
     return false;
   }
+
 };
 
 /**
