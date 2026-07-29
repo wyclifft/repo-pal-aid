@@ -355,7 +355,7 @@ button, [role="button"], input, select, textarea {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   v2.11.14 — WebView 51 (Chromium 51) CSS COMPATIBILITY LAYER
+   v2.11.17 — WebView 51 (Chromium 51) CSS COMPATIBILITY LAYER
    ───────────────────────────────────────────────────────────────────────────
    The CS10 (Android 7 / WebView 51.0.2704.91) is missing:
      - CSS `gap` on flexbox        (added Chrome 84)
@@ -369,6 +369,75 @@ button, [role="button"], input, select, textarea {
    browsers (thanks to @supports guards). Do not remove without a modern-
    only build path.
    ═══════════════════════════════════════════════════════════════════════ */
+
+html,
+body,
+#root,
+.min-h-screen,
+.bg-background,
+[data-radix-portal] {
+  background-color: #ffffff !important;
+  color: #020817 !important;
+}
+
+.bg-card,
+.bg-popover,
+.bg-white,
+[role="dialog"],
+[data-radix-popper-content-wrapper],
+[data-radix-menu-content],
+[data-radix-dialog-content],
+[data-radix-select-content] {
+  background-color: #ffffff !important;
+  color: #020817 !important;
+}
+
+.bg-muted,
+.bg-secondary,
+.bg-accent,
+.bg-gray-50,
+.bg-gray-100,
+.bg-slate-50,
+.bg-slate-100 {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.text-foreground,
+.text-card-foreground,
+.text-popover-foreground,
+.text-gray-900,
+.text-slate-900 {
+  color: #020817 !important;
+}
+
+.text-muted-foreground,
+.text-gray-500,
+.text-gray-600,
+.text-slate-500,
+.text-slate-600 {
+  color: #64748b !important;
+}
+
+.border,
+.border-border,
+.border-input,
+.border-gray-200,
+.border-slate-200 {
+  border-color: #e2e8f0 !important;
+}
+
+.shadow,
+.shadow-sm,
+.shadow-md,
+.shadow-lg {
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.16) !important;
+}
+
+.dark,
+.dark * {
+  color-scheme: light !important;
+}
 
 /* -- gap polyfill via > * + * margin (works everywhere since Chrome 4) -- */
 @supports not (gap: 1rem) {
@@ -422,7 +491,8 @@ button, [role="button"], input, select, textarea {
   }
   .dark [class*="backdrop-blur"],
   [class*="backdrop-blur"][class*="bg-black"] {
-    background-color: rgba(15, 23, 42, 0.9) !important;
+    background-color: rgba(255, 255, 255, 0.98) !important;
+    color: #020817 !important;
   }
 }
 
