@@ -986,26 +986,25 @@ export const connectInternalPrinter = async (): Promise<{ success: boolean; erro
 };
 
 export const printToInternalPrinter = async (content: string): Promise<{ success: boolean; error?: string }> => {
-  const bridge = cs10PrinterBridge();
-  if (!bridge) return { success: false, error: 'CS10 internal printer bridge unavailable' };
-
+  if (!Capacitor.isNativePlatform()) {
+    return { success: false, error: 'Internal printer only available on native' };
+  }
   try {
-    const raw = bridge.printText(content + '\n\n\n');
-    const parsed = JSON.parse(raw || '{}');
-    if (parsed?.success) {
-      console.log('✅ CS10 internal printer print completed');
-      return { success: true };
-    }
-    const details = [parsed?.stage, parsed?.exception, parsed?.message, parsed?.error]
-      .filter(Boolean).join(' | ');
+    // Split into lines for the SDK's line-based printer. Trailing feeds are
+    // added inside PosApi.printReceipt() so paper clears the tear bar.
+    const lines = (content || '').split('\n');
+    await PosApi.printReceipt({ lines });
+    console.log('✅ CS10 internal printer print completed (PosApi)');
+    return { success: true };
+  } catch (error: any) {
+    const code = error?.code || error?.errorMessage;
+    const message = error?.message || String(error);
+    const detail = code ? `${code}: ${message}` : message;
+    console.error('❌ CS10 internal printer print error:', detail);
     // v2.11.25: NEVER auto-fall-back to Bluetooth here — the user explicitly
     // picked Internal. Surface the diagnostic and let them retry or manually
     // switch to CLASSIC.
-    return { success: false, error: details || 'Internal print failed' };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Internal print failed';
-    console.error('❌ CS10 internal printer print error:', error);
-    return { success: false, error: errorMessage };
+    return { success: false, error: detail || 'Internal print failed' };
   }
 };
 
