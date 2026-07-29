@@ -11,7 +11,7 @@ import java.io.File
 /**
  * v2.11.25: CS10 internal printer JS bridge — REAL initialization, no permanent gate.
  *
- * Previous versions (v2.11.23/24) probed for /vendor/lib*/libcustom_jni.so and
+ * Previous versions (v2.11.23/24) probed for /vendor/lib[*] /libcustom_jni.so and
  * IBCRService$Stub and refused to touch the SDK if either was missing. Field
  * evidence shows other software prints successfully on the CS10 A26 firmware,
  * so a hard gate is wrong.
