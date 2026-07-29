@@ -97,8 +97,12 @@ class MainActivity : BridgeActivity() {
     override fun onDestroy() {
         // Flush all pending logs SYNCHRONOUSLY before process exit
         // This is now a blocking call that waits for writes to complete
-        bluetoothClassicJsBridge?.shutdown()
+        // v2.11.21: copy the mutable field into a local val to satisfy
+        // Kotlin's smart-cast rules (mutable properties cannot be smart-cast).
+        val jsBridge = bluetoothClassicJsBridge
+        jsBridge?.shutdown()
         DatabaseLogger.flush()
         super.onDestroy()
     }
 }
+
