@@ -185,12 +185,15 @@ function getSavedDevice(role: BtRole): SavedDevice | null {
     return null;
   }
   // printer
-  const ble = getStoredPrinterInfo();
-  if (ble) return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: "ble" };
+  // v2.11.14: prefer Classic (SPP) first — matches scale behaviour and works
+  // on WebView 51 / Android 7 devices where BLE printing is unreliable.
   const cls = getStoredClassicPrinter();
   if (cls) return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
+  const ble = getStoredPrinterInfo();
+  if (ble) return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: "ble" };
   return null;
 }
+
 
 function isLowLevelConnected(role: BtRole): boolean {
   if (role === "scale") return isScaleConnected() || isClassicScaleConnected();
