@@ -99,6 +99,14 @@ type AndroidClassicBridge = {
 
 const androidClassicBridge = (): AndroidClassicBridge | undefined => (window as any).BluetoothClassicAndroid;
 
+type Cs10PrinterBridge = {
+  isAvailable(): string;
+  status(): string;
+  printText(text: string): string;
+};
+
+const cs10PrinterBridge = (): Cs10PrinterBridge | undefined => (window as any).Cs10PrinterAndroid;
+
 const parseAndroidClassicResult = <T,>(action: string, raw: string): T => {
   const parsed = JSON.parse(raw || '{}');
   if (parsed?.error) {
@@ -189,7 +197,11 @@ const androidFallbackBluetoothClassic: BluetoothClassicPlugin = {
 let useAndroidClassicFallback = false;
 
 const resolveBluetoothClassic = (): BluetoothClassicPlugin => {
-  if (Capacitor.isNativePlatform() && androidClassicBridge() && useAndroidClassicFallback) {
+  // v2.11.22: On CS10/WebView 51 the Capacitor proxy can exist but still
+  // dispatch every method as UNIMPLEMENTED. If our direct bridge is present,
+  // use it first so paired devices come from Android's bonded-device list.
+  if (Capacitor.isNativePlatform() && androidClassicBridge()) {
+    useAndroidClassicFallback = true;
     return androidFallbackBluetoothClassic;
   }
   return CapacitorBluetoothClassic;
@@ -298,6 +310,17 @@ export const isClassicBluetoothAvailable = async (): Promise<boolean> => {
     return false;
   }
 
+  if (androidClassicBridge()) {
+    useAndroidClassicFallback = true;
+    try {
+      const fallbackResult = await androidFallbackBluetoothClassic.isAvailable();
+      console.log(`ℹ️ Classic Bluetooth direct bridge available check: ${JSON.stringify(fallbackResult)}`);
+      return !!fallbackResult.available;
+    } catch (fallbackError) {
+      console.error('❌ Classic Bluetooth direct bridge availability failed:', fallbackError);
+    }
+  }
+
   // v2.11.21: bounded retry — on WebView 51 the Capacitor bridge occasionally
   // publishes its plugin map a few hundred ms after the first JS call. Wait up
   // to 4s (in 250ms slices) for BluetoothClassic to appear before failing.
@@ -376,6 +399,17 @@ export const getPairedDevices = async (): Promise<ClassicBluetoothDevice[]> => {
   if (!Capacitor.isNativePlatform()) {
     console.log('ℹ️ Classic Bluetooth: Paired devices only available on native');
     return [];
+  }
+
+  if (androidClassicBridge()) {
+    useAndroidClassicFallback = true;
+    try {
+      const result = await androidFallbackBluetoothClassic.getPairedDevices();
+      console.log(`📱 Found ${result.devices.length} paired devices via direct Android bridge`);
+      return result.devices;
+    } catch (fallbackError) {
+      console.error('❌ Classic Bluetooth direct bridge getPairedDevices failed:', fallbackError);
+    }
   }
 
   try {
@@ -816,6 +850,7 @@ let classicPrinter: {
   device: ClassicBluetoothDevice | null;
   address: string | null;
   isConnected: boolean;
+  internal?: boolean;
 } = {
   device: null,
   address: null,
@@ -823,6 +858,81 @@ let classicPrinter: {
 };
 
 const CLASSIC_PRINTER_KEY = 'lastClassicBluetoothPrinter';
+const INTERNAL_PRINTER_ADDRESS = 'CS10-INTERNAL-PRINTER';
+
+const parseCs10PrinterResult = <T,>(action: string, raw: string): T => {
+  const parsed = JSON.parse(raw || '{}');
+  if (parsed?.error) {
+    throw new Error(`[CS10-PRINTER] ${action} failed: ${parsed.error}`);
+  }
+  return parsed as T;
+};
+
+export const isInternalPrinterAvailable = async (): Promise<boolean> => {
+  if (!Capacitor.isNativePlatform()) return false;
+  const bridge = cs10PrinterBridge();
+  if (!bridge) return false;
+  try {
+    const result = parseCs10PrinterResult<{ available: boolean }>('isAvailable', bridge.isAvailable());
+    console.log(`🖨️ CS10 internal printer available: ${!!result.available}`);
+    return !!result.available;
+  } catch (error) {
+    console.warn('⚠️ CS10 internal printer availability check failed:', error);
+    return false;
+  }
+};
+
+export const connectInternalPrinter = async (): Promise<{ success: boolean; error?: string }> => {
+  if (!Capacitor.isNativePlatform()) {
+    return { success: false, error: 'Internal printer only available on native' };
+  }
+
+  try {
+    const available = await isInternalPrinterAvailable();
+    if (!available) return { success: false, error: 'CS10 internal printer bridge unavailable' };
+
+    const device: ClassicBluetoothDevice = {
+      address: INTERNAL_PRINTER_ADDRESS,
+      name: 'CS10 Internal Printer',
+      bonded: true,
+    };
+
+    classicPrinter = {
+      device,
+      address: INTERNAL_PRINTER_ADDRESS,
+      isConnected: true,
+      internal: true,
+    };
+
+    localStorage.setItem(CLASSIC_PRINTER_KEY, JSON.stringify({
+      ...device,
+      internal: true,
+      timestamp: Date.now(),
+    }));
+    window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true, type: 'classic', internal: true } }));
+    console.log('✅ Connected to CS10 internal printer bridge');
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('❌ CS10 internal printer connection error:', error);
+    return { success: false, error: errorMessage };
+  }
+};
+
+export const printToInternalPrinter = async (content: string): Promise<{ success: boolean; error?: string }> => {
+  const bridge = cs10PrinterBridge();
+  if (!bridge) return { success: false, error: 'CS10 internal printer bridge unavailable' };
+
+  try {
+    parseCs10PrinterResult('printText', bridge.printText(content + '\n\n\n'));
+    console.log('✅ CS10 internal printer print completed');
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Internal print failed';
+    console.error('❌ CS10 internal printer print error:', error);
+    return { success: false, error: errorMessage };
+  }
+};
 
 /**
  * Connect to a Classic Bluetooth printer (built-in POS printers, SPP printers)
@@ -919,7 +1029,9 @@ export const connectClassicPrinter = async (
  */
 export const disconnectClassicPrinter = async (): Promise<void> => {
   try {
-    await BluetoothClassic.disconnect({ role: 'printer' });
+    if (!classicPrinter.internal) {
+      await BluetoothClassic.disconnect({ role: 'printer' });
+    }
   } catch (error) {
     console.warn('⚠️ Error disconnecting Classic BT printer:', error);
   }
@@ -931,6 +1043,7 @@ const clearClassicPrinterState = () => {
     device: null,
     address: null,
     isConnected: false,
+    internal: false,
   };
   window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: false, type: 'classic' } }));
 };
@@ -984,6 +1097,10 @@ export const quickReconnectClassicPrinter = async (): Promise<{ success: boolean
     return { success: false, error: 'Stored printer expired' };
   }
 
+  if ((storedDevice as any).internal || storedDevice.address === INTERNAL_PRINTER_ADDRESS) {
+    return connectInternalPrinter();
+  }
+
   return connectClassicPrinter(storedDevice);
 };
 
@@ -993,6 +1110,11 @@ export const quickReconnectClassicPrinter = async (): Promise<{ success: boolean
 export const printToClassicPrinter = async (content: string): Promise<{ success: boolean; error?: string }> => {
   if (!classicPrinter.isConnected) {
     return { success: false, error: 'No Classic printer connected' };
+  }
+
+  if (classicPrinter.internal || classicPrinter.address === INTERNAL_PRINTER_ADDRESS) {
+    console.log('🖨️ Printing via CS10 internal printer bridge...');
+    return printToInternalPrinter(content);
   }
 
   try {
