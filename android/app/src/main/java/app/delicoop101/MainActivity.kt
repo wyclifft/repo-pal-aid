@@ -45,13 +45,21 @@ class MainActivity : BridgeActivity() {
 
         // v2.11.21: log the full plugin map that the bridge published so we
         // can verify BluetoothClassic / OfflineStorage / BluetoothLe are all
-        // present at runtime on legacy WebViews.
+        // present at runtime on legacy WebViews. Uses reflection because the
+        // Bridge#plugins map is not part of the public Capacitor API surface.
         try {
-            val names = bridge?.plugins?.keys?.joinToString(", ") ?: "none"
-            Log.d(TAG, "[BRIDGE] Registered plugins: $names")
-        } catch (e: Exception) {
+            val b: Any? = bridge
+            if (b != null) {
+                val field = b.javaClass.getDeclaredField("plugins")
+                field.isAccessible = true
+                val map = field.get(b) as? Map<*, *>
+                val names = map?.keys?.joinToString(", ") ?: "none"
+                Log.d(TAG, "[BRIDGE] Registered plugins: $names")
+            }
+        } catch (e: Throwable) {
             Log.w(TAG, "[BRIDGE] Failed to enumerate plugins: ${e.message}")
         }
+
 
         // v2.11.20: Direct WebView bridge fallback for WebView 51 devices where
         // Capacitor's plugin header export can omit local Kotlin plugins, causing
