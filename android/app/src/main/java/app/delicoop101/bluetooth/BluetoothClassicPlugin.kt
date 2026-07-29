@@ -396,6 +396,7 @@ class BluetoothClassicPlugin : Plugin() {
                 }
             } catch (e: IOException) {
                 Log.e(TAG, "[BT][$role] Write failed: ${e.message}")
+                handleRoleConnectionLost(role, e.message ?: "Write failed")
                 withContext(Dispatchers.Main) {
                     call.reject("Write failed: ${e.message}")
                 }
@@ -436,6 +437,7 @@ class BluetoothClassicPlugin : Plugin() {
                 }
             } catch (e: IOException) {
                 Log.e(TAG, "[BT][$role] Write failed: ${e.message}", e)
+                handleRoleConnectionLost(role, e.message ?: "Write failed")
                 withContext(Dispatchers.Main) {
                     call.reject("Write failed: ${e.message}")
                 }
@@ -464,26 +466,51 @@ class BluetoothClassicPlugin : Plugin() {
                             event.put("address", connection.device?.address)
                             notifyListeners("dataReceived", event)
                         }
+                    } else if (bytes < 0) {
+                        val reason = "bt socket closed, read return: $bytes"
+                        Log.e(TAG, "[BT][$role] Read error: $reason")
+                        handleRoleConnectionLost(role, reason)
+                        break
                     }
                 } catch (e: IOException) {
                     if (isActive) {
                         Log.e(TAG, "[BT][$role] Read error: ${e.message}")
-                        withContext(Dispatchers.Main) {
-                            val event = JSObject()
-                            event.put("error", e.message)
-                            event.put("role", role)
-                            event.put("address", connection.device?.address)
-                            notifyListeners("connectionLost", event)
-                            val state = JSObject()
-                            state.put("connected", false)
-                            state.put("role", role)
-                            state.put("address", connection.device?.address)
-                            notifyListeners("connectionStateChanged", state)
-                        }
+                        handleRoleConnectionLost(role, e.message ?: "Read error")
                         break
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun handleRoleConnectionLost(role: String, error: String) {
+        val connection = connections.getOrPut(role) { RoleConnection() }
+        val address = connection.device?.address
+        if (connection.socket == null && connection.inputStream == null && connection.device == null) {
+            return
+        }
+        try {
+            connection.inputStream?.close()
+            connection.socket?.close()
+        } catch (e: IOException) {
+            Log.e(TAG, "[BT][$role] Error closing stale connection: ${e.message}")
+        }
+        connection.inputStream = null
+        connection.socket = null
+        connection.device = null
+        connection.readJob = null
+        withContext(Dispatchers.Main) {
+            val event = JSObject()
+            event.put("error", error)
+            event.put("role", role)
+            event.put("address", address)
+            notifyListeners("connectionLost", event)
+            val state = JSObject()
+            state.put("connected", false)
+            state.put("role", role)
+            state.put("address", address)
+            state.put("error", error)
+            notifyListeners("connectionStateChanged", state)
         }
     }
 

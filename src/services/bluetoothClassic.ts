@@ -226,6 +226,13 @@ export interface ClassicBluetoothDevice {
   deviceClass?: number;
 }
 
+export interface InternalPrinterStatus {
+  available: boolean;
+  reason?: string;
+  model?: string;
+  sdk?: number;
+}
+
 export interface ClassicScaleConnection {
   device: ClassicBluetoothDevice | null;
   address: string | null;
@@ -246,6 +253,7 @@ let classicScale: ClassicScaleConnection = {
 
 let dataListenerHandle: PluginListenerHandle | null = null;
 let connectionListenerHandle: PluginListenerHandle | null = null;
+let printerConnectionListenerHandle: PluginListenerHandle | null = null;
 
 // Storage keys
 const CLASSIC_DEVICE_KEY = 'lastClassicBluetoothDevice';
@@ -868,18 +876,23 @@ const parseCs10PrinterResult = <T,>(action: string, raw: string): T => {
   return parsed as T;
 };
 
-export const isInternalPrinterAvailable = async (): Promise<boolean> => {
-  if (!Capacitor.isNativePlatform()) return false;
+export const getInternalPrinterStatus = async (): Promise<InternalPrinterStatus> => {
+  if (!Capacitor.isNativePlatform()) return { available: false, reason: 'not-native' };
   const bridge = cs10PrinterBridge();
-  if (!bridge) return false;
+  if (!bridge) return { available: false, reason: 'bridge-missing' };
   try {
-    const result = parseCs10PrinterResult<{ available: boolean }>('isAvailable', bridge.isAvailable());
+    const result = parseCs10PrinterResult<InternalPrinterStatus>('isAvailable', bridge.isAvailable());
     console.log(`🖨️ CS10 internal printer available: ${!!result.available}`);
-    return !!result.available;
+    return { ...result, available: !!result.available };
   } catch (error) {
     console.warn('⚠️ CS10 internal printer availability check failed:', error);
-    return false;
+    return { available: false, reason: 'status-check-failed' };
   }
+};
+
+export const isInternalPrinterAvailable = async (): Promise<boolean> => {
+  const status = await getInternalPrinterStatus();
+  return status.available;
 };
 
 export const connectInternalPrinter = async (): Promise<{ success: boolean; error?: string }> => {
@@ -888,8 +901,8 @@ export const connectInternalPrinter = async (): Promise<{ success: boolean; erro
   }
 
   try {
-    const available = await isInternalPrinterAvailable();
-    if (!available) return { success: false, error: 'CS10 internal printer bridge unavailable' };
+    const status = await getInternalPrinterStatus();
+    if (!status.available) return { success: false, error: status.reason || 'CS10 internal printer bridge unavailable' };
 
     const device: ClassicBluetoothDevice = {
       address: INTERNAL_PRINTER_ADDRESS,
@@ -972,7 +985,11 @@ export const connectClassicPrinter = async (
     // when the event genuinely belongs to this printer AND the native socket
     // confirms it is gone.
     const printerAddress = device.address;
-    await BluetoothClassic.addListener('connectionStateChanged', async (state: any) => {
+    if (printerConnectionListenerHandle) {
+      await printerConnectionListenerHandle.remove();
+      printerConnectionListenerHandle = null;
+    }
+    printerConnectionListenerHandle = await BluetoothClassic.addListener('connectionStateChanged', async (state: any) => {
       if (state.role && state.role !== 'printer') return;
       if (state.connected) return;
       const eventAddress: string | undefined = state.address;
@@ -1034,6 +1051,10 @@ export const disconnectClassicPrinter = async (): Promise<void> => {
     }
   } catch (error) {
     console.warn('⚠️ Error disconnecting Classic BT printer:', error);
+  }
+  if (printerConnectionListenerHandle) {
+    await printerConnectionListenerHandle.remove();
+    printerConnectionListenerHandle = null;
   }
   clearClassicPrinterState();
 };
@@ -1117,22 +1138,32 @@ export const printToClassicPrinter = async (content: string): Promise<{ success:
     return printToInternalPrinter(content);
   }
 
-  try {
-    console.log('🖨️ Printing via Classic Bluetooth SPP...');
-    
-    // ESC/POS commands
-    const ESC = '\x1B';
-    const GS = '\x1D';
-    
-    // Build print data with ESC/POS commands
-    const printData = 
-      ESC + '@' +           // Initialize printer
-      ESC + 'a\x01' +       // Center alignment
-      content +
-      '\n\n\n\n\n' +        // Line feeds
-      GS + 'V\x00';         // Cut paper
-    
-    // Send data in chunks to avoid buffer overflow
+  const printerDevice = classicPrinter.device && classicPrinter.address ? {
+    ...classicPrinter.device,
+    address: classicPrinter.address,
+  } : null;
+
+  const isRecoverablePrinterSocketError = (message: string): boolean => {
+    const lower = message.toLowerCase();
+    return lower.includes('broken pipe') ||
+      lower.includes('socket closed') ||
+      lower.includes('not connected') ||
+      lower.includes('write failed');
+  };
+
+  // ESC/POS commands
+  const ESC = '\x1B';
+  const GS = '\x1D';
+
+  // Build print data with ESC/POS commands. Receipt text/content is unchanged.
+  const printData =
+    ESC + '@' +           // Initialize printer
+    ESC + 'a\x01' +       // Center alignment
+    content +
+    '\n\n\n\n\n' +        // Line feeds
+    GS + 'V\x00';         // Cut paper
+
+  const sendPrintData = async () => {
     const chunkSize = 200;
     for (let i = 0; i < printData.length; i += chunkSize) {
       const chunk = printData.slice(i, i + chunkSize);
@@ -1141,19 +1172,41 @@ export const printToClassicPrinter = async (content: string): Promise<{ success:
       } else {
         await BluetoothClassic.write({ data: chunk, role: 'printer' });
       }
-      // Small delay between chunks
       if (i + chunkSize < printData.length) {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
     }
-    
-    console.log('✅ Classic BT print completed');
-    return { success: true };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Print failed';
-    console.error('❌ Classic BT print error:', error);
-    return { success: false, error: errorMessage };
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      console.log(attempt === 0 ? '🖨️ Printing via Classic Bluetooth SPP...' : '🖨️ Retrying Classic Bluetooth print after reconnect...');
+      await sendPrintData();
+      console.log('✅ Classic BT print completed');
+      return { success: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Print failed';
+      console.error('❌ Classic BT print error:', error);
+      if (attempt === 0 && printerDevice && isRecoverablePrinterSocketError(errorMessage)) {
+        console.warn('[BT][printer] Socket dropped during print, reconnecting once and restarting receipt print');
+        await disconnectClassicPrinter();
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const reconnect = await connectClassicPrinter(printerDevice);
+        if (reconnect.success) {
+          continue;
+        }
+        return { success: false, error: reconnect.error || 'Printer connection lost. Reconnect the Bluetooth printer and retry.' };
+      }
+      return {
+        success: false,
+        error: isRecoverablePrinterSocketError(errorMessage)
+          ? 'Printer connection lost. Reconnect the Bluetooth printer and retry.'
+          : errorMessage,
+      };
+    }
   }
+
+  return { success: false, error: 'Printer connection lost. Reconnect the Bluetooth printer and retry.' };
 };
 
 /**

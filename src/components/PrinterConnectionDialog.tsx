@@ -20,8 +20,9 @@ import {
   type ClassicBluetoothDevice,
   isInternalPosPrinter,
   connectDirectToAddress,
-  isInternalPrinterAvailable,
+  getInternalPrinterStatus,
   connectInternalPrinter,
+  type InternalPrinterStatus,
 } from '@/services/bluetoothClassic';
 
 export type PrinterConnectionType = 'ble' | 'classic' | 'direct';
@@ -51,7 +52,7 @@ export const PrinterConnectionDialog = ({
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<DeviceWithResolvedName | null>(null);
   const [directAddress, setDirectAddress] = useState('');
-  const [internalAvailable, setInternalAvailable] = useState(false);
+  const [internalStatus, setInternalStatus] = useState<InternalPrinterStatus>({ available: false, reason: 'checking' });
 
   const isNative = Capacitor.isNativePlatform();
 
@@ -60,8 +61,8 @@ export const PrinterConnectionDialog = ({
       isClassicBluetoothAvailable().then(function(avail) {
         setClassicAvailable(avail);
       });
-      isInternalPrinterAvailable().then(function(avail) {
-        setInternalAvailable(avail);
+      getInternalPrinterStatus().then(function(status) {
+        setInternalStatus(status);
       });
     }
   }, [open, isNative]);
@@ -146,6 +147,10 @@ export const PrinterConnectionDialog = ({
   };
 
   const handleInternalConnect = async () => {
+    if (!internalStatus.available) {
+      toast.info(getInternalUnavailableMessage());
+      return;
+    }
     setIsConnecting(true);
     try {
       const result = await connectInternalPrinter();
@@ -160,6 +165,18 @@ export const PrinterConnectionDialog = ({
       toast.error('Internal printer failed');
     }
     setIsConnecting(false);
+  };
+
+  const internalAvailable = internalStatus.available;
+
+  const getInternalUnavailableMessage = () => {
+    if (internalStatus.reason === 'cs10-sdk-incompatible') {
+      return 'This CS10 Android 7 firmware does not include the required POS printer service. Use a paired Bluetooth printer from CLASSIC.';
+    }
+    if (internalStatus.reason === 'bridge-missing') {
+      return 'Internal printer bridge not detected. Use CLASSIC to connect a Bluetooth printer.';
+    }
+    return 'Internal printer is not available on this device. Use CLASSIC to connect a Bluetooth printer.';
   };
 
   const isLikelyPrinter = (name: string) => {
@@ -253,17 +270,33 @@ export const PrinterConnectionDialog = ({
             <div className="space-y-4 py-2">
               <Button
                 onClick={handleInternalConnect}
-                disabled={isConnecting || !internalAvailable}
-                className="w-full h-12 bg-green-600 hover:bg-green-700"
+                disabled={isConnecting}
+                aria-disabled={!internalAvailable}
+                variant={internalAvailable ? 'default' : 'outline'}
+                className={"w-full min-h-12 " + (internalAvailable ? "" : "border-dashed text-muted-foreground")}
               >
                 {isConnecting ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Printer className="h-4 w-4 mr-2" />}
-                CS10 Internal Printer
+                <span className="flex flex-col items-start leading-tight">
+                  <span>CS10 Internal Printer</span>
+                  {!internalAvailable && <span className="text-[10px] font-normal">Not supported on this device</span>}
+                </span>
               </Button>
 
               <div className="bg-amber-50 border border-amber-200 p-2 rounded text-[10px] text-amber-800 flex gap-2">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                <p>{internalAvailable ? 'Use manual MAC only for an external Bluetooth printer.' : 'Internal printer bridge not detected. Use manual MAC only if you know a real external printer address.'}</p>
+                <p>{internalAvailable ? 'Use manual MAC only for an external Bluetooth printer.' : getInternalUnavailableMessage()}</p>
               </div>
+
+              {!internalAvailable && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={function() { setConnectionType('classic'); }}
+                  className="w-full h-10"
+                >
+                  Use Bluetooth Printer Instead
+                </Button>
+              )}
 
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-gray-500">MANUAL MAC ADDRESS</label>

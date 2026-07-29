@@ -165,12 +165,24 @@ class BluetoothClassicJsBridge(
         val data = options.optString("data", "")
         if (data.isEmpty()) throw IllegalArgumentException("Data is required")
 
-        val socket = connections[role]?.socket
+        val connection = connections[role]
+        val socket = connection?.socket
         if (socket == null || !socket.isConnected) throw IllegalStateException("$role not connected")
 
-        socket.outputStream.write(data.toByteArray())
-        socket.outputStream.flush()
-        JSONObject().put("success", true).put("role", role).put("fallback", true)
+        try {
+            socket.outputStream.write(data.toByteArray())
+            socket.outputStream.flush()
+            JSONObject().put("success", true).put("role", role).put("fallback", true)
+        } catch (e: IOException) {
+            val reason = e.message ?: "write failed"
+            Log.e(TAG, "[BT][JS][$role] Write failed, clearing stale socket: $reason", e)
+            handleRoleConnectionLost(role, connection.device?.address, reason)
+            JSONObject()
+                .put("error", "$role socket closed: $reason")
+                .put("disconnected", true)
+                .put("role", role)
+                .put("fallback", true)
+        }
     }
 
     fun shutdown() {
@@ -216,17 +228,16 @@ class BluetoothClassicJsBridge(
                             .put("data", data)
                             .put("role", role)
                             .put("address", address))
+                    } else if (bytes < 0) {
+                        val reason = "bt socket closed, read return: $bytes"
+                        Log.e(TAG, "[BT][JS][$role] Read error: $reason")
+                        handleRoleConnectionLost(role, address, reason)
+                        break
                     }
                 } catch (e: IOException) {
-                    Log.e(TAG, "[BT][JS][$role] Read error: ${e.message}")
-                    emit("BluetoothClassic:connectionLost", JSONObject()
-                        .put("error", e.message ?: "Read error")
-                        .put("role", role)
-                        .put("address", address))
-                    emit("BluetoothClassic:connectionStateChanged", JSONObject()
-                        .put("connected", false)
-                        .put("role", role)
-                        .put("address", address))
+                    val reason = e.message ?: "Read error"
+                    Log.e(TAG, "[BT][JS][$role] Read error: $reason")
+                    handleRoleConnectionLost(role, address, reason)
                     break
                 }
             }
@@ -235,6 +246,19 @@ class BluetoothClassicJsBridge(
         reader.isDaemon = true
         connection.reader = reader
         reader.start()
+    }
+
+    private fun handleRoleConnectionLost(role: String, address: String?, error: String) {
+        disconnectRole(role, notify = false)
+        emit("BluetoothClassic:connectionLost", JSONObject()
+            .put("error", error)
+            .put("role", role)
+            .put("address", address))
+        emit("BluetoothClassic:connectionStateChanged", JSONObject()
+            .put("connected", false)
+            .put("role", role)
+            .put("address", address)
+            .put("error", error))
     }
 
     private fun disconnectRole(role: String, notify: Boolean) {
