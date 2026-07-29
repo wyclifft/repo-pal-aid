@@ -957,13 +957,21 @@
 //   the fallback after the UNIMPLEMENTED bridge failure is detected. Strictly
 //   Bluetooth plumbing — no transaction, receipt, cumulative, reference
 //   generator, IndexedDB schema, sync engine, KCB payments, or auth changes.
+// v2.11.22: CS10 NATIVE BLUETOOTH/PRINTER RECOVERY. Android 7/WebView 51 now
+//   prefers the direct BluetoothClassicAndroid JS bridge so paired scales are
+//   read from BluetoothAdapter.bondedDevices instead of the broken Capacitor
+//   UNIMPLEMENTED proxy. Added Cs10PrinterAndroid for the CS10/Z100 internal
+//   printer using the vendor PosApiHelper SDK, because the built-in printer is
+//   not a Bluetooth SPP device. Strictly native device discovery/printing — no
+//   transaction, receipt content, cumulative, reference generator, IndexedDB
+//   schema, sync engine, KCB payments, or auth logic changes.
 // v2.11.12: PRINTER DIALOG + CLASSIC SPP SUPPORT. Added connection selector
 //   for internal CS10 printers. Hardened bridge polyfills and native plugin
 //   registration to fix "MISSING" errors on WebView 51.
-export const APP_VERSION = '2.11.21';
-export const APP_VERSION_CODE = 163;
+export const APP_VERSION = '2.11.22';
+export const APP_VERSION_CODE = 164;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'bt-bridge-fix';
+export const APP_FIX_TAG = 'cs10-bt-printer-native';
 
 
 
