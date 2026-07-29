@@ -353,3 +353,102 @@ button, [role="button"], input, select, textarea {
   transform: translateY(0);
   transition: opacity 0.2s ease-out, transform 0.2s ease-out;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v2.11.14 — WebView 51 (Chromium 51) CSS COMPATIBILITY LAYER
+   ───────────────────────────────────────────────────────────────────────────
+   The CS10 (Android 7 / WebView 51.0.2704.91) is missing:
+     - CSS `gap` on flexbox        (added Chrome 84)
+     - CSS `gap` on grid           (added Chrome 66, was `grid-gap`)
+     - `backdrop-filter`            (Chrome 76) — silently transparent
+     - `aspect-ratio`               (Chrome 88)
+     - `dvh`/`svh` units            (Chrome 108)
+     - `:is()` / `:where()`         (Chrome 88) — Tailwind reset already
+                                     tolerates absence
+   These fallbacks paint correctly on WebView 51 AND are no-ops on modern
+   browsers (thanks to @supports guards). Do not remove without a modern-
+   only build path.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* -- gap polyfill via > * + * margin (works everywhere since Chrome 4) -- */
+@supports not (gap: 1rem) {
+  /* flex-row (default) — horizontal spacing between siblings */
+  .flex.gap-1 > * + *, .flex.gap-x-1 > * + * { margin-left: 0.25rem; }
+  .flex.gap-2 > * + *, .flex.gap-x-2 > * + * { margin-left: 0.5rem; }
+  .flex.gap-3 > * + *, .flex.gap-x-3 > * + * { margin-left: 0.75rem; }
+  .flex.gap-4 > * + *, .flex.gap-x-4 > * + * { margin-left: 1rem; }
+  .flex.gap-5 > * + *, .flex.gap-x-5 > * + * { margin-left: 1.25rem; }
+  .flex.gap-6 > * + *, .flex.gap-x-6 > * + * { margin-left: 1.5rem; }
+  .flex.gap-8 > * + *, .flex.gap-x-8 > * + * { margin-left: 2rem; }
+
+  /* flex-col — vertical spacing overrides horizontal */
+  .flex.flex-col.gap-1 > * + * { margin-left: 0; margin-top: 0.25rem; }
+  .flex.flex-col.gap-2 > * + * { margin-left: 0; margin-top: 0.5rem; }
+  .flex.flex-col.gap-3 > * + * { margin-left: 0; margin-top: 0.75rem; }
+  .flex.flex-col.gap-4 > * + * { margin-left: 0; margin-top: 1rem; }
+  .flex.flex-col.gap-5 > * + * { margin-left: 0; margin-top: 1.25rem; }
+  .flex.flex-col.gap-6 > * + * { margin-left: 0; margin-top: 1.5rem; }
+  .flex.flex-col.gap-8 > * + * { margin-left: 0; margin-top: 2rem; }
+  .flex.gap-y-1 > * + * { margin-top: 0.25rem; }
+  .flex.gap-y-2 > * + * { margin-top: 0.5rem; }
+  .flex.gap-y-3 > * + * { margin-top: 0.75rem; }
+  .flex.gap-y-4 > * + * { margin-top: 1rem; }
+  .flex.gap-y-6 > * + * { margin-top: 1.5rem; }
+
+  /* Grid gap fallback — use the legacy grid-gap property which WebView 51
+     also lacks (Chrome 66). We fall back to margin on children for grids
+     of one column; multi-column grids should use explicit padding. */
+  .grid.gap-1 > * { margin: 0.125rem; }
+  .grid.gap-2 > * { margin: 0.25rem; }
+  .grid.gap-3 > * { margin: 0.375rem; }
+  .grid.gap-4 > * { margin: 0.5rem; }
+  .grid.gap-6 > * { margin: 0.75rem; }
+
+  /* Also emit the legacy grid-gap alias for browsers that only speak it */
+  .grid.gap-1 { grid-gap: 0.25rem; }
+  .grid.gap-2 { grid-gap: 0.5rem; }
+  .grid.gap-3 { grid-gap: 0.75rem; }
+  .grid.gap-4 { grid-gap: 1rem; }
+  .grid.gap-6 { grid-gap: 1.5rem; }
+  .grid.gap-8 { grid-gap: 2rem; }
+}
+
+/* -- backdrop-filter fallback: solid tint when blur isn't supported --
+   Any element combining `backdrop-blur-*` with `bg-white/95`, `bg-black/60`
+   etc. renders transparent on WebView 51. Force an opaque surface. */
+@supports not ((backdrop-filter: blur(4px)) or (-webkit-backdrop-filter: blur(4px))) {
+  [class*="backdrop-blur"] {
+    background-color: rgba(255, 255, 255, 0.98) !important;
+  }
+  .dark [class*="backdrop-blur"],
+  [class*="backdrop-blur"][class*="bg-black"] {
+    background-color: rgba(15, 23, 42, 0.9) !important;
+  }
+}
+
+/* -- aspect-ratio fallback via padding-bottom trick --
+   Tailwind's aspect-square / aspect-video / aspect-[4/3] emit the modern
+   `aspect-ratio` property which WV 51 ignores. We restore the ratio via
+   ::before padding when the property is unsupported. */
+@supports not (aspect-ratio: 1 / 1) {
+  .aspect-square { position: relative; }
+  .aspect-square::before { content: ""; display: block; padding-bottom: 100%; }
+  .aspect-square > * { position: absolute; inset: 0; top: 0; left: 0; right: 0; bottom: 0; }
+
+  .aspect-video { position: relative; }
+  .aspect-video::before { content: ""; display: block; padding-bottom: 56.25%; }
+  .aspect-video > * { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+
+  .\[aspect-ratio\:4\/3\], [class*="aspect-[4/3]"] { position: relative; }
+  .\[aspect-ratio\:4\/3\]::before, [class*="aspect-[4/3]"]::before {
+    content: ""; display: block; padding-bottom: 75%;
+  }
+}
+
+/* -- position: sticky was added in Chrome 56 → not in WV 51. Fall back to
+     relative so content still flows correctly (loses stick behaviour but
+     never disappears). */
+@supports not (position: sticky) {
+  .sticky { position: relative !important; }
+}
+
