@@ -1017,10 +1017,28 @@
 //   offers a manual "Retry probe" — it NEVER auto-falls-back to Bluetooth
 //   when the user explicitly picked Internal. No transaction, sync,
 //   IndexedDB, receipt content, Bluetooth pairing, or business logic changes.
-export const APP_VERSION = '2.11.26';
-export const APP_VERSION_CODE = 168;
+// v2.11.27: POS-API-PLUGIN. Retired the Cs10PrinterJsBridge / probe service /
+//   CiontekPrinterBridge / CiontekServiceProbe stack and introduced a proper
+//   Capacitor 7 plugin (PosApiPlugin, Java) that wraps the vendor POS SDK
+//   (vpos.apipackage.PosApiHelper + com.cspos.PaySys) via reflection so the
+//   build stays green whether or not the vendor JAR is present at compile
+//   time. Sys.Lib_AppInit(context) runs once in load(); every JNI call runs
+//   on a dedicated worker thread. Exposes only confirmed SDK methods:
+//   system (beep/powerOn/getVersion/getSerial/…), printer (initializePrinter/
+//   printText/startPrint/printReceipt/printerStatus), ICC/PICC (openCard/
+//   sendApdu/detectCard/…), MSR (openMag/readMagStripe), scanner, PIN pad
+//   (enterPin/getPinBlock), EMV (initEmv/startTransaction/setAmount/loadAid/
+//   loadCapk/getTag), fingerprint, ID card, serial. Return codes are
+//   normalised: 0 → ok, -1 → NO_PAPER, -2 → PRINTER_OVERHEATED,
+//   -3 → LOW_BATTERY, other → POS_ERR_<n>; missing SDK → HARDWARE_UNAVAILABLE.
+//   PrinterConnectionDialog "Internal CS10 Printer" and
+//   printToInternalPrinter() now route through PosApi.printReceipt(). No
+//   transaction, sync, IndexedDB, receipt content, or Classic Bluetooth
+//   changes.
+export const APP_VERSION = '2.11.27';
+export const APP_VERSION_CODE = 169;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'cs10-pos-manager-provider-aidl';
+export const APP_FIX_TAG = 'pos-api-plugin';
 
 
 
