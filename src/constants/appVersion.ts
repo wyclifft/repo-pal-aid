@@ -930,6 +930,10 @@
 //   creation, receipts, cumulative logic (v2.10.121 downward-hold still
 //   active), reference generator, IndexedDB schema, sync engine, KCB
 //   payments, or auth.
+// v2.11.18: Final CS10 native-shell light-status-bar correction. Keeps the
+//   white Android/Capacitor shell consistent on WebView 51 without changing
+//   transaction, receipt, cumulative, reference generator, IndexedDB schema,
+//   sync engine, KCB payments, or auth logic.
 // v2.11.17: CS10 WebView 51 recovery. Hardens the native BluetoothClassic
 //   plugin for Android 7 by treating legacy Bluetooth permissions as install-
 //   time grants, falling back to BluetoothAdapter.getDefaultAdapter(), adding
@@ -945,8 +949,8 @@
 // v2.11.12: PRINTER DIALOG + CLASSIC SPP SUPPORT. Added connection selector
 //   for internal CS10 printers. Hardened bridge polyfills and native plugin
 //   registration to fix "MISSING" errors on WebView 51.
-export const APP_VERSION = '2.11.17';
-export const APP_VERSION_CODE = 159;
+export const APP_VERSION = '2.11.18';
+export const APP_VERSION_CODE = 160;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'cs10-plugin-ui-fix';
 
