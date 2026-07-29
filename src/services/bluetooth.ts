@@ -1989,15 +1989,15 @@ const stringToBytes = (str: string): number[] => {
 
 export const printToBluetoothPrinter = async (content: string): Promise<{ success: boolean; error?: string }> => {
   try {
-    if (Capacitor.isNativePlatform() && await isInternalPrinterAvailable()) {
-      console.log('🖨️ Using CS10 internal printer bridge...');
-      return await printToInternalPrinter(content);
-    }
-
     // Check for Classic printer first - if connected, delegate to Classic printer
     if (isClassicPrinterConnected()) {
       console.log('🖨️ Using Classic Bluetooth printer...');
       return await printToClassicPrinter(content);
+    }
+
+    if (Capacitor.isNativePlatform() && !printer.isConnected && await isInternalPrinterAvailable()) {
+      console.log('🖨️ Using CS10 internal printer bridge...');
+      return await printToInternalPrinter(content);
     }
     
     // Check BLE printer connection
