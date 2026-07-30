@@ -229,8 +229,16 @@ public class PosApiHelper {
     }
 
     public int PrintCheckStatus() {
-        int voltage = Integer.parseInt(readSysBattFile(NODE_BATT_VOL));
-        if (!"Charging".equals(readSysBattFile(NODE_BATT_STATUS))) {
+        // v2.11.28: battery nodes may be unreadable on some firmware; treat as non-charging.
+        int voltage = 0;
+        String status = "";
+        try {
+            voltage = Integer.parseInt(readSysBattFile(NODE_BATT_VOL));
+            status = readSysBattFile(NODE_BATT_STATUS);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (!"Charging".equals(status)) {
             Print.Lib_PrnIsCharge(0);
         } else {
             Print.Lib_PrnIsCharge(1);
