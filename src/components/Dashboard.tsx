@@ -147,11 +147,22 @@ export const Dashboard = ({
     window.addEventListener('scaleConnectionChange', handleScaleChange as EventListener);
     window.addEventListener('printerConnectionChange', handlePrinterChange as EventListener);
     
+    // v2.11.32: real-time truth-source poll so the dots reflect the actual
+    // socket state even when no event fires (silent drops, native reconnects).
+    const poll = setInterval(() => {
+      const s = isScaleConnected();
+      const p = isPrinterConnected();
+      setScaleConnected((prev) => (prev === s ? prev : s));
+      setPrinterConnected((prev) => (prev === p ? prev : p));
+    }, 1500);
+
     return () => {
+      clearInterval(poll);
       window.removeEventListener('scaleConnectionChange', handleScaleChange as EventListener);
       window.removeEventListener('printerConnectionChange', handlePrinterChange as EventListener);
     };
   }, []);
+
   
   // Session close handler that respects sessPrint setting
   const handleSessionCloseSuccess = useCallback(() => {
