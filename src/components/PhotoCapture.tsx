@@ -348,7 +348,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
         </DialogHeader>
 
 
-        <div className="relative bg-black aspect-[4/3] min-h-[300px]">
+        <div className="relative bg-black flex-1 min-h-[160px] overflow-hidden">
           {/* Camera preview or captured image */}
           {capturedImage ? (
             <img 
