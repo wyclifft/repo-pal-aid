@@ -331,11 +331,14 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DialogContent className="max-w-lg p-0 overflow-hidden">
-        <DialogHeader className="p-4 pb-2 bg-[#5E35B1] text-white">
+      {/* v2.11.30: CS10 720x1280 fit — the dialog is a fixed-height flex column,
+          the preview flexes/shrinks, and the action row is a non-shrinking
+          footer so Retake / Use Photo / Cancel are always on screen. */}
+      <DialogContent className="max-w-lg p-0 overflow-hidden max-h-[92vh] flex flex-col">
+        <DialogHeader className="p-4 pb-2 bg-[#5E35B1] text-white flex-shrink-0">
           <div className="flex items-center justify-between">
             <DialogTitle className="text-lg font-semibold">{title}</DialogTitle>
-            <button onClick={handleClose} className="p-1 hover:bg-white/20 rounded">
+            <button onClick={handleClose} className="p-2 hover:bg-white/20 rounded" aria-label="Close">
               <X className="h-5 w-5" />
             </button>
           </div>
@@ -343,6 +346,7 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
             Capture a photo using the device camera. Confirm or retake before submitting.
           </DialogDescription>
         </DialogHeader>
+
 
         <div className="relative bg-black aspect-[4/3] min-h-[300px]">
           {/* Camera preview or captured image */}
