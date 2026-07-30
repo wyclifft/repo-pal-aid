@@ -1260,7 +1260,7 @@ export const printToClassicPrinter = async (content: string): Promise<{ success:
     ESC + '@' +           // Initialize printer
     ESC + 'a\x01' +       // Center alignment
     content +
-    '\n\n\n\n\n' +        // Line feeds
+    '\n\n' +              // v2.11.33: trimmed tail feed (was 5 lines)
     GS + 'V\x00';         // Cut paper
 
   const sendPrintData = async () => {
