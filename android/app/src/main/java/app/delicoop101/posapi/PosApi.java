@@ -86,7 +86,29 @@ public final class PosApi {
         }
     }
 
+    /**
+     * v2.11.29: init lifecycle state for diagnostics — "ok" | "pending" | "failed".
+     * "pending" means Lib_AppInit has not completed yet (the plugin runs it
+     * asynchronously on the worker thread at load()), which used to surface to JS
+     * as a bare ready=false with no error at all.
+     */
+    public String initState() {
+        if (appInitDone.get()) return "ok";
+        return initError != null ? "failed" : "pending";
+    }
+
+    public boolean isAppInitDone() { return appInitDone.get(); }
+
     public Throwable getInitError() { return initError; }
+
+    /** Human readable init error, or null. */
+    public String initErrorText() {
+        Throwable t = initError;
+        if (t == null) return null;
+        String msg = t.getMessage();
+        return t.getClass().getSimpleName() + (msg == null ? "" : ": " + msg);
+    }
+
 
     // -------------------------------------------------------------- system
     public Result beep()     { return call("Lib_Beep",     new IntCall() { public int run() { return Sys.Lib_Beep(); } }); }
