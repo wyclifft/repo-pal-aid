@@ -34,7 +34,11 @@ public class PosApiHelper {
     private int ret;
     private byte[] version = new byte[9];
     private static final Object mLock = new Object();
-    private static Object mBCRService = getBCRService();
+    // v2.11.29: resolved lazily. The CS10 firmware has no com.android.server.bcr
+    // .IBCRService, and eager resolution in the static initialiser spammed logcat
+    // with ClassNotFoundException stack traces on every app start.
+    private static Object mBCRService = null;
+
     public static String TmpStr = "";
 
     public int SetMcuPowerMode(int mode) {
@@ -775,11 +779,14 @@ public class PosApiHelper {
             Class<?> stub = Class.forName("com.android.server.bcr.IBCRService$Stub");
             Method asInterfaceMethod = stub.getDeclaredMethod("asInterface", IBinder.class);
             return asInterfaceMethod.invoke(stub, b);
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (Throwable e) {
+            // v2.11.29: absent on CS10 firmware and unused by this app — log once,
+            // quietly, instead of dumping a stack trace on every call.
+            Log.d("PosApiHelper", "bcr_service unavailable (ignored): " + e);
             return null;
         }
     }
+
 
     public static boolean installRomPackage(Context context, String romFilePath) {
         Log.e("RomUtil", "installRomPackage - s");

@@ -22,7 +22,7 @@ export class PosApiWeb extends WebPlugin implements PosApiPlugin {
   setLog = unavailableResult as unknown as PosApiPlugin['setLog'];
   setLed = unavailableResult as unknown as PosApiPlugin['setLed'];
   setEntryMode = unavailableResult as unknown as PosApiPlugin['setEntryMode'];
-  async isReady(): Promise<PosReadyResult> { return { ok: true, ready: false, error: 'web' }; }
+  async isReady(): Promise<PosReadyResult> { return { ok: true, ready: false, state: 'web', error: 'web' }; }
 
   // printer
   initializePrinter = unavailableResult;

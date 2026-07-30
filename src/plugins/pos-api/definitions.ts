@@ -28,8 +28,11 @@ export interface PosResult {
 export interface PosReadyResult {
   ok: true;
   ready: boolean;
+  /** v2.11.29: native init lifecycle — 'ok' | 'pending' | 'failed' | 'web'. */
+  state?: string;
   error?: string;
 }
+
 
 export interface PosApiPlugin {
   // --- system

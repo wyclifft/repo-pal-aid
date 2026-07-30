@@ -47,8 +47,29 @@ export default defineConfig(({ mode }) => ({
         return cleanHtml;
       }
     },
+    {
+      // v2.11.29 — WebView 51 hard gate.
+      // 1. Downlevel Capacitor's injected native-bridge.js to ES5 (the real
+      //    cause of "Unexpected token (" at index.html:54 on Android 7).
+      // 2. Verify every emitted script parses as ES5 before the APK is built.
+      name: 'webview-51-es5-guard',
+      apply: 'build' as const,
+      async closeBundle() {
+        // @ts-expect-error - plain .mjs build helpers, no type declarations
+        const { buildLegacyBridge } = await import('./scripts/build-legacy-bridge.mjs');
+        await buildLegacyBridge();
+        // @ts-expect-error - plain .mjs build helpers, no type declarations
+        const { verifyEs5 } = await import('./scripts/verify-es5.mjs');
+        const failures = verifyEs5({ outDir: 'dist' });
+        if (failures.length) {
+          throw new Error(`[es5-guard] build output is not ES5-safe for WebView 51 (${failures.length} file(s)).`);
+        }
+      },
+
+    },
     mode === "development" && componentTagger(),
   ].filter(Boolean),
+
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

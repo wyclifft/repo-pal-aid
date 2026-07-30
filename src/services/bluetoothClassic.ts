@@ -882,16 +882,38 @@ const INTERNAL_PRINTER_ADDRESS = 'CS10-INTERNAL-PRINTER';
 
 
 
+/**
+ * v2.11.29: WebView 51 logs Error objects as an empty string, which is why the
+ * device only ever showed "availability check failed:" with no cause. Every
+ * failure path now produces a stringified, human readable reason and carries the
+ * native init `state` (ok | pending | failed) through to /debug.
+ */
+const describeError = (error: unknown): string => {
+  if (error == null) return 'unknown error';
+  if (typeof error === 'string') return error;
+  const anyErr = error as Record<string, unknown>;
+  const parts = [anyErr.code, anyErr.errorMessage, anyErr.message]
+    .filter((v) => typeof v === 'string' && v.length > 0) as string[];
+  if (parts.length) return parts.join(' | ');
+  try {
+    const json = JSON.stringify(error);
+    if (json && json !== '{}') return json;
+  } catch { /* ignore */ }
+  return String(error);
+};
+
 export const getInternalPrinterStatus = async (): Promise<InternalPrinterStatus> => {
   if (!Capacitor.isNativePlatform()) return { available: false, reason: 'not-native' };
   try {
     const ready = await PosApi.isReady();
     if (!ready.ready) {
+      const message = ready.error || `Vendor SDK not ready (state=${ready.state || 'unknown'})`;
+      console.warn(`🖨️ CS10 internal printer not ready: state=${ready.state || 'unknown'} ${message}`);
       return {
         available: false,
-        reason: 'sdk-unavailable',
+        reason: ready.state === 'pending' ? 'sdk-initializing' : 'sdk-unavailable',
         stage: 'PosApi.isReady',
-        message: ready.error || 'Vendor SDK not loaded',
+        message,
       };
     }
     // Probe the printer by opening + initializing. Any hardware/paper/heat/battery
@@ -902,7 +924,7 @@ export const getInternalPrinterStatus = async (): Promise<InternalPrinterStatus>
       return { available: true, reason: 'ok' };
     } catch (e: any) {
       const code = e?.code || e?.errorMessage || 'init-failed';
-      const msg = e?.message || String(e);
+      const msg = describeError(e);
       console.warn(`🖨️ CS10 internal printer init failed: ${code} ${msg}`);
       return {
         available: false,
@@ -913,15 +935,17 @@ export const getInternalPrinterStatus = async (): Promise<InternalPrinterStatus>
       };
     }
   } catch (error) {
-    console.warn('⚠️ CS10 internal printer availability check failed:', error);
+    const msg = describeError(error);
+    console.warn('⚠️ CS10 internal printer availability check failed:', msg);
     return {
       available: false,
       reason: 'status-check-failed',
-      message: error instanceof Error ? error.message : String(error),
+      message: msg,
       stage: 'PosApi',
     };
   }
 };
+
 
 /**
  * v2.11.27: Re-run the PosApi initialize probe. There is no cached probe on
