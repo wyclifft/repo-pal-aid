@@ -36,6 +36,9 @@ export default function PeriodicReport() {
   const { produceLabel, routeLabel, weightUnit, weightLabel } = useAppSettings();
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
+  // v2.11.30: controlled calendars so they auto-close on selection (CS10 fix)
+  const [startOpen, setStartOpen] = useState(false);
+  const [endOpen, setEndOpen] = useState(false);
 
   // Check authentication
   useEffect(() => {
