@@ -109,14 +109,35 @@ public class PosApiPlugin extends Plugin {
     @PluginMethod public void printerStatus(PluginCall c) {
         run(() -> respond(c, PosApi.get().printerStatus()));
     }
+    /**
+     * v2.11.29: isReady now runs on the POS worker thread like every other
+     * method (it performs a live JNI version probe — never do that on the UI
+     * thread, it was a measured source of skipped frames), probes once instead
+     * of twice, retries a pending Lib_AppInit, and always returns structured
+     * detail so the JS side can never log an empty reason.
+     */
     @PluginMethod public void isReady(PluginCall c) {
-        PosApi api = PosApi.get();
-        JSObject out = new JSObject().put("ok", true).put("ready", api.isReady());
-        if (!api.isReady() && api.getInitError() != null) {
-            out.put("error", api.getInitError().getClass().getSimpleName() + " " + api.getInitError().getMessage());
-        }
-        c.resolve(out);
+        run(() -> {
+            PosApi api = PosApi.get();
+            if (!api.isAppInitDone()) {
+                // load() dispatches appInit asynchronously; a probe can land first.
+                PosApi.Result init = api.appInit(getContext());
+                Log.i(TAG, "isReady: re-ran appInit rc=" + init.rc + " code=" + init.code);
+            }
+            boolean ready = api.isReady();
+            JSObject out = new JSObject()
+                .put("ok", true)
+                .put("ready", ready)
+                .put("state", api.initState());
+            String err = api.initErrorText();
+            if (err != null) out.put("error", err);
+            if (!ready && err == null) {
+                out.put("error", "POS SDK not ready (state=" + api.initState() + ")");
+            }
+            c.resolve(out);
+        });
     }
+
 
     // ------------------------------------------------------------- ICC
     @PluginMethod public void openCard(PluginCall c)   { run(() -> respond(c, PosApi.get().iccOpen())); }
