@@ -294,7 +294,13 @@ public class PosApiHelper {
     }
 
     public int PrintStr(String str) {
-        return Print.Lib_PrnStr(str);
+        // v2.11.28: Lib_PrnStr declares UnsupportedEncodingException; never propagate it.
+        try {
+            return Print.Lib_PrnStr(str);
+        } catch (java.io.UnsupportedEncodingException e) {
+            e.printStackTrace();
+            return -1;
+        }
     }
 
     public int PrintSetLinPixelDis(char iLinDistance) {
