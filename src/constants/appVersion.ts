@@ -1075,7 +1075,7 @@ export const APP_VERSION = '2.11.29';
 export const APP_VERSION_CODE = 171;
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'pos-api-vendor-sdk';
+export const APP_FIX_TAG = 'webview51-bridge-es5';
 
 
 
