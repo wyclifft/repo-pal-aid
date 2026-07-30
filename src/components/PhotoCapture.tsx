@@ -354,8 +354,9 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
             <img 
               src={capturedImage} 
               alt="Captured" 
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
             />
+
           ) : (
             <>
               <video 
