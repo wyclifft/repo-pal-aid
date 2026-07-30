@@ -1085,8 +1085,8 @@
 //   (CS10 firmware has no IBCRService; behaviour unchanged, log spam gone).
 //   No transaction, sync, IndexedDB, receipt content, payments, device auth or
 //   Classic Bluetooth logic changes.
-export const APP_VERSION = '2.11.30';
-export const APP_VERSION_CODE = 172;
+export const APP_VERSION = '2.11.31';
+export const APP_VERSION_CODE = 173;
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'webview51-bridge-es5';
