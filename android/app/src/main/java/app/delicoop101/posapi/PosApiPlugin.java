@@ -99,7 +99,14 @@ public class PosApiPlugin extends Plugin {
             c.reject("INVALID_ARGUMENT", "lines must be string[]");
             return;
         }
-        run(() -> respond(c, PosApi.get().printReceipt(lines)));
+        // v2.11.30: optional geometry so the CS10 receipt font/feed can be tuned
+        // from JS without another native build. Defaults preserve callers.
+        final int fontHeight = c.getInt("fontHeight", PosApi.DEFAULT_FONT_HEIGHT);
+        final int fontWidth  = c.getInt("fontWidth",  PosApi.DEFAULT_FONT_WIDTH);
+        final int lineSpace  = c.getInt("lineSpace",  PosApi.DEFAULT_LINE_SPACE);
+        final int feedDots   = c.getInt("feedDots",   PosApi.DEFAULT_FEED_DOTS);
+        final String[] payload = lines;
+        run(() -> respond(c, PosApi.get().printReceipt(payload, fontHeight, fontWidth, lineSpace, feedDots)));
     }
     @PluginMethod public void closePrinter(PluginCall c) {
         // SDK has no explicit close — resolve ok. Kept for API symmetry.
