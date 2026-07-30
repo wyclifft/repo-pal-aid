@@ -1035,10 +1035,25 @@
 //   printToInternalPrinter() now route through PosApi.printReceipt(). No
 //   transaction, sync, IndexedDB, receipt content, or Classic Bluetooth
 //   changes.
-export const APP_VERSION = '2.11.27';
-export const APP_VERSION_CODE = 169;
+// v2.11.28: POS-API-VENDOR-SDK. Replaced the reflection-only PosApi wrapper with
+//   the recovered vendor SDK compiled into the app: vpos/apipackage/*, vpos/util,
+//   com/cspos/PaySys plus libPosApi.so + libPaypassApi.so under
+//   jniLibs/armeabi-v7a. PosApi.java now calls PosApiHelper / Sys / Print / Icc /
+//   Picc / Mcr / Scan / Fingerprint / IDCard / PaySys directly; the
+//   ClassNotFoundException "PosApiHelper unavailable" fallbacks are gone while
+//   normal runtime error mapping (NO_PAPER / PRINTER_OVERHEATED / LOW_BATTERY /
+//   POS_ERR_<n>) is preserved. Sys.Lib_AppInit(context) still runs exactly once
+//   in PosApiPlugin.load() on the worker thread. Decompiled SDK sources were
+//   patched to compile (checked-exception wrapping in PosApiHelper print/barcode
+//   helpers, missing return in readSysBattCat, android.support → literal colour
+//   masks). ABI pinned to armeabi-v7a to match the shipped native libraries and
+//   ProGuard keeps vpos.** / com.cspos.**. TypeScript PosApi surface unchanged.
+//   No transaction, sync, IndexedDB, receipt content, payments, scale, or
+//   Classic Bluetooth logic changes.
+export const APP_VERSION = '2.11.28';
+export const APP_VERSION_CODE = 170;
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'pos-api-plugin';
+export const APP_FIX_TAG = 'pos-api-vendor-sdk';
 
 
 
