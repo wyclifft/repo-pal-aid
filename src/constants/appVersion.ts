@@ -1,4 +1,18 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.11.30: ANDROID 7 / WEBVIEW 51 UI + RECEIPT LAYOUT FIX (presentation only).
+//   Printer: PosApi.printReceipt now takes fontHeight/fontWidth/lineSpace/
+//   feedDots (CS10 defaults 32/24/2/80). Larger glyphs at the same 24-dot
+//   width keep the 32-column layout and alignment intact; the leading blank
+//   lines are gone (left indent 0, no pre-feed) and bottom clearance is a real
+//   Lib_PrnStep after PrintStart so the last line clears the tear bar.
+//   Camera: PhotoCapture dialog is a capped flex column with a sticky footer,
+//   so Cancel / Retake / Use Photo are always on screen at 720x1280.
+//   Date pickers: PeriodicReport calendars are controlled and auto-close on
+//   selection; PopoverContent gains collision padding + max-height.
+//   Dialogs: DialogContent capped at 92vh with internal scrolling (vh only,
+//   no dvh — unsupported on WebView 51).
+//   No business logic, API, database, sync, or reference-generation changes.
+//
 // v2.11.8: NATIVE STARTUP BOOT FIX — restored the missing React root render
 //   request in src/main.tsx so Capacitor can move past the pre-React
 //   index.html spinner. Removed the duplicate inline /sw.js registration
@@ -1071,8 +1085,8 @@
 //   (CS10 firmware has no IBCRService; behaviour unchanged, log spam gone).
 //   No transaction, sync, IndexedDB, receipt content, payments, device auth or
 //   Classic Bluetooth logic changes.
-export const APP_VERSION = '2.11.29';
-export const APP_VERSION_CODE = 171;
+export const APP_VERSION = '2.11.30';
+export const APP_VERSION_CODE = 172;
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'webview51-bridge-es5';

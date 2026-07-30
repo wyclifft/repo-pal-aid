@@ -331,11 +331,14 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DialogContent className="max-w-lg p-0 overflow-hidden">
-        <DialogHeader className="p-4 pb-2 bg-[#5E35B1] text-white">
+      {/* v2.11.30: CS10 720x1280 fit — the dialog is a fixed-height flex column,
+          the preview flexes/shrinks, and the action row is a non-shrinking
+          footer so Retake / Use Photo / Cancel are always on screen. */}
+      <DialogContent className="max-w-lg p-0 overflow-hidden max-h-[92vh] flex flex-col">
+        <DialogHeader className="p-4 pb-2 bg-[#5E35B1] text-white flex-shrink-0">
           <div className="flex items-center justify-between">
             <DialogTitle className="text-lg font-semibold">{title}</DialogTitle>
-            <button onClick={handleClose} className="p-1 hover:bg-white/20 rounded">
+            <button onClick={handleClose} className="p-2 hover:bg-white/20 rounded" aria-label="Close">
               <X className="h-5 w-5" />
             </button>
           </div>
@@ -344,14 +347,16 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
           </DialogDescription>
         </DialogHeader>
 
-        <div className="relative bg-black aspect-[4/3] min-h-[300px]">
+
+        <div className="relative bg-black flex-1 min-h-[160px] overflow-hidden">
           {/* Camera preview or captured image */}
           {capturedImage ? (
             <img 
               src={capturedImage} 
               alt="Captured" 
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
             />
+
           ) : (
             <>
               <video 
@@ -396,33 +401,41 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
           <canvas ref={canvasRef} className="hidden" />
         </div>
 
-        {/* Controls */}
-        <div className="p-4 bg-gray-100">
+        {/* Controls — flex-shrink-0 footer, always visible on a 720x1280 CS10 */}
+        <div className="p-3 bg-gray-100 flex-shrink-0 border-t">
           {capturedImage ? (
-            <div className="flex gap-3 justify-center">
+            <div className="flex flex-wrap gap-2 justify-center">
+              <Button 
+                onClick={handleClose}
+                variant="outline"
+                className="flex items-center gap-2 h-12 min-w-[96px]"
+              >
+                <X className="h-4 w-4" />
+                Cancel
+              </Button>
               <Button 
                 onClick={retakePhoto}
                 variant="outline"
-                className="flex items-center gap-2"
+                className="flex items-center gap-2 h-12 min-w-[96px]"
               >
                 <RotateCcw className="h-4 w-4" />
                 Retake
               </Button>
               <Button 
                 onClick={confirmPhoto}
-                className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
+                className="flex items-center gap-2 h-12 min-w-[120px] bg-green-600 hover:bg-green-700"
               >
                 <Check className="h-4 w-4" />
                 Use Photo
               </Button>
             </div>
           ) : (
-            <div className="flex gap-3 justify-center">
+            <div className="flex flex-wrap gap-2 justify-center">
               <Button 
                 onClick={switchCamera}
                 variant="outline"
                 disabled={isLoading || !!cameraError}
-                className="flex items-center gap-2"
+                className="flex items-center gap-2 h-12 min-w-[96px]"
               >
                 <RotateCcw className="h-4 w-4" />
                 Switch
@@ -430,10 +443,11 @@ const PhotoCapture = ({ open, onClose, onCapture, title = 'Capture Buyer Photo',
               <Button 
                 onClick={capturePhoto}
                 disabled={isLoading || !!cameraError}
-                className="flex items-center gap-2 bg-[#E53935] hover:bg-[#D32F2F] px-8"
+                className="flex items-center gap-2 h-12 px-8 bg-[#E53935] hover:bg-[#D32F2F]"
               >
                 <Camera className="h-5 w-5" />
                 Capture
+
               </Button>
             </div>
           )}

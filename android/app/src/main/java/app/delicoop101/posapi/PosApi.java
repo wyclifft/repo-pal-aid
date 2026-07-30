@@ -224,21 +224,76 @@ public final class PosApi {
         return call("PrintClose", new IntCall() { public int run() { return helper.PrintClose(); } });
     }
 
-    /** printReceipt(lines) — canonical Open → Init(2,24,24,0) → PrintStr* → Start. */
+    /** v2.11.30: CS10 receipt defaults — taller glyphs, tight leading, no head offset. */
+    public static final int DEFAULT_FONT_HEIGHT = 32;
+    public static final int DEFAULT_FONT_WIDTH  = 24;
+    public static final int DEFAULT_LINE_SPACE  = 2;
+    public static final int DEFAULT_FEED_DOTS   = 80;
+
     public Result printReceipt(String[] lines) {
+        return printReceipt(lines, DEFAULT_FONT_HEIGHT, DEFAULT_FONT_WIDTH,
+                DEFAULT_LINE_SPACE, DEFAULT_FEED_DOTS);
+    }
+
+    /**
+     * v2.11.30: printReceipt with tunable geometry.
+     *
+     * Open → Init(gray, fontHeight, fontWidth, 0) → left indent 0 + line space
+     * → PrintStr* → Start → post-print paper feed.
+     *
+     * Three fixes over the v2.11.28 sequence:
+     *  1. No leading blank lines and an explicit Lib_PrnSetLeftIndent(0) so the
+     *     head starts at the very first printable line/column (kills the top gap).
+     *  2. Larger default font height (24 → 32) at the same 24-dot width, so the
+     *     32-character column layout and all alignment are preserved.
+     *  3. Bottom clearance is a real paper step AFTER PrintStart() instead of
+     *     three text newlines, so the last line is never left under the head.
+     */
+    public Result printReceipt(String[] lines, int fontHeight, int fontWidth,
+                               int lineSpace, int feedDots) {
         Result r = printOpen();
         if (r.code != null) return r;
-        r = printInit(2, 24, 24, 0);
+
+        int gray = 2;
+        r = printInit(gray, fontHeight, fontWidth, 0);
         if (r.code != null) return r;
+
+        // Geometry: best-effort, never fatal — some firmwares no-op these.
+        try { vpos.apipackage.Print.Lib_PrnSetLeftIndent(0); } catch (Throwable ignored) { }
+        try { vpos.apipackage.Print.Lib_PrnSetLineSpace(Math.max(0, lineSpace)); } catch (Throwable ignored) { }
+        try { helper.PrintSetAlign(0); } catch (Throwable ignored) { }
+
         if (lines != null) {
             for (String line : lines) {
                 r = printStr((line == null ? "" : line) + "\n");
                 if (r.code != null) return r;
             }
         }
-        // trailing feed for a clean tear
-        printStr("\n\n\n");
-        return printStart();
+
+        Result started = printStart();
+        if (started.code != null) return started;
+
+        // Post-print clearance so the tail of the receipt clears the tear bar.
+        feedPaper(feedDots);
+        return started;
+    }
+
+    /** Best-effort paper advance in dot-lines; falls back to blank text lines. */
+    public void feedPaper(int dots) {
+        if (dots <= 0) return;
+        try {
+            int rc = vpos.apipackage.Print.Lib_PrnStep(dots);
+            if (rc == 0) return;
+        } catch (Throwable ignored) { }
+        try {
+            vpos.apipackage.Print.Lib_PrnFeedPaper(dots);
+            return;
+        } catch (Throwable ignored) { }
+        // Last resort: blank lines through the normal text path.
+        try {
+            printStr("\n\n\n");
+            printStart();
+        } catch (Throwable ignored) { }
     }
 
     // -------------------------------------------------------------- ICC

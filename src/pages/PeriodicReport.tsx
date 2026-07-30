@@ -36,6 +36,9 @@ export default function PeriodicReport() {
   const { produceLabel, routeLabel, weightUnit, weightLabel } = useAppSettings();
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
+  // v2.11.30: controlled calendars so they auto-close on selection (CS10 fix)
+  const [startOpen, setStartOpen] = useState(false);
+  const [endOpen, setEndOpen] = useState(false);
 
   // Check authentication
   useEffect(() => {
@@ -291,24 +294,26 @@ export default function PeriodicReport() {
             {/* Start Date */}
             <div className="space-y-2">
               <Label>Start Date</Label>
-              <Popover>
+              {/* v2.11.30: controlled popover — closes as soon as a date is
+                  picked so the calendar never blocks the fields below. */}
+              <Popover open={startOpen} onOpenChange={setStartOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
                     className={cn(
-                      "w-full justify-start text-left font-normal",
+                      "w-full h-12 justify-start text-left font-normal",
                       !startDate && "text-muted-foreground"
                     )}
                   >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {startDate ? format(startDate, "PPP") : "Pick a date"}
+                    <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
+                    <span className="truncate">{startDate ? format(startDate, "PPP") : "Pick a date"}</span>
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
+                <PopoverContent className="w-auto max-w-[calc(100vw-1.5rem)] p-0" align="start">
                   <Calendar
                     mode="single"
                     selected={startDate}
-                    onSelect={setStartDate}
+                    onSelect={(d) => { setStartDate(d); setStartOpen(false); }}
                     initialFocus
                     className={cn("p-3 pointer-events-auto")}
                   />
@@ -324,30 +329,31 @@ export default function PeriodicReport() {
             {/* End Date */}
             <div className="space-y-2">
               <Label>End Date</Label>
-              <Popover>
+              <Popover open={endOpen} onOpenChange={setEndOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
                     className={cn(
-                      "w-full justify-start text-left font-normal",
+                      "w-full h-12 justify-start text-left font-normal",
                       !endDate && "text-muted-foreground"
                     )}
                   >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {endDate ? format(endDate, "PPP") : "Pick a date"}
+                    <CalendarIcon className="mr-2 h-4 w-4 flex-shrink-0" />
+                    <span className="truncate">{endDate ? format(endDate, "PPP") : "Pick a date"}</span>
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
+                <PopoverContent className="w-auto max-w-[calc(100vw-1.5rem)] p-0" align="start">
                   <Calendar
                     mode="single"
                     selected={endDate}
-                    onSelect={setEndDate}
+                    onSelect={(d) => { setEndDate(d); setEndOpen(false); }}
                     initialFocus
                     className={cn("p-3 pointer-events-auto")}
                   />
                 </PopoverContent>
               </Popover>
             </div>
+
 
             {/* v2.10.77: Member Search with live suggestions */}
             <div className="space-y-2 relative">
