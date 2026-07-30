@@ -57,9 +57,12 @@ export function verifyEs5({ outDir = "dist", silent = false } = {}) {
 
   const bridge = resolve(ROOT, "android/app/src/main/assets/native-bridge.js");
   if (existsSync(bridge)) {
-    parseEs5("android native-bridge.js", readFileSync(bridge, "utf8"), failures);
+    // Bridge is gated at ES2015 — Chromium 51 is ES2015-complete, it only
+    // chokes on ES2016+ (async/await, exponent, object rest).
+    parse("android native-bridge.js", readFileSync(bridge, "utf8"), failures, 2015);
     checked++;
   }
+
 
   if (failures.length) {
     console.error(`\n[es5-guard] ${failures.length} file(s) are NOT ES5 — WebView 51 will fail:`);
