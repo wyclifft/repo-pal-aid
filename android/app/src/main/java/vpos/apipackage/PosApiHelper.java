@@ -779,11 +779,14 @@ public class PosApiHelper {
             Class<?> stub = Class.forName("com.android.server.bcr.IBCRService$Stub");
             Method asInterfaceMethod = stub.getDeclaredMethod("asInterface", IBinder.class);
             return asInterfaceMethod.invoke(stub, b);
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (Throwable e) {
+            // v2.11.29: absent on CS10 firmware and unused by this app — log once,
+            // quietly, instead of dumping a stack trace on every call.
+            Log.d("PosApiHelper", "bcr_service unavailable (ignored): " + e);
             return null;
         }
     }
+
 
     public static boolean installRomPackage(Context context, String romFilePath) {
         Log.e("RomUtil", "installRomPackage - s");
