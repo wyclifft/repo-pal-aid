@@ -66,8 +66,12 @@ export async function buildLegacyBridge({ silent = false } = {}) {
 ${result.code}
 `;
 
-  // Hard gate: never emit something WebView 51 still cannot parse.
-  acorn.parse(code, { ecmaVersion: 5 });
+  // Hard gate: never emit something WebView 51 cannot parse.
+  // Chromium 51 is ES2015-complete (class, let/const, generators, destructuring,
+  // spread); what it lacks is ES2016+ — async/await, exponent, object rest.
+  // So ES2015 is the correct parse target for the bridge.
+  acorn.parse(code, { ecmaVersion: 2015 });
+
 
   mkdirSync(dirname(TARGET), { recursive: true });
   writeFileSync(TARGET, code, "utf8");
