@@ -254,9 +254,25 @@ public final class PosApi {
         Result r = printOpen();
         if (r.code != null) return r;
 
+        // v2.11.31: some CS10 firmwares reject non-stock font geometry with
+        // PRN_SETFONTERR (-4009). Try the requested size, then progressively
+        // safer stock sizes, instead of failing the whole receipt.
         int gray = 2;
-        r = printInit(gray, fontHeight, fontWidth, 0);
-        if (r.code != null) return r;
+        int[][] candidates = new int[][] {
+            { fontHeight, fontWidth },
+            { fontHeight, fontHeight },
+            { 24, 24 },
+            { 16, 16 }
+        };
+        Result init = null;
+        boolean initialized = false;
+        for (int[] c : candidates) {
+            if (c[0] <= 0 || c[1] <= 0) continue;
+            init = printInit(gray, c[0], c[1], 0);
+            if (init.code == null) { initialized = true; break; }
+            android.util.Log.w("PosApi", "PrintInit " + c[0] + "x" + c[1] + " rejected: " + init.code);
+        }
+        if (!initialized) return init;
 
         // Geometry: best-effort, never fatal — some firmwares no-op these.
         try { vpos.apipackage.Print.Lib_PrnSetLeftIndent(0); } catch (Throwable ignored) { }
