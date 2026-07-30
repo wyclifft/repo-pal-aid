@@ -518,16 +518,23 @@ export const Dashboard = ({
               {isReconnecting ? 'RECONNECTING...' : 'RECONNECT'}
             </button>
 
+            {/* v2.11.33: solid inline-styled dots (no blink animation, no
+                palette classes) so WebView 51 always renders live status. */}
             <div className="flex justify-center gap-4 flex-wrap">
               <div className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${printerConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
-                <span className="text-gray-600 dark:text-gray-400" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>{printerConnected ? 'Printer' : 'Printer'}</span>
+                <span style={{ width: '10px', height: '10px', borderRadius: '9999px', flexShrink: 0, backgroundColor: printerConnected ? '#16a34a' : '#dc2626' }} />
+                <span style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)', color: printerConnected ? '#16a34a' : '#dc2626', fontWeight: 700 }}>
+                  {printerConnected ? 'Printer: ON' : 'Printer: OFF'}
+                </span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${scaleConnected ? 'bg-green-500' : 'bg-red-500'} animate-[blink_1.5s_ease-in-out_infinite]`} />
-                <span className="text-gray-600 dark:text-gray-400" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>{scaleConnected ? 'Scale' : 'Scale'}</span>
+                <span style={{ width: '10px', height: '10px', borderRadius: '9999px', flexShrink: 0, backgroundColor: scaleConnected ? '#16a34a' : '#dc2626' }} />
+                <span style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)', color: scaleConnected ? '#16a34a' : '#dc2626', fontWeight: 700 }}>
+                  {scaleConnected ? 'Scale: ON' : 'Scale: OFF'}
+                </span>
               </div>
             </div>
+
           </div>
 
           {/* Sync Totals - Moved here for visibility during work */}
