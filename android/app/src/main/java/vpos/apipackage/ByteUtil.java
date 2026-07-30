@@ -1,8 +1,6 @@
 package vpos.apipackage;
 
 import android.annotation.SuppressLint;
-import android.support.v4.internal.view.SupportMenu;
-import android.support.v4.view.ViewCompat;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;

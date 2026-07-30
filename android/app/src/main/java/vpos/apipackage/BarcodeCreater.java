@@ -5,7 +5,6 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.PointF;
-import android.support.v4.view.ViewCompat;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
