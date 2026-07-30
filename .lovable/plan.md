@@ -1,55 +1,52 @@
-## v2.11.29 (version code 171) — CS10 / Android 7 (WebView 51)
+# Android 7 (WebView 51) / CS10 720×1280 UI & Receipt Output Pass — v2.11.30
 
-Nothing below is guesswork; each item was reproduced from the actual build output and source in this repo.
+Presentation-layer only. No changes to transaction creation, reference generation, sync, IndexedDB schema, APIs, or workflows.
 
-### What I verified first
+## What I verified in the code first
 
-- I ran a production build and parsed **every** emitted JS chunk with an ES5 parser: all 60+ `*-legacy-*.js` files parse clean as ES5. The app's own bundle is **not** the syntax error.
-- The built `index.html` is only **48 lines** long and contains no modern syntax.
-- The real culprit: **Capacitor's own `native-bridge.js`**, which the native shell injects *inline* into the document at startup. It parses as ES2017, not ES2015:
-  - `native-bridge.js:47` → `const convertFormData = async (formData) => {`
-  - An ES2015 parse fails at exactly **line 47, column 45: "Unexpected token ("** — the same message the device reports, and inline injection shifts it to document **line ~54**. That is the reported `index.html:54` error.
-  - Consequence: the inline bridge script dies mid-parse, so `window.Capacitor.Plugins` is never fully published — which is also why plugin calls have been returning `UNIMPLEMENTED`/empty errors.
-- `PosApiPlugin.isReady()` does **not** dispatch to the worker thread (every other method does) and calls `api.isReady()` twice, each doing a live JNI version probe **on the UI thread**.
-- `PosApiPlugin.load()` starts `Lib_AppInit` asynchronously; if JS probes before it completes, `ready=false` with `initError == null`, so the JS log prints `⚠️ CS10 internal printer availability check failed:` **with no detail** — exactly the reported symptom.
-- `PosApiHelper.java:37` runs `getBCRService()` in a *static initializer*. It catches the exception and returns `null` (not fatal), but calls `e.printStackTrace()` → the recurring `IBCRService` stack traces. Cosmetic only.
+- Internal printing goes `printToInternalPrinter()` → `PosApi.printReceipt({lines})` → native `PosApi.java:228`, which runs `PrintOpen → PrintInit(2, 24, 24, 0) → PrintStr(line) → PrintStr("\n\n\n") → PrintStart()`. Font height/width are hardcoded at 24, and the only bottom clearance is three text newlines (no paper step/feed), which is why the last lines sit under the tear bar.
+- The top gap is not in the text builders — `printReceipt()` in `src/services/bluetooth.ts` starts directly with the company name line. It comes from the printer head start offset, which the SDK exposes via `Lib_PrnStep` / left-indent / line-space settings that we never call.
+- `PhotoCapture.tsx` renders inside `DialogContent` with a `aspect-[4/3] min-h-[300px]` preview and a fixed control bar, and `src/components/ui/dialog.tsx:43` sets no `max-height` — so on a short viewport the Retake / Use Photo row is pushed past the screen edge.
+- The Periodic Report date pickers (`src/pages/PeriodicReport.tsx:294` and `:327`) use uncontrolled `Popover`s, so the calendar stays open after a date is picked and covers the fields below. These are the only `PopoverTrigger` usages in the app outside the UI primitive.
 
-### Changes
+## 1. Printer output (all receipt types)
 
-**1. Ship an ES5 Capacitor bridge (fixes the syntax error and the dead plugin bridge)**
+Single shared change point, so every receipt/report benefits at once (milk, store/AI, Z-Report, device Z-Report, periodic report — all funnel through the same print helpers).
 
-Add a small build step that transpiles `node_modules/@capacitor/android/.../native-bridge.js` down to ES5 (Babel, target `chrome 51`; async → generator via the inline `_asyncToGenerator` helper, no regenerator runtime needed since Chrome 51 has generators) and writes the result to `android/app/src/main/assets/native-bridge.js`. App-module assets take precedence over the Capacitor AAR asset, so the shell injects the ES5 version — no fork of Capacitor, no patching `node_modules` at runtime.
+- `PosApi.java` / `PosApiPlugin.java`: replace the hardcoded `printReceipt` sequence with a parameterised one:
+  - larger font — `PrintInit(gray, 32, 24, 0)` (taller glyphs, same 32-column width so alignment and paper width are unchanged),
+  - explicit `Lib_PrnSetLineSpace` and `Lib_PrnSetLeftIndent(0)` so lines are tight and start at column 0,
+  - drop the leading head offset by not emitting any pre-content feed and by issuing `Lib_PrnStep`/`Lib_PrnFeedPaper` only *after* `PrintStart()`,
+  - replace the 3 blank `PrintStr("\n")` lines with a real post-print paper feed so nothing is clipped and the tear line clears.
+  - Accept optional `{ fontHeight, fontWidth, lineSpace, feedDots }` in the plugin call, defaulted so existing callers keep working.
+- `src/plugins/pos-api/definitions.ts` + `web.ts`: extend the `printReceipt` signature with those optional options.
+- `src/services/bluetoothClassic.ts`: pass the CS10 defaults from `printToInternalPrinter`.
+- Character-width builders in `src/services/bluetooth.ts` stay at `W = 32` — alignment, column padding, and content are untouched.
 
-**2. Guard against regressions**
+## 2. Camera capture screen
 
-Add an ES5 verification script (acorn, `ecmaVersion: 5`) over `dist/assets/*.js`, the generated `index.html` inline scripts, and the overridden `native-bridge.js`. It fails loudly if a non-ES5 construct ever reaches the Android build again.
+`src/components/PhotoCapture.tsx`:
+- Constrain the dialog to the viewport (`max-h-[92vh]`, flex column) and let the preview area flex/shrink instead of forcing `min-h-[300px]`.
+- Pin the action row as a non-shrinking footer so **Retake / Use Photo / Cancel** are always on screen; the preview scrolls or scales down instead.
+- Bump the buttons to POS-friendly touch targets (`h-12`, wider hit area) and add an explicit **Cancel** button next to Retake/Use Photo in the captured state.
 
-**3. Internal printer detection (`PosApiPlugin.java`, `PosApi.java`)**
+## 3. Date pickers
 
-- Dispatch `isReady` onto the existing `PosApiWorker` handler thread like every other method; call `api.isReady()` once.
-- Track init state as `pending | ok | failed`. If a probe arrives while init is pending, await/retry the init on the worker instead of returning a bare `false`.
-- Always return structured detail: `{ ok, ready, state, rc, error }` so the reason is never empty.
+`src/pages/PeriodicReport.tsx`:
+- Make both `Popover`s controlled and close them in `onSelect` right after a date is chosen.
+- Add `collisionPadding` / `avoidCollisions` so the calendar never renders off-screen on 720×1280, and cap it with `max-h-[70vh] overflow-auto`.
+- Z-Report uses `ZReportPeriodSelector`; I'll audit it in the same pass and apply the same close-on-select behaviour if it exposes a calendar popover, otherwise leave its native input alone.
 
-**4. JS-side error visibility (`src/services/bluetoothClassic.ts`)**
+## 4. Viewport-fit pass
 
-Stringify caught errors (WebView 51 logs `Error` objects as empty) and record the returned `state`/`error` fields to the `/debug` console. Detection logic itself is unchanged apart from reading the richer payload.
+- `src/components/ui/dialog.tsx`: add `max-h-[92vh] overflow-y-auto` and a small viewport margin to the shared `DialogContent` — one change that fixes every modal in the app (farmer search, reprint, receipt, duplicate delivery, cow details, add member, session expired).
+- `src/components/ui/popover.tsx`: add collision padding and a max-height so dropdowns never overflow.
+- Walk the primary screens at a 360×640 CSS viewport (Dashboard, Buy, Sell/Store, AI, Settings, Z-Report, Periodic Report, Payments, receipts) and fix clipping with flex/`min-w-0`/wrapping — no `dvh` units, no `gap`-only layouts, no `backdrop-filter` reliance (WebView 51 constraints already established in this project).
+- Ensure primary action buttons stay reachable (sticky footers where a screen is taller than the viewport) and touch targets are ≥44px.
 
-**5. Silence the barcode-service noise (`PosApiHelper.java`)**
+## Technical notes
 
-Make `mBCRService` lazily resolved and drop the `printStackTrace()` in `getBCRService()` — the CS10 firmware has no `IBCRService` and the app never uses it. Behaviour unchanged (`null` as today).
-
-**6. Frame skipping**
-
-Removing the main-thread JNI probe in item 3 addresses the measured cause. No unrelated UI or rendering code will be touched.
-
-**7. Version bump**
-
-`src/constants/appVersion.ts` → `2.11.29`, `android/app/build.gradle` → `versionCode 171`, with changelog notes.
-
-### Out of scope
-
-No changes to transactions, receipts, sync, IndexedDB, device auth, payments, or `server.js`. No Bluetooth Classic behaviour changes.
-
-### After merge
-
-`git pull` → `npm install` → `npm run build` → `npx cap sync` → rebuild the APK. The bridge asset is generated at build time, so a plain `cap sync` picks it up.
+- Version bump to `2.11.30` in `src/constants/appVersion.ts` with a changelog block, and `versionCode 172` in `android/app/build.gradle`.
+- The native printer changes require a rebuild: `git pull` → `npm install` → `npm run build` → `npx cap sync` → rebuild the APK.
+- The exact CS10 font height is firmware-dependent; the plugin options make it tunable from JS without another native build if 32 proves too tall for the 32-column layout.
+- Verification: typecheck + production build (with the existing ES5 guard), plus a Playwright pass at 360×640 capturing each screen to confirm nothing is clipped.
