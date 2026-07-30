@@ -55,14 +55,17 @@ export default defineConfig(({ mode }) => ({
       name: 'webview-51-es5-guard',
       apply: 'build' as const,
       async closeBundle() {
+        // @ts-expect-error - plain .mjs build helpers, no type declarations
         const { buildLegacyBridge } = await import('./scripts/build-legacy-bridge.mjs');
         await buildLegacyBridge();
+        // @ts-expect-error - plain .mjs build helpers, no type declarations
         const { verifyEs5 } = await import('./scripts/verify-es5.mjs');
-        const failures = verifyEs5({ outDir: this.meta ? 'dist' : 'dist' });
+        const failures = verifyEs5({ outDir: 'dist' });
         if (failures.length) {
-          this.error(`[es5-guard] build output is not ES5-safe for WebView 51 (${failures.length} file(s)).`);
+          throw new Error(`[es5-guard] build output is not ES5-safe for WebView 51 (${failures.length} file(s)).`);
         }
       },
+
     },
     mode === "development" && componentTagger(),
   ].filter(Boolean),
