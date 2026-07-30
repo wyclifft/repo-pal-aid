@@ -1,136 +1,78 @@
 
-# PosApiPlugin — Capacitor 7 Vendor SDK Wrapper (v2.11.27)
+# Integrate recovered vendor POS SDK into PosApiPlugin — v2.11.28 (code 170)
 
-Wrap the vendor POS SDK (`vpos.apipackage.*`, `com.cspos.PaySys`, `libPosApi.so`, `libPaypassApi.so`) in a single Capacitor plugin, retire the old CS10 printer bridge, and route the Internal CS10 Printer button through the new plugin. Only confirmed SDK methods are exposed; no invented APIs.
+## What I verified in the uploads
 
-## Assumptions (from your answers)
+- `apipackage.zip` → 23 Java sources, package `vpos.apipackage` (`PosApiHelper`, `Sys`, `Print`, `Icc`, `Picc`, `Mcr`, `Scan`, `Fingerprint`, `IDCard`, `Key`, `Pci`, `APDU_SEND/RESP`, `ByteUtil`, `StringUtil`, `Session`, `FileTools`, `BarcodeCreater`, `AppTypeApi`, `AppTypeWindow`, `PasswordShow`, `CustomLayout`, `PrintInitException`).
+- `cspos.zip` → `com.cspos.PaySys` (all EMV/PIN natives), plus `BuildConfig.java` and `R.java` from the vendor demo app.
+- `armeabi-v7a.zip` → `libPosApi.so` (550,120 B) and `libPaypassApi.so` (405,948 B).
+- The project already has `android/app/src/main/jniLibs/{armeabi-v7a,arm64-v8a}/` with *different* builds (v7a `libPosApi.so` is 599,280 B) plus a `libVisaLib.so`. The uploaded v7a pair comes from this exact device's PosDemo, so it wins.
+- Gaps found in the recovered set (must be supplied or the build fails): `vpos.util.Util` (used by `PosApiHelper.SetMcuPowerMode`) and `vpos.apipackage.PrinterBitmap` (used by `Print.Bitmap2PrintDot`). Also `BarcodeCreater`/`ByteUtil`/`CustomLayout` import `android.support.v4.*` (project is AndroidX), and `AppTypeWindow`/`PasswordShow` import `com.cspos.R`.
 
-- Vendor JAR is already at `android/app/libs/*.jar` (containing `vpos.apipackage.*`, `com.cspos.PaySys`, `vpos.apipackage.PosApiHelper`).
-- Native libs are already at `android/app/src/main/jniLibs/<abi>/libPosApi.so` and `libPaypassApi.so`.
-- Plugin lives inside the existing app module (`app.delicoop101.posapi`).
-- Existing internal-printer bridge/probe from v2.11.25–26 is retired. All other pre-existing hardware paths (Classic BT scale, external printer, etc.) stay untouched.
-- Java, AndroidX, Android 7+, Capacitor 7.
+## Plan
 
-## Files
+### 1. Native libraries
 
-### New — Android
+- Overwrite `android/app/src/main/jniLibs/armeabi-v7a/libPosApi.so` and `libPaypassApi.so` with the uploaded device-matched builds. Keep `libVisaLib.so` as-is.
+- No arm64 versions were recovered, and mixing an unverified arm64 `libPosApi.so` with the recovered v7a Java layer is the most likely source of a fresh SIGSEGV. So: delete `jniLibs/arm64-v8a/` and pin `ndk { abiFilters "armeabi-v7a" }` in `android/app/build.gradle`. Every arm64 Android device also runs armeabi-v7a, so this loses no device coverage.
 
-```
-android/app/src/main/java/app/delicoop101/posapi/
-    PosApi.java          // thin wrapper around PosApiHelper.getInstance() + PaySys
-    PosApiPlugin.java    // @CapacitorPlugin, dispatches PluginCall -> PosApi
-```
+### 2. Add recovered SDK sources
 
-- `PosApi.java`
-  - Static singleton, `init(Context)` calls `Sys.Lib_AppInit(ctx)` exactly once.
-  - Holds one `PosApiHelper.getInstance()` reference.
-  - One method per confirmed SDK call listed below. No invented calls.
-  - Central `mapRc(int)` translating printer return codes: `0 -> ok`, `-1 -> NO_PAPER`, `-2 -> PRINTER_OVERHEATED`, `-3 -> LOW_BATTERY`, other -> `POS_ERR_<n>`.
-- `PosApiPlugin.java`
-  - `@CapacitorPlugin(name = "PosApi")`
-  - `load()` calls `PosApi.init(getContext())` inside a try/catch — a failing init resolves subsequent calls with a structured error, never crashes.
-  - All hardware work runs on a single background `HandlerThread` (JNI calls are not main-thread safe) and results are posted back to the Capacitor call.
-  - `@PluginMethod` per exposed method below.
-
-### New — TypeScript
-
-```
-src/plugins/pos-api/
-    definitions.ts   // PosApiPlugin interface + option/result types + PosErrorCode union
-    index.ts         // registerPlugin<PosApiPlugin>('PosApi', { web: () => new PosApiWeb() })
-    web.ts           // PosApiWeb: every method rejects with 'UNIMPLEMENTED_ON_WEB'
-```
-
-### Modified
-
-- `android/app/src/main/java/app/delicoop101/MainActivity.kt`
-  - `registerPlugin(PosApiPlugin::class.java)` alongside existing plugins.
-  - Remove registration/injection of the old CS10 printer JS bridge (`Cs10PrinterJsBridge`) and its call sites in `installDirectJsBridges`.
-- `android/app/src/main/AndroidManifest.xml`
-  - Remove the `:posprobe` service entry for `Cs10PrinterProbeService`.
-- `src/components/PrinterConnectionDialog.tsx` and `src/hooks/useDirectPrint.ts`
-  - Replace calls into the retired CS10 bridge with the new `PosApi` plugin (`initializePrinter` → `printReceipt` → `closePrinter`).
-  - "Internal CS10 Printer" button always attempts `PosApi.printerStatus()` first; on error surfaces the returned `code`/`message` in the existing diagnostic panel.
-- `src/constants/appVersion.ts` — bump to `2.11.27`, `APP_FIX_TAG = 'pos-api-plugin'`.
-- `android/app/build.gradle` — `versionCode 169`, `versionName "2.11.27"`.
-
-### Deleted (retire old printer path only)
-
-- `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterJsBridge.kt`
-- `android/app/src/main/java/app/delicoop101/bluetooth/Cs10PrinterProbeService.kt`
-- `android/app/src/main/java/app/delicoop101/bluetooth/CiontekPrinterBridge.kt`
-- `android/app/src/main/java/app/delicoop101/bluetooth/CiontekServiceProbe.kt`
-- `android/app/libs/cs10-posapi.jar.disabled` (if still present; the real vendor JAR you dropped in stays)
-- `android/app/libs/README-CS10-SDK.md`
-
-Classic Bluetooth files (`BluetoothClassicPlugin.kt`, `BluetoothClassicJsBridge.kt`) are **not** touched.
-
-## Exposed plugin methods (only confirmed SDK calls)
-
-| Domain | Plugin method | Underlying SDK call(s) |
-|---|---|---|
-| System | `beep` | `Lib_Beep` |
-| System | `powerOn` / `powerOff` | `Lib_PowerOn` / `Lib_PowerOff` |
-| System | `getVersion` | `Lib_GetVersion` |
-| System | `getSerial` | `Lib_ReadSN` |
-| System | `getChipId` | `Lib_ReadChipID` |
-| System | `getTime` / `setTime` | `Lib_GetTime` / `Lib_SetTime` |
-| System | `setLed` | `Lib_SetLed` / `SysSetLedMode` |
-| System | `setLog` | `Lib_LogSwitch` |
-| System | `setEntryMode` | `Lib_SetEntryModeOpen` / `Lib_SetEntryModeClose` |
-| Printer | `initializePrinter` | `PrintOpen`, `PrintInit(2,24,24,0)` |
-| Printer | `printText` | `PrintStr` |
-| Printer | `startPrint` | `PrintStart` |
-| Printer | `printReceipt(lines[])` | `PrintOpen` → `PrintInit` → loop `PrintStr` → `PrintStart` |
-| Printer | `closePrinter` | (state reset; SDK has no explicit close) |
-| Printer | `printerStatus` | last `PrintStart` rc mapped via `mapRc` |
-| ICC | `openCard` / `closeCard` / `checkCard` / `sendApdu` | `IccOpen` / `IccClose` / `IccCheck` / `IccCommand` |
-| NFC | `openNfc` / `closeNfc` / `detectCard` / `sendApdu` / `removeCard` / `resetCard` / `entryPoint` | `PiccOpen` / `PiccClose` / `PiccCheck` / `PiccCommand` / `PiccRemove` / `PiccReset` / `EntryPoint` |
-| MSR | `openMag` / `closeMag` / `resetMag` / `checkMag` / `readMagStripe` | `McrOpen` / `McrClose` / `McrReset` / `McrCheck` / `McrRead` |
-| Scanner | `openScanner` / `scan` / `closeScanner` | `ScanOpen` / `ScanRead` / `ScanClose` |
-| PIN Pad | `enterPin` / `getPinBlock` / `getKlkPinBlock` / `setTimeout` / `setPinType` | `PaySys.CallKeyPad` / `Getpinblock` / `GetKLKpinblock` / `SetPadTime` / `SetPinType` |
-| EMV | `initEmv`, `startTransaction`, `completeTransaction`, `getTag`, `prepareField55`, `setAmount`, `setTransactionType`, `setCardType`, `setOnlineResult`, `getEmvVersion`, `loadCapk`, `loadAid`, `saveTermParas`, `clearAllAids`, `clearAllCapks` | Matching `PaySys.Emv*` methods |
-| Fingerprint | `openFingerprint` / `closeFingerprint` / `captureFingerprint` / `matchFingerprint` / `getFingerprintCode` / `deleteFingerprints` | `FpOpen` / `FpClose` / `FpRegister` / `FpMatch` / `FpCode` / `FpDeleteAll` |
-| ID Card | `openIdReader` / `readId` / `readId2` / `closeIdReader` | `IDCardOpen` / `IDCardRead` / `IDCardRead2` / `IDCardClose` |
-| Serial | `send` / `receive` / `sendPacket` / `receivePacket` | `SendBytes` / `RecvBytes` / `SendPacket` / `RecvPacket` |
-
-Every method returns `{ ok: true, ...data }` on success, or `reject(code, message)` where `code` is from the `PosErrorCode` union in `definitions.ts` (`NO_PAPER`, `PRINTER_OVERHEATED`, `LOW_BATTERY`, `NOT_INITIALIZED`, `HARDWARE_UNAVAILABLE`, `TIMEOUT`, `INVALID_ARGUMENT`, `POS_ERR_<n>`).
-
-## Error handling contract
-
-- Printer: `0 → ok`, `-1 → NO_PAPER`, `-2 → PRINTER_OVERHEATED`, `-3 → LOW_BATTERY`, other → `POS_ERR_<n>`.
-- Any `UnsatisfiedLinkError` / `NoClassDefFoundError` / SDK bind failure at `load()` → subsequent calls reject `HARDWARE_UNAVAILABLE` with the JNI message attached.
-- Missing/invalid arguments → `INVALID_ARGUMENT`.
-- JNI methods returning non-zero (non-printer) → `POS_ERR_<n>` with the raw integer preserved for logging.
-
-## Web fallback
-
-`web.ts` implements every method as `throw this.unavailable('UNIMPLEMENTED_ON_WEB')` so the same TS API compiles in browser dev without leaking hardware calls.
-
-## UI wiring (printer only)
-
-`PrinterConnectionDialog.tsx` "Internal CS10 Printer" button flow becomes:
+Under `android/app/src/main/java/`:
 
 ```text
-tap → PosApi.initializePrinter()
-    → PosApi.printReceipt({ lines: sampleLines })
-    → PosApi.closePrinter()
-    → toast success OR show diagnostic panel with { code, message } on reject
+vpos/apipackage/  Sys, Print, PosApiHelper, PrintInitException, Icc, Picc, Mcr,
+                  Scan, Fingerprint, IDCard, Key, Pci, AppTypeApi,
+                  APDU_SEND, APDU_RESP, ByteUtil, StringUtil, Session,
+                  FileTools, BarcodeCreater, PrinterBitmap (new)
+vpos/util/        Util (new)
+com/cspos/        PaySys
 ```
 
-`useDirectPrint.ts` gains an `internalCs10` printer branch that calls `PosApi.printReceipt({ lines })` and maps errors to the existing toast/diagnostic UI.
+- **Excluded:** `AppTypeWindow`, `PasswordShow`, `CustomLayout`, `com.cspos.R`, `com.cspos.BuildConfig` — vendor demo UI/resource classes that reference `com.cspos.R` layouts we don't ship and that nothing in the printer/system path calls. Excluding them avoids dragging vendor resources into the app.
+- **`PrinterBitmap` (new, 4 fields):** `m_iWidth`, `m_iHeight`, `m_iRowBytes`, `m_pDotByteBuffer` — exactly the shape `Print.Bitmap2PrintDot()` builds and consumes.
+- **`vpos.util.Util` (new):** single `sleepMs(long)` helper, the only member referenced.
+- **AndroidX fixes:** rewrite `android.support.v4.view.ViewCompat` → `androidx.core.view.ViewCompat`, `android.support.v4.internal.view.SupportMenu` → the literal int constants it provides, `android.support.v4.view.MotionEventCompat` → `androidx.core.view.MotionEventCompat` (only `BarcodeCreater` and `ByteUtil` remain after the exclusions).
+- ZXing is already on the classpath (`com.google.zxing:core:3.5.1`), which satisfies `Print`/`BarcodeCreater`/`PosApiHelper` barcode signatures.
+- `proguard-rules.pro`: add `-keep class vpos.** { *; }` and `-keep class com.cspos.** { *; }` so JNI-bound names survive a future minified build.
 
-## Verification checklist (before shipping)
+### 3. Rewrite `PosApi.java` as direct calls
 
-- App builds on Java 17 / Android 7+ target.
-- No compile-time reference to retired `Cs10PrinterJsBridge` / `CiontekPrinterBridge` remains.
-- `MainActivity` startup logs show `PosApi` in the registered plugin list.
-- Tapping Internal CS10 Printer either prints or produces a structured `{code, message}` — never a silent no-op or SIGSEGV.
-- Existing flows (transaction create, receipt render, Classic BT scale, sync, photo capture) remain intact.
-- Version stamped `2.11.27` / `versionCode 169` everywhere.
+Replace all reflection in `android/app/src/main/java/app/delicoop101/posapi/PosApi.java` with typed calls. Removed: `Class.forName`, `Method.invoke`, the `initError` / "PosApiHelper unavailable" path, and `hwUnavailable()` fallbacks. Kept: the `Result` struct, `mapRc()` printer-code mapping, and per-call `try/catch (Throwable)` for genuine runtime failures (`UnsatisfiedLinkError` from a bad firmware match still surfaces as a structured error rather than a crash).
 
-## Not in this pass
+Direct bindings (recovered signatures, not invented):
 
-- ICC / NFC / MSR / EMV / PIN / fingerprint / ID / scanner UI surfaces — the plugin exposes them via TS but no screens are added.
-- Standalone Capacitor plugin package (kept inside app module per your choice).
-- Firmware-specific SDK swap tooling (JAR you dropped in is used as-is).
+| Area | Call |
+|---|---|
+| init | `Sys.Lib_AppInit(ctx)` — once, guarded by an `AtomicBoolean` |
+| system | `Sys.Lib_Beep/PowerOn/PowerOff/GetVersion/ReadSN/ReadChipID/GetTime/SetTime/LogSwitch/SetLed/SetEntryModeOpen/Close` |
+| printer | `PosApiHelper.getInstance()` → `PrintInit(2,24,24,0)`, `PrintStr`, `PrintStart`, `PrintCheckStatus`, `PrintClose` (`PrintOpen()`/`PrintInit()` throw `PrintInitException`, so they're wrapped) |
+| ICC / PICC / MSR | `Icc.Lib_*`, `Picc.Lib_*`, `Mcr.Lib_McrRead(keyNo, mode, t1, t2, t3)` |
+| scanner | `Scan.Lib_ScanOpen/Close`, `Lib_ScanRead(short timeout, String[] out)` |
+| fingerprint | `Fingerprint.Lib_FpOpen/Close/Register/Match/Code/DeleteAll` |
+| ID card | `IDCard.Lib_IDCardOpen/Read/Read2/Close` |
+| serial | `Sys.Lib_SendBytes/RecvBytes/SendPacket/RecvPacket` |
+| PIN / EMV | `PaySys.CallKeyPad/Getpinblock/GetKLKpinblock/SetPadTime/SetPinType`, `PaySys.EmvContextInit/EmvProcess/EmvFinal/EmvGetTagData/EmvPrePare55Field/EmvSetTransAmount/EmvSetTransType/EmvSetCardType/EmvSetOnlineResult/EmvGetVersion/EmvAddOneCAPK/EmvAddOneAIDS/EmvSaveTermParas/EmvClearAllAIDS/EmvClearAllCapks` |
+
+Two recovered signatures differ from the current reflective guesses and will be adapted **inside** `PosApi.java` so the TS surface is unchanged: `Fingerprint.Lib_FpRegister()` takes no id (the `id` argument is accepted and ignored), and `Scan.Lib_ScanRead` takes a `short` timeout.
+
+`isReady()` becomes: `Sys.Lib_AppInit` completed **and** a `SysGetVersion` probe returned — no more class-presence check.
+
+### 4. Untouched
+
+`PosApiPlugin.java`, `src/plugins/pos-api/*` (`definitions.ts`, `index.ts`, `web.ts`), `bluetoothClassic.ts` internal-printer routing, `PrinterConnectionDialog.tsx`, `useDirectPrint.ts`, Classic Bluetooth scale/printer, payments, sync, IndexedDB, UI. The Capacitor method names, arguments and result shapes stay byte-identical.
+
+### 5. Version
+
+- `src/constants/appVersion.ts` → `2.11.28`, `APP_FIX_TAG = 'pos-api-vendor-sdk'`
+- `android/app/build.gradle` → `versionCode 170`, `versionName "2.11.28"`
+
+## Verification I can do here vs. on-device
+
+Runnable in this environment: web typecheck/build stays green (no TS change), and no source references the retired bridges.
+
+Not runnable here (no Android SDK/Gradle in the sandbox): the `:app:compileDebugJava` pass and every hardware assertion (`isReady()`, `initializePrinter`, `printReceipt`, `printerStatus`, absence of "PosApiHelper unavailable"). Those need `npx cap sync && ./gradlew assembleDebug` on your machine. I'll self-review every recovered source against its call sites for import/signature breakage before finishing, and list anything I couldn't statically resolve.
+
+## Rollback
+
+The change is confined to `jniLibs/`, the two new source trees, `PosApi.java`, `build.gradle`, and `proguard-rules.pro` — reverting those restores v2.11.27 exactly.

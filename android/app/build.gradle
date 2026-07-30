@@ -23,8 +23,16 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 169
-        versionName "2.11.27"
+        versionCode 170
+        versionName "2.11.28"
+
+        // v2.11.28: vendor POS SDK ships 32-bit libPosApi.so / libPaypassApi.so only.
+        // Pin the ABI so the loader never picks a 64-bit process without them.
+        ndk {
+            abiFilters "armeabi-v7a"
+        }
+
+
 
 
 
