@@ -1014,10 +1014,19 @@ export const printToInternalPrinter = async (content: string): Promise<{ success
     return { success: false, error: 'Internal printer only available on native' };
   }
   try {
-    // Split into lines for the SDK's line-based printer. Trailing feeds are
-    // added inside PosApi.printReceipt() so paper clears the tear bar.
+    // Split into lines for the SDK's line-based printer.
+    // v2.11.30: geometry is passed explicitly — taller glyphs (32 dots) at the
+    // same 24-dot width so the 32-column layout is untouched, tight line
+    // spacing, and a real post-print paper feed so the last line clears the
+    // tear bar. No leading feed, which removes the blank space at the top.
     const lines = (content || '').split('\n');
-    await PosApi.printReceipt({ lines });
+    await PosApi.printReceipt({
+      lines,
+      fontHeight: 32,
+      fontWidth: 24,
+      lineSpace: 2,
+      feedDots: 80,
+    });
     console.log('✅ CS10 internal printer print completed (PosApi)');
     return { success: true };
   } catch (error: any) {
