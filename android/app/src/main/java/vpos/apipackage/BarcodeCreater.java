@@ -44,7 +44,7 @@ public abstract class BarcodeCreater {
         tv.setGravity(1);
         tv.setWidth(width);
         tv.setDrawingCacheEnabled(true);
-        tv.setTextColor(ViewCompat.MEASURED_STATE_MASK);
+        tv.setTextColor(0xff000000);
         tv.measure(View.MeasureSpec.makeMeasureSpec(0, 0), View.MeasureSpec.makeMeasureSpec(0, 0));
         tv.layout(0, 0, tv.getMeasuredWidth(), tv.getMeasuredHeight());
         tv.buildDrawingCache();
@@ -66,7 +66,7 @@ public abstract class BarcodeCreater {
         for (int y = 0; y < height; y++) {
             int offset = y * width;
             for (int x = 0; x < width; x++) {
-                pixels[offset + x] = result.get(x, y) ? ViewCompat.MEASURED_STATE_MASK : -1;
+                pixels[offset + x] = result.get(x, y) ? 0xff000000 : -1;
             }
         }
         Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);

@@ -186,7 +186,7 @@ public class ByteUtil {
         int l = 0;
         if (b.length - offset >= 4) {
             int l2 = b[offset + 0];
-            l = (int) (((long) (((int) (((long) (((int) (((long) (l2 & 255)) | (((long) b[offset + 1]) << 8))) & SupportMenu.USER_MASK)) | (((long) b[offset + 2]) << 16))) & ViewCompat.MEASURED_SIZE_MASK)) | (((long) b[offset + 3]) << 24));
+            l = (int) (((long) (((int) (((long) (((int) (((long) (l2 & 255)) | (((long) b[offset + 1]) << 8))) & 0x0000ffff)) | (((long) b[offset + 2]) << 16))) & 0x00ffffff)) | (((long) b[offset + 3]) << 24));
         }
         return Float.intBitsToFloat(l);
     }
