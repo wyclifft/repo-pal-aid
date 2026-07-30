@@ -1050,8 +1050,30 @@
 //   ProGuard keeps vpos.** / com.cspos.**. TypeScript PosApi surface unchanged.
 //   No transaction, sync, IndexedDB, receipt content, payments, scale, or
 //   Classic Bluetooth logic changes.
-export const APP_VERSION = '2.11.28';
-export const APP_VERSION_CODE = 170;
+// v2.11.29: WEBVIEW51-BRIDGE-ES5. Root-caused the long-standing Android 7 / CS10
+//   "Uncaught SyntaxError: Unexpected token ( (index.html:54)". The app bundle was
+//   never at fault — every emitted legacy chunk parses as ES5. The failure came
+//   from Capacitor's own native-bridge.js, which the native shell injects INLINE
+//   into index.html and which is ES2017 (`const convertFormData = async (...) =>`
+//   at bridge line 47 → document line ~54). The inline script died mid-parse, so
+//   window.Capacitor.Plugins was never fully published — the real reason plugin
+//   calls kept returning UNIMPLEMENTED / empty errors. Fix: scripts/
+//   build-legacy-bridge.mjs downlevels the bridge (Babel, target chrome 51 → no
+//   async/await, no regenerator) into android/app/src/main/assets/native-bridge.js,
+//   which overrides the Capacitor AAR asset; node_modules is untouched.
+//   scripts/verify-es5.mjs is a build-time gate (acorn) over dist assets, inline
+//   index.html scripts and the bridge, wired into vite.config.ts closeBundle.
+//   Printer detection: PosApiPlugin.isReady() now runs on the POS worker thread
+//   (it does a live JNI probe — running it on the UI thread caused skipped
+//   frames), probes once instead of twice, re-runs a pending Lib_AppInit, and
+//   returns { ready, state: ok|pending|failed, error } so the JS side can no
+//   longer log an empty reason. PosApiHelper.getBCRService() is lazy and quiet
+//   (CS10 firmware has no IBCRService; behaviour unchanged, log spam gone).
+//   No transaction, sync, IndexedDB, receipt content, payments, device auth or
+//   Classic Bluetooth logic changes.
+export const APP_VERSION = '2.11.29';
+export const APP_VERSION_CODE = 171;
+
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'pos-api-vendor-sdk';
 
