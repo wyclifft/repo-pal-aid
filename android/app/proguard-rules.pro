@@ -31,3 +31,8 @@
 -keepclassmembers class * {
     @com.getcapacitor.PluginMethod public *;
 }
+
+# v2.11.28: keep the recovered vendor POS SDK (JNI entry points resolved by name)
+-keep class vpos.** { *; }
+-keep class com.cspos.** { *; }
+-keepclasseswithmembernames class * { native <methods>; }
