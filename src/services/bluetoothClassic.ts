@@ -1019,14 +1019,20 @@ export const printToInternalPrinter = async (content: string): Promise<{ success
     // same 24-dot width so the 32-column layout is untouched, tight line
     // spacing, and a real post-print paper feed so the last line clears the
     // tear bar. No leading feed, which removes the blank space at the top.
+    // v2.11.32: some CS10 firmwares ignore Lib_PrnStep, so the tail of the
+    // receipt stayed inside the print head and got cut off. Pad the buffer
+    // with real blank lines AND request a larger post-print feed.
     const lines = (content || '').split('\n');
+    while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+    lines.push('', '', '', '', '');
     await PosApi.printReceipt({
       lines,
       fontHeight: 32,
       fontWidth: 24,
       lineSpace: 2,
-      feedDots: 80,
+      feedDots: 160,
     });
+
     console.log('✅ CS10 internal printer print completed (PosApi)');
     return { success: true };
   } catch (error: any) {
