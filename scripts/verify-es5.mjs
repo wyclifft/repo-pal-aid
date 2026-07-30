@@ -13,9 +13,9 @@ import * as acorn from "acorn";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-function parseEs5(label, code, failures) {
+function parse(label, code, failures, ecmaVersion = 5) {
   try {
-    acorn.parse(code, { ecmaVersion: 5 });
+    acorn.parse(code, { ecmaVersion });
   } catch (error) {
     const pos = typeof error.pos === "number" ? error.pos : 0;
     failures.push({
@@ -25,6 +25,9 @@ function parseEs5(label, code, failures) {
     });
   }
 }
+
+const parseEs5 = (label, code, failures) => parse(label, code, failures, 5);
+
 
 export function verifyEs5({ outDir = "dist", silent = false } = {}) {
   const failures = [];
