@@ -487,8 +487,10 @@ export const BuyProduceScreen = ({
         <div className="flex gap-1.5 sm:gap-2">
           <input
             ref={inputRef}
-            type="text"
-            inputMode="text"
+            type="tel"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="off"
             placeholder="Enter Member No."
             value={memberNo}
             onChange={(e) => setMemberNo(e.target.value)}
