@@ -448,22 +448,39 @@ public class PosApiHelper {
                 throw th;
             }
         }
+        return null;
     }
 
     public int PrintBmp(Bitmap bitmap) {
         return new Print().Lib_PrnBmp(bitmap);
     }
 
+    // v2.11.28: barcode helpers wrap the ZXing checked exceptions instead of propagating them.
     public int PrintBarcode(String contents, int desiredWidth, int desiredHeight, BarcodeFormat barcodeFormat) {
-        return new Print().Lib_PrnBarcode(contents, desiredWidth, desiredHeight, barcodeFormat);
+        try {
+            return new Print().Lib_PrnBarcode(contents, desiredWidth, desiredHeight, barcodeFormat);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return -1;
+        }
     }
 
     public int PrintQrCode_Cut(String contents, int desiredWidth, int desiredHeight, BarcodeFormat barcodeFormat) {
-        return new Print().printCutQrCode(contents, desiredWidth, desiredHeight, barcodeFormat);
+        try {
+            return new Print().printCutQrCode(contents, desiredWidth, desiredHeight, barcodeFormat);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return -1;
+        }
     }
 
     public int PrintCutQrCode_Str(String qrContent, String printTxt, int distance, int desiredWidth, int desiredHeight, BarcodeFormat barcodeFormat) {
-        return new Print().printCutQrCodeStr(qrContent, printTxt, distance, desiredWidth, desiredHeight, barcodeFormat);
+        try {
+            return new Print().printCutQrCodeStr(qrContent, printTxt, distance, desiredWidth, desiredHeight, barcodeFormat);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return -1;
+        }
     }
 
     public int PciWritePIN_MKey(byte keyNo, byte keyLen, byte[] keyData, byte mode) {
