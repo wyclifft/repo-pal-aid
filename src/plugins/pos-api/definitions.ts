@@ -53,7 +53,19 @@ export interface PosApiPlugin {
   initializePrinter(): Promise<PosResult>;
   printText(opts: { text: string }): Promise<PosResult>;
   startPrint(): Promise<PosResult>;
-  printReceipt(opts: { lines: string[] }): Promise<PosResult>;
+  /**
+   * v2.11.30: optional printer geometry. Omitted values fall back to the CS10
+   * defaults in PosApi.java (fontHeight 32, fontWidth 24, lineSpace 2,
+   * feedDots 80). Width stays at 24 dots so the 32-column receipt layout and
+   * every column alignment are unchanged.
+   */
+  printReceipt(opts: {
+    lines: string[];
+    fontHeight?: number;
+    fontWidth?: number;
+    lineSpace?: number;
+    feedDots?: number;
+  }): Promise<PosResult>;
   closePrinter(): Promise<{ ok: true }>;
   printerStatus(): Promise<PosResult>;
 
