@@ -41,6 +41,8 @@ const Settings = lazy(() => import("./pages/Settings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const DebugConsole = lazy(() => import("./pages/DebugConsole"));
 const PaymentsScreen = lazy(() => import("./modules/payments/PaymentsScreen"));
+// v2.12.0 — Yetu Sacco member portal (orgtype = 'S')
+const SaccoPortal = lazy(() => import("./modules/sacco/SaccoPortal"));
 
 // Configure QueryClient with aggressive caching and better error handling
 const queryClient = new QueryClient({
