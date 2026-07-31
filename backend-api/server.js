@@ -8,6 +8,8 @@ const http = require('http');
 const url = require('url');
 const { createCache } = require('./lib/lruCache');
 const { chargeFarmerViaKCB } = require('./kcbPaymentService');
+// v2.12.0 — Yetu Sacco member payments module (webhook + member portal APIs)
+const { handleYetuRoutes } = require('./yetuRoutes');
 
 // SECURITY (v2.10.83): require DB credentials from environment.
 // Hardcoded fallback values were removed — they leaked production credentials
@@ -4874,8 +4876,16 @@ console.error("===========================");
       return sendJSON(res, { success: true, status: paymentStatus });
     }
 
+    // ===== YETU SACCO MEMBER PAYMENTS (v2.12.0) =====
+    // Additive module: webhook + member portal read APIs. Returns true when
+    // the request was handled so the chain can fall through otherwise.
+    if (path.startsWith('/api/yetu/')) {
+      const handled = await handleYetuRoutes({ pool, path, method, req, res, parsedUrl, sendJSON });
+      if (handled) return;
+    }
 
     // 404
+
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
 
   } catch (error) {

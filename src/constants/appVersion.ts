@@ -1085,7 +1085,7 @@
 //   (CS10 firmware has no IBCRService; behaviour unchanged, log spam gone).
 //   No transaction, sync, IndexedDB, receipt content, payments, device auth or
 //   Classic Bluetooth logic changes.
-export const APP_VERSION = '2.11.33'; // v2.11.33: receipt tail trim, live printer/scale status, numeric member keypad
+export const APP_VERSION = '2.12.0'; // v2.12.0: Yetu Sacco member payments portal (orgtype='S')
 export const APP_VERSION_CODE = 174;
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
