@@ -790,7 +790,7 @@ const Store = () => {
             onClick={() => {
               setIsMemberMode(!isMemberMode);
               setSelectedFarmer(null);
-              setFarmerId('');
+              setFarmerSearchQuery('');
             }}
             className={`w-12 h-6 rounded-full transition-colors relative ${isMemberMode ? 'bg-gray-700' : 'bg-orange-500'}`}
           >
