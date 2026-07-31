@@ -109,6 +109,9 @@ interface AppSettingsContextType {
   // Helper getters
   isDairy: boolean;
   isCoffee: boolean;
+  // v2.12.0: Sacco organization type (psettings.orgtype = 'S') — enables the
+  // dedicated Yetu Sacco member payments portal.
+  isSacco: boolean;
   routeLabel: string;
   centerLabel: string;
   produceLabel: string;
