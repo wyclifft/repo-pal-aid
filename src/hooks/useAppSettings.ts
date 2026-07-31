@@ -591,6 +591,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     refreshSettings,
     isDairy,
     isCoffee,
+    isSacco,
     routeLabel,
     centerLabel,
     produceLabel,
