@@ -14,6 +14,7 @@ import { ServiceWorkerUpdateBanner } from "@/components/ServiceWorkerUpdateBanne
 import { preloadCriticalAssets } from "@/utils/precachePages";
 import { requestAllPermissions } from "@/utils/permissionRequests";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { useSaccoAccess } from "@/modules/sacco/useSaccoAccess";
 
 // Error boundary specifically for ReprintProvider — falls back to rendering children without reprint
 class ReprintErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
@@ -145,7 +146,35 @@ const AppContent = () => {
   const { portalMode } = useSaccoAccess();
 
   // Initialize global data sync
-...
+  useDataSync();
+
+  // Listen for app becoming visible to refresh data
+  useEffect(() => {
+    const handleVisible = () => {
+      if (!mountedRef.current) return;
+      queryClient.invalidateQueries({ refetchType: 'none' });
+    };
+    window.addEventListener('appVisible', handleVisible);
+    return () => {
+      mountedRef.current = false;
+      window.removeEventListener('appVisible', handleVisible);
+    };
+  }, []);
+
+  // Listen for background sync events
+  useEffect(() => {
+    const handleBackgroundSync = () => {
+      if (!mountedRef.current) return;
+      console.log('Background sync triggered');
+      queryClient.invalidateQueries();
+    };
+    window.addEventListener('backgroundSync', handleBackgroundSync);
+    return () => window.removeEventListener('backgroundSync', handleBackgroundSync);
+  }, []);
+
+  return (
+    <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <ServiceWorkerUpdateBanner />
       <BackendStatusBanner />
       {/* OfflineIndicator now rendered inside Dashboard for proper layout positioning */}
       <Suspense fallback={<PageLoader />}>
