@@ -1,0 +1,3 @@
+- [x] Update `SellProduceScreen.tsx` Member No input
+- [x] Update `BuyProduceScreen.tsx` Member No input
+- [x] Verify keyboard behavior and lookup logic

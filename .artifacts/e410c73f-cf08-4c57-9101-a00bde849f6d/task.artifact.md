@@ -1,0 +1,9 @@
+- `[x]` Numeric Keypad Optimization (Final)
+    - `[x]` Add spin-button hiding CSS to `index.css`
+    - `[x]` Update `BuyProduceScreen.tsx` (Member No.)
+    - `[x]` Update `SellProduceScreen.tsx` (Member No.)
+    - `[x]` Update `Store.tsx` (Member No.)
+    - `[x]` Update `AIPage.tsx` (Member No.)
+    - `[x]` Update `Login.tsx` (User ID)
+    - `[x]` Update `AddMemberModal.tsx` (Member ID & ID Number)
+    - `[x]` Update `CowDetailsModal.tsx` (Number of Calves)

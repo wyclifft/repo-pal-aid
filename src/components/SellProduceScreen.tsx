@@ -87,7 +87,7 @@ export const SellProduceScreen = ({
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
   const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
-  const inputRef = useRef<HTMLInputElement>(null);
+  const farmerInputRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers, isReady } = useIndexedDB();
   
@@ -251,7 +251,7 @@ export const SellProduceScreen = ({
   // Focus input when member is cleared (for post-submit flow)
   const focusMemberInput = () => {
     setTimeout(() => {
-      inputRef.current?.focus();
+      farmerInputRef.current?.focus();
     }, 100);
   };
   
@@ -425,13 +425,15 @@ export const SellProduceScreen = ({
         {/* Member Search */}
         <div className="flex gap-1.5 sm:gap-2">
           <input
-            ref={inputRef}
-            type="text"
-            inputMode="text"
+            ref={farmerInputRef}
+            type="tel"
+            autoComplete="off"
             placeholder="Enter Member No."
             value={memberNo}
-            onChange={(e) => setMemberNo(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleEnter()}
+            onChange={(e) => {
+              setMemberNo(e.target.value.replace(/\D/g, ""));
+            }}
+            onKeyDown={(e) => e.key === "Enter" && handleEnter()}
             className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-800 bg-white rounded-lg text-base sm:text-lg min-h-[44px] font-semibold"
           />
           <button

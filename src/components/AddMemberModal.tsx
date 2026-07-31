@@ -342,6 +342,8 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
             <div className="relative">
               <Input
                 id="mm-mmcode"
+                type="number"
+                autoComplete="off"
                 value={mmcode}
                 onChange={(e) => { setMmcode(e.target.value); editingClear(); }}
                 placeholder={suggestingId ? 'Fetching next ID…' : (memberType === 'D' ? 'e.g. D00001' : 'e.g. M00001')}
@@ -399,8 +401,8 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
             <Label htmlFor="mm-idno">ID Number *</Label>
             <Input
               id="mm-idno"
-              type="tel"
-              inputMode="numeric"
+              type="number"
+              autoComplete="off"
               value={idno}
               onChange={(e) => { setIdno(e.target.value); editingClear(); }}
               placeholder="e.g. 12345678"

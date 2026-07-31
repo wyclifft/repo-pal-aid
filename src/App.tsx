@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { QueryClient } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { HashRouter, Routes, Route, useLocation } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ReprintProvider } from "@/contexts/ReprintContext";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -169,7 +169,7 @@ const AppContent = () => {
   }, []);
   
   return (
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <ServiceWorkerUpdateBanner />
       <BackendStatusBanner />
       {/* OfflineIndicator now rendered inside Dashboard for proper layout positioning */}
@@ -187,7 +187,7 @@ const AppContent = () => {
           <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
         </Routes>
       </Suspense>
-    </BrowserRouter>
+    </HashRouter>
   );
 };
 

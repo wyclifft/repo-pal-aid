@@ -93,7 +93,7 @@ export const BuyProduceScreen = ({
     farmer: { id: string; name: string };
     reason: DuplicateDeliveryReason;
   } | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const farmerInputRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers, isReady } = useIndexedDB();
   
@@ -346,7 +346,7 @@ export const BuyProduceScreen = ({
   // Focus input when member is cleared (for post-submit flow)
   const focusMemberInput = () => {
     setTimeout(() => {
-      inputRef.current?.focus();
+      farmerInputRef.current?.focus();
     }, 100);
   };
   
@@ -380,14 +380,14 @@ export const BuyProduceScreen = ({
   return (
     <div className="min-h-screen min-h-[100dvh] bg-gradient-to-b from-teal-100 to-teal-200 flex flex-col overflow-x-hidden">
       {/* Purple Header */}
-      <header className="bg-purple-600 text-white px-3 sm:px-4 py-3 sticky top-0 z-40" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
-        <h1 className="text-sm sm:text-lg font-semibold truncate">
+      <header className="bg-purple-600 text-white px-3 sm:px-4 py-2 sticky top-0 z-40" style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}>
+        <h1 className="text-xs sm:text-lg font-semibold truncate">
           [{route?.tcode}] {route?.descript} {session?.descript} {today}
         </h1>
       </header>
 
       {/* Produce Buying Banner - uses orgtype to switch wording */}
-      <div className="bg-teal-500 text-white text-center py-2 font-semibold text-sm sm:text-base">
+      <div className="bg-teal-500 text-white text-center py-1 font-semibold text-xs sm:text-base">
         {produceLabel} Buying
       </div>
 
@@ -407,7 +407,7 @@ export const BuyProduceScreen = ({
       )}
 
       {/* Main Content */}
-      <div className="flex-1 px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4 overflow-y-auto" style={{ paddingBottom: 'max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))' }}>
+      <div className="flex-1 px-3 sm:px-4 py-2 sm:py-4 space-y-2 sm:space-y-4 overflow-y-auto" style={{ paddingBottom: 'max(1rem, calc(env(safe-area-inset-bottom) + 0.5rem))' }}>
         {/* Weight Display - Coffee mode shows Gross/Sack/Net, Dairy mode shows simple weight */}
         {isCoffee ? (
           <CoffeeWeightDisplay
@@ -437,7 +437,7 @@ export const BuyProduceScreen = ({
 
         {/* Manual Weight Entry - enforces supervisor mode and psettings AutoW */}
         <div className={`flex gap-2 items-center ${manualDisabled ? 'opacity-50' : ''}`}>
-          <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
+          <span className="text-xs font-medium text-gray-700 whitespace-nowrap">
             {isCoffee ? 'Manual Gross:' : 'Manual:'}
             {manualDisabled && <span className="text-red-500 ml-1">(Disabled)</span>}
           </span>
@@ -465,7 +465,7 @@ export const BuyProduceScreen = ({
                 onManualWeightChange?.(grossValue);
               }
             }}
-            className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 rounded-lg text-base sm:text-lg min-h-[44px] ${
+            className={`flex-1 px-3 py-1.5 border-2 rounded-lg text-sm ${
               manualDisabled 
                 ? 'border-gray-200 bg-gray-100 cursor-not-allowed' 
                 : 'border-gray-300'
@@ -484,36 +484,36 @@ export const BuyProduceScreen = ({
         )}
 
         {/* Member Search */}
-        <div className="flex gap-1.5 sm:gap-2">
+        <div className="flex gap-1">
           <input
-            ref={inputRef}
+            ref={farmerInputRef}
             type="tel"
-            inputMode="numeric"
-            pattern="[0-9]*"
             autoComplete="off"
-            placeholder="Enter Member No."
+            placeholder="Member No."
             value={memberNo}
-            onChange={(e) => setMemberNo(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleEnter()}
-            className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-800 bg-white rounded-lg text-base sm:text-lg min-h-[44px] font-semibold"
+            onChange={(e) => {
+              setMemberNo(e.target.value.replace(/\D/g, ""));
+            }}
+            onKeyDown={(e) => e.key === "Enter" && handleEnter()}
+            className="flex-1 px-3 py-2 border-2 border-gray-800 bg-white rounded-lg text-sm font-semibold"
           />
           <button
             onClick={handleEnter}
-            className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
+            className="w-10 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[36px]"
           >
-            <CornerDownLeft className="h-5 w-5 sm:h-6 sm:w-6" />
+            <CornerDownLeft className="h-4 w-4" />
           </button>
           <button
             onClick={handleSearch}
-            className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
+            className="w-10 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[36px]"
           >
-            <Search className="h-5 w-5 sm:h-6 sm:w-6" />
+            <Search className="h-4 w-4" />
           </button>
           <button
             onClick={handleClear}
-            className="w-11 sm:w-14 bg-red-500 text-white rounded-lg flex items-center justify-center active:bg-red-600 min-h-[44px]"
+            className="w-10 bg-red-500 text-white rounded-lg flex items-center justify-center active:bg-red-600 min-h-[36px]"
           >
-            <X className="h-5 w-5 sm:h-6 sm:w-6" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
@@ -535,25 +535,25 @@ export const BuyProduceScreen = ({
         />
 
         {/* Member Info Card */}
-        <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-2">
-          <div className="flex justify-between items-center border-b border-gray-100 pb-2">
+        <div className="bg-white border border-gray-200 rounded-lg p-2 space-y-1">
+          <div className="flex justify-between items-center border-b border-gray-100 pb-1">
             <div>
-              <span className="text-gray-600 text-sm">MEMBER</span>
-              <p className="font-semibold">
+              <span className="text-gray-600 text-[10px]">MEMBER</span>
+              <p className="font-semibold text-xs">
                 {selectedFarmer ? `${selectedFarmer.id} - ${selectedFarmer.name}` : '-'}
               </p>
             </div>
-            <span className="font-bold text-lg">
+            <span className="font-bold text-base">
               {totalCapturedWeight > 0 ? `${totalCapturedWeight.toFixed(1)}KGS` : '-KGS'}
             </span>
           </div>
           
-          <div className="border-b border-gray-100 pb-2">
-            <span className="font-bold">CLERK [{userName?.toUpperCase()}]</span>
-            <p className="text-gray-600 text-sm">{userName}</p>
+          <div className="border-b border-gray-100 pb-1">
+            <span className="font-bold text-[10px]">CLERK [{userName?.toUpperCase()}]</span>
+            <p className="text-gray-600 text-[10px]">{userName}</p>
           </div>
           
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center text-[10px]">
             <span className="font-bold">WEIGHT TODAY</span>
             <span className="text-gray-600">
               {todayWeight > 0 ? `${todayWeight.toFixed(1)} KGS` : '-'}
@@ -562,44 +562,44 @@ export const BuyProduceScreen = ({
         </div>
 
         {/* Delivered By Input */}
-        <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4">
-          <label className="text-xs sm:text-sm font-medium text-gray-600 mb-1 block">Delivered By</label>
+        <div className="bg-white border border-gray-200 rounded-lg p-2">
+          <label className="text-[10px] font-medium text-gray-600 mb-0.5 block">Delivered By</label>
           <input
             type="text"
             placeholder="Enter name (default: owner)"
             value={deliveredBy}
             onChange={(e) => onDeliveredByChange?.(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+            className="w-full px-2 py-1 border border-gray-300 rounded-md text-xs"
           />
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-2 sm:gap-3">
+        <div className="flex gap-2">
           <button
             onClick={handleBackWithHaptic}
-            className="flex-1 py-3 bg-white border-2 border-gray-800 rounded-lg font-semibold text-gray-800 hover:bg-gray-100 active:bg-gray-200 min-h-[48px] text-sm sm:text-base"
+            className="flex-1 py-2 bg-white border-2 border-gray-800 rounded-lg font-semibold text-gray-800 hover:bg-gray-100 active:bg-gray-200 min-h-[40px] text-xs"
           >
             Back
           </button>
           <button
             onClick={handleCaptureWithHaptic}
             disabled={!!captureDisabled || weight <= 0 || zeroOptBlocked}
-            className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${(captureDisabled || weight <= 0 || zeroOptBlocked) ? 'opacity-50 pointer-events-none' : ''}`}
+            className={`flex-1 py-2 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[40px] text-xs ${(captureDisabled || weight <= 0 || zeroOptBlocked) ? 'opacity-50 pointer-events-none' : ''}`}
           >
             Capture
           </button>
           <button
             onClick={handleSubmitWithHaptic}
             disabled={!!submitDisabled || isSubmitting}
-            className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${(submitDisabled || isSubmitting) ? 'opacity-50 pointer-events-none' : ''} flex items-center justify-center gap-2`}
+            className={`flex-1 py-2 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[40px] text-xs ${(submitDisabled || isSubmitting) ? 'opacity-50 pointer-events-none' : ''} flex items-center justify-center gap-1.5`}
           >
             {isSubmitting ? (
               <>
-                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Submitting...
+                ...
               </>
             ) : (
               'Submit'

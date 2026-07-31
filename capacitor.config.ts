@@ -11,7 +11,7 @@ const config: CapacitorConfig = {
   android: {
     minWebViewVersion: 50, // v2.11.12: support legacy Android 7 POS (CS10, WebView 51)
     allowMixedContent: false, // Disabled for production security
-    captureInput: true,
+    captureInput: false,
     backgroundColor: '#ffffff',
     // Disable WebView debugging in production
     webContentsDebuggingEnabled: !isProduction,

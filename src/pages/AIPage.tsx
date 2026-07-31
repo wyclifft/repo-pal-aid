@@ -42,7 +42,7 @@ const AIPage = () => {
   const [loading, setLoading] = useState(true);
 
   // Member/Farmer state
-  const [farmerId, setFarmerId] = useState('');
+  const [memberNo, setMemberNo] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [showFarmerSearch, setShowFarmerSearch] = useState(false);
@@ -328,17 +328,17 @@ const AIPage = () => {
   });
 
   // Handle Enter key on member input
-  const handleMemberEnter = () => {
-    if (!farmerId.trim()) return;
-    resolveAndSelect(farmerId, (farmer) => {
+  const handleEnter = () => {
+    if (!memberNo.trim()) return;
+    resolveAndSelect(memberNo, (farmer) => {
       setSelectedFarmer(farmer);
-      setFarmerId(farmer.farmer_id);
+      setMemberNo(farmer.farmer_id);
     });
   };
 
   // Clear member selection
   const handleMemberClear = () => {
-    setFarmerId('');
+    setMemberNo('');
     setSelectedFarmer(null);
     setCart([]);
     try { Haptics.impact({ style: ImpactStyle.Light }); } catch { }
@@ -616,15 +616,18 @@ const AIPage = () => {
         <div className="flex gap-2">
           <input
             ref={farmerInputRef}
-            type="text"
-            value={farmerId}
-            onChange={(e) => setFarmerId(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleMemberEnter()}
-            placeholder="Enter member no."
+            type="tel"
+            autoComplete="off"
+            placeholder="Enter Member No."
+            value={memberNo}
+            onChange={(e) => {
+              setMemberNo(e.target.value.replace(/\D/g, ""));
+            }}
+            onKeyDown={(e) => e.key === "Enter" && handleEnter()}
             className="flex-1 px-4 py-3 border-2 border-gray-800 rounded-lg bg-white font-semibold"
           />
           <button
-            onClick={handleMemberEnter}
+            onClick={handleEnter}
             className="w-12 bg-[#4DD0E1] text-white rounded-lg flex items-center justify-center"
           >
             <CornerDownLeft className="h-5 w-5" />
@@ -783,7 +786,7 @@ const AIPage = () => {
                 key={f.farmer_id}
                 onClick={() => {
                   setSelectedFarmer(f);
-                  setFarmerId(f.farmer_id);
+                  setMemberNo(f.farmer_id);
                   setShowFarmerSearch(false);
                   setFarmerSearchQuery('');
                 }}

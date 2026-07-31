@@ -476,11 +476,10 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           {/* User ID Field */}
           <div className="relative">
             <input
-              type="text"
+              type="number"
               id="userid"
               name="userid"
-              inputMode="text"
-              autoComplete="username"
+              autoComplete="off"
               placeholder="User ID"
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
@@ -514,7 +513,6 @@ export const Login = memo(({ onLogin }: LoginProps) => {
             </button>
           </div>
 
-          {/* Login Button */}
           <button
             type="submit"
             disabled={loading}

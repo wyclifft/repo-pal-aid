@@ -47,7 +47,7 @@ const Store = () => {
   const [syncing, setSyncing] = useState(false);
 
   // Member/Farmer state
-  const [farmerId, setFarmerId] = useState('');
+  const [memberNo, setMemberNo] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [showFarmerSearch, setShowFarmerSearch] = useState(false);
@@ -417,12 +417,12 @@ const Store = () => {
   }, [farmers, isMemberMode]);
 
   // Handle Enter key on member input
-  const handleMemberEnter = () => {
-    if (!farmerId.trim()) return;
-    const farmer = resolveFarmerId(farmerId);
+  const handleEnter = () => {
+    if (!memberNo.trim()) return;
+    const farmer = resolveFarmerId(memberNo);
     if (farmer) {
       setSelectedFarmer(farmer);
-      setFarmerId(farmer.farmer_id);
+      setMemberNo(farmer.farmer_id);
       try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
     } else {
       toast.error('Member not found');
@@ -431,7 +431,7 @@ const Store = () => {
 
   // Clear member selection
   const handleMemberClear = () => {
-    setFarmerId('');
+    setMemberNo('');
     setSelectedFarmer(null);
     setCart([]);
     try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
@@ -802,16 +802,18 @@ const Store = () => {
         <div className="flex gap-1.5 mb-3">
           <input
             ref={farmerInputRef}
-            type="text"
-            inputMode="text"
+            type="tel"
+            autoComplete="off"
             placeholder="Enter Member No."
-            value={farmerId}
-            onChange={(e) => setFarmerId(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleMemberEnter()}
+            value={memberNo}
+            onChange={(e) => {
+              setMemberNo(e.target.value.replace(/\D/g, ""));
+            }}
+            onKeyDown={(e) => e.key === "Enter" && handleEnter()}
             className="flex-1 px-4 py-3 bg-white border-2 border-gray-300 rounded-lg text-lg font-medium"
           />
           <button
-            onClick={handleMemberEnter}
+            onClick={handleEnter}
             className="w-12 bg-[#00695C] text-white rounded-lg flex items-center justify-center"
           >
             <CornerDownLeft className="h-5 w-5" />
@@ -972,7 +974,7 @@ const Store = () => {
                   key={farmer.farmer_id}
                   onClick={() => {
                     setSelectedFarmer(farmer);
-                    setFarmerId(farmer.farmer_id);
+                    setMemberNo(farmer.farmer_id);
                     setShowFarmerSearch(false);
                     setFarmerSearchQuery('');
                   }}

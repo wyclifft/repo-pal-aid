@@ -291,6 +291,16 @@ All colors MUST be HSL.
     perspective: 1000px;
   }
 
+  /* Hide spin buttons for numeric inputs */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+  }
+  input[type="number"] {
+      -moz-appearance: textfield;
+  }
+
   /* Prevent layout shifts */
   .aspect-fixed {
     contain: layout style;

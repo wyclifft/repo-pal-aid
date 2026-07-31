@@ -96,8 +96,8 @@ export const CowDetailsModal = ({
 
           {/* Number of Calves */}
           <input
-            type="text"
-            inputMode="numeric"
+            type="number"
+            autoComplete="off"
             placeholder="Number of Calves"
             value={numberOfCalves}
             onChange={(e) => setNumberOfCalves(e.target.value)}

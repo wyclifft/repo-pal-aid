@@ -222,6 +222,7 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, selectedMpr
       <input
         ref={inputRef}
         type="text"
+        inputMode="text"
         placeholder={selectedRoute ? "Search Farmer (ID or Name)" : "Select a route first"}
         value={searchQuery}
         onChange={(e) => {
