@@ -554,6 +554,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   // These will automatically update when settings state changes
   const isDairy = settings.orgtype === 'D';
   const isCoffee = settings.orgtype === 'C';
+  // v2.12.0 — 'S' = Sacco (Yetu member payments portal)
+  const isSacco = String(settings.orgtype || '').trim().toUpperCase() === 'S';
   // Trim rdesc since DB column may have trailing whitespace
   const trimmedRdesc = settings.rdesc?.trim();
   const routeLabel = trimmedRdesc || (isDairy ? 'Route' : 'Center');
