@@ -139,55 +139,35 @@ const PageWrapper = ({ children }: { children: React.ReactNode }) => {
 // Wrapper component to use hooks inside context providers
 const AppContent = () => {
   const mountedRef = useRef(true);
-  
+
+  // v2.12.0 — Sacco installs run as a dedicated member portal: every route
+  // resolves to the Sacco portal and all other modules stay unreachable.
+  const { portalMode } = useSaccoAccess();
+
   // Initialize global data sync
-  useDataSync();
-  
-  // Listen for app becoming visible to refresh data
-  useEffect(() => {
-    const handleVisible = () => {
-      if (!mountedRef.current) return;
-      // Trigger a soft refresh when app becomes visible
-      queryClient.invalidateQueries({ refetchType: 'none' });
-    };
-    
-    window.addEventListener('appVisible', handleVisible);
-    return () => {
-      mountedRef.current = false;
-      window.removeEventListener('appVisible', handleVisible);
-    };
-  }, []);
-  
-  // Listen for background sync events
-  useEffect(() => {
-    const handleBackgroundSync = () => {
-      if (!mountedRef.current) return;
-      console.log('🔄 Background sync triggered');
-      queryClient.invalidateQueries();
-    };
-    
-    window.addEventListener('backgroundSync', handleBackgroundSync);
-    return () => window.removeEventListener('backgroundSync', handleBackgroundSync);
-  }, []);
-  
-  return (
-    <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <ServiceWorkerUpdateBanner />
+...
       <BackendStatusBanner />
       {/* OfflineIndicator now rendered inside Dashboard for proper layout positioning */}
       <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />
-          <Route path="/z-report" element={<PageWrapper><ZReport /></PageWrapper>} />
-          <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
-          <Route path="/ai" element={<PageWrapper><AIPage /></PageWrapper>} />
-          <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
-          <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
-          <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
-          <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
-          <Route path="/payments" element={<PageWrapper><PaymentsScreen /></PageWrapper>} />
-          <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
-        </Routes>
+        {portalMode ? (
+          <Routes>
+            <Route path="*" element={<PageWrapper><SaccoPortal /></PageWrapper>} />
+          </Routes>
+        ) : (
+          <Routes>
+            <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />
+            <Route path="/z-report" element={<PageWrapper><ZReport /></PageWrapper>} />
+            <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
+            <Route path="/ai" element={<PageWrapper><AIPage /></PageWrapper>} />
+            <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
+            <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
+            <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
+            <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
+            <Route path="/payments" element={<PageWrapper><PaymentsScreen /></PageWrapper>} />
+            <Route path="/sacco" element={<PageWrapper><SaccoPortal /></PageWrapper>} />
+            <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
+          </Routes>
+        )}
       </Suspense>
     </HashRouter>
   );
