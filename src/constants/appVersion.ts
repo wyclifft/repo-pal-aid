@@ -1085,8 +1085,8 @@
 //   (CS10 firmware has no IBCRService; behaviour unchanged, log spam gone).
 //   No transaction, sync, IndexedDB, receipt content, payments, device auth or
 //   Classic Bluetooth logic changes.
-export const APP_VERSION = '2.12.0'; // v2.12.0: Yetu Sacco member payments portal (orgtype='S')
-export const APP_VERSION_CODE = 174;
+export const APP_VERSION = '2.12.1'; // v2.12.1: Yetu webhook HTTP Basic auth + onboarding/troubleshooting guide
+export const APP_VERSION_CODE = 177;
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'webview51-bridge-es5';
