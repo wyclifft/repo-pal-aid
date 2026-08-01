@@ -23,8 +23,8 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 176
-        versionName "2.12.0"
+        versionCode 177
+        versionName "2.12.1"
 
 
         // v2.11.28: vendor POS SDK ships 32-bit libPosApi.so / libPaypassApi.so only.
