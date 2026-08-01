@@ -54,8 +54,31 @@ const describeAuthHeaders = (headers = {}) =>
  * @returns {{ ok: boolean, reason?: string }}
  */
 const verifyYetuRequest = (req, rawBody) => {
-  const mode = String(process.env.YETU_AUTH_MODE || 'none').toLowerCase();
   const headers = req.headers || {};
+  const basicUser = process.env.YETU_BASIC_USER || '';
+  const basicPass = process.env.YETU_BASIC_PASS || '';
+  // Default to basic once credentials are configured; otherwise stay pass-through.
+  const defaultMode = basicUser && basicPass ? 'basic' : 'none';
+  const mode = String(process.env.YETU_AUTH_MODE || defaultMode).toLowerCase();
+
+  if (mode === 'basic') {
+    if (!basicUser || !basicPass) {
+      console.warn('[YETU][AUTH] mode=basic but YETU_BASIC_USER/YETU_BASIC_PASS are not set — rejecting');
+      return { ok: false, reason: 'auth_not_configured' };
+    }
+    const creds = parseBasicAuth(headers['authorization']);
+    if (!creds) {
+      console.warn('[YETU][AUTH] basic: missing or malformed Authorization header');
+      return { ok: false, reason: 'unauthorized' };
+    }
+    const userOk = safeEqual(creds.user, basicUser);
+    const passOk = safeEqual(creds.pass, basicPass);
+    if (!userOk || !passOk) {
+      console.warn('[YETU][AUTH] basic: credential mismatch (user=%s)', userOk ? 'ok' : 'bad');
+      return { ok: false, reason: 'unauthorized' };
+    }
+    return { ok: true };
+  }
 
   if (mode === 'none') {
     console.log('[YETU][AUTH] mode=none (pass-through) headers=', describeAuthHeaders(headers).join(',') || 'n/a');
@@ -67,6 +90,7 @@ const verifyYetuRequest = (req, rawBody) => {
     console.warn('[YETU][AUTH] mode=%s but YETU_CALLBACK_SECRET is not set — rejecting', mode);
     return { ok: false, reason: 'auth_not_configured' };
   }
+
 
   if (mode === 'secret') {
     const provided =
