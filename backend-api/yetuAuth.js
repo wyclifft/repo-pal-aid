@@ -1,14 +1,16 @@
 /**
- * v2.12.0 — Yetu Sacco webhook authentication (pluggable).
+ * v2.12.1 — Yetu Sacco webhook authentication (pluggable).
  *
- * Yetu Sacco has NOT yet confirmed the authentication mechanism for their
- * callback. Until they do, this verifier passes every request through and
- * simply records which auth-looking headers arrived, so the real scheme can
- * be enabled later by flipping one env var — no route or service change.
+ * CONFIRMED BY YETU: HTTP Basic Authentication.
+ *   Set YETU_AUTH_MODE=basic (this is also the default when credentials exist)
+ *   Set YETU_BASIC_USER and YETU_BASIC_PASS to the agreed credentials.
+ * Yetu then calls the webhook with:
+ *   Authorization: Basic base64(user:pass)
  *
- * When Yetu confirms:
- *   • Shared secret  -> set YETU_AUTH_MODE=secret and YETU_CALLBACK_SECRET
- *   • HMAC signature -> set YETU_AUTH_MODE=hmac   and YETU_CALLBACK_SECRET
+ * Other modes remain available without a route/service change:
+ *   • YETU_AUTH_MODE=secret -> shared secret header (YETU_CALLBACK_SECRET)
+ *   • YETU_AUTH_MODE=hmac   -> HMAC-SHA256 signature (YETU_CALLBACK_SECRET)
+ *   • YETU_AUTH_MODE=none   -> pass-through (testing only)
  */
 const crypto = require('crypto');
 
@@ -19,6 +21,30 @@ const AUTH_HEADER_HINTS = [
   'x-yetu-secret',
   'x-signature',
 ];
+
+/** Timing-safe string compare that never throws on length mismatch. */
+const safeEqual = (a, b) => {
+  const bufA = Buffer.from(String(a || ''), 'utf8');
+  const bufB = Buffer.from(String(b || ''), 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+};
+
+/** Parse an `Authorization: Basic ...` header into { user, pass } or null. */
+const parseBasicAuth = (headerValue) => {
+  const raw = String(headerValue || '');
+  if (!/^basic\s+/i.test(raw)) return null;
+  const encoded = raw.replace(/^basic\s+/i, '').trim();
+  let decoded = '';
+  try {
+    decoded = Buffer.from(encoded, 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+  const idx = decoded.indexOf(':');
+  if (idx < 0) return null;
+  return { user: decoded.slice(0, idx), pass: decoded.slice(idx + 1) };
+};
 
 /** Non-sensitive summary of the auth headers a request carried. */
 const describeAuthHeaders = (headers = {}) =>
