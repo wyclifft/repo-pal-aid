@@ -3261,37 +3261,63 @@ const server = http.createServer(async (req, res) => {
         const regOsVersion = body.osVersion ? String(body.osVersion).trim() : null;
         let result;
         try {
-          // Newest schema (with hardware identity columns)
-          [result] = await pool.query(
-            `INSERT INTO approved_devices
-               (device_fingerprint, user_id, approved, device_info, last_sync, ccode,
-                ssaid, device_model, device_manufacturer, os_version, last_seen_at,
-                created_at, updated_at)
-             VALUES (?, ?, FALSE, ?, NOW(), ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
-            [body.device_fingerprint, body.user_id, body.device_info || null, ccode,
-             regSsaid, regModel, regManufacturer, regOsVersion]
-          );
-        } catch (e) {
-          if (e && e.code === 'ER_BAD_FIELD_ERROR') {
-            // Migration not run — fallback to schema without hw columns
-            try {
-              [result] = await pool.query(
-                'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
-                [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
-              );
-            } catch (e2) {
-              if (e2 && e2.code === 'ER_BAD_FIELD_ERROR') {
+          try {
+            // Newest schema (with hardware identity columns)
+            [result] = await pool.query(
+              `INSERT INTO approved_devices
+                 (device_fingerprint, user_id, approved, device_info, last_sync, ccode,
+                  ssaid, device_model, device_manufacturer, os_version, last_seen_at,
+                  created_at, updated_at)
+               VALUES (?, ?, FALSE, ?, NOW(), ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
+              [body.device_fingerprint, body.user_id, body.device_info || null, ccode,
+               regSsaid, regModel, regManufacturer, regOsVersion]
+            );
+          } catch (e) {
+            if (e && e.code === 'ER_BAD_FIELD_ERROR') {
+              // Migration not run — fallback to schema without hw columns
+              try {
                 [result] = await pool.query(
-                  'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, FALSE, ?, NOW())',
-                  [body.device_fingerprint, body.user_id, body.device_info || null]
+                  'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync, ccode, created_at, updated_at) VALUES (?, ?, FALSE, ?, NOW(), ?, NOW(), NOW())',
+                  [body.device_fingerprint, body.user_id, body.device_info || null, ccode]
                 );
-              } else {
-                throw e2;
+              } catch (e2) {
+                if (e2 && e2.code === 'ER_BAD_FIELD_ERROR') {
+                  [result] = await pool.query(
+                    'INSERT INTO approved_devices (device_fingerprint, user_id, approved, device_info, last_sync) VALUES (?, ?, FALSE, ?, NOW())',
+                    [body.device_fingerprint, body.user_id, body.device_info || null]
+                  );
+                } else {
+                  throw e2;
+                }
               }
+            } else {
+              throw e;
             }
-          } else {
-            throw e;
           }
+        } catch (insertErr) {
+          // v2.12.2: concurrent registration race — another request inserted the
+          // same fingerprint between our SELECT and INSERT. Treat as idempotent
+          // success instead of a 500 so login never breaks on a duplicate.
+          if (insertErr && insertErr.code === 'ER_DUP_ENTRY') {
+            console.warn('[DEVICE][REGISTER] duplicate fingerprint race — returning existing row:', String(body.device_fingerprint).substring(0, 16) + '…');
+            const [dupRows] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
+            if (dupRows.length > 0) {
+              const [dupDev] = await pool.query(
+                'SELECT devcode, trnid, milkid, storeid, aiid FROM devsettings WHERE uniquedevcode = ?',
+                [body.device_fingerprint]
+              );
+              const dupData = {
+                ...dupRows[0],
+                devcode: dupDev.length > 0 ? dupDev[0].devcode : devcode,
+                trnid: dupDev.length > 0 ? (dupDev[0].trnid || 0) : trnid,
+                milkid: dupDev.length > 0 ? (dupDev[0].milkid || 0) : 0,
+                storeid: dupDev.length > 0 ? (dupDev[0].storeid || 0) : 0,
+                aiid: dupDev.length > 0 ? (dupDev[0].aiid || 0) : 0,
+              };
+              return sendJSON(res, { success: true, data: dupData, message: 'Device already registered' });
+            }
+          }
+          throw insertErr;
         }
         const [newDevice] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [result.insertId]);
         
@@ -3299,6 +3325,7 @@ const server = http.createServer(async (req, res) => {
         const deviceData = { ...newDevice[0], devcode: devcode, trnid: trnid };
         
         return sendJSON(res, { success: true, data: deviceData, message: 'Device registered' }, 201);
+
       }
     }
 
