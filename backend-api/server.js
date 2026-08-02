@@ -207,21 +207,10 @@ const getPaymentPeriodRange = async (period, ccode) => {
   } else if (normalized === 'month') {
     start = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
   } else {
-    try {
-      const [seasonRows] = await pool.query(
-        `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
-           FROM sessions
-          WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
-            AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
-          ORDER BY datefrom DESC LIMIT 1`,
-        [ccode, today, today]
-      );
-      if (seasonRows.length > 0) {
-        start = seasonRows[0].datefrom;
-        end = seasonRows[0].dateto;
-      }
-    } catch (e) {
-      console.warn('[PAY][PERIOD] season lookup failed, using 90-day fallback:', e?.message || e);
+    const season = await findActiveSeason(ccode, today);
+    if (season) {
+      start = season.datefrom;
+      end = season.dateto;
     }
     if (!start) start = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 90));
   }
@@ -1197,13 +1186,8 @@ const server = http.createServer(async (req, res) => {
         normalizedSession = (scode || descript).toUpperCase();
         if (!normalizedSession || normalizedSession === 'AM' || normalizedSession === 'PM') {
           try {
-            const [s] = await pool.query(
-              `SELECT SCODE FROM sessions
-               WHERE ccode = ? AND ? BETWEEN datefrom AND dateto
-               ORDER BY id DESC LIMIT 1`,
-              [ccode, transdate]
-            );
-            if (s.length && s[0].SCODE) normalizedSession = String(s[0].SCODE).toUpperCase();
+            const season = await findActiveSeason(ccode, transdate);
+            if (season && season.SCODE) normalizedSession = String(season.SCODE).toUpperCase();
           } catch (e) { console.warn('Coffee SCODE rescue lookup failed:', e?.message); }
         }
         console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, session_descript: body.session_descript, normalizedSession });
@@ -1936,15 +1920,7 @@ const server = http.createServer(async (req, res) => {
       let seasonName = '';
       if (collections.length > 0 && collections[0].season_code) {
         const seasonCode = collections[0].season_code;
-        const [seasonRows] = await pool.query(
-          `SELECT descript FROM sessions WHERE SCODE = ? AND ccode = ?`,
-          [seasonCode, ccode]
-        );
-        if (seasonRows.length > 0) {
-          seasonName = seasonRows[0].descript;
-        } else {
-          seasonName = seasonCode;
-        }
+        seasonName = (await findSeasonDescript(seasonCode, ccode)) || seasonCode;
       } else if (collections.length > 0) {
         seasonName = collections[0].session || 'AM';
       }
@@ -2277,11 +2253,8 @@ const server = http.createServer(async (req, res) => {
           // (b) sessions table fallback (date-range)
           if (!canonical) {
             try {
-              const [s] = await conn.query(
-                `SELECT SCODE FROM sessions WHERE ccode = ? AND ? BETWEEN datefrom AND dateto ORDER BY id DESC LIMIT 1`,
-                [ccode, transdate]
-              );
-              if (s.length && s[0].SCODE) canonical = String(s[0].SCODE).toUpperCase();
+              const season = await findActiveSeason(ccode, transdate, conn);
+              if (season && season.SCODE) canonical = String(season.SCODE).toUpperCase();
             } catch (e) { console.warn('[/api/sales] coffee SCODE rescue failed:', e?.message); }
           }
 
@@ -2561,11 +2534,8 @@ const server = http.createServer(async (req, res) => {
 
           if (!canonical) {
             try {
-              const [s] = await conn.query(
-                `SELECT SCODE FROM sessions WHERE ccode = ? AND ? BETWEEN datefrom AND dateto ORDER BY id DESC LIMIT 1`,
-                [ccode, transdate]
-              );
-              if (s.length && s[0].SCODE) canonical = String(s[0].SCODE).toUpperCase();
+              const season = await findActiveSeason(ccode, transdate, conn);
+              if (season && season.SCODE) canonical = String(season.SCODE).toUpperCase();
             } catch (e) { console.warn('[/api/sales/batch] coffee SCODE rescue failed:', e?.message); }
           }
 
@@ -3742,15 +3712,10 @@ const server = http.createServer(async (req, res) => {
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
-          const [seasonRows] = await pool.query(
-            `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
-             FROM sessions WHERE TRIM(ccode) = TRIM(?) AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
-             ORDER BY datefrom DESC LIMIT 1`,
-            [ccode, today, today]
-          );
-          if (seasonRows.length > 0) {
-            periodStart = seasonRows[0].datefrom;
-            periodEnd = seasonRows[0].dateto;
+          const activeSeason = await findActiveSeason(ccode, today);
+          if (activeSeason) {
+            periodStart = activeSeason.datefrom;
+            periodEnd = activeSeason.dateto;
             console.log(`📊 Batch cumulative using season range: ${periodStart} to ${periodEnd}`);
           } else {
             console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);
@@ -3893,15 +3858,10 @@ const server = http.createServer(async (req, res) => {
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
-          const [seasonRows] = await pool.query(
-            `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
-             FROM sessions WHERE TRIM(ccode) = TRIM(?) AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
-             ORDER BY datefrom DESC LIMIT 1`,
-            [ccode, today, today]
-          );
-          if (seasonRows.length > 0) {
-            periodStart = seasonRows[0].datefrom;
-            periodEnd = seasonRows[0].dateto;
+          const activeSeason = await findActiveSeason(ccode, today);
+          if (activeSeason) {
+            periodStart = activeSeason.datefrom;
+            periodEnd = activeSeason.dateto;
             console.log(`📊 Individual cumulative for ${farmer_id} using season range: ${periodStart} to ${periodEnd}`);
           } else {
             console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);
