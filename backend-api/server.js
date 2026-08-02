@@ -479,35 +479,27 @@ const server = http.createServer(async (req, res) => {
       const orgtype = psettingsRows.length > 0 ? psettingsRows[0].orgtype : 'D';
       const periodLabel = orgtype === 'C' ? 'Season' : 'Session';
 
-      const [seasonsTableRows] = await pool.query(
-        `SELECT 1 AS exists_flag
-         FROM information_schema.tables
-         WHERE table_schema = DATABASE()
-           AND table_name = 'seasons'
-         LIMIT 1`
-      );
-      const hasSeasonsTable = seasonsTableRows.length > 0;
+      const seasonsAvailable = await hasSeasonsTable();
 
-      if (orgtype === 'C' && hasSeasonsTable) {
-        // Coffee mode: query seasons table when the deployment has it.
-        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      if (orgtype === 'C' && seasonsAvailable) {
+        // Coffee mode: seasons table (id, scode, Descript, ccode, datefrom, dateto).
+        // NOTE: seasons has no time_from/time_to — coffee is date-range driven.
+        const today = toYmdLocal(new Date()); // local YYYY-MM-DD (never toISOString)
 
         const [seasonRows] = await pool.query(
           `SELECT 
             id,
-            SCODE,
+            scode AS SCODE,
             descript, 
             ccode,
             DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, 
             DATE_FORMAT(dateto, '%Y-%m-%d') as dateto, 
-            time_from, 
-            time_to,
             CASE 
               WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1 
               ELSE 0 
             END as dateEnabled
            FROM seasons 
-           WHERE ccode = ? 
+           WHERE TRIM(ccode) = TRIM(?) 
            ORDER BY datefrom DESC`,
           [today, today, ccode]
         );
@@ -519,8 +511,8 @@ const server = http.createServer(async (req, res) => {
           ccode: row.ccode,
           datefrom: row.datefrom,
           dateto: row.dateto,
-          time_from: row.time_from,
-          time_to: row.time_to,
+          time_from: null,
+          time_to: null,
           dateEnabled: row.dateEnabled === 1
         }));
 
@@ -533,13 +525,14 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      // Fallback for deployments where the seasons table is absent.
-      // Use the live sessions table shape instead of assuming a legacy SCODE column.
+      // Dairy (orgtype 'D') / legacy: sessions table
+      // (ID, Icode, descript, ccode, time_from, time_to, status).
       const [rows] = await pool.query(
         `SELECT id, Icode AS SCODE, descript, time_from, time_to, ccode
-         FROM sessions WHERE ccode = ? ORDER BY time_from`,
+         FROM sessions WHERE TRIM(ccode) = TRIM(?) ORDER BY time_from`,
         [ccode]
       );
+
 
       const processedSessions = rows.map(row => ({
         id: row.id,
