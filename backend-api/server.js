@@ -425,11 +425,20 @@ const server = http.createServer(async (req, res) => {
       
       const orgtype = psettingsRows.length > 0 ? psettingsRows[0].orgtype : 'D';
       const periodLabel = orgtype === 'C' ? 'Season' : 'Session';
-      
-      if (orgtype === 'C') {
-        // Coffee mode: Fetch from sessions table with date range validation
+
+      const [seasonsTableRows] = await pool.query(
+        `SELECT 1 AS exists_flag
+         FROM information_schema.tables
+         WHERE table_schema = DATABASE()
+           AND table_name = 'seasons'
+         LIMIT 1`
+      );
+      const hasSeasonsTable = seasonsTableRows.length > 0;
+
+      if (orgtype === 'C' && hasSeasonsTable) {
+        // Coffee mode: query seasons table when the deployment has it.
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-        
+
         const [seasonRows] = await pool.query(
           `SELECT 
             id,
@@ -444,13 +453,12 @@ const server = http.createServer(async (req, res) => {
               WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1 
               ELSE 0 
             END as dateEnabled
-           FROM sessions 
+           FROM seasons 
            WHERE ccode = ? 
            ORDER BY datefrom DESC`,
           [today, today, ccode]
         );
-        
-        // Map rows with enabled flag calculated by backend - include all season details
+
         const processedSeasons = seasonRows.map(row => ({
           id: row.id,
           SCODE: row.SCODE,
@@ -460,43 +468,43 @@ const server = http.createServer(async (req, res) => {
           dateto: row.dateto,
           time_from: row.time_from,
           time_to: row.time_to,
-          dateEnabled: row.dateEnabled === 1 // Boolean for frontend
+          dateEnabled: row.dateEnabled === 1
         }));
-        
-        return sendJSON(res, { 
-          success: true, 
-          data: processedSeasons, 
-          ccode,
-          periodLabel,
-          orgtype
-        });
-      } else {
-        // Dairy mode: Fetch from sessions table (include SCODE for CAN column)
-        const [rows] = await pool.query(
-          `SELECT id, SCODE, descript, time_from, time_to, ccode 
-           FROM sessions WHERE ccode = ? ORDER BY time_from`,
-          [ccode]
-        );
-        
-        // Sessions are always dateEnabled (no date range)
-        const processedSessions = rows.map(row => ({
-          id: row.id,
-          SCODE: row.SCODE, // Include SCODE for transactions.CAN
-          descript: row.descript,
-          time_from: row.time_from,
-          time_to: row.time_to,
-          ccode: row.ccode,
-          dateEnabled: true
-        }));
-        
-        return sendJSON(res, { 
-          success: true, 
-          data: processedSessions, 
+
+        return sendJSON(res, {
+          success: true,
+          data: processedSeasons,
           ccode,
           periodLabel,
           orgtype
         });
       }
+
+      // Fallback for deployments where the seasons table is absent.
+      // Use the live sessions table shape instead of assuming a legacy SCODE column.
+      const [rows] = await pool.query(
+        `SELECT id, Icode AS SCODE, descript, time_from, time_to, ccode
+         FROM sessions WHERE ccode = ? ORDER BY time_from`,
+        [ccode]
+      );
+
+      const processedSessions = rows.map(row => ({
+        id: row.id,
+        SCODE: row.SCODE || row.Icode || null,
+        descript: row.descript,
+        time_from: row.time_from,
+        time_to: row.time_to,
+        ccode: row.ccode,
+        dateEnabled: true
+      }));
+
+      return sendJSON(res, {
+        success: true,
+        data: processedSessions,
+        ccode,
+        periodLabel,
+        orgtype
+      });
     }
 
     // Get active session for a device (based on current time)
@@ -524,7 +532,7 @@ const server = http.createServer(async (req, res) => {
       
       // Find active session where current time is between time_from and time_to
       const [rows] = await pool.query(
-        `SELECT SCODE, descript, time_from, time_to, ccode 
+        `SELECT Icode AS SCODE, descript, time_from, time_to, ccode 
          FROM sessions 
          WHERE ccode = ? AND time_from <= ? AND time_to >= ?
          ORDER BY time_from
