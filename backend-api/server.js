@@ -128,6 +128,70 @@ const toYmdLocal = (d) => {
   return `${y}-${m}-${day}`;
 };
 
+/**
+ * v2.12.4 — Contabo schema split:
+ *   seasons  → orgtype 'C' (id, scode, Descript, ccode, datefrom, dateto)
+ *   sessions → orgtype 'D' (ID, Icode, descript, ccode, time_from, time_to, status)
+ *
+ * Legacy cPanel deployments kept season columns (SCODE/datefrom/dateto) inside the
+ * sessions table, so every helper below probes for the seasons table once and falls
+ * back to the legacy shape. Backward compatible with old databases.
+ */
+let _hasSeasonsTableCache = null;
+const hasSeasonsTable = async () => {
+  if (_hasSeasonsTableCache !== null) return _hasSeasonsTableCache;
+  try {
+    const [rows] = await pool.query(
+      `SELECT 1 FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = 'seasons' LIMIT 1`
+    );
+    _hasSeasonsTableCache = rows.length > 0;
+  } catch (e) {
+    console.warn('[SEASON] table probe failed:', e?.message || e);
+    _hasSeasonsTableCache = false;
+  }
+  return _hasSeasonsTableCache;
+};
+
+// Active season row (date range) covering `date` for a ccode. Returns null when none.
+const findActiveSeason = async (ccode, date, conn = pool) => {
+  const table = (await hasSeasonsTable()) ? 'seasons' : 'sessions';
+  try {
+    const [rows] = await conn.query(
+      `SELECT scode AS SCODE, descript,
+              DATE_FORMAT(datefrom, '%Y-%m-%d') AS datefrom,
+              DATE_FORMAT(dateto, '%Y-%m-%d') AS dateto
+         FROM ${table}
+        WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+          AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
+        ORDER BY datefrom DESC, id DESC LIMIT 1`,
+      [ccode, date, date]
+    );
+    return rows.length ? rows[0] : null;
+  } catch (e) {
+    console.warn(`[SEASON] active lookup failed on ${table}:`, e?.message || e);
+    return null;
+  }
+};
+
+// Human-readable name for a season code (falls back to the code itself).
+const findSeasonDescript = async (scode, ccode, conn = pool) => {
+  const table = (await hasSeasonsTable()) ? 'seasons' : 'sessions';
+  try {
+    const [rows] = await conn.query(
+      `SELECT descript FROM ${table}
+        WHERE UPPER(TRIM(scode)) = UPPER(TRIM(?)) AND TRIM(ccode) = TRIM(?) LIMIT 1`,
+      [scode, ccode]
+    );
+    return rows.length ? rows[0].descript : null;
+  } catch (e) {
+    console.warn(`[SEASON] descript lookup failed on ${table}:`, e?.message || e);
+    return null;
+  }
+};
+
+
+
 const getPaymentPeriodRange = async (period, ccode) => {
   const normalized = ['day', 'week', 'month', 'season'].includes(period) ? period : 'month';
   const now = new Date();
@@ -143,21 +207,10 @@ const getPaymentPeriodRange = async (period, ccode) => {
   } else if (normalized === 'month') {
     start = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
   } else {
-    try {
-      const [seasonRows] = await pool.query(
-        `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
-           FROM sessions
-          WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
-            AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
-          ORDER BY datefrom DESC LIMIT 1`,
-        [ccode, today, today]
-      );
-      if (seasonRows.length > 0) {
-        start = seasonRows[0].datefrom;
-        end = seasonRows[0].dateto;
-      }
-    } catch (e) {
-      console.warn('[PAY][PERIOD] season lookup failed, using 90-day fallback:', e?.message || e);
+    const season = await findActiveSeason(ccode, today);
+    if (season) {
+      start = season.datefrom;
+      end = season.dateto;
     }
     if (!start) start = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 90));
   }
@@ -426,35 +479,27 @@ const server = http.createServer(async (req, res) => {
       const orgtype = psettingsRows.length > 0 ? psettingsRows[0].orgtype : 'D';
       const periodLabel = orgtype === 'C' ? 'Season' : 'Session';
 
-      const [seasonsTableRows] = await pool.query(
-        `SELECT 1 AS exists_flag
-         FROM information_schema.tables
-         WHERE table_schema = DATABASE()
-           AND table_name = 'seasons'
-         LIMIT 1`
-      );
-      const hasSeasonsTable = seasonsTableRows.length > 0;
+      const seasonsAvailable = await hasSeasonsTable();
 
-      if (orgtype === 'C' && hasSeasonsTable) {
-        // Coffee mode: query seasons table when the deployment has it.
-        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      if (orgtype === 'C' && seasonsAvailable) {
+        // Coffee mode: seasons table (id, scode, Descript, ccode, datefrom, dateto).
+        // NOTE: seasons has no time_from/time_to — coffee is date-range driven.
+        const today = toYmdLocal(new Date()); // local YYYY-MM-DD (never toISOString)
 
         const [seasonRows] = await pool.query(
           `SELECT 
             id,
-            SCODE,
+            scode AS SCODE,
             descript, 
             ccode,
             DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, 
             DATE_FORMAT(dateto, '%Y-%m-%d') as dateto, 
-            time_from, 
-            time_to,
             CASE 
               WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1 
               ELSE 0 
             END as dateEnabled
            FROM seasons 
-           WHERE ccode = ? 
+           WHERE TRIM(ccode) = TRIM(?) 
            ORDER BY datefrom DESC`,
           [today, today, ccode]
         );
@@ -466,8 +511,8 @@ const server = http.createServer(async (req, res) => {
           ccode: row.ccode,
           datefrom: row.datefrom,
           dateto: row.dateto,
-          time_from: row.time_from,
-          time_to: row.time_to,
+          time_from: null,
+          time_to: null,
           dateEnabled: row.dateEnabled === 1
         }));
 
@@ -480,13 +525,14 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      // Fallback for deployments where the seasons table is absent.
-      // Use the live sessions table shape instead of assuming a legacy SCODE column.
+      // Dairy (orgtype 'D') / legacy: sessions table
+      // (ID, Icode, descript, ccode, time_from, time_to, status).
       const [rows] = await pool.query(
         `SELECT id, Icode AS SCODE, descript, time_from, time_to, ccode
-         FROM sessions WHERE ccode = ? ORDER BY time_from`,
+         FROM sessions WHERE TRIM(ccode) = TRIM(?) ORDER BY time_from`,
         [ccode]
       );
+
 
       const processedSessions = rows.map(row => ({
         id: row.id,
@@ -525,19 +571,43 @@ const server = http.createServer(async (req, res) => {
       }
       
       const ccode = deviceRows[0].ccode;
-      
-      // Get current time in HH:MM:SS format
+
       const now = new Date();
-      const currentTime = now.toTimeString().split(' ')[0]; // "HH:MM:SS"
-      
-      // Find active session where current time is between time_from and time_to
+      const currentTime = now.toTimeString().split(' ')[0]; // "HH:MM:SS" (legacy TIME columns)
+      const currentHour = now.getHours();                   // int (Contabo sessions.time_from/to are INT hours)
+
+      // v2.12.4: coffee (orgtype C) has no time windows — resolve the active season by date.
+      const [orgRows] = await pool.query(
+        `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(cno) = TRIM(?) LIMIT 1`,
+        [ccode]
+      );
+      const activeOrgtype = orgRows.length ? String(orgRows[0].orgtype || 'D').toUpperCase() : 'D';
+
+      if (activeOrgtype === 'C') {
+        const season = await findActiveSeason(ccode, toYmdLocal(now));
+        if (!season) {
+          return sendJSON(res, { success: true, data: null, message: 'No active season for today', ccode });
+        }
+        return sendJSON(res, {
+          success: true,
+          data: { SCODE: season.SCODE, descript: season.descript, datefrom: season.datefrom, dateto: season.dateto, ccode },
+          ccode
+        });
+      }
+
+      // Dairy: match the current time against the session window.
+      // Handles both INT-hour columns (Contabo) and legacy TIME columns.
       const [rows] = await pool.query(
         `SELECT Icode AS SCODE, descript, time_from, time_to, ccode 
          FROM sessions 
-         WHERE ccode = ? AND time_from <= ? AND time_to >= ?
+         WHERE TRIM(ccode) = TRIM(?)
+           AND (
+             (time_from <= ? AND time_to >= ?)
+             OR (time_from <= ? AND time_to >= ?)
+           )
          ORDER BY time_from
          LIMIT 1`,
-        [ccode, currentTime, currentTime]
+        [ccode, currentTime, currentTime, currentHour, currentHour]
       );
       
       if (rows.length === 0) {
@@ -550,6 +620,7 @@ const server = http.createServer(async (req, res) => {
       }
       
       return sendJSON(res, { success: true, data: rows[0], ccode });
+
     }
 
     // Routes endpoint - Fetch from fm_tanks table
@@ -1133,13 +1204,8 @@ const server = http.createServer(async (req, res) => {
         normalizedSession = (scode || descript).toUpperCase();
         if (!normalizedSession || normalizedSession === 'AM' || normalizedSession === 'PM') {
           try {
-            const [s] = await pool.query(
-              `SELECT SCODE FROM sessions
-               WHERE ccode = ? AND ? BETWEEN datefrom AND dateto
-               ORDER BY id DESC LIMIT 1`,
-              [ccode, transdate]
-            );
-            if (s.length && s[0].SCODE) normalizedSession = String(s[0].SCODE).toUpperCase();
+            const season = await findActiveSeason(ccode, transdate);
+            if (season && season.SCODE) normalizedSession = String(season.SCODE).toUpperCase();
           } catch (e) { console.warn('Coffee SCODE rescue lookup failed:', e?.message); }
         }
         console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, session_descript: body.session_descript, normalizedSession });
@@ -1872,15 +1938,7 @@ const server = http.createServer(async (req, res) => {
       let seasonName = '';
       if (collections.length > 0 && collections[0].season_code) {
         const seasonCode = collections[0].season_code;
-        const [seasonRows] = await pool.query(
-          `SELECT descript FROM sessions WHERE SCODE = ? AND ccode = ?`,
-          [seasonCode, ccode]
-        );
-        if (seasonRows.length > 0) {
-          seasonName = seasonRows[0].descript;
-        } else {
-          seasonName = seasonCode;
-        }
+        seasonName = (await findSeasonDescript(seasonCode, ccode)) || seasonCode;
       } else if (collections.length > 0) {
         seasonName = collections[0].session || 'AM';
       }
@@ -2213,11 +2271,8 @@ const server = http.createServer(async (req, res) => {
           // (b) sessions table fallback (date-range)
           if (!canonical) {
             try {
-              const [s] = await conn.query(
-                `SELECT SCODE FROM sessions WHERE ccode = ? AND ? BETWEEN datefrom AND dateto ORDER BY id DESC LIMIT 1`,
-                [ccode, transdate]
-              );
-              if (s.length && s[0].SCODE) canonical = String(s[0].SCODE).toUpperCase();
+              const season = await findActiveSeason(ccode, transdate, conn);
+              if (season && season.SCODE) canonical = String(season.SCODE).toUpperCase();
             } catch (e) { console.warn('[/api/sales] coffee SCODE rescue failed:', e?.message); }
           }
 
@@ -2497,11 +2552,8 @@ const server = http.createServer(async (req, res) => {
 
           if (!canonical) {
             try {
-              const [s] = await conn.query(
-                `SELECT SCODE FROM sessions WHERE ccode = ? AND ? BETWEEN datefrom AND dateto ORDER BY id DESC LIMIT 1`,
-                [ccode, transdate]
-              );
-              if (s.length && s[0].SCODE) canonical = String(s[0].SCODE).toUpperCase();
+              const season = await findActiveSeason(ccode, transdate, conn);
+              if (season && season.SCODE) canonical = String(season.SCODE).toUpperCase();
             } catch (e) { console.warn('[/api/sales/batch] coffee SCODE rescue failed:', e?.message); }
           }
 
@@ -3678,15 +3730,10 @@ const server = http.createServer(async (req, res) => {
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
-          const [seasonRows] = await pool.query(
-            `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
-             FROM sessions WHERE TRIM(ccode) = TRIM(?) AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
-             ORDER BY datefrom DESC LIMIT 1`,
-            [ccode, today, today]
-          );
-          if (seasonRows.length > 0) {
-            periodStart = seasonRows[0].datefrom;
-            periodEnd = seasonRows[0].dateto;
+          const activeSeason = await findActiveSeason(ccode, today);
+          if (activeSeason) {
+            periodStart = activeSeason.datefrom;
+            periodEnd = activeSeason.dateto;
             console.log(`📊 Batch cumulative using season range: ${periodStart} to ${periodEnd}`);
           } else {
             console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);
@@ -3829,15 +3876,10 @@ const server = http.createServer(async (req, res) => {
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
-          const [seasonRows] = await pool.query(
-            `SELECT DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, DATE_FORMAT(dateto, '%Y-%m-%d') as dateto
-             FROM sessions WHERE TRIM(ccode) = TRIM(?) AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
-             ORDER BY datefrom DESC LIMIT 1`,
-            [ccode, today, today]
-          );
-          if (seasonRows.length > 0) {
-            periodStart = seasonRows[0].datefrom;
-            periodEnd = seasonRows[0].dateto;
+          const activeSeason = await findActiveSeason(ccode, today);
+          if (activeSeason) {
+            periodStart = activeSeason.datefrom;
+            periodEnd = activeSeason.dateto;
             console.log(`📊 Individual cumulative for ${farmer_id} using season range: ${periodStart} to ${periodEnd}`);
           } else {
             console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);
