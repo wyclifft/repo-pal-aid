@@ -159,7 +159,15 @@ const SaccoPortal = () => {
               {companyName || 'Member portal'}
               {summaryQuery.data?.account_number ? ` • A/C ${summaryQuery.data.account_number}` : ''}
             </p>
+            <p className="text-[11px] text-muted-foreground">
+              {txnQuery.isFetching
+                ? 'Updating…'
+                : txnQuery.dataUpdatedAt
+                  ? `Live • updated ${formatClock(txnQuery.dataUpdatedAt)}`
+                  : 'Live'}
+            </p>
           </div>
+
           <div className="flex items-center">
             <Button
               variant="outline"
