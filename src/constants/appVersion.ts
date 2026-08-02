@@ -1085,8 +1085,8 @@
 //   (CS10 firmware has no IBCRService; behaviour unchanged, log spam gone).
 //   No transaction, sync, IndexedDB, receipt content, payments, device auth or
 //   Classic Bluetooth logic changes.
-export const APP_VERSION = '2.12.3'; // v2.12.3: Contabo migration — SQL table `user` renamed to `Users`; Sacco portal auto-refreshes (20s poll + focus/reconnect)
-export const APP_VERSION_CODE = 179;
+export const APP_VERSION = '2.12.4'; // v2.12.4: Contabo schema split — coffee seasons read from `seasons` table, dairy sessions from `sessions`; cumulative season range restored
+export const APP_VERSION_CODE = 180;
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'webview51-bridge-es5';
