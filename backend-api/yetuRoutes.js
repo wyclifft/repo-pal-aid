@@ -84,7 +84,7 @@ const resolveSaccoAccess = async (pool, { deviceFingerprint, userid }) => {
 
   const [userRows] = await pool.query(
     `SELECT IFNULL(can_access_payments, 0) AS can_access_payments, link_account
-       FROM user
+       FROM Users
       WHERE TRIM(userid) = ? AND UPPER(TRIM(ccode)) = UPPER(TRIM(?))
       LIMIT 1`,
     [userId, ccode]
