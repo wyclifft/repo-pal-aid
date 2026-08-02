@@ -3,6 +3,8 @@
  * Optimized for cPanel with minimal RAM usage
  */
 
+require('dotenv').config({ path: __dirname + '/.env' });
+
 const mysql = require('mysql2/promise');
 const http = require('http');
 const url = require('url');
@@ -171,7 +173,7 @@ const resolvePaymentsAccess = async ({ deviceFingerprint, userid }) => {
   if (!userId) return { ok: false, status: 400, error: 'userid is required' };
 
   const [deviceRows] = await pool.query(
-    'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ? LIMIT 1',
+    'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
     [fingerprint]
   );
   if (deviceRows.length === 0 || !toDbBool(deviceRows[0].authorized)) {
@@ -182,7 +184,7 @@ const resolvePaymentsAccess = async ({ deviceFingerprint, userid }) => {
   if (!ccode) return { ok: false, status: 403, error: 'Device company not configured' };
 
   const [settingsRows] = await pool.query(
-    'SELECT IFNULL(payments_active, 0) AS payments_active FROM psettings WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) LIMIT 1',
+    'SELECT IFNULL(payments_active, 0) AS payments_active FROM psettings WHERE UPPER(TRIM(cno)) = UPPER(TRIM(?)) LIMIT 1',
     [ccode]
   );
   if (settingsRows.length === 0 || !toDbBool(settingsRows[0].payments_active)) {
@@ -288,7 +290,7 @@ const addOneDay = (ymd) => {
 
 const getCompanyPricePerKg = async (executor, ccode) => {
   const [rows] = await executor.query(
-    'SELECT IFNULL(price_per_kg, 0) AS price_per_kg FROM psettings WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) LIMIT 1',
+    'SELECT IFNULL(price_per_kg, 0) AS price_per_kg FROM psettings WHERE UPPER(TRIM(cno)) = UPPER(TRIM(?)) LIMIT 1',
     [ccode]
   );
   return Number(rows[0]?.price_per_kg || 0);
@@ -376,13 +378,23 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    const allowsHead = method === 'GET' || method === 'HEAD';
+
+    // Temporary route for deployment/version confirmation
+    if (path === '/version' && allowsHead) {
+      return sendJSON(res, {
+        server: 'Contabo',
+        version: '2.12.3'
+      });
+    }
+
     // Health check
-    if (path === '/api/health') {
+    if (path === '/api/health' && allowsHead) {
       return sendJSON(res, { success: true, message: 'API running', timestamp: new Date(), version: APP_VERSION });
     }
 
     // Version check (useful to verify cPanel is running the latest server.js)
-    if (path === '/api/version' && method === 'GET') {
+    if (path === '/api/version' && allowsHead) {
       return sendJSON(res, { success: true, version: APP_VERSION, node: process.version });
     }
 
@@ -392,7 +404,7 @@ const server = http.createServer(async (req, res) => {
       
       // Get device and check authorization
       const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [uniquedevcode]
       );
       
@@ -407,7 +419,7 @@ const server = http.createServer(async (req, res) => {
       
       // Get orgtype from psettings to determine data source
       const [psettingsRows] = await pool.query(
-        'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE ccode = ?',
+        'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE cno = ?',
         [ccode]
       );
       
@@ -493,7 +505,7 @@ const server = http.createServer(async (req, res) => {
       
       // Get device and check authorization
       const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [uniquedevcode]
       );
       
@@ -538,7 +550,7 @@ const server = http.createServer(async (req, res) => {
       
       // Get device and check authorization
       const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [uniquedevcode]
       );
       
@@ -583,7 +595,7 @@ const server = http.createServer(async (req, res) => {
       
       // Get device and check authorization
       const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [uniquedevcode]
       );
       
@@ -693,7 +705,7 @@ const server = http.createServer(async (req, res) => {
       let ccode = null;
       if (uniquedevcode) {
         const [deviceRows] = await pool.query(
-          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode FROM devSettings WHERE uniquedevcode = ?',
           [uniquedevcode]
         );
         if (deviceRows.length > 0) {
@@ -790,9 +802,9 @@ const server = http.createServer(async (req, res) => {
         // Start transaction
         await connection.beginTransaction();
         
-        // Get devcode from devsettings for reference generation
+        // Get devcode from devSettings for reference generation
         const [deviceRows] = await connection.query(
-          'SELECT ccode, devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
           [deviceserial]
         );
         
@@ -836,9 +848,9 @@ const server = http.createServer(async (req, res) => {
         // Generate reference: devcode + 8-digit trnid padded
         const transrefno = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
         
-        // Update trnid in devsettings
+        // Update trnid in devSettings
         await connection.query(
-          'UPDATE devsettings SET trnid = ? WHERE uniquedevcode = ?',
+          'UPDATE devSettings SET trnid = ? WHERE uniquedevcode = ?',
           [nextTrnId, deviceserial]
         );
         
@@ -880,9 +892,9 @@ const server = http.createServer(async (req, res) => {
       try {
         await connection.beginTransaction();
         
-        // Get devcode from devsettings
+        // Get devcode from devSettings
         const [deviceRows] = await connection.query(
-          'SELECT ccode, devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
           [deviceserial]
         );
         
@@ -953,9 +965,9 @@ const server = http.createServer(async (req, res) => {
           ]
         );
         
-        // Update trnid in devsettings to end of batch
+        // Update trnid in devSettings to end of batch
         await connection.query(
-          'UPDATE devsettings SET trnid = ? WHERE uniquedevcode = ?',
+          'UPDATE devSettings SET trnid = ? WHERE uniquedevcode = ?',
           [endNumber - 1, deviceserial]
         );
         
@@ -1011,9 +1023,9 @@ const server = http.createServer(async (req, res) => {
       const clerk = body.clerk_name || 'unknown';
       const deviceserial = body.device_fingerprint || 'web';
       
-      // Fetch ccode from devsettings using uniquedevcode
+      // Fetch ccode from devSettings using uniquedevcode
       const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized, milkid FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, authorized, milkid FROM devSettings WHERE uniquedevcode = ?',
         [deviceserial]
       );
       
@@ -1032,7 +1044,7 @@ const server = http.createServer(async (req, res) => {
       // BACKEND VALIDATION: Enforce psettings rules
       // Fetch psettings for this company to validate business rules
       const [psettingsRows] = await pool.query(
-        'SELECT IFNULL(AutoW, 0) as AutoW, IFNULL(zeroopt, 0) as zeroopt FROM psettings WHERE ccode = ?',
+        'SELECT IFNULL(AutoW, 0) as AutoW, IFNULL(zeroopt, 0) as zeroopt FROM psettings WHERE cno = ?',
         [ccode]
       );
       
@@ -1096,7 +1108,7 @@ const server = http.createServer(async (req, res) => {
       let orgtype = 'D';
       try {
         const [orgRows] = await pool.query(
-          'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE ccode = ? LIMIT 1',
+          'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE cno = ? LIMIT 1',
           [ccode]
         );
         if (orgRows.length > 0) orgtype = (orgRows[0].orgtype || 'D').toString().toUpperCase();
@@ -1260,7 +1272,7 @@ const server = http.createServer(async (req, res) => {
 
           // SUCCESS: Update trnid AND milkid AFTER successful insert
           const [devRows] = await pool.query(
-            'SELECT devcode FROM devsettings WHERE uniquedevcode = ?',
+            'SELECT devcode FROM devSettings WHERE uniquedevcode = ?',
             [deviceserial]
           );
           if (devRows.length > 0 && devRows[0].devcode) {
@@ -1269,7 +1281,7 @@ const server = http.createServer(async (req, res) => {
             const insertedTrnId = parseInt(attemptTransrefno.slice(-8), 10);
             if (!isNaN(insertedTrnId)) {
               await pool.query(
-                `UPDATE devsettings SET 
+                `UPDATE devSettings SET 
                   trnid = GREATEST(IFNULL(trnid, 0), ?),
                   milkid = GREATEST(IFNULL(milkid, 0), ?)
                  WHERE uniquedevcode = ?`,
@@ -1381,7 +1393,7 @@ const server = http.createServer(async (req, res) => {
       }
       
       const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [deviceserial]
       );
       
@@ -1443,7 +1455,7 @@ const server = http.createServer(async (req, res) => {
 
       // Get device's company code and devcode
       const [deviceRows] = await pool.query(
-        'SELECT ccode, devcode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        'SELECT ccode, devcode FROM devSettings WHERE uniquedevcode = ? AND authorized = 1',
         [uniquedevcode]
       );
       
@@ -1515,8 +1527,8 @@ const server = http.createServer(async (req, res) => {
       // Get device's company code, devcode, and company name
       const [deviceRows] = await pool.query(
         `SELECT d.ccode, d.devcode, p.cname as company_name
-         FROM devsettings d
-         LEFT JOIN psettings p ON d.ccode = p.ccode
+         FROM devSettings d
+         LEFT JOIN psettings p ON d.ccode = p.cno
          WHERE d.uniquedevcode = ? AND d.authorized = 1`,
         [uniquedevcode]
       );
@@ -1654,7 +1666,7 @@ const server = http.createServer(async (req, res) => {
 
       // Get device's company code
       const [deviceRows] = await pool.query(
-        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        'SELECT ccode FROM devSettings WHERE uniquedevcode = ? AND authorized = 1',
         [uniquedevcode]
       );
       
@@ -1763,8 +1775,8 @@ const server = http.createServer(async (req, res) => {
       // Get device info including devcode, ccode, and company name
       const [deviceRows] = await pool.query(
         `SELECT d.ccode, d.devcode, p.cname as company_name, p.orgtype, p.rdesc
-         FROM devsettings d
-         LEFT JOIN psettings p ON d.ccode = p.ccode
+         FROM devSettings d
+         LEFT JOIN psettings p ON d.ccode = p.cno
          WHERE d.uniquedevcode = ? AND d.authorized = 1`,
         [uniquedevcode]
       );
@@ -1783,7 +1795,7 @@ const server = http.createServer(async (req, res) => {
       const produceLabel = isCoffee ? 'COFFEE' : 'MILK';
       
       // Get the device's unique identifier (deviceserial) from the fingerprint
-      // The deviceserial in transactions matches the uniquedevcode from devsettings
+      // The deviceserial in transactions matches the uniquedevcode from devSettings
       const deviceSerial = uniquedevcode;
 
       // Define CAN column codes for each period (original session SCODE values)
@@ -1964,7 +1976,7 @@ const server = http.createServer(async (req, res) => {
       
       // Get device and check authorization
       const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [uniquedevcode]
       );
       
@@ -2017,12 +2029,12 @@ const server = http.createServer(async (req, res) => {
         // Calculate amount (quantity * price)
         const amount = (body.quantity || 0) * (body.price || 0);
         
-        // Get device's ccode from devsettings using device_fingerprint
+        // Get device's ccode from devSettings using device_fingerprint
         let ccode = '';
         let authorized = false;
         if (body.device_fingerprint) {
           const [deviceRows] = await conn.query(
-            'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+            'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
             [body.device_fingerprint]
           );
           if (deviceRows.length > 0) {
@@ -2155,7 +2167,7 @@ const server = http.createServer(async (req, res) => {
         let salesOrgtype = 'D';
         try {
           const [orgRows] = await conn.query(
-            'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE ccode = ? LIMIT 1',
+            'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE cno = ? LIMIT 1',
             [ccode]
           );
           if (orgRows.length > 0) salesOrgtype = (orgRows[0].orgtype || 'D').toString().toUpperCase();
@@ -2237,7 +2249,7 @@ const server = http.createServer(async (req, res) => {
             transtype,                          // Transtype: 2 for Store, 3 for AI
             0,                                  // processed
             0,                                  // uploaded
-            ccode,                              // ccode (from device's devsettings)
+            ccode,                              // ccode (from device's devSettings)
             0,                                  // ivat
             body.price || 0,                    // iprice
             amount,                             // amount
@@ -2264,7 +2276,7 @@ const server = http.createServer(async (req, res) => {
         await conn.commit();
         conn.release();
         
-        // Update storeid/aiid counter in devsettings (same pattern as milk collection)
+        // Update storeid/aiid counter in devSettings (same pattern as milk collection)
         if (body.device_fingerprint) {
           try {
             const insertedTrnId = parseInt(transrefno.slice(-8), 10);
@@ -2272,16 +2284,16 @@ const server = http.createServer(async (req, res) => {
             const counterField = transtype === 3 ? 'aiid' : 'storeid';
             if (!isNaN(insertedTrnId)) {
               await pool.query(
-                `UPDATE devsettings SET 
+                `UPDATE devSettings SET 
                   trnid = GREATEST(IFNULL(trnid, 0), ?),
                   ${counterField} = GREATEST(IFNULL(${counterField}, 0), ?)
                  WHERE uniquedevcode = ?`,
                 [insertedTrnId, typeId, body.device_fingerprint]
               );
-              console.log(`📊 Updated devsettings: trnid=${insertedTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
+              console.log(`📊 Updated devSettings: trnid=${insertedTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
             }
           } catch (counterErr) {
-            console.error('⚠️ Failed to update sale counters in devsettings:', counterErr);
+            console.error('⚠️ Failed to update sale counters in devSettings:', counterErr);
             // Don't fail the sale response - counter update is non-critical
           }
         }
@@ -2339,12 +2351,12 @@ const server = http.createServer(async (req, res) => {
         const transtime = now.toTimeString().split(' ')[0];
         const timestamp = Math.floor(now.getTime() / 1000);
         
-        // Get device's ccode from devsettings
+        // Get device's ccode from devSettings
         let ccode = '';
         let authorized = false;
         if (body.device_fingerprint) {
           const [deviceRows] = await conn.query(
-            'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+            'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
             [body.device_fingerprint]
           );
           if (deviceRows.length > 0) {
@@ -2444,7 +2456,7 @@ const server = http.createServer(async (req, res) => {
         let batchOrgtype = 'D';
         try {
           const [orgRows] = await conn.query(
-            'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE ccode = ? LIMIT 1',
+            'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE cno = ? LIMIT 1',
             [ccode]
           );
           if (orgRows.length > 0) batchOrgtype = (orgRows[0].orgtype || 'D').toString().toUpperCase();
@@ -2567,7 +2579,7 @@ const server = http.createServer(async (req, res) => {
         await conn.commit();
         conn.release();
 
-        // Update storeid/aiid counter in devsettings (same pattern as milk collection)
+        // Update storeid/aiid counter in devSettings (same pattern as milk collection)
         if (body.device_fingerprint && insertedRefs.length > 0) {
           try {
             const maxTrnId = Math.max(...insertedRefs.map(ref => parseInt(ref.slice(-8), 10)));
@@ -2575,16 +2587,16 @@ const server = http.createServer(async (req, res) => {
             const counterField = transtype === 3 ? 'aiid' : 'storeid';
             if (!isNaN(maxTrnId)) {
               await pool.query(
-                `UPDATE devsettings SET 
+                `UPDATE devSettings SET 
                   trnid = GREATEST(IFNULL(trnid, 0), ?),
                   ${counterField} = GREATEST(IFNULL(${counterField}, 0), ?)
                  WHERE uniquedevcode = ?`,
                 [maxTrnId, typeId, body.device_fingerprint]
               );
-              console.log(`📊 Batch: Updated devsettings: trnid=${maxTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
+              console.log(`📊 Batch: Updated devSettings: trnid=${maxTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
             }
           } catch (counterErr) {
-            console.error('⚠️ Failed to update batch sale counters in devsettings:', counterErr);
+            console.error('⚠️ Failed to update batch sale counters in devSettings:', counterErr);
           }
         }
 
@@ -2697,7 +2709,7 @@ const server = http.createServer(async (req, res) => {
       let ccode = null;
       if (uniquedevcode) {
         const [deviceRows] = await pool.query(
-          'SELECT ccode FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode FROM devSettings WHERE uniquedevcode = ?',
           [uniquedevcode]
         );
         if (deviceRows.length > 0) {
@@ -2760,7 +2772,7 @@ const server = http.createServer(async (req, res) => {
     //              same user profile)
     //   3. SSAID + model + manufacturer (defensive 3-way match)
     // On hit we return the same payload shape as /api/devices/fingerprint/:fp,
-    // including devcode/trnid/milkid/storeid/aiid from devsettings, so the
+    // including devcode/trnid/milkid/storeid/aiid from devSettings, so the
     // device rehydrates its original identity instead of being issued a
     // fresh one. On miss we return 404 and the client falls through to the
     // existing flow. Strictly additive — no existing endpoint touched.
@@ -2896,11 +2908,11 @@ const server = http.createServer(async (req, res) => {
 
         // Build the response in the same shape as /api/devices/fingerprint/:fp
         // so the client can use it as a drop-in. Pull devcode + counters from
-        // devsettings keyed on the ORIGINAL device_fingerprint (which equals
+        // devSettings keyed on the ORIGINAL device_fingerprint (which equals
         // uniquedevcode in this system).
         const recoveredFingerprint = matchedRow.device_fingerprint;
         const [devRows] = await pool.query(
-          'SELECT uniquedevcode, ccode, devcode, trnid, milkid, storeid, aiid, authorized FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT uniquedevcode, ccode, devcode, trnid, milkid, storeid, aiid, authorized FROM devSettings WHERE uniquedevcode = ?',
           [recoveredFingerprint]
         );
 
@@ -2917,7 +2929,7 @@ const server = http.createServer(async (req, res) => {
           resolved_fingerprint: recoveredFingerprint,
         };
 
-        // Apply the same GREATEST(devsettings.trnid, MAX(transrefno)) self-heal
+        // Apply the same GREATEST(devSettings.trnid, MAX(transrefno)) self-heal
         // we use in /api/devices/fingerprint/:fp so a reinstalled device never
         // gets a counter lower than what's actually live in transactions.
         let lastTrnId = parseInt(deviceData.trnid, 10) || 0;
@@ -2936,7 +2948,7 @@ const server = http.createServer(async (req, res) => {
                 lastTrnId = txTrnId;
                 try {
                   await pool.query(
-                    'UPDATE devsettings SET trnid = GREATEST(IFNULL(trnid, 0), ?) WHERE uniquedevcode = ?',
+                    'UPDATE devSettings SET trnid = GREATEST(IFNULL(trnid, 0), ?) WHERE uniquedevcode = ?',
                     [lastTrnId, recoveredFingerprint]
                   );
                 } catch (healErr) {
@@ -2969,9 +2981,9 @@ const server = http.createServer(async (req, res) => {
         [fingerprint]
       );
       
-      // Then check devsettings for authorization, company info, and device code
+      // Then check devSettings for authorization, company info, and device code
       const [devRows] = await pool.query(
-        'SELECT uniquedevcode, ccode, devcode, trnid, milkid, storeid, aiid, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT uniquedevcode, ccode, devcode, trnid, milkid, storeid, aiid, authorized FROM devSettings WHERE uniquedevcode = ?',
         [fingerprint]
       );
       
@@ -3031,7 +3043,7 @@ const server = http.createServer(async (req, res) => {
             IFNULL(sackTare, 1) as sackTare,
             IFNULL(sackEdit, 0) as sackEdit,
             IFNULL(payments_active, 0) as payments_active
-          FROM psettings WHERE ccode = ?`,
+          FROM psettings WHERE cno = ?`,
           [deviceData.ccode]);
         
         if (companyRows.length > 0) {
@@ -3068,8 +3080,8 @@ const server = http.createServer(async (req, res) => {
       deviceData.app_settings = appSettings;
       
       // Get last used trnid for this devcode for counter sync.
-      // CRITICAL FIX (v2.10.70): Always cross-check devsettings.trnid against the
-      // actual MAX(transrefno) tail in transactions. devsettings.trnid can become
+      // CRITICAL FIX (v2.10.70): Always cross-check devSettings.trnid against the
+      // actual MAX(transrefno) tail in transactions. devSettings.trnid can become
       // stale (e.g. when offline syncs land but the counter UPDATE silently fails,
       // or when records are imported out-of-band). Returning a stale low trnid
       // causes the device to regenerate references that collide with existing
@@ -3089,17 +3101,17 @@ const server = http.createServer(async (req, res) => {
             // Extract trnid using last 8 digits to avoid clientFetch corruption
             const txTrnId = parseInt(lastRef.slice(-8), 10) || 0;
             if (txTrnId > lastTrnId) {
-              console.log(`🔧 [TRNID-SYNC] devsettings.trnid (${lastTrnId}) is stale for ${deviceData.devcode}; using transactions MAX (${txTrnId})`);
+              console.log(`🔧 [TRNID-SYNC] devSettings.trnid (${lastTrnId}) is stale for ${deviceData.devcode}; using transactions MAX (${txTrnId})`);
               lastTrnId = txTrnId;
-              // Self-heal: persist the corrected trnid back to devsettings so
+              // Self-heal: persist the corrected trnid back to devSettings so
               // future calls (and counter-update statements) start from a sane base.
               try {
                 await pool.query(
-                  'UPDATE devsettings SET trnid = GREATEST(IFNULL(trnid, 0), ?) WHERE uniquedevcode = ?',
+                  'UPDATE devSettings SET trnid = GREATEST(IFNULL(trnid, 0), ?) WHERE uniquedevcode = ?',
                   [lastTrnId, fingerprint]
                 );
               } catch (healErr) {
-                console.warn('⚠️ [TRNID-SYNC] Failed to self-heal devsettings.trnid:', healErr?.message || healErr);
+                console.warn('⚠️ [TRNID-SYNC] Failed to self-heal devSettings.trnid:', healErr?.message || healErr);
               }
             }
           }
@@ -3169,7 +3181,7 @@ const server = http.createServer(async (req, res) => {
               }
             }
             const [devRows] = await pool.query(
-              'SELECT devcode, trnid, milkid, storeid, aiid FROM devsettings WHERE uniquedevcode = ?',
+              'SELECT devcode, trnid, milkid, storeid, aiid FROM devSettings WHERE uniquedevcode = ?',
               [recovered.device_fingerprint]
             );
             const deviceData = {
@@ -3215,9 +3227,9 @@ const server = http.createServer(async (req, res) => {
 
         const [updated] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
         
-        // Get devcode and trnid from devsettings
+        // Get devcode and trnid from devSettings
         const [devRows] = await pool.query(
-          'SELECT devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
           [body.device_fingerprint]
         );
         const deviceData = { 
@@ -3228,27 +3240,27 @@ const server = http.createServer(async (req, res) => {
         
         return sendJSON(res, { success: true, data: deviceData, message: 'Device already registered' });
       } else {
-        // Check if device exists in devsettings to get ccode and devcode
+        // Check if device exists in devSettings to get ccode and devcode
         const [devRows] = await pool.query(
-          'SELECT ccode, devcode, trnid FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
           [body.device_fingerprint]
         );
         const ccode = devRows.length > 0 ? devRows[0].ccode : null;
         const devcode = devRows.length > 0 ? devRows[0].devcode : null;
         const trnid = devRows.length > 0 ? devRows[0].trnid : 0;
 
-        // If device not in devsettings, create a minimal record
+        // If device not in devSettings, create a minimal record
         if (devRows.length === 0) {
           try {
             await pool.query(
-              'INSERT INTO devsettings (uniquedevcode, device, authorized, trnid) VALUES (?, ?, 0, 0)',
+              'INSERT INTO devSettings (uniquedevcode, device, authorized, trnid) VALUES (?, ?, 0, 0)',
               [body.device_fingerprint, body.device_info || null]
             );
-            console.log('📱 Created devsettings record for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
+            console.log('📱 Created devSettings record for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
           } catch (insertError) {
             // Ignore duplicate key errors - device might have been added by another process
             if (insertError.code !== 'ER_DUP_ENTRY') {
-              console.error('❌ Failed to create devsettings record:', insertError);
+              console.error('❌ Failed to create devSettings record:', insertError);
             }
           }
         }
@@ -3303,7 +3315,7 @@ const server = http.createServer(async (req, res) => {
             const [dupRows] = await pool.query('SELECT * FROM approved_devices WHERE device_fingerprint = ?', [body.device_fingerprint]);
             if (dupRows.length > 0) {
               const [dupDev] = await pool.query(
-                'SELECT devcode, trnid, milkid, storeid, aiid FROM devsettings WHERE uniquedevcode = ?',
+                'SELECT devcode, trnid, milkid, storeid, aiid FROM devSettings WHERE uniquedevcode = ?',
                 [body.device_fingerprint]
               );
               const dupData = {
@@ -3508,7 +3520,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // psettings endpoint - Get company settings (ALL behavior switches)
-    // REQUIRES device to be authorized in devsettings table
+    // REQUIRES device to be authorized in devSettings table
     if (path === '/api/psettings' && method === 'GET') {
       const ccode = parsedUrl.query.ccode;
       const uniquedevcode = parsedUrl.query.uniquedevcode;
@@ -3518,7 +3530,7 @@ const server = http.createServer(async (req, res) => {
       // If uniquedevcode provided, verify device is authorized first
       if (!targetCcode && uniquedevcode) {
         const [deviceRows] = await pool.query(
-          'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
           [uniquedevcode]
         );
         
@@ -3539,7 +3551,7 @@ const server = http.createServer(async (req, res) => {
       
       const [rows] = await pool.query(
         `SELECT 
-          ccode,
+          cno AS ccode,
           cname as company_name,
           caddress,
           tel,
@@ -3556,7 +3568,7 @@ const server = http.createServer(async (req, res) => {
           IFNULL(printcumm, 0) as printcumm,
           IFNULL(zeroopt, 0) as zeroopt,
           IFNULL(payments_active, 0) as payments_active
-        FROM psettings WHERE ccode = ?`,
+        FROM psettings WHERE cno = ?`,
         [targetCcode]
       );
       
@@ -3626,7 +3638,7 @@ const server = http.createServer(async (req, res) => {
       
       // Get device's ccode
       const [deviceRows] = await pool.query(
-        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        'SELECT ccode FROM devSettings WHERE uniquedevcode = ? AND authorized = 1',
         [uniquedevcode]
       );
       
@@ -3654,7 +3666,7 @@ const server = http.createServer(async (req, res) => {
       // instead of calendar month, so transactions from the entire season are included
       try {
         const [orgRows] = await pool.query(
-          `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(ccode) = TRIM(?) LIMIT 1`, [ccode]
+          `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(cno) = TRIM(?) LIMIT 1`, [ccode]
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
@@ -3777,7 +3789,7 @@ const server = http.createServer(async (req, res) => {
       
       // Get device's ccode
       const [deviceRows] = await pool.query(
-        'SELECT ccode FROM devsettings WHERE uniquedevcode = ? AND authorized = 1',
+        'SELECT ccode FROM devSettings WHERE uniquedevcode = ? AND authorized = 1',
         [uniquedevcode]
       );
       
@@ -3805,7 +3817,7 @@ const server = http.createServer(async (req, res) => {
       // For coffee orgs, use active season date range instead of calendar month
       try {
         const [orgRows] = await pool.query(
-          `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(ccode) = TRIM(?) LIMIT 1`, [ccode]
+          `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(cno) = TRIM(?) LIMIT 1`, [ccode]
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
@@ -3899,7 +3911,7 @@ const server = http.createServer(async (req, res) => {
       if (device_fingerprint) {
         try {
           const [devRows] = await pool.query(
-            'SELECT ccode FROM devsettings WHERE uniquedevcode = ? LIMIT 1',
+            'SELECT ccode FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
             [String(device_fingerprint).trim()]
           );
           deviceCcode = (devRows[0]?.ccode || '').toString().trim();
@@ -4036,7 +4048,7 @@ const server = http.createServer(async (req, res) => {
 
         // Resolve ccode (never trust client)
         const [deviceRows] = await pool.query(
-          'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
           [deviceFingerprint]
         );
         if (deviceRows.length === 0 || !deviceRows[0].authorized) {
@@ -4064,7 +4076,7 @@ const server = http.createServer(async (req, res) => {
             `SELECT
                CAST(reserved_testid_min AS UNSIGNED) AS rmin,
                CAST(reserved_testid_max AS UNSIGNED) AS rmax
-             FROM psettings WHERE ccode = ? LIMIT 1`,
+             FROM psettings WHERE cno = ? LIMIT 1`,
             [ccode]
           );
           if (psRows && psRows[0]) {
@@ -4207,7 +4219,7 @@ const server = http.createServer(async (req, res) => {
 
         // Resolve ccode from device (never trust client)
         const [deviceRows] = await pool.query(
-          'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ?',
+          'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
           [deviceFingerprint]
         );
         if (deviceRows.length === 0 || !deviceRows[0].authorized) {
@@ -4314,9 +4326,9 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { success: false, error: 'Device fingerprint required' }, 400);
       }
 
-      // Look up ccode and devcode from devsettings
+      // Look up ccode and devcode from devSettings
       const [deviceRows] = await pool.query(
-        'SELECT ccode, devcode, authorized FROM devsettings WHERE uniquedevcode = ?',
+        'SELECT ccode, devcode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [deviceFingerprint]
       );
       if (deviceRows.length === 0 || !deviceRows[0].authorized) {
@@ -4916,6 +4928,7 @@ console.error("===========================");
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
 
   } catch (error) {
+    console.error(error);
     const requestId = `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
     // v2.10.108: detect DB-busy / pool-pressure and respond with a fast,
