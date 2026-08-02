@@ -128,6 +128,70 @@ const toYmdLocal = (d) => {
   return `${y}-${m}-${day}`;
 };
 
+/**
+ * v2.12.4 — Contabo schema split:
+ *   seasons  → orgtype 'C' (id, scode, Descript, ccode, datefrom, dateto)
+ *   sessions → orgtype 'D' (ID, Icode, descript, ccode, time_from, time_to, status)
+ *
+ * Legacy cPanel deployments kept season columns (SCODE/datefrom/dateto) inside the
+ * sessions table, so every helper below probes for the seasons table once and falls
+ * back to the legacy shape. Backward compatible with old databases.
+ */
+let _hasSeasonsTableCache = null;
+const hasSeasonsTable = async () => {
+  if (_hasSeasonsTableCache !== null) return _hasSeasonsTableCache;
+  try {
+    const [rows] = await pool.query(
+      `SELECT 1 FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = 'seasons' LIMIT 1`
+    );
+    _hasSeasonsTableCache = rows.length > 0;
+  } catch (e) {
+    console.warn('[SEASON] table probe failed:', e?.message || e);
+    _hasSeasonsTableCache = false;
+  }
+  return _hasSeasonsTableCache;
+};
+
+// Active season row (date range) covering `date` for a ccode. Returns null when none.
+const findActiveSeason = async (ccode, date, conn = pool) => {
+  const table = (await hasSeasonsTable()) ? 'seasons' : 'sessions';
+  try {
+    const [rows] = await conn.query(
+      `SELECT scode AS SCODE, descript,
+              DATE_FORMAT(datefrom, '%Y-%m-%d') AS datefrom,
+              DATE_FORMAT(dateto, '%Y-%m-%d') AS dateto
+         FROM ${table}
+        WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+          AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
+        ORDER BY datefrom DESC, id DESC LIMIT 1`,
+      [ccode, date, date]
+    );
+    return rows.length ? rows[0] : null;
+  } catch (e) {
+    console.warn(`[SEASON] active lookup failed on ${table}:`, e?.message || e);
+    return null;
+  }
+};
+
+// Human-readable name for a season code (falls back to the code itself).
+const findSeasonDescript = async (scode, ccode, conn = pool) => {
+  const table = (await hasSeasonsTable()) ? 'seasons' : 'sessions';
+  try {
+    const [rows] = await conn.query(
+      `SELECT descript FROM ${table}
+        WHERE UPPER(TRIM(scode)) = UPPER(TRIM(?)) AND TRIM(ccode) = TRIM(?) LIMIT 1`,
+      [scode, ccode]
+    );
+    return rows.length ? rows[0].descript : null;
+  } catch (e) {
+    console.warn(`[SEASON] descript lookup failed on ${table}:`, e?.message || e);
+    return null;
+  }
+};
+
+
+
 const getPaymentPeriodRange = async (period, ccode) => {
   const normalized = ['day', 'week', 'month', 'season'].includes(period) ? period : 'month';
   const now = new Date();
