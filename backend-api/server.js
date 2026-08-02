@@ -571,19 +571,43 @@ const server = http.createServer(async (req, res) => {
       }
       
       const ccode = deviceRows[0].ccode;
-      
-      // Get current time in HH:MM:SS format
+
       const now = new Date();
-      const currentTime = now.toTimeString().split(' ')[0]; // "HH:MM:SS"
-      
-      // Find active session where current time is between time_from and time_to
+      const currentTime = now.toTimeString().split(' ')[0]; // "HH:MM:SS" (legacy TIME columns)
+      const currentHour = now.getHours();                   // int (Contabo sessions.time_from/to are INT hours)
+
+      // v2.12.4: coffee (orgtype C) has no time windows — resolve the active season by date.
+      const [orgRows] = await pool.query(
+        `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(cno) = TRIM(?) LIMIT 1`,
+        [ccode]
+      );
+      const activeOrgtype = orgRows.length ? String(orgRows[0].orgtype || 'D').toUpperCase() : 'D';
+
+      if (activeOrgtype === 'C') {
+        const season = await findActiveSeason(ccode, toYmdLocal(now));
+        if (!season) {
+          return sendJSON(res, { success: true, data: null, message: 'No active season for today', ccode });
+        }
+        return sendJSON(res, {
+          success: true,
+          data: { SCODE: season.SCODE, descript: season.descript, datefrom: season.datefrom, dateto: season.dateto, ccode },
+          ccode
+        });
+      }
+
+      // Dairy: match the current time against the session window.
+      // Handles both INT-hour columns (Contabo) and legacy TIME columns.
       const [rows] = await pool.query(
         `SELECT Icode AS SCODE, descript, time_from, time_to, ccode 
          FROM sessions 
-         WHERE ccode = ? AND time_from <= ? AND time_to >= ?
+         WHERE TRIM(ccode) = TRIM(?)
+           AND (
+             (time_from <= ? AND time_to >= ?)
+             OR (time_from <= ? AND time_to >= ?)
+           )
          ORDER BY time_from
          LIMIT 1`,
-        [ccode, currentTime, currentTime]
+        [ccode, currentTime, currentTime, currentHour, currentHour]
       );
       
       if (rows.length === 0) {
@@ -596,6 +620,7 @@ const server = http.createServer(async (req, res) => {
       }
       
       return sendJSON(res, { success: true, data: rows[0], ccode });
+
     }
 
     // Routes endpoint - Fetch from fm_tanks table
