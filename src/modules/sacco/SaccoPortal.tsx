@@ -29,6 +29,14 @@ import TransactionDetailSheet from './components/TransactionDetailSheet';
 
 const DEFAULT_FILTERS: FilterState = { search: '', from: '', to: '', limit: 20 };
 
+/** Local HH:MM clock for the live-refresh indicator (never toISOString). */
+const formatClock = (ts: number): string => {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+
 const SaccoPortal = () => {
   const { currentUser, isAuthenticated, login, logout } = useAuth();
   const { companyName } = useAppSettings();
@@ -159,7 +167,15 @@ const SaccoPortal = () => {
               {companyName || 'Member portal'}
               {summaryQuery.data?.account_number ? ` • A/C ${summaryQuery.data.account_number}` : ''}
             </p>
+            <p className="text-[11px] text-muted-foreground">
+              {txnQuery.isFetching
+                ? 'Updating…'
+                : txnQuery.dataUpdatedAt
+                  ? `Live • updated ${formatClock(txnQuery.dataUpdatedAt)}`
+                  : 'Live'}
+            </p>
           </div>
+
           <div className="flex items-center">
             <Button
               variant="outline"

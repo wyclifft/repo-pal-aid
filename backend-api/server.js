@@ -191,7 +191,7 @@ const resolvePaymentsAccess = async ({ deviceFingerprint, userid }) => {
 
   const [userRows] = await pool.query(
     `SELECT IFNULL(can_access_payments, 0) AS can_access_payments
-       FROM user
+       FROM Users
       WHERE TRIM(userid) = ? AND UPPER(TRIM(ccode)) = UPPER(TRIM(?))
       LIMIT 1`,
     [userId, ccode]
@@ -3913,7 +3913,7 @@ const server = http.createServer(async (req, res) => {
       let rows = [];
       if (deviceCcode) {
         const [scoped] = await pool.query(
-          'SELECT * FROM user WHERE TRIM(userid) = ? AND TRIM(password) = ? AND UPPER(TRIM(ccode)) = UPPER(?) LIMIT 1',
+          'SELECT * FROM Users WHERE TRIM(userid) = ? AND TRIM(password) = ? AND UPPER(TRIM(ccode)) = UPPER(?) LIMIT 1',
           [userid.trim(), password.trim(), deviceCcode]
         );
         rows = scoped;
@@ -3928,7 +3928,7 @@ const server = http.createServer(async (req, res) => {
       // "Invalid credentials" or the existing cross-company "Access denied").
       if (rows.length === 0) {
         const [legacy] = await pool.query(
-          'SELECT * FROM user WHERE TRIM(userid) = ? AND TRIM(password) = ?',
+          'SELECT * FROM Users WHERE TRIM(userid) = ? AND TRIM(password) = ?',
           [userid.trim(), password.trim()]
         );
         rows = legacy;
@@ -3939,7 +3939,7 @@ const server = http.createServer(async (req, res) => {
       if (rows.length === 0) {
         // Debug: Check if user exists
         const [userCheck] = await pool.query(
-          'SELECT userid, LENGTH(password) as pwd_len FROM user WHERE TRIM(userid) = ?',
+          'SELECT userid, LENGTH(password) as pwd_len FROM Users WHERE TRIM(userid) = ?',
           [userid.trim()]
         );
         
@@ -4017,7 +4017,7 @@ const server = http.createServer(async (req, res) => {
           depart: user.depart,
           // v2.10.40: expose add_members permission for member-creation gating
           add_members: toBool(user.add_members),
-          // v2.11.1: expose Payments permission from real MySQL table `user`
+          // v2.11.1: expose Payments permission from real MySQL table `Users`
           can_access_payments: toBool(user.can_access_payments)
         }
       });
@@ -4217,7 +4217,7 @@ const server = http.createServer(async (req, res) => {
 
         // Verify user has add_members permission
         const [userRows] = await pool.query(
-          'SELECT IFNULL(add_members, 0) AS add_members FROM user WHERE TRIM(userid) = ? LIMIT 1',
+          'SELECT IFNULL(add_members, 0) AS add_members FROM Users WHERE TRIM(userid) = ? LIMIT 1',
           [userId]
         );
         if (userRows.length === 0) {
