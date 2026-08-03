@@ -3812,9 +3812,12 @@ const server = http.createServer(async (req, res) => {
       // field that older clients ignore safely.
       const conn = await pool.getConnection();
       let totalRows, productRows, snapshotMaxId = 0;
+      // v2.12.5: per-query timings so the real bottleneck is visible in prod logs.
+      let msTotals = 0, msProducts = 0, msSnapshot = 0;
       try {
         try { await conn.query("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"); } catch (e) { /* non-fatal */ }
 
+        let _t0 = Date.now();
         const [tRows] = await conn.query(
           `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
            FROM transactions 
