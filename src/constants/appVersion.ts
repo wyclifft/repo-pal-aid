@@ -1085,8 +1085,17 @@
 //   (CS10 firmware has no IBCRService; behaviour unchanged, log spam gone).
 //   No transaction, sync, IndexedDB, receipt content, payments, device auth or
 //   Classic Bluetooth logic changes.
-export const APP_VERSION = '2.12.4'; // v2.12.4: Contabo schema split — coffee seasons read from `seasons` table, dairy sessions from `sessions`; cumulative season range restored
-export const APP_VERSION_CODE = 180;
+// v2.12.5 — Cumulative sync flood fix + item loading diagnostics:
+//   • Client: batch cumulative call retries with backoff; per-farmer fallback is
+//     skipped entirely when the batch failed because the server was busy (503 /
+//     timeout), and fallback concurrency capped 25 → 4 with slower pacing.
+//   • Backend: /api/farmer-monthly-frequency-batch returns 503 + Retry-After when
+//     the MySQL pool is saturated, caches results for 20s per ccode|route|period,
+//     and logs per-query timings (totals/products/snapshot).
+//   • Backend: /api/items logs row counts and, when empty, the sellable invtype
+//     spread so mis-tagged coffee produce in Contabo fm_items is visible.
+export const APP_VERSION = '2.12.5'; // v2.12.5: cumulative batch backoff/caching, no fallback flood, item load diagnostics
+export const APP_VERSION_CODE = 181;
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'webview51-bridge-es5';
