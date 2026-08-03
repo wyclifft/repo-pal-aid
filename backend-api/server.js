@@ -3793,6 +3793,16 @@ const server = http.createServer(async (req, res) => {
       const tRouteFilter = route ? ' AND UPPER(TRIM(t.route)) = UPPER(TRIM(?))' : '';
       const tBaseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
 
+      // v2.12.5: serve from the 20s batch cache when an identical scan just ran.
+      const cumCacheKey = `cumbatch:${String(ccode).toUpperCase()}:${String(route || 'ALL').toUpperCase()}:${periodStart}:${periodEnd}`;
+      const cachedBatch = cumulativeBatchCache.get(cumCacheKey);
+      if (cachedBatch) {
+        console.log(`[CUM:BATCH] cache-hit ${cumCacheKey} farmers=${cachedBatch.total_farmers}`);
+        return sendJSON(res, { success: true, data: cachedBatch });
+      }
+
+
+
       // v2.10.119: SAME-CONNECTION BATCH READ — acquire one pooled connection
       // and run both the totals SUM and the per-product SUM on it under
       // READ COMMITTED so the two queries see the same snapshot. Also
