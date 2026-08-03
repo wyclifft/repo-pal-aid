@@ -3827,7 +3827,9 @@ const server = http.createServer(async (req, res) => {
           baseParams
         );
         totalRows = tRows;
+        msTotals = Date.now() - _t0;
 
+        _t0 = Date.now();
         const [pRows] = await conn.query(
           `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
                   IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
