@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { type Session } from '@/services/mysqlApi';
+import { useAppSettings } from '@/hooks/useAppSettings';
 
 interface UseSessionExpirationOptions {
   session: Session | null;
@@ -24,6 +25,7 @@ export const useSessionExpiration = ({
   enabled = true,
   checkIntervalMs = 60000, // Check every minute
 }: UseSessionExpirationOptions): UseSessionExpirationResult => {
+  const { isCoffee } = useAppSettings();
   const [isExpired, setIsExpired] = useState(false);
   const [expiresInMinutes, setExpiresInMinutes] = useState<number | null>(null);
   const wasActiveRef = useRef(false);
@@ -59,6 +61,11 @@ export const useSessionExpiration = ({
       return false;
     }
 
+    // v2.10.71: Coffee orgs bypass time validation — validation is date-only.
+    if (isCoffee) {
+      return true;
+    }
+
     const timeFrom = toHour(sess.time_from);
     const timeTo = toHour(sess.time_to);
 
@@ -75,10 +82,13 @@ export const useSessionExpiration = ({
     }
 
     return currentHour >= timeFrom && currentHour < timeTo;
-  }, [isDateEnabled]);
+  }, [isDateEnabled, isCoffee]);
 
   // Calculate minutes until session expires
   const calculateExpiresInMinutes = useCallback((sess: Session): number | null => {
+    // v2.10.71: Coffee orgs have no time-based expiration.
+    if (isCoffee) return null;
+
     const timeTo = toHour(sess.time_to);
     if (timeTo === null) return null;
 
@@ -95,7 +105,7 @@ export const useSessionExpiration = ({
     // Convert to minutes and subtract current minutes past the hour
     const minutesUntilExpiry = (hoursUntilExpiry * 60) - currentMinutes;
     return Math.max(0, minutesUntilExpiry);
-  }, []);
+  }, [isCoffee]);
 
   // Acknowledge the expiration (dismiss the modal, but session remains expired)
   const acknowledgeExpiration = useCallback(() => {

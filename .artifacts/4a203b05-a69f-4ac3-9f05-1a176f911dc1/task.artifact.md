@@ -1,0 +1,6 @@
+- [x] Update `SessionSelector.tsx` to bypass time validation for Coffee orgs
+- [x] Update `useSessionExpiration.ts` to skip time-based expiration for Coffee orgs
+- [x] Fix initial state of `orgtype` in `SessionSelector.tsx` to prevent false Dairy classification during cache load
+- [x] Verify changes in `SessionSelector.tsx`
+- [x] Verify changes in `useSessionExpiration.ts`
+- [x] Update walkthrough artifact

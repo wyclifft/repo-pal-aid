@@ -3871,7 +3871,7 @@ const server = http.createServer(async (req, res) => {
         _t0 = Date.now();
         const [pRows] = await conn.query(
           `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
-                  IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
+                  IFNULL(MAX(fi.descript), ANY_VALUE(TRIM(t.icode))) as product_name,
                   IFNULL(SUM(t.weight), 0) as weight 
            FROM transactions t
            LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
@@ -4007,7 +4007,7 @@ const server = http.createServer(async (req, res) => {
       
       const [productRows] = await pool.query(
         `SELECT TRIM(t.icode) as icode, 
-                IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
+                IFNULL(MAX(fi.descript), ANY_VALUE(TRIM(t.icode))) as product_name,
                 IFNULL(SUM(t.weight), 0) as weight 
          FROM transactions t
          LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))

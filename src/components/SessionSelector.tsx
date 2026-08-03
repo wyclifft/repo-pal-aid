@@ -23,8 +23,26 @@ export const SessionSelector = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [periodLabel, setPeriodLabel] = useState(propPeriodLabel);
-  const [orgtype, setOrgtype] = useState<string>('D');
+  const [periodLabel, setPeriodLabel] = useState<string>(() => {
+    try {
+      const cached = localStorage.getItem('app_settings');
+      if (cached) {
+        const s = JSON.parse(cached);
+        if (s?.periodLabel) return s.periodLabel;
+        if (s?.orgtype === 'C') return 'Season';
+      }
+    } catch { /* ignore */ }
+    return propPeriodLabel;
+  });
+  const [orgtype, setOrgtype] = useState<string>(() => {
+    try {
+      const cached = localStorage.getItem('app_settings');
+      if (cached) {
+        return JSON.parse(cached)?.orgtype || 'D';
+      }
+    } catch { /* ignore */ }
+    return 'D';
+  });
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const { saveSessions, getSessions, isReady } = useIndexedDB();
   const { isOnline } = useOfflineStatus();
@@ -99,6 +117,11 @@ export const SessionSelector = ({
     if (!isDateEnabled(session)) {
       return false;
     }
+
+    // v2.10.71: Coffee orgs ('C') bypass time validation — validation is date-only.
+    if (orgtype === 'C') {
+      return true;
+    }
     
     const timeFrom = toHour(session.time_from);
     const timeTo = toHour(session.time_to);
@@ -116,7 +139,7 @@ export const SessionSelector = ({
     }
     
     return currentHour >= timeFrom && currentHour < timeTo;
-  }, [currentTime, isDateEnabled]);
+  }, [currentTime, isDateEnabled, orgtype]);
 
   // Check if a session is SELECTABLE (can be chosen by user)
   // When OFFLINE: ONLY the currently active session is selectable
@@ -201,7 +224,10 @@ export const SessionSelector = ({
               console.warn('[SESSION] Coffee cache missing SCODE — will force network refresh');
             }
             console.log('[SESSION] Loaded from cache:', cached.length, 'sessions');
-            processSessionData(cached);
+
+            // v2.10.71: Use detected coffeeOrg status when processing cache
+            processSessionData(cached, undefined, coffeeOrg ? 'C' : 'D');
+
             hasLoadedRef.current = true;
             setInitialLoadComplete(true);
             setLoading(false);

@@ -1,0 +1,4 @@
+- [x] Fix SQL `only_full_group_by` error in `server.js`
+    - [x] Update `/api/farmer-monthly-frequency` individual query (around line 4010)
+    - [x] Update `/api/farmer-monthly-frequency` batch/cumulative query (around line 3874)
+- [x] Verify there are no other similar issues in the file
