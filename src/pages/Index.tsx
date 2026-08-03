@@ -821,7 +821,8 @@ const Index = () => {
                 }));
                 
                 if (i + BATCH_SIZE < remaining.length) {
-                  await new Promise(r => setTimeout(r, pass === 1 ? 20 : 100));
+                  // v2.12.5: inter-wave pacing (was 20ms) to keep server load low
+                  await new Promise(r => setTimeout(r, pass === 1 ? 150 : 250));
                 }
               }
               
