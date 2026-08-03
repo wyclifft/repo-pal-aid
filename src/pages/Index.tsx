@@ -505,11 +505,28 @@ const Index = () => {
         
         // Step 2: Try batch endpoint first (1 request instead of 3558)
         let batchSuccess = false;
+        // v2.12.5: when the batch fails because the SERVER is busy (503 / timeout /
+        // pool pressure), the per-farmer fallback would fire hundreds of requests and
+        // make the pool exhaustion worse. Retry the batch with backoff instead, and
+        // suppress the fallback entirely for server-busy failures.
+        let batchServerBusy = false;
         const batchLabel = `cumulative-prefetch route=${selectedRouteCode || 'ALL'}`;
         cumulativeMonitor.startBatch(batchLabel, farmersToCache.length, { source: 'prefetch' });
         try {
-          const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
-          if (batchResult.success && batchResult.data && batchResult.data.farmers) {
+          const isServerBusy = (r: any) =>
+            !!r?.offline || /503|timed out|timeout|Server unavailable|too many|busy|ECONNRESET/i.test(String(r?.error || ''));
+
+          let batchResult: any = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
+            if (batchResult?.success && batchResult.data?.farmers) { batchServerBusy = false; break; }
+            batchServerBusy = isServerBusy(batchResult);
+            if (!batchServerBusy || attempt === 3 || !navigator.onLine) break;
+            console.warn(`📦 Batch cumulative attempt ${attempt} failed (${batchResult?.error}) — backing off ${attempt * 4}s`);
+            await new Promise(r => setTimeout(r, attempt * 4000));
+          }
+
+          if (batchResult && batchResult.success && batchResult.data && batchResult.data.farmers) {
             const batchMap = new Map<string, number>();
             const batchByProductMap = new Map<string, Array<{ icode: string; product_name: string; weight: number }>>();
             for (const f of batchResult.data.farmers) {
