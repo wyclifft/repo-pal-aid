@@ -3842,8 +3842,10 @@ const server = http.createServer(async (req, res) => {
           tBaseParams
         );
         productRows = pRows;
+        msProducts = Date.now() - _t0;
 
         try {
+          _t0 = Date.now();
           const snapParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
           const [snapRows] = await conn.query(
             `SELECT IFNULL(MAX(id), 0) as max_id
@@ -3853,6 +3855,7 @@ const server = http.createServer(async (req, res) => {
             snapParams
           );
           snapshotMaxId = snapRows.length > 0 ? Number(snapRows[0].max_id) || 0 : 0;
+          msSnapshot = Date.now() - _t0;
         } catch (_e) { /* probe failure is non-fatal */ }
       } finally {
         try { conn.release(); } catch (_e) {}
