@@ -755,7 +755,12 @@ const Index = () => {
         
         
         // Step 3: Fallback — individual calls with multi-pass retry (only if batch failed)
-        if (!batchSuccess) {
+        // v2.12.5: never run the per-farmer fallback when the batch failed because the
+        // server was busy (503/timeout) — that only deepens backend pool exhaustion.
+        if (!batchSuccess && batchServerBusy) {
+          console.warn('📦 Batch cumulative unavailable (server busy) — skipping per-farmer fallback to protect the backend pool');
+        }
+        if (!batchSuccess && !batchServerBusy) {
           const now = new Date();
           const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
           const uncachedFarmers: typeof farmersToCache = [];
