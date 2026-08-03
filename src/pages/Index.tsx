@@ -505,11 +505,28 @@ const Index = () => {
         
         // Step 2: Try batch endpoint first (1 request instead of 3558)
         let batchSuccess = false;
+        // v2.12.5: when the batch fails because the SERVER is busy (503 / timeout /
+        // pool pressure), the per-farmer fallback would fire hundreds of requests and
+        // make the pool exhaustion worse. Retry the batch with backoff instead, and
+        // suppress the fallback entirely for server-busy failures.
+        let batchServerBusy = false;
         const batchLabel = `cumulative-prefetch route=${selectedRouteCode || 'ALL'}`;
         cumulativeMonitor.startBatch(batchLabel, farmersToCache.length, { source: 'prefetch' });
         try {
-          const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
-          if (batchResult.success && batchResult.data && batchResult.data.farmers) {
+          const isServerBusy = (r: any) =>
+            !!r?.offline || /503|timed out|timeout|Server unavailable|too many|busy|ECONNRESET/i.test(String(r?.error || ''));
+
+          let batchResult: any = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
+            if (batchResult?.success && batchResult.data?.farmers) { batchServerBusy = false; break; }
+            batchServerBusy = isServerBusy(batchResult);
+            if (!batchServerBusy || attempt === 3 || !navigator.onLine) break;
+            console.warn(`📦 Batch cumulative attempt ${attempt} failed (${batchResult?.error}) — backing off ${attempt * 4}s`);
+            await new Promise(r => setTimeout(r, attempt * 4000));
+          }
+
+          if (batchResult && batchResult.success && batchResult.data && batchResult.data.farmers) {
             const batchMap = new Map<string, number>();
             const batchByProductMap = new Map<string, Array<{ icode: string; product_name: string; weight: number }>>();
             for (const f of batchResult.data.farmers) {
@@ -738,7 +755,12 @@ const Index = () => {
         
         
         // Step 3: Fallback — individual calls with multi-pass retry (only if batch failed)
-        if (!batchSuccess) {
+        // v2.12.5: never run the per-farmer fallback when the batch failed because the
+        // server was busy (503/timeout) — that only deepens backend pool exhaustion.
+        if (!batchSuccess && batchServerBusy) {
+          console.warn('📦 Batch cumulative unavailable (server busy) — skipping per-farmer fallback to protect the backend pool');
+        }
+        if (!batchSuccess && !batchServerBusy) {
           const now = new Date();
           const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
           const uncachedFarmers: typeof farmersToCache = [];
@@ -761,7 +783,9 @@ const Index = () => {
             for (let pass = 1; pass <= MAX_PASSES && remaining.length > 0; pass++) {
               if (!navigator.onLine) break;
               
-              const BATCH_SIZE = pass === 1 ? 25 : 10;
+              // v2.12.5: hard concurrency cap (was 25) so a failed batch can never
+              // saturate the backend connection pool.
+              const BATCH_SIZE = pass === 1 ? 4 : 3;
               const TIMEOUT = pass === 1 ? 5000 : pass <= 3 ? 8000 : 12000;
               const failed: typeof remaining = [];
               let passSuccess = 0;
@@ -797,7 +821,8 @@ const Index = () => {
                 }));
                 
                 if (i + BATCH_SIZE < remaining.length) {
-                  await new Promise(r => setTimeout(r, pass === 1 ? 20 : 100));
+                  // v2.12.5: inter-wave pacing (was 20ms) to keep server load low
+                  await new Promise(r => setTimeout(r, pass === 1 ? 150 : 250));
                 }
               }
               

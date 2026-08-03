@@ -296,6 +296,31 @@ const parseCrbalTotal = (crbal) => {
 //     transient `PROTOCOL_CONNECTION_LOST` / `ECONNRESET` sockets the shared
 //     cPanel MySQL occasionally drops on long-running scans.
 const payablePayableCache = createCache({ max: 200, ttlMs: 60000 });
+
+// v2.12.5: short-lived cache for the farmer cumulative batch scan. Several
+// devices on the same route prewarm within seconds of each other; without this
+// each one re-runs three full-season GROUP BY scans on `transactions`.
+// TTL is intentionally short (20s) so new deliveries surface quickly.
+const cumulativeBatchCache = createCache({ max: 50, ttlMs: 20000 });
+
+// v2.12.5: pool-pressure probe. When the pool is effectively exhausted we
+// answer heavy read endpoints with 503 + Retry-After instead of queueing,
+// so clients back off rather than piling more work onto MySQL.
+const poolPressure = () => {
+  try {
+    const p = /** @type {any} */ (pool).pool;
+    if (!p) return { inUse: 0, free: 0, queued: 0, saturated: false };
+    const inUse = p._allConnections.length - p._freeConnections.length;
+    const queued = p._connectionQueue.length;
+    // Saturated when no free connections AND we're at the configured limit,
+    // or when requests are already waiting in the queue.
+    const saturated = queued > 0 || (p._freeConnections.length === 0 && inUse >= POOL_LIMIT);
+    return { inUse, free: p._freeConnections.length, queued, saturated };
+  } catch (_) {
+    return { inUse: 0, free: 0, queued: 0, saturated: false };
+  }
+};
+
 const invalidatePayableCache = (ccode) => {
   const prefix = `payable:${String(ccode || '').toUpperCase()}:`;
   // Best-effort scan — cache size is capped at 200 so this is cheap.
@@ -2067,7 +2092,24 @@ const server = http.createServer(async (req, res) => {
       query += ' ORDER BY descript';
       
       const [rows] = await pool.query(query, params);
-      
+
+      // v2.12.5: diagnostics — when a filtered request comes back empty it is
+      // usually because Contabo's fm_items rows are not tagged with the expected
+      // invtype (new schema defaults invtype to '05'). Log the actual spread so
+      // the data can be corrected instead of guessing.
+      console.log(`[ITEMS] ccode=${ccode} invtype=${invtype || 'ALL'} rows=${rows.length}`);
+      if (rows.length === 0) {
+        try {
+          const [spread] = await pool.query(
+            'SELECT IFNULL(invtype, "(null)") as invtype, COUNT(*) as n FROM fm_items WHERE sellable = 1 AND ccode = ? GROUP BY invtype',
+            [ccode]
+          );
+          console.log(`[ITEMS] ccode=${ccode} sellable invtype spread: ${spread.map(r => `${r.invtype}=${r.n}`).join(', ') || 'no sellable rows'}`);
+        } catch (e) {
+          console.log('[ITEMS] invtype spread probe failed:', e.message);
+        }
+      }
+
       return sendJSON(res, { success: true, data: rows });
     }
 
@@ -3695,6 +3737,23 @@ const server = http.createServer(async (req, res) => {
           error: 'uniquedevcode is required' 
         }, 400);
       }
+
+      // v2.12.5: refuse fast when the pool is saturated so the client backs off
+      // instead of adding a heavy season-wide scan to an already queued pool.
+      {
+        const pp = poolPressure();
+        if (pp.saturated) {
+          console.warn(`[CUM:BATCH] 503 pool saturated inUse=${pp.inUse} free=${pp.free} queued=${pp.queued}`);
+          res.setHeader('Retry-After', '10');
+          return sendJSON(res, {
+            success: false,
+            error: 'Service temporarily unavailable (database busy)',
+            retry_after: 10
+          }, 503);
+        }
+      }
+      
+
       
       // Get device's ccode
       const [deviceRows] = await pool.query(
@@ -3751,6 +3810,16 @@ const server = http.createServer(async (req, res) => {
       const tRouteFilter = route ? ' AND UPPER(TRIM(t.route)) = UPPER(TRIM(?))' : '';
       const tBaseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
 
+      // v2.12.5: serve from the 20s batch cache when an identical scan just ran.
+      const cumCacheKey = `cumbatch:${String(ccode).toUpperCase()}:${String(route || 'ALL').toUpperCase()}:${periodStart}:${periodEnd}`;
+      const cachedBatch = cumulativeBatchCache.get(cumCacheKey);
+      if (cachedBatch) {
+        console.log(`[CUM:BATCH] cache-hit ${cumCacheKey} farmers=${cachedBatch.total_farmers}`);
+        return sendJSON(res, { success: true, data: cachedBatch });
+      }
+
+
+
       // v2.10.119: SAME-CONNECTION BATCH READ — acquire one pooled connection
       // and run both the totals SUM and the per-product SUM on it under
       // READ COMMITTED so the two queries see the same snapshot. Also
@@ -3760,9 +3829,12 @@ const server = http.createServer(async (req, res) => {
       // field that older clients ignore safely.
       const conn = await pool.getConnection();
       let totalRows, productRows, snapshotMaxId = 0;
+      // v2.12.5: per-query timings so the real bottleneck is visible in prod logs.
+      let msTotals = 0, msProducts = 0, msSnapshot = 0;
       try {
         try { await conn.query("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"); } catch (e) { /* non-fatal */ }
 
+        let _t0 = Date.now();
         const [tRows] = await conn.query(
           `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
            FROM transactions 
@@ -3772,7 +3844,9 @@ const server = http.createServer(async (req, res) => {
           baseParams
         );
         totalRows = tRows;
+        msTotals = Date.now() - _t0;
 
+        _t0 = Date.now();
         const [pRows] = await conn.query(
           `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
                   IFNULL(MAX(fi.descript), TRIM(t.icode)) as product_name,
@@ -3785,8 +3859,10 @@ const server = http.createServer(async (req, res) => {
           tBaseParams
         );
         productRows = pRows;
+        msProducts = Date.now() - _t0;
 
         try {
+          _t0 = Date.now();
           const snapParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
           const [snapRows] = await conn.query(
             `SELECT IFNULL(MAX(id), 0) as max_id
@@ -3796,6 +3872,7 @@ const server = http.createServer(async (req, res) => {
             snapParams
           );
           snapshotMaxId = snapRows.length > 0 ? Number(snapRows[0].max_id) || 0 : 0;
+          msSnapshot = Date.now() - _t0;
         } catch (_e) { /* probe failure is non-fatal */ }
       } finally {
         try { conn.release(); } catch (_e) {}
@@ -3812,22 +3889,23 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      console.log(`[CUM:BATCH] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totalRows.length} snapshot_max_id=${snapshotMaxId}`);
+      console.log(`[CUM:BATCH] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totalRows.length} snapshot_max_id=${snapshotMaxId} timings totals=${msTotals}ms products=${msProducts}ms snapshot=${msSnapshot}ms`);
 
-      return sendJSON(res, { 
-        success: true, 
-        data: {
-          farmers: totalRows.map(r => ({
-            farmer_id: r.farmer_id,
-            cumulative_weight: parseFloat(r.cumulative_weight) || 0,
-            by_product: productMap[r.farmer_id] || []
-          })),
-          month_start: periodStart,
-          month_end: periodEnd,
-          total_farmers: totalRows.length,
-          snapshot_max_id: snapshotMaxId
-        }
-      });
+      const batchPayload = {
+        farmers: totalRows.map(r => ({
+          farmer_id: r.farmer_id,
+          cumulative_weight: parseFloat(r.cumulative_weight) || 0,
+          by_product: productMap[r.farmer_id] || []
+        })),
+        month_start: periodStart,
+        month_end: periodEnd,
+        total_farmers: totalRows.length,
+        snapshot_max_id: snapshotMaxId
+      };
+
+      try { cumulativeBatchCache.set(cumCacheKey, batchPayload); } catch (_e) { /* cache is best-effort */ }
+
+      return sendJSON(res, { success: true, data: batchPayload });
     }
 
     // Farmer monthly cumulative frequency endpoint
