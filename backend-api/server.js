@@ -296,6 +296,31 @@ const parseCrbalTotal = (crbal) => {
 //     transient `PROTOCOL_CONNECTION_LOST` / `ECONNRESET` sockets the shared
 //     cPanel MySQL occasionally drops on long-running scans.
 const payablePayableCache = createCache({ max: 200, ttlMs: 60000 });
+
+// v2.12.5: short-lived cache for the farmer cumulative batch scan. Several
+// devices on the same route prewarm within seconds of each other; without this
+// each one re-runs three full-season GROUP BY scans on `transactions`.
+// TTL is intentionally short (20s) so new deliveries surface quickly.
+const cumulativeBatchCache = createCache({ max: 50, ttlMs: 20000 });
+
+// v2.12.5: pool-pressure probe. When the pool is effectively exhausted we
+// answer heavy read endpoints with 503 + Retry-After instead of queueing,
+// so clients back off rather than piling more work onto MySQL.
+const poolPressure = () => {
+  try {
+    const p = /** @type {any} */ (pool).pool;
+    if (!p) return { inUse: 0, free: 0, queued: 0, saturated: false };
+    const inUse = p._allConnections.length - p._freeConnections.length;
+    const queued = p._connectionQueue.length;
+    // Saturated when no free connections AND we're at the configured limit,
+    // or when requests are already waiting in the queue.
+    const saturated = queued > 0 || (p._freeConnections.length === 0 && inUse >= POOL_LIMIT);
+    return { inUse, free: p._freeConnections.length, queued, saturated };
+  } catch (_) {
+    return { inUse: 0, free: 0, queued: 0, saturated: false };
+  }
+};
+
 const invalidatePayableCache = (ccode) => {
   const prefix = `payable:${String(ccode || '').toUpperCase()}:`;
   // Best-effort scan — cache size is capped at 200 so this is cheap.
