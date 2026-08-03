@@ -2092,7 +2092,24 @@ const server = http.createServer(async (req, res) => {
       query += ' ORDER BY descript';
       
       const [rows] = await pool.query(query, params);
-      
+
+      // v2.12.5: diagnostics — when a filtered request comes back empty it is
+      // usually because Contabo's fm_items rows are not tagged with the expected
+      // invtype (new schema defaults invtype to '05'). Log the actual spread so
+      // the data can be corrected instead of guessing.
+      console.log(`[ITEMS] ccode=${ccode} invtype=${invtype || 'ALL'} rows=${rows.length}`);
+      if (rows.length === 0) {
+        try {
+          const [spread] = await pool.query(
+            'SELECT IFNULL(invtype, "(null)") as invtype, COUNT(*) as n FROM fm_items WHERE sellable = 1 AND ccode = ? GROUP BY invtype',
+            [ccode]
+          );
+          console.log(`[ITEMS] ccode=${ccode} sellable invtype spread: ${spread.map(r => `${r.invtype}=${r.n}`).join(', ') || 'no sellable rows'}`);
+        } catch (e) {
+          console.log('[ITEMS] invtype spread probe failed:', e.message);
+        }
+      }
+
       return sendJSON(res, { success: true, data: rows });
     }
 
