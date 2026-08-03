@@ -130,11 +130,11 @@ const toYmdLocal = (d) => {
 
 /**
  * v2.12.4 — Contabo schema split:
- *   seasons  → orgtype 'C' (id, scode, Descript, ccode, datefrom, dateto)
+ *   Seasons  → orgtype 'C' (id, scode, Descript, ccode, datefrom, dateto)
  *   sessions → orgtype 'D' (ID, Icode, descript, ccode, time_from, time_to, status)
  *
  * Legacy cPanel deployments kept season columns (SCODE/datefrom/dateto) inside the
- * sessions table, so every helper below probes for the seasons table once and falls
+ * sessions table, so every helper below probes for the Seasons table once and falls
  * back to the legacy shape. Backward compatible with old databases.
  */
 let _hasSeasonsTableCache = null;
@@ -143,7 +143,7 @@ const hasSeasonsTable = async () => {
   try {
     const [rows] = await pool.query(
       `SELECT 1 FROM information_schema.tables
-        WHERE table_schema = DATABASE() AND table_name = 'seasons' LIMIT 1`
+        WHERE table_schema = DATABASE() AND table_name IN ('Seasons', 'Seasons') LIMIT 1`
     );
     _hasSeasonsTableCache = rows.length > 0;
   } catch (e) {
@@ -155,13 +155,18 @@ const hasSeasonsTable = async () => {
 
 // Active season row (date range) covering `date` for a ccode. Returns null when none.
 const findActiveSeason = async (ccode, date, conn = pool) => {
-  const table = (await hasSeasonsTable()) ? 'seasons' : 'sessions';
+  const seasonalTableExists = await hasSeasonsTable();
+
+  if (!seasonalTableExists) {
+    return null;
+  }
+
   try {
     const [rows] = await conn.query(
       `SELECT scode AS SCODE, descript,
               DATE_FORMAT(datefrom, '%Y-%m-%d') AS datefrom,
               DATE_FORMAT(dateto, '%Y-%m-%d') AS dateto
-         FROM ${table}
+         FROM Seasons
         WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
           AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
         ORDER BY datefrom DESC, id DESC LIMIT 1`,
@@ -169,23 +174,28 @@ const findActiveSeason = async (ccode, date, conn = pool) => {
     );
     return rows.length ? rows[0] : null;
   } catch (e) {
-    console.warn(`[SEASON] active lookup failed on ${table}:`, e?.message || e);
+    console.warn('[SEASON] active lookup failed on Seasons:', e?.message || e);
     return null;
   }
 };
 
 // Human-readable name for a season code (falls back to the code itself).
 const findSeasonDescript = async (scode, ccode, conn = pool) => {
-  const table = (await hasSeasonsTable()) ? 'seasons' : 'sessions';
+  const seasonalTableExists = await hasSeasonsTable();
+
+  if (!seasonalTableExists) {
+    return null;
+  }
+
   try {
     const [rows] = await conn.query(
-      `SELECT descript FROM ${table}
+      `SELECT descript FROM Seasons
         WHERE UPPER(TRIM(scode)) = UPPER(TRIM(?)) AND TRIM(ccode) = TRIM(?) LIMIT 1`,
       [scode, ccode]
     );
     return rows.length ? rows[0].descript : null;
   } catch (e) {
-    console.warn(`[SEASON] descript lookup failed on ${table}:`, e?.message || e);
+    console.warn('[SEASON] descript lookup failed on Seasons:', e?.message || e);
     return null;
   }
 };
@@ -479,52 +489,52 @@ const server = http.createServer(async (req, res) => {
     // Sessions/Seasons endpoint - Fetch from sessions OR season table based on orgtype
     if (path.startsWith('/api/sessions/by-device/') && method === 'GET') {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
-      
+
       // Get device and check authorization
       const [deviceRows] = await pool.query(
         'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [uniquedevcode]
       );
-      
+
       if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
-        return sendJSON(res, { 
-          success: false, 
-          message: 'Device not authorized' 
+        return sendJSON(res, {
+          success: false,
+          message: 'Device not authorized'
         }, 401);
       }
-      
+
       const ccode = deviceRows[0].ccode;
-      
+
       // Get orgtype from psettings to determine data source
       const [psettingsRows] = await pool.query(
         'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE cno = ?',
         [ccode]
       );
-      
+
       const orgtype = psettingsRows.length > 0 ? psettingsRows[0].orgtype : 'D';
       const periodLabel = orgtype === 'C' ? 'Season' : 'Session';
 
-      const seasonsAvailable = await hasSeasonsTable();
+      const SeasonsAvailable = await hasSeasonsTable();
 
-      if (orgtype === 'C' && seasonsAvailable) {
-        // Coffee mode: seasons table (id, scode, Descript, ccode, datefrom, dateto).
-        // NOTE: seasons has no time_from/time_to — coffee is date-range driven.
+      if (orgtype === 'C' && SeasonsAvailable) {
+        // Coffee mode: Seasons table (id, scode, Descript, ccode, datefrom, dateto).
+        // NOTE: Seasons has no time_from/time_to — coffee is date-range driven.
         const today = toYmdLocal(new Date()); // local YYYY-MM-DD (never toISOString)
 
         const [seasonRows] = await pool.query(
-          `SELECT 
+          `SELECT
             id,
             scode AS SCODE,
-            descript, 
+            descript,
             ccode,
-            DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom, 
-            DATE_FORMAT(dateto, '%Y-%m-%d') as dateto, 
-            CASE 
-              WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1 
-              ELSE 0 
+            DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom,
+            DATE_FORMAT(dateto, '%Y-%m-%d') as dateto,
+            CASE
+              WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1
+              ELSE 0
             END as dateEnabled
-           FROM seasons 
-           WHERE TRIM(ccode) = TRIM(?) 
+           FROM Seasons
+           WHERE TRIM(ccode) = TRIM(?)
            ORDER BY datefrom DESC`,
           [today, today, ccode]
         );
@@ -547,6 +557,18 @@ const server = http.createServer(async (req, res) => {
           ccode,
           periodLabel,
           orgtype
+        });
+      }
+
+      if (orgtype === 'C' && !SeasonsAvailable) {
+        // v2.12.5: Do not mix tables. If Coffee and no Seasons table, return empty.
+        return sendJSON(res, {
+          success: true,
+          data: [],
+          ccode,
+          periodLabel,
+          orgtype,
+          message: 'Seasons table not found'
         });
       }
 
