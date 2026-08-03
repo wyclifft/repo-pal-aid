@@ -3720,6 +3720,23 @@ const server = http.createServer(async (req, res) => {
           error: 'uniquedevcode is required' 
         }, 400);
       }
+
+      // v2.12.5: refuse fast when the pool is saturated so the client backs off
+      // instead of adding a heavy season-wide scan to an already queued pool.
+      {
+        const pp = poolPressure();
+        if (pp.saturated) {
+          console.warn(`[CUM:BATCH] 503 pool saturated inUse=${pp.inUse} free=${pp.free} queued=${pp.queued}`);
+          res.setHeader('Retry-After', '10');
+          return sendJSON(res, {
+            success: false,
+            error: 'Service temporarily unavailable (database busy)',
+            retry_after: 10
+          }, 503);
+        }
+      }
+      
+
       
       // Get device's ccode
       const [deviceRows] = await pool.query(
