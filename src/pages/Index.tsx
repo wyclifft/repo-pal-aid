@@ -783,7 +783,9 @@ const Index = () => {
             for (let pass = 1; pass <= MAX_PASSES && remaining.length > 0; pass++) {
               if (!navigator.onLine) break;
               
-              const BATCH_SIZE = pass === 1 ? 25 : 10;
+              // v2.12.5: hard concurrency cap (was 25) so a failed batch can never
+              // saturate the backend connection pool.
+              const BATCH_SIZE = pass === 1 ? 4 : 3;
               const TIMEOUT = pass === 1 ? 5000 : pass <= 3 ? 8000 : 12000;
               const failed: typeof remaining = [];
               let passSuccess = 0;
