@@ -3872,22 +3872,23 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      console.log(`[CUM:BATCH] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totalRows.length} snapshot_max_id=${snapshotMaxId}`);
+      console.log(`[CUM:BATCH] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totalRows.length} snapshot_max_id=${snapshotMaxId} timings totals=${msTotals}ms products=${msProducts}ms snapshot=${msSnapshot}ms`);
 
-      return sendJSON(res, { 
-        success: true, 
-        data: {
-          farmers: totalRows.map(r => ({
-            farmer_id: r.farmer_id,
-            cumulative_weight: parseFloat(r.cumulative_weight) || 0,
-            by_product: productMap[r.farmer_id] || []
-          })),
-          month_start: periodStart,
-          month_end: periodEnd,
-          total_farmers: totalRows.length,
-          snapshot_max_id: snapshotMaxId
-        }
-      });
+      const batchPayload = {
+        farmers: totalRows.map(r => ({
+          farmer_id: r.farmer_id,
+          cumulative_weight: parseFloat(r.cumulative_weight) || 0,
+          by_product: productMap[r.farmer_id] || []
+        })),
+        month_start: periodStart,
+        month_end: periodEnd,
+        total_farmers: totalRows.length,
+        snapshot_max_id: snapshotMaxId
+      };
+
+      try { cumulativeBatchCache.set(cumCacheKey, batchPayload); } catch (_e) { /* cache is best-effort */ }
+
+      return sendJSON(res, { success: true, data: batchPayload });
     }
 
     // Farmer monthly cumulative frequency endpoint
