@@ -1,4 +1,22 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.6: CONTABO PERFORMANCE + SACCO/SEASON UX.
+//   /api/items: client in-flight de-dup + 5 min memory cache, server 60 s cache
+//     (stops the continuous [ITEMS] request loop); ProductSelector paints from
+//     IndexedDB instantly and syncs in the background so the coffee-type
+//     selector is never blocked while online.
+//   Coffee (orgtype='C'): all time_from/time_to validation removed — seasons
+//     have no time window, so validation is date-only everywhere
+//     (SessionSelector, BuyProduceScreen, useSessionExpiration).
+//   Login: /api/farmer-monthly-frequency-batch is now cache-serving with a
+//     background warmer; a miss returns pending:true immediately. Clients treat
+//     pending as "keep cache, retry" and never write the empty list.
+//   devSettings inserts use '000' placeholders instead of NULL/'' for
+//     uniquedevcode and device.
+//   Sacco: dynamic header from psettings, Print removed, real cross-platform
+//     CSV export, "Today" summary card. Coffee can switch to past seasons
+//     offline and the Cumulative screen honours the selected season.
+//   No changes to reference generation, transaction creation, or sync matrices.
+//
 // v2.11.30: ANDROID 7 / WEBVIEW 51 UI + RECEIPT LAYOUT FIX (presentation only).
 //   Printer: PosApi.printReceipt now takes fontHeight/fontWidth/lineSpace/
 //   feedDots (CS10 defaults 32/24/2/80). Larger glyphs at the same 24-dot
@@ -1094,8 +1112,8 @@
 //     and logs per-query timings (totals/products/snapshot).
 //   • Backend: /api/items logs row counts and, when empty, the sellable invtype
 //     spread so mis-tagged coffee produce in Contabo fm_items is visible.
-export const APP_VERSION = '2.12.5'; // v2.12.5: cumulative batch backoff/caching, no fallback flood, item load diagnostics
-export const APP_VERSION_CODE = 181;
+export const APP_VERSION = '2.12.6'; // v2.12.5: cumulative batch backoff/caching, no fallback flood, item load diagnostics
+export const APP_VERSION_CODE = 182;
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'webview51-bridge-es5';
