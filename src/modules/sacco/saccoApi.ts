@@ -37,6 +37,8 @@ export interface SaccoTransactionPage {
 export interface SaccoSummary {
   lifetime_total: number;
   lifetime_count: number;
+  /** v2.12.6: total contributions received today. */
+  today_total?: number;
   month_total: number;
   year_total: number;
   last_deposit_date: string | null;

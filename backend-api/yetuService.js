@@ -264,6 +264,9 @@ const getSummary = async (pool, { ccode, accountNumber }) => {
     `SELECT
         IFNULL(SUM(amount), 0) AS lifetime_total,
         COUNT(*) AS lifetime_count,
+        -- v2.12.6: today's contributions power the portal's first summary card
+        IFNULL(SUM(CASE WHEN DATE(transaction_date) = CURDATE()
+                        THEN amount ELSE 0 END), 0) AS today_total,
         IFNULL(SUM(CASE WHEN YEAR(transaction_date) = YEAR(CURDATE())
                          AND MONTH(transaction_date) = MONTH(CURDATE())
                         THEN amount ELSE 0 END), 0) AS month_total,
@@ -279,6 +282,7 @@ const getSummary = async (pool, { ccode, accountNumber }) => {
   return {
     lifetime_total: Number(r.lifetime_total) || 0,
     lifetime_count: Number(r.lifetime_count) || 0,
+    today_total: Number(r.today_total) || 0,
     month_total: Number(r.month_total) || 0,
     year_total: Number(r.year_total) || 0,
     last_deposit_date: r.last_deposit_date || null,
