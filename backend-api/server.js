@@ -3536,13 +3536,18 @@ const server = http.createServer(async (req, res) => {
         const devcode = devRows.length > 0 ? devRows[0].devcode : null;
         const trnid = devRows.length > 0 ? devRows[0].trnid : 0;
 
-        // If device not in devSettings, create a minimal record
+        // If device not in devSettings, create a minimal record.
+        // v2.12.6: devsettings on Contabo is NOT NULL — never write NULL/empty
+        // for uniquedevcode or device; fall back to the '000' placeholder.
         if (devRows.length === 0) {
           try {
+            const safeUniqueDevCode = String(body.device_fingerprint || '').trim() || '000';
+            const safeDeviceLabel = String(body.device_info || body.model || '').trim() || '000';
             await pool.query(
               'INSERT INTO devSettings (uniquedevcode, device, authorized, trnid) VALUES (?, ?, 0, 0)',
-              [body.device_fingerprint, body.device_info || null]
+              [safeUniqueDevCode, safeDeviceLabel]
             );
+
             console.log('📱 Created devSettings record for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
           } catch (insertError) {
             // Ignore duplicate key errors - device might have been added by another process
