@@ -119,19 +119,19 @@ export const SessionSelector = ({
     }
 
     // v2.10.71: Coffee orgs ('C') bypass time validation — validation is date-only.
-    if (orgtype === 'C') {
+    // v2.12.6: the `seasons` table has NO time_from/time_to columns, so any row
+    // that carries a date range but no time window is validated by date alone.
+    // This removes the bogus "Session time validation failed" rejection.
+    const timeFrom = toHour(session.time_from);
+    const timeTo = toHour(session.time_to);
+    const hasTimeWindow = timeFrom !== null && timeTo !== null;
+
+    if (orgtype === 'C' || !hasTimeWindow) {
       return true;
     }
     
-    const timeFrom = toHour(session.time_from);
-    const timeTo = toHour(session.time_to);
-    
-    if (timeFrom === null || timeTo === null) {
-      console.log('Session time validation failed:', { timeFrom, timeTo, session });
-      return false;
-    }
-    
     const currentHour = currentTime.getHours();
+
     
     // Handle sessions that span midnight (e.g., 22-6)
     if (timeTo < timeFrom) {
