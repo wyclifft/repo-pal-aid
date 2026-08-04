@@ -45,11 +45,12 @@ export const SummaryCards = ({ summary, isLoading }: Props) => {
     <div className="grid grid-cols-2 lg:grid-cols-4">
       <div className="p-1">
         <Tile
-          label="Total contributed"
-          value={formatMoney(summary?.lifetime_total ?? 0)}
+          label="Today"
+          value={formatMoney(summary?.today_total ?? 0)}
           icon={<Wallet className="h-4 w-4" />}
         />
       </div>
+
       <div className="p-1">
         <Tile
           label="This month"
