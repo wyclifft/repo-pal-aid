@@ -41,11 +41,10 @@ const formatClock = (ts: number): string => {
 const SaccoPortal = () => {
   const { currentUser, isAuthenticated, login, logout } = useAuth();
   // v2.12.6: header text comes from psettings (company name), never hardcoded.
-  const { companyName, settings } = useAppSettings();
+  const { companyName } = useAppSettings();
   const portalTitle = (companyName || '').trim()
     ? `${companyName.trim()} Payments`
     : 'Member Payments';
-  const isSaccoOrg = String(settings.orgtype || '').trim().toUpperCase() === 'S';
   const { isSacco, paymentsActive, canAccessPayments } = useSaccoAccess();
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
