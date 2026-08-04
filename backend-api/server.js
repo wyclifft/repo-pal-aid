@@ -3979,10 +3979,27 @@ const server = http.createServer(async (req, res) => {
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
-          const activeSeason = await findActiveSeason(ccode, today);
-          if (activeSeason) {
-            periodStart = activeSeason.datefrom;
-            periodEnd = activeSeason.dateto;
+          // v2.12.6: allow an explicit season (SCODE) so the app can show
+          // cumulative totals for a PAST season, not only the active one.
+          let season = null;
+          const requestedSeason = String(parsedUrl.query.season || '').trim();
+          if (requestedSeason) {
+            try {
+              const [sRows] = await pool.query(
+                `SELECT SCODE, datefrom, dateto FROM seasons
+                 WHERE TRIM(ccode) = TRIM(?) AND TRIM(SCODE) = TRIM(?) LIMIT 1`,
+                [ccode, requestedSeason]
+              );
+              if (sRows.length > 0) season = sRows[0];
+              else console.log(`⚠️ Requested season ${requestedSeason} not found for ccode=${ccode}`);
+            } catch (e) {
+              console.log('⚠️ Season lookup failed:', e.message);
+            }
+          }
+          if (!season) season = await findActiveSeason(ccode, today);
+          if (season) {
+            periodStart = toYmdLocal(new Date(season.datefrom));
+            periodEnd = toYmdLocal(new Date(season.dateto));
             console.log(`📊 Batch cumulative using season range: ${periodStart} to ${periodEnd}`);
           } else {
             console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);
@@ -3991,6 +4008,7 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         console.log('⚠️ Could not detect orgtype for cumulative, using monthly range:', e.message);
       }
+
       
       // v2.12.6: CACHE-SERVING ENDPOINT. The heavy season-wide scan lives in
       // the background warmer (computeCumulativeBatch) — identical SQL, just
