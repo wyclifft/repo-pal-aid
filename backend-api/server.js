@@ -3998,8 +3998,9 @@ const server = http.createServer(async (req, res) => {
           }
           if (!season) season = await findActiveSeason(ccode, today);
           if (season) {
-            periodStart = toYmdLocal(new Date(season.datefrom));
-            periodEnd = toYmdLocal(new Date(season.dateto));
+            const ymd = (v) => (typeof v === 'string' ? v.slice(0, 10) : toYmdLocal(new Date(v)));
+            periodStart = ymd(season.datefrom);
+            periodEnd = ymd(season.dateto);
             console.log(`📊 Batch cumulative using season range: ${periodStart} to ${periodEnd}`);
           } else {
             console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);
