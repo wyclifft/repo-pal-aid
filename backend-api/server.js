@@ -26,8 +26,8 @@ if (!process.env.MYSQL_USER || !process.env.MYSQL_PASSWORD) {
 // across both Node apps (backend-api + sync-service) on the same MySQL user.
 // Worst case: 2 Passenger workers × pool 8 = 16 conns for this app.
 // Tunable via .htaccess env without code changes.
-const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 8);
-const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 50);
+const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 80);
+const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 100);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 
 const pool = mysql.createPool({
@@ -3986,7 +3986,7 @@ const server = http.createServer(async (req, res) => {
           if (requestedSeason) {
             try {
               const [sRows] = await pool.query(
-                `SELECT SCODE, datefrom, dateto FROM seasons
+                `SELECT SCODE, datefrom, dateto FROM Seasons
                  WHERE TRIM(ccode) = TRIM(?) AND TRIM(SCODE) = TRIM(?) LIMIT 1`,
                 [ccode, requestedSeason]
               );

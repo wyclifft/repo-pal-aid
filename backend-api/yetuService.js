@@ -49,21 +49,35 @@ const toMysqlDateTime = (date) => {
  * shape. Unknown extra fields are preserved via raw_payload.
  */
 const normalizeYetuPayload = (body = {}) => {
-  const reference = str(pick(body, [
-    'transaction_reference', 'transactionReference', 'transactionRef', 'trans_ref',
-    'reference', 'transactionId', 'transaction_id', 'receipt_number', 'receiptNumber',
-  ]));
+ const reference = str(pick(body, [
+  'TransRef',
+  'transaction_reference', 'transactionReference', 'transactionRef', 'trans_ref',
+  'reference', 'transactionId', 'transaction_id', 'receipt_number', 'receiptNumber',
+]));
   const accountNumber = str(pick(body, [
-    'member_number', 'memberNumber', 'account_number', 'accountNumber',
-    'member_no', 'memberNo', 'account', 'billRefNumber', 'bill_ref_number',
-  ]));
-  const amountRaw = pick(body, ['amount', 'transaction_amount', 'transactionAmount', 'transAmount', 'value']);
-  const payerName = str(pick(body, ['payer_name', 'payerName', 'customer_name', 'customerName', 'name', 'fullName']));
-  const payerMobile = str(pick(body, ['payer_mobile', 'payerMobile', 'msisdn', 'phone', 'phone_number', 'phoneNumber', 'mobile']));
+  'InvoiceNumber',
+  'member_number', 'memberNumber', 'account_number', 'accountNumber',
+  'member_no', 'memberNo', 'account', 'billRefNumber', 'bill_ref_number',
+]));
+  const amountRaw = pick(body, [
+  'TransAmount',
+  'amount', 'transaction_amount', 'transactionAmount', 'transAmount', 'value'
+]);
+  const payerName = str(pick(body, [
+  'ClientNames',
+  'payer_name', 'payerName', 'customer_name', 'customerName', 'name', 'fullName'
+]));
+  const payerMobile = str(pick(body, [
+  'MSISDN',
+  'payer_mobile', 'payerMobile', 'msisdn', 'phone',
+  'phone_number', 'phoneNumber', 'mobile'
+]));
   const timestamp = parseTimestamp(pick(body, [
-    'transaction_timestamp', 'transactionTimestamp', 'transaction_date', 'transactionDate',
-    'timestamp', 'date', 'transTime', 'trans_time',
-  ]));
+  'TransTime',
+  'transaction_timestamp', 'transactionTimestamp',
+  'transaction_date', 'transactionDate',
+  'timestamp', 'date', 'transTime', 'trans_time',
+]));
   const channel = str(pick(body, ['channel', 'source', 'paymentChannel'])) || 'YETU';
 
   const amount = Number(String(amountRaw === undefined ? '' : amountRaw).replace(/[, ]/g, ''));
