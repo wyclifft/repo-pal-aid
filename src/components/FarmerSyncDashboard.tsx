@@ -149,11 +149,18 @@ export const FarmerSyncDashboard = () => {
     let batchResult: Awaited<ReturnType<typeof mysqlApi.farmerFrequency.getMonthlyFrequencyBatch>> | null = null;
     try {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        // v2.12.6: pass the selected season so a PAST season shows its own
+        // cumulative totals instead of always the current one.
         batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(
           deviceFingerprint,
-          route || undefined
+          route || undefined,
+          activeScode || undefined
         );
-        if (batchResult?.success && batchResult.data?.farmers) break;
+        if ((batchResult as any)?.pending || batchResult?.data?.pending) {
+          console.log('[SyncDash] Backend cumulative snapshot warming — using offline cache');
+          return null;
+        }
+        if (batchResult?.success && batchResult.data?.farmers?.length) break;
         if (attempt < maxAttempts) {
           console.warn(`[SyncDash] Batch API attempt ${attempt} failed, retrying in 2s...`);
           await new Promise(r => setTimeout(r, 2000));
@@ -236,7 +243,7 @@ export const FarmerSyncDashboard = () => {
       console.warn('[SyncDash] Batch API failed:', err);
       return null;
     }
-  }, [getFarmerCumulative, activeRoute, activeIcode]);
+  }, [getFarmerCumulative, activeRoute, activeIcode, activeScode]);
 
   /**
    * Offline fallback (v2.10.62): transaction-driven, NOT cm_members-driven.
@@ -402,8 +409,10 @@ export const FarmerSyncDashboard = () => {
         const deviceFingerprint = await resolveFingerprint();
         if (deviceFingerprint) {
           try {
-            const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, activeRoute || undefined);
-            if (batchResult.success && batchResult.data?.farmers) {
+            const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, activeRoute || undefined, activeScode || undefined);
+            if ((batchResult as any)?.pending || batchResult.data?.pending) {
+              console.log('[SyncDash] Cumulative refresh skipped — backend snapshot warming');
+            } else if (batchResult.success && batchResult.data?.farmers?.length) {
               const batchFarmers = batchResult.data.farmers;
               const batchLabel = `cumulative-refresh route=${activeRoute || 'ALL'}`;
               cumulativeMonitor.startBatch(batchLabel, batchFarmers.length, { source: 'SyncDash' });

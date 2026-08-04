@@ -1091,6 +1091,9 @@ export interface FarmerMonthlyFrequencyBatch {
   // to detect read-replica drift between successive batch calls. Older
   // backends omit it; clients treat absence as "unknown".
   snapshot_max_id?: number;
+  // v2.12.6: backend is warming the season snapshot in the background; the
+  // farmer list is EMPTY and must never be written to the local cache.
+  pending?: boolean;
 }
 
 export const farmerFrequencyApi = {
@@ -1107,9 +1110,12 @@ export const farmerFrequencyApi = {
    * Get ALL farmers' monthly cumulative weights in a single batch request
    * Returns cumulative weights for every farmer under the device's ccode
    */
-  getMonthlyFrequencyBatch: async (uniquedevcode: string, route?: string): Promise<ApiResponse<FarmerMonthlyFrequencyBatch>> => {
+  // v2.12.6: `season` (SCODE) is optional — pass it to read cumulative totals
+  // for a PAST season instead of the active one (coffee orgs).
+  getMonthlyFrequencyBatch: async (uniquedevcode: string, route?: string, season?: string): Promise<ApiResponse<FarmerMonthlyFrequencyBatch>> => {
     let url = `/farmer-monthly-frequency-batch?uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
     if (route) url += `&route=${encodeURIComponent(route)}`;
+    if (season) url += `&season=${encodeURIComponent(season)}`;
     return apiRequest<FarmerMonthlyFrequencyBatch>(url, {}, 30000);
   },
 };
