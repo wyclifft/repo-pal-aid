@@ -2253,7 +2253,16 @@ const server = http.createServer(async (req, res) => {
       }
       
       const ccode = deviceRows[0].ccode;
-      
+
+      // v2.12.6: serve from a 60 s cache. Devices were re-requesting the same
+      // catalogue continuously; the rows change rarely, so the cache removes
+      // the query load without changing the response shape.
+      const itemsKey = `items:${String(ccode).toUpperCase()}:${invtype || 'ALL'}`;
+      const cachedItems = itemsCache.get(itemsKey);
+      if (cachedItems) {
+        return sendJSON(res, { success: true, data: cachedItems });
+      }
+
       // Build query with optional invtype filter
       let query = 'SELECT * FROM fm_items WHERE sellable = 1 AND ccode = ?';
       const params = [ccode];
@@ -2267,11 +2276,12 @@ const server = http.createServer(async (req, res) => {
       
       const [rows] = await pool.query(query, params);
 
+      itemsCache.set(itemsKey, rows);
+
       // v2.12.5: diagnostics — when a filtered request comes back empty it is
       // usually because Contabo's fm_items rows are not tagged with the expected
-      // invtype (new schema defaults invtype to '05'). Log the actual spread so
-      // the data can be corrected instead of guessing.
-      console.log(`[ITEMS] ccode=${ccode} invtype=${invtype || 'ALL'} rows=${rows.length}`);
+      // invtype (new schema defaults invtype to '05'). Logged on cache miss only.
+      console.log(`[ITEMS] ccode=${ccode} invtype=${invtype || 'ALL'} rows=${rows.length} (cache miss)`);
       if (rows.length === 0) {
         try {
           const [spread] = await pool.query(
@@ -2285,6 +2295,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       return sendJSON(res, { success: true, data: rows });
+
     }
 
     // Sales endpoints - Unified for Store (transtype=2) and AI (transtype=3)
