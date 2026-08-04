@@ -808,20 +808,60 @@ export interface Item {
   invtype?: string; // '01' = produce (milk, cherry), '05' = store items, '06' = AI items
 }
 
+// v2.12.6: in-flight de-duplication + short TTL memory cache for /api/items.
+// The endpoint was being hammered because product selectors re-ran their load
+// effect on every selection change. Data is effectively static during a shift.
+const ITEMS_TTL_MS = 5 * 60 * 1000;
+const itemsCache = new Map<string, { at: number; value: ApiResponse<Item[]> }>();
+const itemsInFlight = new Map<string, Promise<ApiResponse<Item[]>>>();
+
 export const itemsApi = {
   /**
    * Get all sellable items filtered by device and optionally by invtype
    * @param uniquedevcode - Device code
    * @param invtype - Optional item type filter: '01' = produce, '05' = store, '06' = AI
+   * @param force - Bypass the client cache (explicit refresh / data sync)
    */
-  getAll: async (uniquedevcode: string, invtype?: string): Promise<ApiResponse<Item[]>> => {
+  getAll: async (uniquedevcode: string, invtype?: string, force = false): Promise<ApiResponse<Item[]>> => {
+    const key = `${uniquedevcode}|${invtype || 'ALL'}`;
+
+    if (!force) {
+      const hit = itemsCache.get(key);
+      if (hit && Date.now() - hit.at < ITEMS_TTL_MS) {
+        return hit.value;
+      }
+      const pending = itemsInFlight.get(key);
+      if (pending) return pending;
+    }
+
     let url = `/items?uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
     if (invtype) {
       url += `&invtype=${encodeURIComponent(invtype)}`;
     }
-    return apiRequest<Item[]>(url);
+
+    const request = apiRequest<Item[]>(url)
+      .then((response) => {
+        // Only cache successful responses — failures must be retryable.
+        if (response.success && response.data) {
+          itemsCache.set(key, { at: Date.now(), value: response });
+        }
+        return response;
+      })
+      .finally(() => {
+        itemsInFlight.delete(key);
+      });
+
+    itemsInFlight.set(key, request);
+    return request;
+  },
+
+  /** Drop cached item responses (used after an explicit company data refresh). */
+  clearCache: () => {
+    itemsCache.clear();
+    itemsInFlight.clear();
   }
 };
+
 
 // ==================== SALES API ====================
 
