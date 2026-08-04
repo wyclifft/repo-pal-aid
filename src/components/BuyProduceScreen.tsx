@@ -172,13 +172,20 @@ export const BuyProduceScreen = ({
       })
     : cachedFarmers;
 
-  // Derive session type (AM/PM) from session time_from
+  // Derive session type (AM/PM) from session time_from.
+  // v2.12.6: coffee seasons have NO time_from/time_to — never touch those
+  // fields for orgtype 'C'; fall back to the device clock when absent.
   const getSessionType = (): 'AM' | 'PM' => {
-    const hour = session.time_from >= 100
-      ? Math.floor(session.time_from / 100)
-      : session.time_from;
+    const raw = (session as any)?.time_from;
+    if (isCoffee || raw === null || raw === undefined || raw === '') {
+      return new Date().getHours() >= 12 ? 'PM' : 'AM';
+    }
+    const numeric = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+    if (isNaN(numeric)) return new Date().getHours() >= 12 ? 'PM' : 'AM';
+    const hour = numeric >= 100 ? Math.floor(numeric / 100) : numeric;
     return hour >= 12 ? 'PM' : 'AM';
   };
+
 
   // Check if a farmer is blocked (blacklisted OR submitted this session OR already in capture queue with multOpt=0)
   const isFarmerBlocked = (farmerId: string, checkMultOpt: boolean = false): boolean => {
