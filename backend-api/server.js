@@ -344,6 +344,145 @@ const poolPressure = () => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// v2.12.6: cumulative batch warmer.
+//
+// computeCumulativeBatch runs the exact same three queries the endpoint used to
+// run inline (same SQL, same normalisation, same READ COMMITTED single
+// connection semantics from v2.10.119) — nothing about the cumulative formula
+// changes. The difference is WHERE it runs: in a background task instead of
+// inside the client request, so login/prewarm never blocks for 20–35 s.
+// ---------------------------------------------------------------------------
+const cumulativeCacheKey = (ccode, route, periodStart, periodEnd) =>
+  `cumbatch:${String(ccode).toUpperCase()}:${String(route || 'ALL').toUpperCase()}:${periodStart}:${periodEnd}`;
+
+async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
+  const routeFilter = route ? ' AND UPPER(TRIM(route)) = UPPER(TRIM(?))' : '';
+  const baseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
+  const tRouteFilter = route ? ' AND UPPER(TRIM(t.route)) = UPPER(TRIM(?))' : '';
+  const tBaseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
+
+  const conn = await pool.getConnection();
+  let totalRows = [], productRows = [], snapshotMaxId = 0;
+  let msTotals = 0, msProducts = 0, msSnapshot = 0;
+  try {
+    try { await conn.query("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"); } catch (e) { /* non-fatal */ }
+
+    let _t0 = Date.now();
+    const [tRows] = await conn.query(
+      `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
+       FROM transactions 
+       WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
+       AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}
+       GROUP BY TRIM(memberno)`,
+      baseParams
+    );
+    totalRows = tRows;
+    msTotals = Date.now() - _t0;
+
+    _t0 = Date.now();
+    const [pRows] = await conn.query(
+      `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
+              IFNULL(MAX(fi.descript), ANY_VALUE(TRIM(t.icode))) as product_name,
+              IFNULL(SUM(t.weight), 0) as weight 
+       FROM transactions t
+       LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
+       WHERE UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
+       AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${tRouteFilter}
+       GROUP BY TRIM(t.memberno), TRIM(t.icode)`,
+      tBaseParams
+    );
+    productRows = pRows;
+    msProducts = Date.now() - _t0;
+
+    try {
+      _t0 = Date.now();
+      const [snapRows] = await conn.query(
+        `SELECT IFNULL(MAX(id), 0) as max_id
+         FROM transactions
+         WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
+         AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}`,
+        baseParams
+      );
+      snapshotMaxId = snapRows.length > 0 ? Number(snapRows[0].max_id) || 0 : 0;
+      msSnapshot = Date.now() - _t0;
+    } catch (_e) { /* probe failure is non-fatal */ }
+  } finally {
+    try { conn.release(); } catch (_e) {}
+  }
+
+  const productMap = {};
+  for (const r of productRows) {
+    if (!productMap[r.farmer_id]) productMap[r.farmer_id] = [];
+    productMap[r.farmer_id].push({
+      icode: r.icode || '',
+      product_name: r.product_name || r.icode || '',
+      weight: parseFloat(r.weight) || 0
+    });
+  }
+
+  console.log(`[CUM:WARM] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totalRows.length} snapshot_max_id=${snapshotMaxId} timings totals=${msTotals}ms products=${msProducts}ms snapshot=${msSnapshot}ms`);
+
+  return {
+    farmers: totalRows.map(r => ({
+      farmer_id: r.farmer_id,
+      cumulative_weight: parseFloat(r.cumulative_weight) || 0,
+      by_product: productMap[r.farmer_id] || []
+    })),
+    month_start: periodStart,
+    month_end: periodEnd,
+    total_farmers: totalRows.length,
+    snapshot_max_id: snapshotMaxId
+  };
+}
+
+/** Schedule (or join) a background warm for one cumulative key. Never awaited by a request. */
+function scheduleCumulativeWarm(ccode, route, periodStart, periodEnd) {
+  const key = cumulativeCacheKey(ccode, route, periodStart, periodEnd);
+  cumulativeWarmKeys.set(key, { ccode, route: route || null, periodStart, periodEnd, lastRun: cumulativeWarmKeys.get(key)?.lastRun || 0 });
+
+  if (cumulativeWarmInFlight.has(key)) return cumulativeWarmInFlight.get(key);
+
+  const job = (async () => {
+    try {
+      const payload = await computeCumulativeBatch(ccode, route, periodStart, periodEnd);
+      cumulativeBatchCache.set(key, payload);
+      const meta = cumulativeWarmKeys.get(key);
+      if (meta) meta.lastRun = Date.now();
+      return payload;
+    } catch (e) {
+      console.error(`[CUM:WARM] failed ${key}:`, e.message);
+      return null;
+    } finally {
+      cumulativeWarmInFlight.delete(key);
+    }
+  })();
+
+  cumulativeWarmInFlight.set(key, job);
+  return job;
+}
+
+// Periodic re-warm of keys devices actually asked for. Skipped when the pool is
+// under pressure so the warmer never competes with live transaction writes.
+setInterval(() => {
+  if (cumulativeWarmKeys.size === 0) return;
+  if (poolPressure().saturated) return;
+  const now = Date.now();
+  for (const [key, meta] of cumulativeWarmKeys) {
+    // Drop keys nobody has requested for an hour.
+    if (meta.lastRun && now - meta.lastRun > 60 * 60 * 1000 && !cumulativeBatchCache.get(key)) {
+      cumulativeWarmKeys.delete(key);
+      continue;
+    }
+    if (now - (meta.lastRun || 0) >= CUM_BATCH_REWARM_MS) {
+      scheduleCumulativeWarm(meta.ccode, meta.route, meta.periodStart, meta.periodEnd);
+      break; // one heavy scan per tick
+    }
+  }
+}, 30000).unref?.();
+
+
+
 const invalidatePayableCache = (ccode) => {
   const prefix = `payable:${String(ccode || '').toUpperCase()}:`;
   // Best-effort scan — cache size is capped at 200 so this is cheap.
