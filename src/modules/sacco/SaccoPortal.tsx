@@ -159,7 +159,10 @@ const SaccoPortal = () => {
   return (
     <div className="min-h-[100vh] bg-background">
       {/* Header — the only navigation in portal mode */}
-      <header className="border-b border-border bg-card px-4 py-3 print:hidden">
+      <header
+        className="border-b border-border bg-card px-4 py-3 print:hidden"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}
+      >
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-semibold text-foreground">Yetu Sacco Payments</h1>
