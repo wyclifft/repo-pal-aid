@@ -307,11 +307,24 @@ const parseCrbalTotal = (crbal) => {
 //     cPanel MySQL occasionally drops on long-running scans.
 const payablePayableCache = createCache({ max: 200, ttlMs: 60000 });
 
-// v2.12.5: short-lived cache for the farmer cumulative batch scan. Several
-// devices on the same route prewarm within seconds of each other; without this
-// each one re-runs three full-season GROUP BY scans on `transactions`.
-// TTL is intentionally short (20s) so new deliveries surface quickly.
-const cumulativeBatchCache = createCache({ max: 50, ttlMs: 20000 });
+// v2.12.5/v2.12.6: cache for the farmer cumulative batch scan. On Contabo the
+// full-season scan takes 20–35 s for ~2k farmers, so it must NEVER run inside a
+// client request. The endpoint now serves this cache only; a background warmer
+// recomputes each recently requested (ccode, route, period) key. TTL is long
+// enough to always have a snapshot to serve, and the warmer keeps it fresh.
+const CUM_BATCH_TTL_MS = 5 * 60 * 1000;      // served snapshot lifetime
+const CUM_BATCH_REWARM_MS = 90 * 1000;       // background recompute interval
+const cumulativeBatchCache = createCache({ max: 50, ttlMs: CUM_BATCH_TTL_MS });
+
+// Warm-job bookkeeping: key -> { ccode, route, periodStart, periodEnd, lastRun }
+const cumulativeWarmKeys = new Map();
+// key -> Promise, so concurrent requests never trigger duplicate scans.
+const cumulativeWarmInFlight = new Map();
+
+// v2.12.6: 60 s cache for /api/items. The catalogue is effectively static
+// during a shift; devices were re-requesting it continuously.
+const itemsCache = createCache({ max: 200, ttlMs: 60000 });
+
 
 // v2.12.5: pool-pressure probe. When the pool is effectively exhausted we
 // answer heavy read endpoints with 503 + Retry-After instead of queueing,
