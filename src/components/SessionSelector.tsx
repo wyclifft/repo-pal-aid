@@ -150,8 +150,13 @@ export const SessionSelector = ({
       return false;
     }
     
-    // OFFLINE: only allow selecting the currently active session
+    // OFFLINE: only the currently active session is selectable for dairy.
+    // v2.12.6: coffee orgs may switch between current and PAST seasons offline
+    // (seasons are cached locally and carry no time window).
     if (!isOnline) {
+      if (orgtype === 'C') {
+        return isPastSeason(session) || isSessionActive(session);
+      }
       return isSessionActive(session);
     }
     
@@ -162,7 +167,8 @@ export const SessionSelector = ({
     
     // For current/regular sessions, check if active (date + time)
     return isSessionActive(session);
-  }, [isFutureSeason, isPastSeason, isSessionActive, isOnline]);
+  }, [isFutureSeason, isPastSeason, isSessionActive, isOnline, orgtype]);
+
 
   // Find the currently active session from loaded sessions
   const findActiveSession = useCallback((sessionList: Session[]): Session | null => {
