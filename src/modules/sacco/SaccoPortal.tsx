@@ -13,12 +13,13 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import {
-  AlertTriangle, Download, LogOut, Printer, RefreshCw, ShieldAlert, WifiOff,
+  AlertTriangle, Download, LogOut, RefreshCw, ShieldAlert, WifiOff,
 } from 'lucide-react';
 import { Login } from '@/components/Login';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { type AppUser } from '@/lib/supabase';
+import { saveExportedFile } from '@/utils/nativeFileExport';
 import { useSaccoAccess } from './useSaccoAccess';
 import { useSaccoSummary, useSaccoTransactions } from './useSaccoTransactions';
 import { formatDateTime, formatMoney, type SaccoTransaction, type SortField, type SortOrder } from './saccoApi';
@@ -39,7 +40,12 @@ const formatClock = (ts: number): string => {
 
 const SaccoPortal = () => {
   const { currentUser, isAuthenticated, login, logout } = useAuth();
-  const { companyName } = useAppSettings();
+  // v2.12.6: header text comes from psettings (company name), never hardcoded.
+  const { companyName, settings } = useAppSettings();
+  const portalTitle = (companyName || '').trim()
+    ? `${companyName.trim()} Payments`
+    : 'Member Payments';
+  const isSaccoOrg = String(settings.orgtype || '').trim().toUpperCase() === 'S';
   const { isSacco, paymentsActive, canAccessPayments } = useSaccoAccess();
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
@@ -112,7 +118,10 @@ const SaccoPortal = () => {
     setPage(1);
   };
 
-  const handleExportCsv = () => {
+  // v2.12.6: real export — writes the file through the cross-platform helper so
+  // it works inside the Capacitor WebView (Documents + share sheet), not only
+  // in a desktop browser.
+  const handleExportCsv = async () => {
     if (rows.length === 0) {
       toast.error('Nothing to export');
       return;
@@ -130,29 +139,13 @@ const SaccoPortal = () => {
       .map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
       .join('\r\n');
     try {
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `sacco-transactions-${new Date().toLocaleDateString('en-CA')}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      console.log('[SACCO][EXPORT] rows=', rows.length);
-      toast.success('Transactions exported');
+      const filename = `sacco-transactions-${new Date().toLocaleDateString('en-CA')}.csv`;
+      await saveExportedFile(filename, csv, 'text/csv;charset=utf-8;');
+      console.log('[SACCO][EXPORT] rows=', rows.length, 'file=', filename);
+      toast.success(`Exported ${rows.length} transaction${rows.length === 1 ? '' : 's'}`);
     } catch (e) {
       console.error('[SACCO][EXPORT] failed', e);
       toast.error('Export failed on this device');
-    }
-  };
-
-  const handlePrint = () => {
-    try {
-      window.print();
-    } catch (e) {
-      console.error('[SACCO][PRINT] failed', e);
-      toast.error('Printing is not available on this device');
     }
   };
 
@@ -165,7 +158,7 @@ const SaccoPortal = () => {
       >
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-semibold text-foreground">Yetu Sacco Payments</h1>
+            <h1 className="text-lg font-semibold text-foreground">{portalTitle}</h1>
             <p className="text-xs text-muted-foreground">
               {companyName || 'Member portal'}
               {summaryQuery.data?.account_number ? ` • A/C ${summaryQuery.data.account_number}` : ''}
@@ -227,11 +220,9 @@ const SaccoPortal = () => {
             {txnQuery.data ? ` • ${formatMoney(txnQuery.data.filteredTotal)} total` : ''}
           </p>
           <div className="flex items-center">
-            <Button variant="outline" size="sm" className="mr-2" onClick={handleExportCsv}>
+            {/* v2.12.6: print removed for Sacco orgs (orgtype='S'). */}
+            <Button variant="outline" size="sm" onClick={handleExportCsv}>
               <Download className="mr-1 h-4 w-4" /> Export
-            </Button>
-            <Button variant="outline" size="sm" onClick={handlePrint}>
-              <Printer className="mr-1 h-4 w-4" /> Print
             </Button>
           </div>
         </div>
