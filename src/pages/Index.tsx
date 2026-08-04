@@ -522,18 +522,30 @@ const Index = () => {
         try {
           const isServerBusy = (r: any) =>
             !!r?.offline || /503|timed out|timeout|Server unavailable|too many|busy|ECONNRESET/i.test(String(r?.error || ''));
+          // v2.12.6: `pending` means the backend is warming the season snapshot
+          // in the background and returned an EMPTY farmer list. Treat it like
+          // "server busy": retry with backoff, never write, never fall back to
+          // per-farmer calls (that is what saturated the pool).
+          const isPending = (r: any) => !!(r?.pending || r?.data?.pending);
 
           let batchResult: any = null;
+          let batchPending = false;
           for (let attempt = 1; attempt <= 3; attempt++) {
             batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
-            if (batchResult?.success && batchResult.data?.farmers) { batchServerBusy = false; break; }
-            batchServerBusy = isServerBusy(batchResult);
+            batchPending = isPending(batchResult);
+            if (!batchPending && batchResult?.success && batchResult.data?.farmers?.length) { batchServerBusy = false; break; }
+            batchServerBusy = batchPending || isServerBusy(batchResult);
             if (!batchServerBusy || attempt === 3 || !navigator.onLine) break;
-            console.warn(`📦 Batch cumulative attempt ${attempt} failed (${batchResult?.error}) — backing off ${attempt * 4}s`);
-            await new Promise(r => setTimeout(r, attempt * 4000));
+            const waitMs = batchPending ? attempt * 3000 : attempt * 4000;
+            console.warn(`📦 Batch cumulative attempt ${attempt} ${batchPending ? 'pending (backend warming)' : `failed (${batchResult?.error})`} — retrying in ${waitMs / 1000}s`);
+            await new Promise(r => setTimeout(r, waitMs));
           }
 
-          if (batchResult && batchResult.success && batchResult.data && batchResult.data.farmers) {
+          if (batchPending) {
+            console.log('⏳ Pre-fetch: backend cumulative snapshot still warming — cached values kept untouched');
+          }
+
+          if (!batchPending && batchResult && batchResult.success && batchResult.data && batchResult.data.farmers) {
             const batchMap = new Map<string, number>();
             const batchByProductMap = new Map<string, Array<{ icode: string; product_name: string; weight: number }>>();
             for (const f of batchResult.data.farmers) {
