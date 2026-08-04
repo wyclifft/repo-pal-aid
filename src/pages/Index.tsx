@@ -316,6 +316,13 @@ const Index = () => {
       try {
         console.log(`🔄 Cumulative refresh (${reason}): using batch API...`);
         const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
+        // v2.12.6: the backend answers `pending: true` while the background
+        // warmer recomputes the season snapshot. It carries an EMPTY farmer
+        // list — writing it would zero every cached cumulative. Skip entirely.
+        if ((batchResult as any)?.data?.pending || (batchResult as any)?.pending) {
+          console.log(`⏳ Cumulative refresh (${reason}): backend snapshot warming — keeping cached values`);
+          return;
+        }
         if (batchResult.success && batchResult.data && batchResult.data.farmers) {
           const batchMap = new Map<string, number>();
           for (const f of batchResult.data.farmers) {
