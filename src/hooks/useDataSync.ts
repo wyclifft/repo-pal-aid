@@ -947,7 +947,9 @@ export const useDataSync = () => {
 
       // 5. Fetch and cache items (only if ccode has items configured)
       try {
-        const itemsResponse = await mysqlApi.items.getAll(deviceFingerprint);
+        // v2.12.6: force-refresh bypasses the client-side items cache so an
+        // explicit company data sync always pulls the latest catalogue.
+        const itemsResponse = await mysqlApi.items.getAll(deviceFingerprint, undefined, true);
         if (itemsResponse.success && itemsResponse.data && itemsResponse.data.length > 0) {
           await saveItems(itemsResponse.data);
           syncedCount++;
