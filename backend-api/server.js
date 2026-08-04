@@ -3976,110 +3976,39 @@ const server = http.createServer(async (req, res) => {
         console.log('⚠️ Could not detect orgtype for cumulative, using monthly range:', e.message);
       }
       
-      // v2.10.72: UPPER+TRIM normalization to prevent case/whitespace mismatches
-      // from silently excluding transactions (e.g. 't002' vs 'T002').
-      // Strictly additive — widens WHERE clause, never narrows.
-      const routeFilter = route ? ' AND UPPER(TRIM(route)) = UPPER(TRIM(?))' : '';
-      const baseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
-      const tRouteFilter = route ? ' AND UPPER(TRIM(t.route)) = UPPER(TRIM(?))' : '';
-      const tBaseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
-
-      // v2.12.5: serve from the 20s batch cache when an identical scan just ran.
-      const cumCacheKey = `cumbatch:${String(ccode).toUpperCase()}:${String(route || 'ALL').toUpperCase()}:${periodStart}:${periodEnd}`;
+      // v2.12.6: CACHE-SERVING ENDPOINT. The heavy season-wide scan lives in
+      // the background warmer (computeCumulativeBatch) — identical SQL, just
+      // never inside a client request. A miss returns immediately with
+      // pending:true so login/prewarm completes in milliseconds; the client
+      // keeps its IndexedDB cumulative cache untouched and retries.
+      const cumCacheKey = cumulativeCacheKey(ccode, route, periodStart, periodEnd);
       const cachedBatch = cumulativeBatchCache.get(cumCacheKey);
+
+      // Always register the key so the warmer keeps this snapshot fresh.
+      const warmMeta = cumulativeWarmKeys.get(cumCacheKey);
+      const stale = !warmMeta || (Date.now() - (warmMeta.lastRun || 0)) >= CUM_BATCH_REWARM_MS;
+
       if (cachedBatch) {
+        if (stale) scheduleCumulativeWarm(ccode, route, periodStart, periodEnd);
         console.log(`[CUM:BATCH] cache-hit ${cumCacheKey} farmers=${cachedBatch.total_farmers}`);
         return sendJSON(res, { success: true, data: cachedBatch });
       }
 
+      scheduleCumulativeWarm(ccode, route, periodStart, periodEnd);
+      console.log(`[CUM:BATCH] pending (warming) ${cumCacheKey}`);
+      return sendJSON(res, {
+        success: true,
+        pending: true,
+        data: {
+          farmers: [],
+          month_start: periodStart,
+          month_end: periodEnd,
+          total_farmers: 0,
+          snapshot_max_id: 0,
+          pending: true
+        }
+      });
 
-
-      // v2.10.119: SAME-CONNECTION BATCH READ — acquire one pooled connection
-      // and run both the totals SUM and the per-product SUM on it under
-      // READ COMMITTED so the two queries see the same snapshot. Also
-      // returns snapshot_max_id so the client can detect read-replica drift
-      // between successive batch calls. Strictly additive: no formula
-      // changes, no removed filters, response shape extended with one new
-      // field that older clients ignore safely.
-      const conn = await pool.getConnection();
-      let totalRows, productRows, snapshotMaxId = 0;
-      // v2.12.5: per-query timings so the real bottleneck is visible in prod logs.
-      let msTotals = 0, msProducts = 0, msSnapshot = 0;
-      try {
-        try { await conn.query("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"); } catch (e) { /* non-fatal */ }
-
-        let _t0 = Date.now();
-        const [tRows] = await conn.query(
-          `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
-           FROM transactions 
-           WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
-           AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}
-           GROUP BY TRIM(memberno)`,
-          baseParams
-        );
-        totalRows = tRows;
-        msTotals = Date.now() - _t0;
-
-        _t0 = Date.now();
-        const [pRows] = await conn.query(
-          `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
-                  IFNULL(MAX(fi.descript), ANY_VALUE(TRIM(t.icode))) as product_name,
-                  IFNULL(SUM(t.weight), 0) as weight 
-           FROM transactions t
-           LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
-           WHERE UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
-           AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${tRouteFilter}
-           GROUP BY TRIM(t.memberno), TRIM(t.icode)`,
-          tBaseParams
-        );
-        productRows = pRows;
-        msProducts = Date.now() - _t0;
-
-        try {
-          _t0 = Date.now();
-          const snapParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
-          const [snapRows] = await conn.query(
-            `SELECT IFNULL(MAX(id), 0) as max_id
-             FROM transactions
-             WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
-             AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}`,
-            snapParams
-          );
-          snapshotMaxId = snapRows.length > 0 ? Number(snapRows[0].max_id) || 0 : 0;
-          msSnapshot = Date.now() - _t0;
-        } catch (_e) { /* probe failure is non-fatal */ }
-      } finally {
-        try { conn.release(); } catch (_e) {}
-      }
-
-      // Build per-farmer product map
-      const productMap = {};
-      for (const r of productRows) {
-        if (!productMap[r.farmer_id]) productMap[r.farmer_id] = [];
-        productMap[r.farmer_id].push({
-          icode: r.icode || '',
-          product_name: r.product_name || r.icode || '',
-          weight: parseFloat(r.weight) || 0
-        });
-      }
-
-      console.log(`[CUM:BATCH] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totalRows.length} snapshot_max_id=${snapshotMaxId} timings totals=${msTotals}ms products=${msProducts}ms snapshot=${msSnapshot}ms`);
-
-      const batchPayload = {
-        farmers: totalRows.map(r => ({
-          farmer_id: r.farmer_id,
-          cumulative_weight: parseFloat(r.cumulative_weight) || 0,
-          by_product: productMap[r.farmer_id] || []
-        })),
-        month_start: periodStart,
-        month_end: periodEnd,
-        total_farmers: totalRows.length,
-        snapshot_max_id: snapshotMaxId
-      };
-
-      try { cumulativeBatchCache.set(cumCacheKey, batchPayload); } catch (_e) { /* cache is best-effort */ }
-
-      return sendJSON(res, { success: true, data: batchPayload });
     }
 
     // Farmer monthly cumulative frequency endpoint
