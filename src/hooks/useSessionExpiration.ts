@@ -69,9 +69,12 @@ export const useSessionExpiration = ({
     const timeFrom = toHour(sess.time_from);
     const timeTo = toHour(sess.time_to);
 
+    // v2.12.6: seasons carry no time window — date validation already passed,
+    // so treat them as active instead of expiring them immediately.
     if (timeFrom === null || timeTo === null) {
-      return false;
+      return true;
     }
+
 
     const now = new Date();
     const currentHour = now.getHours();
