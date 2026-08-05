@@ -2864,27 +2864,27 @@ if (path === '/api/sales' && method === 'POST') {
                 body.device_fingerprint || '',
                 body.farmer_id || '',
                 storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
-                item.quantity || 0,
+                toNumOrZero(item.quantity),
                 batchSessionVal,                  // session (SCODE for coffee, label for dairy)
                 transdate,
                 transtime,
-                transtype,
+                toIntOrNull(transtype, 2),
                 0,
                 0,
                 ccode,
                 0,
-                item.price || 0,
-                amount,
+                toNumOrZero(item.price),
+                toNumOrZero(amount),
                 item.item_code || '',
                 batchSeasonVal,                   // v2.10.56: CAN (canonical SCODE for coffee, raw season for dairy)
                 timestamp,
                 0,
-                '',
+                0,                                // v2.12.7: milk_session_id is INT — 0, never ''
                 photoFilename,  // Same photo for all items
                 photoDirectory,
                 item.cow_name || '',
                 item.cow_breed || '',
-                item.number_of_calves || '',
+                toIntOrNull(item.number_of_calves), // v2.12.7: noofcalfs is INT — 0, never ''
                 item.other_details || ''
               ]
             );
