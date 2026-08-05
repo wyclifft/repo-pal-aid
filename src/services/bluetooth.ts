@@ -2735,8 +2735,11 @@ export const printMemberProduceStatement = async (data: {
   const dashLine = '-'.repeat(W);
   
   const formatDate = (dateStr: string) => {
-    // Convert YYYY-MM-DD to DD/MM/YYYY
-    const [year, month, day] = dateStr.split('-');
+    // v2.12.7: accepts 'YYYY-MM-DD' or a full ISO timestamp; the ISO time part
+    // must never reach printed output.
+    const ymd = String(dateStr || '').trim().split('T')[0].split(' ')[0];
+    const [year, month, day] = ymd.split('-');
+    if (!year || !month || !day) return ymd;
     return `${day}/${month}/${year}`;
   };
   
