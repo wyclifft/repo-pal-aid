@@ -1552,15 +1552,22 @@ const server = http.createServer(async (req, res) => {
             const devcode = devRows[0].devcode;
             // Extract trnid using last 8 digits to avoid clientFetch corruption
             const insertedTrnId = parseInt(attemptTransrefno.slice(-8), 10);
+const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 10);
             if (!isNaN(insertedTrnId)) {
               await pool.query(
-                `UPDATE devSettings SET 
+                `UPDATE devSettings SET
                   trnid = GREATEST(IFNULL(trnid, 0), ?),
                   milkid = GREATEST(IFNULL(milkid, 0), ?)
                  WHERE uniquedevcode = ?`,
-                [insertedTrnId, attemptUploadrefno || 0, deviceserial]
+                [
+  insertedTrnId,
+  isNaN(insertedMilkId) ? 0 : insertedMilkId,
+  deviceserial
+]
               );
-              console.log(`✅ Updated trnid to ${insertedTrnId}, milkid to ${attemptUploadrefno} for device`);
+              console.log(
+  `✅ Updated trnid to ${insertedTrnId}, milkid to ${insertedMilkId} for device`
+);
             }
           }
 
@@ -1585,18 +1592,18 @@ const server = http.createServer(async (req, res) => {
                 );
                 if (payloadMatch) {
                   console.log(`ℹ️ Record ${attemptTransrefno} already exists with matching payload (true idempotent retry)`);
-                  return { 
-                    success: true, 
-                    reference_no: attemptTransrefno, 
-                    uploadrefno: attemptUploadrefno, 
+                  return {
+                    success: true,
+                    reference_no: attemptTransrefno,
+                    uploadrefno: attemptUploadrefno,
                     isNew: false,
                     message: 'Record already exists (duplicate reference)'
                   };
                 } else {
                   // Payload mismatch — this is a reference COLLISION, not a retry
                   console.warn(`⚠️ Reference collision: ${attemptTransrefno} exists with different payload. Existing: member=${existing.memberno}, weight=${existing.weight}. New: member=${cleanFarmerId}, weight=${body.weight}`);
-                  return { 
-                    success: false, 
+                  return {
+                    success: false,
                     collision: true,
                     reference_no: attemptTransrefno,
                     error: 'REFERENCE_COLLISION',
@@ -1609,10 +1616,10 @@ const server = http.createServer(async (req, res) => {
             }
             // Fallback: if lookup fails, treat as idempotent success to avoid data loss
             console.log(`ℹ️ Record with reference ${attemptTransrefno} already exists (idempotent fallback)`);
-            return { 
-              success: true, 
-              reference_no: attemptTransrefno, 
-              uploadrefno: attemptUploadrefno, 
+            return {
+              success: true,
+              reference_no: attemptTransrefno,
+              uploadrefno: attemptUploadrefno,
               isNew: false,
               message: 'Record already exists (duplicate reference)'
             };
@@ -1622,18 +1629,18 @@ const server = http.createServer(async (req, res) => {
           }
         }
       };
-      
+
       // If uploadrefno not provided by frontend, generate from backend
       if (!uploadrefno) {
         uploadrefno = currentMilkId + 1;
         console.log('📝 Backend generated milkId:', uploadrefno);
       }
-      
+
       try {
         const result = await attemptInsert(transrefno, uploadrefno);
-        return sendJSON(res, { 
-          success: true, 
-          message: 'Collection created', 
+        return sendJSON(res, {
+          success: true,
+          message: 'Collection created',
           reference_no: result.reference_no,
           uploadrefno: result.uploadrefno
         }, 201);
@@ -1651,36 +1658,36 @@ const server = http.createServer(async (req, res) => {
     if (path.startsWith('/api/milk-collection/') && method === 'PUT') {
       const ref = path.split('/')[3];
       const body = await parseBody(req);
-      
+
       console.log('🟡 BACKEND: UPDATING existing transaction');
       console.log('📝 Reference:', ref);
       console.log('⚖️ New Weight:', body.weight, 'Kg');
-      
+
       // CRITICAL: Get device's ccode to ensure update only affects records for this device
       const deviceserial = body.device_fingerprint;
       if (!deviceserial) {
-        return sendJSON(res, { 
-          success: false, 
-          error: 'device_fingerprint is required for updates' 
+        return sendJSON(res, {
+          success: false,
+          error: 'device_fingerprint is required for updates'
         }, 400);
       }
-      
+
       const [deviceRows] = await pool.query(
         'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [deviceserial]
       );
-      
+
       if (deviceRows.length === 0 || !deviceRows[0].authorized) {
         console.log('❌ Device not authorized for update:', deviceserial);
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Device not authorized' 
+        return sendJSON(res, {
+          success: false,
+          error: 'Device not authorized'
         }, 403);
       }
-      
+
       const ccode = deviceRows[0].ccode;
       console.log('🏢 Company Code:', ccode);
-      
+
       const updates = [];
       const values = [];
       if (body.weight !== undefined) {
@@ -1695,11 +1702,11 @@ const server = http.createServer(async (req, res) => {
         values.push(transdate, transtime);
       }
       if (updates.length === 0) return sendJSON(res, { success: false, error: 'No fields to update' }, 400);
-      
+
       // STRICT: Update only records matching BOTH transrefno AND ccode
       values.push(ref, ccode);
       const [result] = await pool.query(`UPDATE transactions SET ${updates.join(', ')} WHERE transrefno = ? AND ccode = ?`, values);
-      
+
       console.log('✅ BACKEND: Record UPDATED, affected rows:', result.affectedRows);
       return sendJSON(res, { success: true, message: 'Collection updated' });
     }
@@ -1731,14 +1738,14 @@ const server = http.createServer(async (req, res) => {
         'SELECT ccode, devcode FROM devSettings WHERE uniquedevcode = ? AND authorized = 1',
         [uniquedevcode]
       );
-      
+
       if (deviceRows.length === 0) {
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Device not authorized or not found' 
+        return sendJSON(res, {
+          success: false,
+          error: 'Device not authorized or not found'
         }, 401);
       }
-      
+
       const ccode = deviceRows[0].ccode;
       const devcode = deviceRows[0].devcode;
 
@@ -1747,7 +1754,7 @@ const server = http.createServer(async (req, res) => {
       // scopes results to the route currently selected on the requesting device.
       const routeFilter = (parsedUrl.query.route || '').toString().trim();
       let query = `
-        SELECT 
+        SELECT
           t.memberno as farmer_id,
           cm.descript as farmer_name,
           cm.route,
@@ -1755,7 +1762,7 @@ const server = http.createServer(async (req, res) => {
           COUNT(*) as collection_count
         FROM transactions t
         LEFT JOIN cm_members cm ON t.memberno = cm.mcode AND t.ccode = cm.ccode
-        WHERE t.Transtype = 1 
+        WHERE t.Transtype = 1
           AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
           AND t.ccode = ?
       `;
@@ -1805,14 +1812,14 @@ const server = http.createServer(async (req, res) => {
          WHERE d.uniquedevcode = ? AND d.authorized = 1`,
         [uniquedevcode]
       );
-      
+
       if (deviceRows.length === 0) {
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Device not authorized or not found' 
+        return sendJSON(res, {
+          success: false,
+          error: 'Device not authorized or not found'
         }, 401);
       }
-      
+
       const ccode = deviceRows[0].ccode;
       const companyName = deviceRows[0].company_name || ccode || 'Company';
 
@@ -1821,7 +1828,7 @@ const server = http.createServer(async (req, res) => {
         'SELECT mcode, descript, route FROM cm_members WHERE mcode = ? AND ccode = ?',
         [farmerId, ccode]
       );
-      
+
       const farmerName = farmerRows.length > 0 ? farmerRows[0].descript : 'Unknown';
       const farmerRoute = farmerRows.length > 0 ? farmerRows[0].route : '';
 
@@ -1840,12 +1847,12 @@ const server = http.createServer(async (req, res) => {
       const routeFilter = (parsedUrl.query.route || '').toString().trim();
 
       const produceParams = [ccode, farmerId, startDate, endDate, ccode];
-      let produceSql = `SELECT DISTINCT i.descript as produce_name 
+      let produceSql = `SELECT DISTINCT i.descript as produce_name
          FROM transactions t
          LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
-         WHERE t.memberno = ? 
-           AND CAST(t.transdate AS DATE) BETWEEN ? AND ? 
-           AND t.Transtype = 1 
+         WHERE t.memberno = ?
+           AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+           AND t.Transtype = 1
            AND t.ccode = ?`;
       if (routeFilter) {
         produceSql += ` AND TRIM(t.route) = TRIM(?)`;
@@ -1853,13 +1860,13 @@ const server = http.createServer(async (req, res) => {
       }
       produceSql += ` LIMIT 1`;
       const [produceRows] = await pool.query(produceSql, produceParams);
-      
+
       const produceName = produceRows.length > 0 && produceRows[0].produce_name ? produceRows[0].produce_name : 'PRODUCE';
 
       // v2.10.77: include icode + product_name per transaction so the receipt
       // can group rows by produce. Additive — old clients ignore extra fields.
       const txParams = [ccode, farmerId, startDate, endDate, ccode];
-      let txSql = `SELECT 
+      let txSql = `SELECT
           t.transdate as date,
           t.transrefno as rec_no,
           t.weight as quantity,
@@ -1868,8 +1875,8 @@ const server = http.createServer(async (req, res) => {
           i.descript as product_name
         FROM transactions t
         LEFT JOIN fm_items i ON UPPER(TRIM(i.icode)) = UPPER(TRIM(t.icode)) AND i.ccode = ?
-        WHERE t.memberno = ? 
-          AND t.Transtype = 1 
+        WHERE t.memberno = ?
+          AND t.Transtype = 1
           AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
           AND t.ccode = ?`;
       if (routeFilter) {
@@ -1909,8 +1916,8 @@ const server = http.createServer(async (req, res) => {
         transactionRouteName = txRouteNameRows.length > 0 ? (txRouteNameRows[0].descript || '') : '';
       }
 
-      return sendJSON(res, { 
-        success: true, 
+      return sendJSON(res, {
+        success: true,
         data: {
           company_name: companyName,
           farmer_id: farmerId,
@@ -1942,22 +1949,22 @@ const server = http.createServer(async (req, res) => {
         'SELECT ccode FROM devSettings WHERE uniquedevcode = ? AND authorized = 1',
         [uniquedevcode]
       );
-      
+
       if (deviceRows.length === 0) {
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Device not authorized or not found' 
+        return sendJSON(res, {
+          success: false,
+          error: 'Device not authorized or not found'
         }, 401);
       }
-      
+
       const ccode = deviceRows[0].ccode;
-      
+
       // Fetch all collections for the specified date and company
       // DB columns → Frontend fields mapping
       const [collections] = await pool.query(
-        `SELECT transrefno, Uploadrefno as uploadrefno, memberno as farmer_id, route, weight, session, 
+        `SELECT transrefno, Uploadrefno as uploadrefno, memberno as farmer_id, route, weight, session,
                 transdate as collection_date, clerk as clerk_name, icode as product_code, entry_type
-         FROM transactions 
+         FROM transactions
          WHERE transdate = ? AND Transtype = 1 AND ccode = ?
          ORDER BY session, route, memberno`,
         [date, ccode]
@@ -2053,20 +2060,20 @@ const server = http.createServer(async (req, res) => {
          WHERE d.uniquedevcode = ? AND d.authorized = 1`,
         [uniquedevcode]
       );
-      
+
       if (deviceRows.length === 0) {
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Device not authorized or not found' 
+        return sendJSON(res, {
+          success: false,
+          error: 'Device not authorized or not found'
         }, 401, origin);
       }
-      
+
       const { ccode, devcode, company_name, orgtype, rdesc } = deviceRows[0];
       const isCoffee = orgtype === 'C';
       const periodLabel = isCoffee ? 'Season' : 'Session';
       const routeLabel = rdesc || (isCoffee ? 'Center' : 'Route');
       const produceLabel = isCoffee ? 'COFFEE' : 'MILK';
-      
+
       // Get the device's unique identifier (deviceserial) from the fingerprint
       // The deviceserial in transactions matches the uniquedevcode from devSettings
       const deviceSerial = uniquedevcode;
@@ -2074,18 +2081,18 @@ const server = http.createServer(async (req, res) => {
       // Define CAN column codes for each period (original session SCODE values)
       // These codes match the sessions.SCODE values from the sessions table
       // Morning: MO (or sometimes just using 'AM')
-      // Afternoon: AF (or sometimes just using 'PM')  
+      // Afternoon: AF (or sometimes just using 'PM')
       // Evening: EV, EVE
       const periodCANCodes = {
         morning: ['MO', 'AM', 'MORNING'],
         afternoon: ['AF', 'PM', 'AFTERNOON'],
         evening: ['EV', 'EVE', 'EVENING', 'NIGHT']
       };
-      
+
       // Define normalized session column values for each period
       // The session column is normalized to AM/PM during milk-collection insertion:
       // - Morning (MO, AM, MORNING) → session='AM'
-      // - Afternoon (AF, PM, AFTERNOON) → session='PM'  
+      // - Afternoon (AF, PM, AFTERNOON) → session='PM'
       // - Evening (EV, EVENING) → session='PM' (because the normalization checks for 'EVENING' → PM)
       // NOTE: EV sessions are normalized to PM in the session column! So we can't rely on session alone.
       const periodNormalizedSession = {
@@ -2098,9 +2105,9 @@ const server = http.createServer(async (req, res) => {
       // Include ALL transaction types: 1=Buy Produce, 2=Sell/Store, 3=AI
       // Join fm_tanks to get route description and fm_items for product name
       let query = `
-        SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, 
-               t.route, t.weight, t.session, t.transdate as collection_date, 
-               t.transtime, t.clerk as clerk_name, t.icode as product_code, 
+        SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id,
+               t.route, t.weight, t.session, t.transdate as collection_date,
+               t.transtime, t.clerk as clerk_name, t.icode as product_code,
                t.entry_type, t.CAN as season_code, t.Transtype as transtype,
                t.iprice, t.amount,
                i.descript as product_name,
@@ -2146,8 +2153,8 @@ const server = http.createServer(async (req, res) => {
       const clerkName = collections.length > 0 ? (collections[0].clerk_name || 'Unknown') : 'Unknown';
 
       // Get produce name (from first transaction if available)
-      const produceName = collections.length > 0 && collections[0].product_name 
-        ? collections[0].product_name 
+      const produceName = collections.length > 0 && collections[0].product_name
+        ? collections[0].product_name
         : produceLabel;
 
       // Calculate totals
@@ -2160,7 +2167,7 @@ const server = http.createServer(async (req, res) => {
       const transactions = collections.map(c => {
         // Extract short ref number (last 5 chars of transrefno for compactness)
         const refno = c.transrefno ? c.transrefno.slice(-5) : '';
-        
+
         // Format time as HH:MM AM/PM
         let timeStr = '';
         if (c.transtime) {
@@ -2231,27 +2238,27 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/items' && method === 'GET') {
       const uniquedevcode = parsedUrl.query.uniquedevcode;
       const invtype = parsedUrl.query.invtype; // Optional filter: '01', '05', '06'
-      
+
       if (!uniquedevcode) {
-        return sendJSON(res, { 
-          success: false, 
-          message: 'Device code required' 
+        return sendJSON(res, {
+          success: false,
+          message: 'Device code required'
         }, 400);
       }
-      
+
       // Get device and check authorization
       const [deviceRows] = await pool.query(
         'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
         [uniquedevcode]
       );
-      
+
       if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
-        return sendJSON(res, { 
-          success: false, 
-          message: 'Device not authorized' 
+        return sendJSON(res, {
+          success: false,
+          message: 'Device not authorized'
         }, 401);
       }
-      
+
       const ccode = deviceRows[0].ccode;
 
       // v2.12.6: serve from a 60 s cache. Devices were re-requesting the same
@@ -2263,17 +2270,24 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { success: true, data: cachedItems });
       }
 
+
+      console.log('[ITEMS] Request:', {
+  ccode,
+  invtype,
+  query: parsedUrl.query
+});
+
       // Build query with optional invtype filter
-      let query = 'SELECT * FROM fm_items WHERE sellable = 1 AND ccode = ?';
+     let query = 'SELECT * FROM fm_items WHERE ccode = ?';
       const params = [ccode];
-      
+
       if (invtype) {
         query += ' AND invtype = ?';
         params.push(invtype);
       }
-      
+
       query += ' ORDER BY descript';
-      
+
       const [rows] = await pool.query(query, params);
 
       itemsCache.set(itemsKey, rows);
@@ -2282,24 +2296,34 @@ const server = http.createServer(async (req, res) => {
       // usually because Contabo's fm_items rows are not tagged with the expected
       // invtype (new schema defaults invtype to '05'). Logged on cache miss only.
       console.log(`[ITEMS] ccode=${ccode} invtype=${invtype || 'ALL'} rows=${rows.length} (cache miss)`);
-      if (rows.length === 0) {
-        try {
-          const [spread] = await pool.query(
-            'SELECT IFNULL(invtype, "(null)") as invtype, COUNT(*) as n FROM fm_items WHERE sellable = 1 AND ccode = ? GROUP BY invtype',
-            [ccode]
-          );
-          console.log(`[ITEMS] ccode=${ccode} sellable invtype spread: ${spread.map(r => `${r.invtype}=${r.n}`).join(', ') || 'no sellable rows'}`);
-        } catch (e) {
-          console.log('[ITEMS] invtype spread probe failed:', e.message);
-        }
-      }
 
-      return sendJSON(res, { success: true, data: rows });
+if (rows.length === 0) {
+  try {
+    const [spread] = await pool.query(
+      `SELECT IFNULL(invtype, "(null)") AS invtype,
+              COUNT(*) AS n
+       FROM fm_items
+       WHERE ccode = ?
+       GROUP BY invtype`,
+      [ccode]
+    );
 
-    }
+    console.log(
+      `[ITEMS] ccode=${ccode} invtype spread: ${
+        spread.map(r => `${r.invtype}=${r.n}`).join(', ') || 'no rows'
+      }`
+    );
+  } catch (e) {
+    console.log('[ITEMS] invtype spread probe failed:', e.message);
+  }
+}
 
-    // Sales endpoints - Unified for Store (transtype=2) and AI (transtype=3)
-    if (path === '/api/sales' && method === 'POST') {
+return sendJSON(res, { success: true, data: rows });
+
+}
+
+ // Sales endpoints - Unified for Store (transtype=2) and AI (transtype=3)
+if (path === '/api/sales' && method === 'POST') {
       const body = await parseBody(req);
       const conn = await pool.getConnection();
       

@@ -151,6 +151,7 @@ const finalizeWebhookLog = async (pool, logId, { outcome, httpStatus, reference,
  * captured (allocation_status = 'unallocated') and can be reconciled later.
  */
 const resolveMember = async (pool, accountNumber) => {
+  console.log('[YETU] Looking up sacco_members...');
   const [rows] = await pool.query(
     `SELECT member_id, ccode FROM sacco_members
       WHERE UPPER(TRIM(account_number)) = UPPER(TRIM(?)) AND status = 'active'
@@ -163,10 +164,18 @@ const resolveMember = async (pool, accountNumber) => {
 
   let ccode = String(process.env.YETU_DEFAULT_CCODE || '').trim();
   if (!ccode) {
+    console.log('[YETU] Looking up psettings...');
     const [companies] = await pool.query(
-      `SELECT ccode FROM psettings WHERE UPPER(TRIM(orgtype)) = 'S' ORDER BY ccode LIMIT 1`
-    );
-    ccode = companies.length > 0 ? String(companies[0].ccode || '').trim() : '';
+  `SELECT cno
+     FROM psettings
+    WHERE UPPER(TRIM(orgtype)) = 'S'
+    ORDER BY cno
+    LIMIT 1`
+);
+
+ccode = companies.length > 0
+  ? String(companies[0].cno || '').trim()
+  : '';
   }
   return { memberId: null, ccode, allocated: false };
 };
@@ -176,12 +185,14 @@ const resolveMember = async (pool, accountNumber) => {
  * @returns {{ stored: boolean, duplicate: boolean, txnId?: number }}
  */
 const storeDeposit = async (pool, payload, rawBody) => {
+  console.log('[YETU] Resolving member:', payload.accountNumber);
   const { memberId, ccode, allocated } = await resolveMember(pool, payload.accountNumber);
   if (!ccode) {
     throw new Error('no Sacco company configured (psettings.orgtype = "S")');
   }
 
   try {
+    console.log('[YETU] Inserting into sacco_transactions...');
     const [result] = await pool.query(
       `INSERT INTO sacco_transactions
          (ccode, member_id, account_number_raw, transaction_reference, amount,
