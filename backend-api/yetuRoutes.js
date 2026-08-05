@@ -60,7 +60,7 @@ const resolveSaccoAccess = async (pool, { deviceFingerprint, userid }) => {
   if (!userId) return { ok: false, status: 400, error: 'userid is required' };
 
   const [deviceRows] = await pool.query(
-    'SELECT ccode, authorized FROM devsettings WHERE uniquedevcode = ? LIMIT 1',
+    'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
     [fingerprint]
   );
   if (deviceRows.length === 0 || !toDbBool(deviceRows[0].authorized)) {
@@ -69,9 +69,10 @@ const resolveSaccoAccess = async (pool, { deviceFingerprint, userid }) => {
   const ccode = String(deviceRows[0].ccode || '').trim();
   if (!ccode) return { ok: false, status: 403, error: 'Device company not configured' };
 
+  // v2.12.7 — psettings is keyed by `cno` (there is no `ccode` column).
   const [settingsRows] = await pool.query(
     `SELECT IFNULL(payments_active, 0) AS payments_active, IFNULL(orgtype, 'D') AS orgtype
-       FROM psettings WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) LIMIT 1`,
+       FROM psettings WHERE UPPER(TRIM(cno)) = UPPER(TRIM(?)) LIMIT 1`,
     [ccode]
   );
   if (settingsRows.length === 0) return { ok: false, status: 403, error: 'Company not configured' };

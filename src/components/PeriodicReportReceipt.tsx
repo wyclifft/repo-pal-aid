@@ -156,8 +156,13 @@ export function PeriodicReportReceipt({
     }
   };
 
+  // v2.12.7 — Dates may arrive as 'YYYY-MM-DD' or a full ISO timestamp
+  // ('2026-08-04T21:00:00.000Z'). Strip anything after the date part so the
+  // ISO time never leaks into printed/previewed reports.
   const formatDisplayDate = (dateStr: string) => {
-    const [year, month, day] = dateStr.split('-');
+    const ymd = String(dateStr || '').trim().split('T')[0].split(' ')[0];
+    const [year, month, day] = ymd.split('-');
+    if (!year || !month || !day) return ymd;
     return `${day}/${month}/${year}`;
   };
 
