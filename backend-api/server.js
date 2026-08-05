@@ -1554,7 +1554,7 @@ const server = http.createServer(async (req, res) => {
               deviceserial,
               cleanFarmerId,
               body.route,
-              body.weight,
+              toNumOrZero(body.weight),           // v2.12.7: never '' into numeric column
               normalizedSession,
               transdate,
               transtime,
