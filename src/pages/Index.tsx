@@ -1742,14 +1742,17 @@ const Index = () => {
               const justSubmitted = printData.justSubmittedWeight ?? 0;
               const trustedFloor = Math.max(cachedBase, prevCum) + justSubmitted;
 
+              // v2.12.7: longer window + one retry (Contabo latency) so the
+              // print path stops falling back to an empty cache (cumulative 0).
               const fetchCloud = () => Promise.race([
                 mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint, printData.routeCode || undefined),
                 new Promise<{ success: false }>((resolve) =>
-                  setTimeout(() => resolve({ success: false }), 1500)
+                  setTimeout(() => resolve({ success: false }), 4000)
                 )
               ]);
 
-              const freqResult = await fetchCloud();
+              let freqResult = await fetchCloud();
+              if (!freqResult.success) freqResult = await fetchCloud();
               if (freqResult.success && freqResult.data) {
                 let cloudCumulative = freqResult.data.cumulative_weight ?? 0;
                 let cloudByProduct = freqResult.data.by_product || [];
@@ -1789,10 +1792,37 @@ const Index = () => {
                   else merged[p.icode] = { ...p };
                 }
                 cumulativeForPrint = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, printData.productIcode);
+                // v2.12.7: never print 0 when the backend breakdown for the
+                // selected produce has not landed yet.
+                if ((cumulativeForPrint?.total ?? 0) === 0 && trustedFloor > 0) {
+                  cumulativeForPrint = {
+                    total: trustedFloor,
+                    byProduct: printData.productIcode
+                      ? [{ icode: printData.productIcode, product_name: printData.productName || printData.productIcode, weight: trustedFloor }]
+                      : [],
+                  };
+                  plog.warn('CUM:ONLINE-PRINT', `${printData.farmerIdForCumulative} product filter empty → using floor ${trustedFloor}`,
+                    { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, icode: printData.productIcode, cloudCumulative, trustedFloor, used: 'floor', path: 'background-print' });
+                }
                 // Update cache only when cloud >= cachedBase (don't lower the cache from a stale read).
                 if (cloudCumulative >= cachedBase) {
                   updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined, { verifySource: 'W7:background-print', caller: 'Index/backgroundPrint' }).catch(() => {});
                 }
+              } else {
+                // v2.12.7: cloud unavailable online — fall back to the trusted
+                // floor rather than an empty cache.
+                const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
+                const filtered = filterCumulativeByProduct(total, printData.productIcode);
+                cumulativeForPrint = (filtered?.total ?? 0) >= trustedFloor || trustedFloor <= 0
+                  ? filtered
+                  : {
+                      total: trustedFloor,
+                      byProduct: printData.productIcode
+                        ? [{ icode: printData.productIcode, product_name: printData.productName || printData.productIcode, weight: trustedFloor }]
+                        : (filtered?.byProduct || []),
+                    };
+                plog.warn('CUM:ONLINE-PRINT', `${printData.farmerIdForCumulative} cloud unavailable → local=${filtered?.total ?? 0} floor=${trustedFloor}`,
+                  { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, local: filtered?.total ?? 0, trustedFloor, used: cumulativeForPrint?.total, path: 'background-print' });
               }
             }
             
