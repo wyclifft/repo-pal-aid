@@ -2581,27 +2581,27 @@ if (path === '/api/sales' && method === 'POST') {
             body.device_fingerprint || '',      // deviceserial
             body.farmer_id || '',               // memberno
             storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
-            body.quantity || 0,                 // weight (using quantity)
+            toNumOrZero(body.quantity),         // weight (using quantity)
             salesSessionVal,                    // v2.10.50: session (SCODE for coffee, label for dairy)
             transdate,                          // transdate
             transtime,                          // transtime
-            transtype,                          // Transtype: 2 for Store, 3 for AI
+            toIntOrNull(transtype, 2),          // Transtype: 2 for Store, 3 for AI
             0,                                  // processed
             0,                                  // uploaded
             ccode,                              // ccode (from device's devSettings)
             0,                                  // ivat
-            body.price || 0,                    // iprice
-            amount,                             // amount
+            toNumOrZero(body.price),            // iprice
+            toNumOrZero(amount),                // amount
             body.item_code || '',               // icode (from body)
             salesSeasonVal,                     // v2.10.56: CAN (canonical SCODE for coffee, raw season for dairy)
             timestamp,                          // time
             0,                                  // capType
-            '',                                 // milk_session_id
+            0,                                  // v2.12.7: milk_session_id is INT — 0, never ''
             photoFilename,                      // photo_filename
             photoDirectory,                     // photo_directory
             body.cow_name || '',                // cowname (AI) - maps from frontend cow_name
             body.cow_breed || '',               // cowbreed (AI) - maps from frontend cow_breed
-            body.number_of_calves || '',        // noofcalfs (AI) - maps from frontend number_of_calves
+            toIntOrNull(body.number_of_calves), // v2.12.7: noofcalfs is INT — 0, never ''
             body.other_details || ''            // aibreed (AI) - maps from frontend other_details
           ]
         );
