@@ -30,6 +30,31 @@ const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 80);
 const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 100);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 
+/**
+ * v2.12.7 — Integer column sanitation.
+ * MariaDB (STRICT mode) rejects '' for INT columns:
+ *   "Incorrect integer value: '' for column 'noofcalfs'".
+ * Never pass a raw string through to an integer column — normalise blanks.
+ * @param {*} value       raw value from the request body
+ * @param {number|null} fallback value used when the input is blank/non-numeric
+ */
+const toIntOrNull = (value, fallback = 0) => {
+  if (value === null || value === undefined) return fallback;
+  const str = String(value).trim();
+  if (str === '') return fallback;
+  const num = parseInt(str, 10);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+/** v2.12.7 — Same guard for DECIMAL/FLOAT columns (weight, price, amount). */
+const toNumOrZero = (value, fallback = 0) => {
+  if (value === null || value === undefined) return fallback;
+  const str = String(value).trim();
+  if (str === '') return fallback;
+  const num = Number(str);
+  return Number.isFinite(num) ? num : fallback;
+};
+
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'localhost',
   user: process.env.MYSQL_USER,
