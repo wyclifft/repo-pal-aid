@@ -1601,12 +1601,19 @@ const Index = () => {
               const cachedBase = Number(cachedRow?.baseCount || 0);
               const trustedFloor = Math.max(cachedBase, previousCumTotal) + justSubmittedWeight;
 
+              // v2.12.7: the Contabo backend is slower than the old cPanel box.
+              // A 2s race lost too often, and the offline fallback returns 0
+              // when the route cache was never pre-warmed → receipts printed 0.
               const fetchCloud = () => Promise.race([
                 mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint, selectedRouteCode || undefined),
-                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 2000))
+                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 4000))
               ]);
 
               let freqResult = await fetchCloud();
+              if (!freqResult.success) {
+                // One retry — a single slow read must not zero the receipt.
+                freqResult = await fetchCloud();
+              }
               if (freqResult.success && freqResult.data) {
                 let cloudCumulative = freqResult.data.cumulative_weight ?? 0;
                 let cloudByProduct = freqResult.data.by_product || [];
@@ -1654,9 +1661,33 @@ const Index = () => {
                   else merged[p.icode] = { ...p };
                 }
                 computedCumulative = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
+                // v2.12.7: the per-product filter yields 0 when the backend has
+                // not yet reported a breakdown row for the selected produce.
+                // Never print 0 when a trusted floor exists.
+                if ((computedCumulative?.total ?? 0) === 0 && trustedFloor > 0) {
+                  computedCumulative = {
+                    total: trustedFloor,
+                    byProduct: selectedProduct?.icode
+                      ? [{ icode: selectedProduct.icode, product_name: selectedProduct.descript || selectedProduct.icode, weight: trustedFloor }]
+                      : [],
+                  };
+                  plog.warn('CUM:ONLINE-PRINT', `${cleanId} product filter empty → using floor ${trustedFloor}`,
+                    { farmerId: cleanId, route: selectedRouteCode, icode: selectedProduct?.icode, cloudCumulative, trustedFloor, used: 'floor', path: 'on-screen' });
+                }
               } else {
+                // Cloud unavailable: local cache + unsynced, but never below the floor.
                 const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
-                computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
+                const filtered = filterCumulativeByProduct(total, selectedProduct?.icode);
+                computedCumulative = (filtered?.total ?? 0) >= trustedFloor || trustedFloor <= 0
+                  ? filtered
+                  : {
+                      total: trustedFloor,
+                      byProduct: selectedProduct?.icode
+                        ? [{ icode: selectedProduct.icode, product_name: selectedProduct.descript || selectedProduct.icode, weight: trustedFloor }]
+                        : (filtered?.byProduct || []),
+                    };
+                plog.warn('CUM:ONLINE-PRINT', `${cleanId} cloud unavailable → local=${filtered?.total ?? 0} floor=${trustedFloor}`,
+                  { farmerId: cleanId, route: selectedRouteCode, local: filtered?.total ?? 0, trustedFloor, used: computedCumulative?.total, path: 'on-screen' });
               }
             } else {
               const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
