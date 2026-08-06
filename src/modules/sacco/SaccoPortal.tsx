@@ -52,6 +52,8 @@ const SaccoPortal = () => {
   const [sort, setSort] = useState<SortField>('transaction_date');
   const [order, setOrder] = useState<SortOrder>('desc');
   const [selected, setSelected] = useState<SaccoTransaction | null>(null);
+  // v2.12.8: '' means "let the server pick the first linked account".
+  const [account, setAccount] = useState<string>('');
 
   const userid = currentUser?.user_id;
   const query = useMemo(
@@ -63,12 +65,26 @@ const SaccoPortal = () => {
       to: filters.to || undefined,
       sort,
       order,
+      account: account || undefined,
     }),
-    [page, filters, sort, order]
+    [page, filters, sort, order, account]
   );
 
-  const summaryQuery = useSaccoSummary(isAuthenticated ? userid : undefined);
+  const summaryQuery = useSaccoSummary(isAuthenticated ? userid : undefined, account || undefined);
   const txnQuery = useSaccoTransactions(isAuthenticated ? userid : undefined, query);
+
+  // v2.12.8: accounts the user may view (from Users.link_account, split on '#').
+  const accounts: string[] =
+    summaryQuery.data?.accounts || txnQuery.data?.accounts || [];
+  const activeAccount =
+    account || summaryQuery.data?.account_number || txnQuery.data?.account_number || '';
+
+  const handleAccountChange = (next: string) => {
+    setAccount(next);
+    setPage(1);
+    setSelected(null);
+  };
+
 
   const handleLogin = (user: AppUser, offline: boolean, password?: string) => {
     login(user, offline, password);
@@ -160,7 +176,8 @@ const SaccoPortal = () => {
             <h1 className="text-lg font-semibold text-foreground">{portalTitle}</h1>
             <p className="text-xs text-muted-foreground">
               {companyName || 'Member portal'}
-              {summaryQuery.data?.account_number ? ` • A/C ${summaryQuery.data.account_number}` : ''}
+              {/* Single linked account: shown inline, no picker. */}
+              {activeAccount && accounts.length <= 1 ? ` • A/C ${activeAccount}` : ''}
             </p>
             <p className="text-[11px] text-muted-foreground">
               {txnQuery.isFetching
@@ -169,7 +186,22 @@ const SaccoPortal = () => {
                   ? `Live • updated ${formatClock(txnQuery.dataUpdatedAt)}`
                   : 'Live'}
             </p>
+            {/* v2.12.8: picker appears only when the user has several linked
+                accounts. Native select — WebView 51 safe. */}
+            {accounts.length > 1 && (
+              <select
+                aria-label="Select account"
+                className="mt-1 h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                value={activeAccount}
+                onChange={(e) => handleAccountChange(e.target.value)}
+              >
+                {accounts.map((a) => (
+                  <option key={a} value={a}>A/C {a}</option>
+                ))}
+              </select>
+            )}
           </div>
+
 
           <div className="flex items-center">
             <Button

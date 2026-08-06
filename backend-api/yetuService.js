@@ -147,14 +147,21 @@ const finalizeWebhookLog = async (pool, logId, { outcome, httpStatus, reference,
 
 /**
  * Resolve the owning company + member for an account number.
- * Falls back to the configured Sacco company so unmatched deposits are still
- * captured (allocation_status = 'unallocated') and can be reconciled later.
+ * v2.12.8: unmatched accounts return ccode = NULL (no fallback company) and are
+ * stored as `unallocated` for later reconciliation.
  */
+
 const resolveMember = async (pool, accountNumber) => {
-  console.log('[YETU] Looking up sacco_members...');
+  // v2.12.8 — sacco_members.account_number may hold SEVERAL accounts separated
+  // by '##' (e.g. 2477136##2478001##2478120). Match the incoming account
+  // against any segment. Single-value rows behave exactly as before.
   const [rows] = await pool.query(
     `SELECT member_id, ccode FROM sacco_members
-      WHERE UPPER(TRIM(account_number)) = UPPER(TRIM(?)) AND status = 'active'
+      WHERE status = 'active'
+        AND FIND_IN_SET(
+              UPPER(TRIM(?)),
+              UPPER(REPLACE(REPLACE(REPLACE(account_number, ' ', ''), '##', ','), '#', ','))
+            ) > 0
       LIMIT 1`,
     [accountNumber]
   );
@@ -162,22 +169,11 @@ const resolveMember = async (pool, accountNumber) => {
     return { memberId: rows[0].member_id, ccode: String(rows[0].ccode || '').trim(), allocated: true };
   }
 
-  let ccode = String(process.env.YETU_DEFAULT_CCODE || '').trim();
-  if (!ccode) {
-    console.log('[YETU] Looking up psettings...');
-    const [companies] = await pool.query(
-  `SELECT cno
-     FROM psettings
-    WHERE UPPER(TRIM(orgtype)) = 'S'
-    ORDER BY cno
-    LIMIT 1`
-);
-
-ccode = companies.length > 0
-  ? String(companies[0].cno || '').trim()
-  : '';
-  }
-  return { memberId: null, ccode, allocated: false };
+  // v2.12.8 — NO fallback company. An unknown account is stored with
+  // member_id = NULL and ccode = NULL so it can never be attributed to
+  // another Sacco's books. It is reconciled later by an operator.
+  console.log('[YETU] account %s not linked to any member — storing unallocated', accountNumber);
+  return { memberId: null, ccode: null, allocated: false };
 };
 
 /**
@@ -187,9 +183,7 @@ ccode = companies.length > 0
 const storeDeposit = async (pool, payload, rawBody) => {
   console.log('[YETU] Resolving member:', payload.accountNumber);
   const { memberId, ccode, allocated } = await resolveMember(pool, payload.accountNumber);
-  if (!ccode) {
-    throw new Error('no Sacco company configured (psettings.orgtype = "S")');
-  }
+
 
   try {
     console.log('[YETU] Inserting into sacco_transactions...');
@@ -200,7 +194,8 @@ const storeDeposit = async (pool, payload, rawBody) => {
           allocation_status, raw_payload)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        ccode,
+        ccode || null, // v2.12.8: NULL for unallocated deposits
+
         memberId,
         payload.accountNumber,
         payload.reference,

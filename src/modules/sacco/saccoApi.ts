@@ -32,6 +32,10 @@ export interface SaccoTransactionPage {
   total: number;
   totalPages: number;
   filteredTotal: number;
+  /** v2.12.8: account the server actually scoped the query to. */
+  account_number?: string;
+  /** v2.12.8: every account this user is allowed to view. */
+  accounts?: string[];
 }
 
 export interface SaccoSummary {
@@ -43,6 +47,8 @@ export interface SaccoSummary {
   year_total: number;
   last_deposit_date: string | null;
   account_number: string;
+  /** v2.12.8: every account this user is allowed to view. */
+  accounts?: string[];
 }
 
 export interface SaccoQuery {
@@ -53,7 +59,10 @@ export interface SaccoQuery {
   to?: string;
   sort?: SortField;
   order?: SortOrder;
+  /** v2.12.8: active account when the user has several linked accounts. */
+  account?: string;
 }
+
 
 async function accessParams(userid: string): Promise<URLSearchParams> {
   const fingerprint = await generateDeviceFingerprint();
@@ -85,6 +94,7 @@ export async function fetchSaccoTransactions(userid: string, query: SaccoQuery):
   if (query.to) params.set('to', query.to);
   if (query.sort) params.set('sort', query.sort);
   if (query.order) params.set('order', query.order);
+  if (query.account) params.set('account', query.account);
 
   const res = await resilientFetch(`${BASE}/transactions?${params.toString()}`, { method: 'GET' });
   const body = await readJson(res);
@@ -98,12 +108,15 @@ export async function fetchSaccoTransactions(userid: string, query: SaccoQuery):
     total: body.total || 0,
     totalPages: body.totalPages || 1,
     filteredTotal: body.filteredTotal || 0,
+    account_number: body.account_number,
+    accounts: Array.isArray(body.accounts) ? body.accounts : undefined,
   };
 }
 
-export async function fetchSaccoSummary(userid: string): Promise<SaccoSummary> {
+export async function fetchSaccoSummary(userid: string, account?: string): Promise<SaccoSummary> {
   assertOnline();
   const params = await accessParams(userid);
+  if (account) params.set('account', account);
   const res = await resilientFetch(`${BASE}/summary?${params.toString()}`, { method: 'GET' });
   const body = await readJson(res);
   if (!res.ok || !body?.success) {
@@ -111,6 +124,7 @@ export async function fetchSaccoSummary(userid: string): Promise<SaccoSummary> {
   }
   return body.data as SaccoSummary;
 }
+
 
 // ── Formatting helpers (shared by table, detail sheet, export, print) ────────
 

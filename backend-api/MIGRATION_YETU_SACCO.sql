@@ -75,3 +75,22 @@ ALTER TABLE user
 --      UPDATE psettings SET orgtype = 'S', payments_active = 1 WHERE ccode = '<CCODE>';
 --      UPDATE user SET can_access_payments = 1, link_account = '<ACCOUNT>' WHERE userid = '<USER>';
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- 6. v2.12.8 — multi-account members + truly unallocated deposits
+--    Additive and safe to re-run.
+-- ---------------------------------------------------------------------------
+-- Deposits for an unknown account are stored with member_id AND ccode NULL,
+-- so they are never attributed to another Sacco's books.
+ALTER TABLE sacco_transactions
+  MODIFY COLUMN ccode VARCHAR(20) NULL;
+
+-- A member may own several account numbers separated by '##'
+--   e.g. 2477136##2478001##2478120
+ALTER TABLE sacco_members
+  MODIFY COLUMN account_number VARCHAR(255) NOT NULL;
+
+-- A login may be linked to several accounts separated by '#'
+--   e.g. UPDATE Users SET link_account = '2477136#2478001' WHERE userid = '<USER>';
+ALTER TABLE Users
+  MODIFY COLUMN link_account VARCHAR(255) NULL;

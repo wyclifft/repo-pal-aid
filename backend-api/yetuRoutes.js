@@ -53,7 +53,7 @@ const clientIp = (req) =>
  * Portal access gate: authorized device + Sacco org type + payments active +
  * per-user permission. Also resolves the member account the user may read.
  */
-const resolveSaccoAccess = async (pool, { deviceFingerprint, userid }) => {
+const resolveSaccoAccess = async (pool, { deviceFingerprint, userid, requestedAccount }) => {
   const fingerprint = String(deviceFingerprint || '').trim();
   const userId = String(userid || '').trim();
   if (!fingerprint) return { ok: false, status: 400, error: 'device_fingerprint is required' };
@@ -94,13 +94,27 @@ const resolveSaccoAccess = async (pool, { deviceFingerprint, userid }) => {
     return { ok: false, status: 403, error: 'Payment permission denied' };
   }
 
-  const accountNumber = String(userRows[0].link_account || '').trim();
-  if (!accountNumber) {
+  // v2.12.8 — Users.link_account may list SEVERAL accounts separated by '#'
+  // (e.g. 2477136#2478001). '##' is tolerated too. Access is limited to this list.
+  const accounts = String(userRows[0].link_account || '')
+    .split('#')
+    .map((a) => a.trim())
+    .filter((a) => a.length > 0);
+
+  if (accounts.length === 0) {
     return { ok: false, status: 403, error: 'No Sacco account is linked to this user' };
   }
 
-  return { ok: true, ccode, userid: userId, accountNumber };
+  // The client may request one of its own accounts; anything else falls back
+  // to the first linked account — never another member's.
+  const requested = String(requestedAccount || '').trim();
+  const accountNumber = accounts.find(
+    (a) => a.toUpperCase() === requested.toUpperCase()
+  ) || accounts[0];
+
+  return { ok: true, ccode, userid: userId, accountNumber, accounts };
 };
+
 
 const isYmd = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
 
@@ -169,6 +183,7 @@ const handleYetuRoutes = async ({ pool, path, method, req, res, parsedUrl, sendJ
     const access = await resolveSaccoAccess(pool, {
       deviceFingerprint: q.uniquedevcode || q.device_fingerprint,
       userid: q.userid || q.user_id,
+      requestedAccount: q.account,
     });
     if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403), true;
 
@@ -188,7 +203,12 @@ const handleYetuRoutes = async ({ pool, path, method, req, res, parsedUrl, sendJ
     });
 
     console.log('[YETU][TXNS] ccode=%s account=%s page=%s rows=%s', access.ccode, access.accountNumber, result.page, result.data.length);
-    return sendJSON(res, { success: true, ...result }), true;
+    return sendJSON(res, {
+      success: true,
+      ...result,
+      account_number: access.accountNumber,
+      accounts: access.accounts,
+    }), true;
   }
 
   // ── Member portal: summary ────────────────────────────────────────────────
@@ -197,12 +217,17 @@ const handleYetuRoutes = async ({ pool, path, method, req, res, parsedUrl, sendJ
     const access = await resolveSaccoAccess(pool, {
       deviceFingerprint: q.uniquedevcode || q.device_fingerprint,
       userid: q.userid || q.user_id,
+      requestedAccount: q.account,
     });
     if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403), true;
 
     const summary = await svc.getSummary(pool, { ccode: access.ccode, accountNumber: access.accountNumber });
-    return sendJSON(res, { success: true, data: { ...summary, account_number: access.accountNumber } }), true;
+    return sendJSON(res, {
+      success: true,
+      data: { ...summary, account_number: access.accountNumber, accounts: access.accounts },
+    }), true;
   }
+
 
   return false;
 };
