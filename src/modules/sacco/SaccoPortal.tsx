@@ -73,7 +73,7 @@ const SaccoPortal = () => {
   const summaryQuery = useSaccoSummary(isAuthenticated ? userid : undefined, account || undefined);
   const txnQuery = useSaccoTransactions(isAuthenticated ? userid : undefined, query);
 
-  // v2.12.8: accounts the user may view (from Users.link_account, split on '#').
+  // v2.12.8: accounts the user may view (from Users.link_account, split on '&&').
   const accounts: string[] =
     summaryQuery.data?.accounts || txnQuery.data?.accounts || [];
   const activeAccount =

@@ -94,10 +94,10 @@ const resolveSaccoAccess = async (pool, { deviceFingerprint, userid, requestedAc
     return { ok: false, status: 403, error: 'Payment permission denied' };
   }
 
-  // v2.12.8 — Users.link_account may list SEVERAL accounts separated by '#'
-  // (e.g. 2477136#2478001). '##' is tolerated too. Access is limited to this list.
+  // v2.12.8 — Users.link_account may list SEVERAL accounts separated by '&&'
+  // (e.g. 77136#T001&&77137#T002). Access is limited to this list.
   const accounts = String(userRows[0].link_account || '')
-    .split('#')
+    .split('&&')
     .map((a) => a.trim())
     .filter((a) => a.length > 0);
 

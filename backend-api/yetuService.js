@@ -153,14 +153,14 @@ const finalizeWebhookLog = async (pool, logId, { outcome, httpStatus, reference,
 
 const resolveMember = async (pool, accountNumber) => {
   // v2.12.8 — sacco_members.account_number may hold SEVERAL accounts separated
-  // by '##' (e.g. 2477136##2478001##2478120). Match the incoming account
-  // against any segment. Single-value rows behave exactly as before.
+  // by '&&' (e.g. 77136#T001&&77137#T002&&77138#T003). Match the incoming
+  // account against any segment. Single-value rows behave exactly as before.
   const [rows] = await pool.query(
     `SELECT member_id, ccode FROM sacco_members
       WHERE status = 'active'
         AND FIND_IN_SET(
               UPPER(TRIM(?)),
-              UPPER(REPLACE(REPLACE(REPLACE(account_number, ' ', ''), '##', ','), '#', ','))
+              UPPER(REPLACE(REPLACE(account_number, ' ', ''), '&&', ','))
             ) > 0
       LIMIT 1`,
     [accountNumber]

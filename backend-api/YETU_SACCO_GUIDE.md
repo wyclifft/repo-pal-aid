@@ -136,7 +136,7 @@ it must return 200 again and create **no** second row (idempotent by
 | Deposit accepted but member sees nothing | `allocation_status='unallocated'` — account number mismatch | Check `SELECT account_number_raw FROM sacco_transactions ORDER BY txn_id DESC LIMIT 5;` and correct `sacco_members.account_number`, then run the back-fill in §3 |
 | Portal not visible / normal dashboard shows | `orgtype <> 'S'` or `payments_active = 0` | `SELECT orgtype, payments_active FROM psettings WHERE ccode='<CCODE>';` |
 | "Payment permission denied" | `user.can_access_payments = 0` | Set it to 1 for that user |
-| "No Sacco account is linked to this user" | `user.link_account` empty | Set it to the member's `account_number` |
+| "No Sacco account is linked to this user" | `user.link_account` empty | Set it to the member's `account_number` (use `&&` for multiple accounts) |
 | "Device not authorized" | Device fingerprint not approved | Approve the device in the existing device-approval screen |
 | Portal shows the offline message | The portal needs connectivity (no offline cache by design) | Restore network |
 | Duplicate deposits appear | Yetu sent two different references for one payment | Reconcile manually; the dedupe key is `transaction_reference` |

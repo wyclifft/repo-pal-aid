@@ -1,0 +1,6 @@
+- [x] Update backend splitting logic in `yetuRoutes.js`
+- [x] Update backend member resolution logic in `yetuService.js`
+- [x] Update Sacco guide documentation in `YETU_SACCO_GUIDE.md`
+- [x] Update Sacco migration SQL file in `MIGRATION_YETU_SACCO.sql`
+- [x] Update frontend portal comments in `SaccoPortal.tsx`
+- [x] Update version constant comment in `appVersion.ts`
