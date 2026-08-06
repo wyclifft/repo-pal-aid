@@ -147,9 +147,10 @@ const finalizeWebhookLog = async (pool, logId, { outcome, httpStatus, reference,
 
 /**
  * Resolve the owning company + member for an account number.
- * Falls back to the configured Sacco company so unmatched deposits are still
- * captured (allocation_status = 'unallocated') and can be reconciled later.
+ * v2.12.8: unmatched accounts return ccode = NULL (no fallback company) and are
+ * stored as `unallocated` for later reconciliation.
  */
+
 const resolveMember = async (pool, accountNumber) => {
   // v2.12.8 — sacco_members.account_number may hold SEVERAL accounts separated
   // by '##' (e.g. 2477136##2478001##2478120). Match the incoming account
