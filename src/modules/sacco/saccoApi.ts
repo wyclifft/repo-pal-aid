@@ -32,6 +32,10 @@ export interface SaccoTransactionPage {
   total: number;
   totalPages: number;
   filteredTotal: number;
+  /** v2.12.8: account the server actually scoped the query to. */
+  account_number?: string;
+  /** v2.12.8: every account this user is allowed to view. */
+  accounts?: string[];
 }
 
 export interface SaccoSummary {
@@ -43,6 +47,8 @@ export interface SaccoSummary {
   year_total: number;
   last_deposit_date: string | null;
   account_number: string;
+  /** v2.12.8: every account this user is allowed to view. */
+  accounts?: string[];
 }
 
 export interface SaccoQuery {
@@ -53,7 +59,10 @@ export interface SaccoQuery {
   to?: string;
   sort?: SortField;
   order?: SortOrder;
+  /** v2.12.8: active account when the user has several linked accounts. */
+  account?: string;
 }
+
 
 async function accessParams(userid: string): Promise<URLSearchParams> {
   const fingerprint = await generateDeviceFingerprint();
