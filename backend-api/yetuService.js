@@ -194,7 +194,8 @@ const storeDeposit = async (pool, payload, rawBody) => {
           allocation_status, raw_payload)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        ccode,
+        ccode || null, // v2.12.8: NULL for unallocated deposits
+
         memberId,
         payload.accountNumber,
         payload.reference,
