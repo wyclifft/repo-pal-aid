@@ -1112,8 +1112,8 @@
 //     and logs per-query timings (totals/products/snapshot).
 //   • Backend: /api/items logs row counts and, when empty, the sellable invtype
 //     spread so mis-tagged coffee produce in Contabo fm_items is visible.
-export const APP_VERSION = '2.12.7'; // v2.12.7: int-column sanitation, online cumulative floor, psettings.cno for Sacco, ISO date normalization
-export const APP_VERSION_CODE = 183;
+export const APP_VERSION = '2.12.8'; // v2.12.8: unallocated deposits keep NULL ccode, '##' multi-account members, '#' multi-account user access with picker, 5s live refresh
+export const APP_VERSION_CODE = 184;
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'webview51-bridge-es5';
