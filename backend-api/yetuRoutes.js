@@ -94,13 +94,27 @@ const resolveSaccoAccess = async (pool, { deviceFingerprint, userid, requestedAc
     return { ok: false, status: 403, error: 'Payment permission denied' };
   }
 
-  const accountNumber = String(userRows[0].link_account || '').trim();
-  if (!accountNumber) {
+  // v2.12.8 — Users.link_account may list SEVERAL accounts separated by '#'
+  // (e.g. 2477136#2478001). '##' is tolerated too. Access is limited to this list.
+  const accounts = String(userRows[0].link_account || '')
+    .split('#')
+    .map((a) => a.trim())
+    .filter((a) => a.length > 0);
+
+  if (accounts.length === 0) {
     return { ok: false, status: 403, error: 'No Sacco account is linked to this user' };
   }
 
-  return { ok: true, ccode, userid: userId, accountNumber };
+  // The client may request one of its own accounts; anything else falls back
+  // to the first linked account — never another member's.
+  const requested = String(requestedAccount || '').trim();
+  const accountNumber = accounts.find(
+    (a) => a.toUpperCase() === requested.toUpperCase()
+  ) || accounts[0];
+
+  return { ok: true, ccode, userid: userId, accountNumber, accounts };
 };
+
 
 const isYmd = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
 
