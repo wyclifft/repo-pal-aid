@@ -53,7 +53,7 @@ const clientIp = (req) =>
  * Portal access gate: authorized device + Sacco org type + payments active +
  * per-user permission. Also resolves the member account the user may read.
  */
-const resolveSaccoAccess = async (pool, { deviceFingerprint, userid }) => {
+const resolveSaccoAccess = async (pool, { deviceFingerprint, userid, requestedAccount }) => {
   const fingerprint = String(deviceFingerprint || '').trim();
   const userId = String(userid || '').trim();
   if (!fingerprint) return { ok: false, status: 400, error: 'device_fingerprint is required' };
