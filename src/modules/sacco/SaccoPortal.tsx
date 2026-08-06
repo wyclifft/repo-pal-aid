@@ -52,6 +52,8 @@ const SaccoPortal = () => {
   const [sort, setSort] = useState<SortField>('transaction_date');
   const [order, setOrder] = useState<SortOrder>('desc');
   const [selected, setSelected] = useState<SaccoTransaction | null>(null);
+  // v2.12.8: '' means "let the server pick the first linked account".
+  const [account, setAccount] = useState<string>('');
 
   const userid = currentUser?.user_id;
   const query = useMemo(
@@ -63,12 +65,26 @@ const SaccoPortal = () => {
       to: filters.to || undefined,
       sort,
       order,
+      account: account || undefined,
     }),
-    [page, filters, sort, order]
+    [page, filters, sort, order, account]
   );
 
-  const summaryQuery = useSaccoSummary(isAuthenticated ? userid : undefined);
+  const summaryQuery = useSaccoSummary(isAuthenticated ? userid : undefined, account || undefined);
   const txnQuery = useSaccoTransactions(isAuthenticated ? userid : undefined, query);
+
+  // v2.12.8: accounts the user may view (from Users.link_account, split on '#').
+  const accounts: string[] =
+    summaryQuery.data?.accounts || txnQuery.data?.accounts || [];
+  const activeAccount =
+    account || summaryQuery.data?.account_number || txnQuery.data?.account_number || '';
+
+  const handleAccountChange = (next: string) => {
+    setAccount(next);
+    setPage(1);
+    setSelected(null);
+  };
+
 
   const handleLogin = (user: AppUser, offline: boolean, password?: string) => {
     login(user, offline, password);
