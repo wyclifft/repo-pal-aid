@@ -183,6 +183,7 @@ const handleYetuRoutes = async ({ pool, path, method, req, res, parsedUrl, sendJ
     const access = await resolveSaccoAccess(pool, {
       deviceFingerprint: q.uniquedevcode || q.device_fingerprint,
       userid: q.userid || q.user_id,
+      requestedAccount: q.account,
     });
     if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403), true;
 
@@ -202,7 +203,12 @@ const handleYetuRoutes = async ({ pool, path, method, req, res, parsedUrl, sendJ
     });
 
     console.log('[YETU][TXNS] ccode=%s account=%s page=%s rows=%s', access.ccode, access.accountNumber, result.page, result.data.length);
-    return sendJSON(res, { success: true, ...result }), true;
+    return sendJSON(res, {
+      success: true,
+      ...result,
+      account_number: access.accountNumber,
+      accounts: access.accounts,
+    }), true;
   }
 
   // ── Member portal: summary ────────────────────────────────────────────────
@@ -211,12 +217,17 @@ const handleYetuRoutes = async ({ pool, path, method, req, res, parsedUrl, sendJ
     const access = await resolveSaccoAccess(pool, {
       deviceFingerprint: q.uniquedevcode || q.device_fingerprint,
       userid: q.userid || q.user_id,
+      requestedAccount: q.account,
     });
     if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403), true;
 
     const summary = await svc.getSummary(pool, { ccode: access.ccode, accountNumber: access.accountNumber });
-    return sendJSON(res, { success: true, data: { ...summary, account_number: access.accountNumber } }), true;
+    return sendJSON(res, {
+      success: true,
+      data: { ...summary, account_number: access.accountNumber, accounts: access.accounts },
+    }), true;
   }
+
 
   return false;
 };
