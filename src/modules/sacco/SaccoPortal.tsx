@@ -176,7 +176,8 @@ const SaccoPortal = () => {
             <h1 className="text-lg font-semibold text-foreground">{portalTitle}</h1>
             <p className="text-xs text-muted-foreground">
               {companyName || 'Member portal'}
-              {summaryQuery.data?.account_number ? ` • A/C ${summaryQuery.data.account_number}` : ''}
+              {/* Single linked account: shown inline, no picker. */}
+              {activeAccount && accounts.length <= 1 ? ` • A/C ${activeAccount}` : ''}
             </p>
             <p className="text-[11px] text-muted-foreground">
               {txnQuery.isFetching
@@ -185,7 +186,22 @@ const SaccoPortal = () => {
                   ? `Live • updated ${formatClock(txnQuery.dataUpdatedAt)}`
                   : 'Live'}
             </p>
+            {/* v2.12.8: picker appears only when the user has several linked
+                accounts. Native select — WebView 51 safe. */}
+            {accounts.length > 1 && (
+              <select
+                aria-label="Select account"
+                className="mt-1 h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                value={activeAccount}
+                onChange={(e) => handleAccountChange(e.target.value)}
+              >
+                {accounts.map((a) => (
+                  <option key={a} value={a}>A/C {a}</option>
+                ))}
+              </select>
+            )}
           </div>
+
 
           <div className="flex items-center">
             <Button
