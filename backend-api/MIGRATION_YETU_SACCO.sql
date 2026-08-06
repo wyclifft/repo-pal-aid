@@ -85,12 +85,12 @@ ALTER TABLE user
 ALTER TABLE sacco_transactions
   MODIFY COLUMN ccode VARCHAR(20) NULL;
 
--- A member may own several account numbers separated by '##'
---   e.g. 2477136##2478001##2478120
+-- A member may own several account numbers separated by '&&'
+--   e.g. 77136#T001&&77137#T002&&77138#T003
 ALTER TABLE sacco_members
   MODIFY COLUMN account_number VARCHAR(255) NOT NULL;
 
 -- A login may be linked to several accounts separated by '#'
---   e.g. UPDATE Users SET link_account = '2477136#2478001' WHERE userid = '<USER>';
+--   e.g. UPDATE Users SET link_account = '77136#T001&&77137#T002' WHERE userid = '<USER>';
 ALTER TABLE Users
   MODIFY COLUMN link_account VARCHAR(255) NULL;
