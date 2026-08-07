@@ -4114,11 +4114,26 @@ if (path === '/api/sales' && method === 'POST') {
         return sendJSON(res, { success: true, data: cachedBatch });
       }
 
-      scheduleCumulativeWarm(ccode, route, periodStart, periodEnd);
+      // v2.12.10: on a cold miss, kick the warm AND wait a bounded 12 s for it.
+      // Most snapshots finish inside that window, so the client gets real data
+      // on the first call instead of looping on `pending` indefinitely.
+      const warmJob = scheduleCumulativeWarm(ccode, route, periodStart, periodEnd);
+      if (warmJob) {
+        const waited = await Promise.race([
+          warmJob.catch(() => null),
+          new Promise((resolve) => setTimeout(() => resolve(undefined), 12000))
+        ]);
+        if (waited) {
+          console.log(`[CUM:BATCH] warm-served ${cumCacheKey} farmers=${waited.total_farmers}`);
+          return sendJSON(res, { success: true, data: waited });
+        }
+      }
+
       console.log(`[CUM:BATCH] pending (warming) ${cumCacheKey}`);
       return sendJSON(res, {
         success: true,
         pending: true,
+        retry_after: 15,
         data: {
           farmers: [],
           month_start: periodStart,
@@ -4128,6 +4143,7 @@ if (path === '/api/sales' && method === 'POST') {
           pending: true
         }
       });
+
 
     }
 
