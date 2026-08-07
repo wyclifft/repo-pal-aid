@@ -328,7 +328,9 @@ module.exports = {
   validateYetuPayload,
   logWebhookRequest,
   finalizeWebhookLog,
+  canonicalAccount,
   resolveMember,
+
   storeDeposit,
   listTransactions,
   getSummary,
