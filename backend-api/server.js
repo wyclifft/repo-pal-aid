@@ -4011,12 +4011,13 @@ if (path === '/api/sales' && method === 'POST') {
         }, 400);
       }
 
-      // v2.12.5: refuse fast when the pool is saturated so the client backs off
-      // instead of adding a heavy season-wide scan to an already queued pool.
+      // v2.12.10: only refuse when the wait queue is genuinely long. The old
+      // `saturated` gate fired on almost every request on Contabo, so the
+      // endpoint never reached the cache/warm path and stayed "pending" forever.
       {
         const pp = poolPressure();
-        if (pp.saturated) {
-          console.warn(`[CUM:BATCH] 503 pool saturated inUse=${pp.inUse} free=${pp.free} queued=${pp.queued}`);
+        if (pp.queued > 30) {
+          console.warn(`[CUM:BATCH] 503 pool queue deep inUse=${pp.inUse} free=${pp.free} queued=${pp.queued}`);
           res.setHeader('Retry-After', '10');
           return sendJSON(res, {
             success: false,
@@ -4025,6 +4026,7 @@ if (path === '/api/sales' && method === 'POST') {
           }, 503);
         }
       }
+
       
 
       
