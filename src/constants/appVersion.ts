@@ -1112,8 +1112,13 @@
 //     and logs per-query timings (totals/products/snapshot).
 //   • Backend: /api/items logs row counts and, when empty, the sellable invtype
 //     spread so mis-tagged coffee produce in Contabo fm_items is visible.
-export const APP_VERSION = '2.12.8'; // v2.12.8: unallocated deposits keep NULL ccode, '&&' multi-account members, '&&' multi-account user access with picker, 5s live refresh
-export const APP_VERSION_CODE = 184;
+// v2.12.9: Yetu webhook — account numbers are canonicalised (trimmed, spaces
+//   removed, UPPER-cased) for both member lookup and storage, so a member who
+//   types 7136#t008 is matched/stored as 7136#T008. Android release builds now
+//   use a stable signing config (fixes update-over-install failures).
+export const APP_VERSION = '2.12.9';
+export const APP_VERSION_CODE = 185;
+
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
 export const APP_FIX_TAG = 'webview51-bridge-es5';
