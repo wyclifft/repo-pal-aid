@@ -411,3 +411,34 @@ different root (e.g. ISRG Root X2 / ECDSA), download the new root PEM from
 <https://letsencrypt.org/certificates/> and either replace or add a second
 `<certificates src="@raw/…"/>` entry inside the same `<domain-config>` block.
 Do NOT move the trust anchor into `<base-config>` — keep it host-scoped.
+
+## Release signing (v2.12.9) — required for updating installed devices
+
+Android only installs an update when the new APK is signed with the **same**
+certificate as the installed app. A build without a configured key is signed
+with the local debug key, which produces `INSTALL_FAILED_UPDATE_INCOMPATIBLE`
+("App not installed") when updating e.g. v2.10.121 → v2.12.9.
+
+Put the production keystore credentials in `~/.gradle/gradle.properties`
+(never commit them):
+
+```
+DELICOOP_STORE_FILE=/absolute/path/delicoop-release.jks
+DELICOOP_STORE_PASSWORD=****
+DELICOOP_KEY_ALIAS=delicoop
+DELICOOP_KEY_PASSWORD=****
+```
+
+`android/app/build.gradle` picks these up automatically (env vars also work).
+If they are absent, the build proceeds unsigned exactly as before.
+
+Verify before distributing:
+
+```
+apksigner verify --print-certs app-release.apk
+adb install -r app-release.apk
+```
+
+If the certificate differs from the one already on the devices and the original
+keystore is lost, the only option is uninstall + reinstall — export/sync any
+pending offline transactions first, since uninstalling clears the app sandbox.
