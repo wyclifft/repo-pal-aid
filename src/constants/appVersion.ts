@@ -1116,8 +1116,16 @@
 //   removed, UPPER-cased) for both member lookup and storage, so a member who
 //   types 7136#t008 is matched/stored as 7136#T008. Android release builds now
 //   use a stable signing config (fixes update-over-install failures).
-export const APP_VERSION = '2.12.9';
-export const APP_VERSION_CODE = 185;
+// v2.12.10: (1) Cumulative batch no longer sticks on "pending (warming)" — the
+//   backend pool gate now only refuses on a deep wait queue, the warmer is no
+//   longer skipped whenever the pool looks busy, cold keys are warmed first with
+//   failure backoff, and a cold request waits up to 12s for the snapshot.
+//   (2) Android back button: single listener; inner pages go back (or to the
+//   Dashboard), only the Dashboard minimises/exits the app.
+//   (3) Bluetooth auto-reconnect installer is actually invoked on native, so the
+//   saved scale/printer reconnect when the app is reopened.
+export const APP_VERSION = '2.12.10';
+export const APP_VERSION_CODE = 186;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
