@@ -177,12 +177,25 @@ const resolveMember = async (pool, accountNumber) => {
 };
 
 /**
+ * v2.12.9 — Canonical account form used for lookup AND storage.
+ * Members type "7136#t008" or "7136 # T008"; the assigned account is
+ * "7136#T008". Trim, drop inner spaces, upper-case. The untouched payload is
+ * still kept in raw_payload.
+ */
+const canonicalAccount = (value) =>
+  String(value === undefined || value === null ? '' : value)
+    .replace(/\s+/g, '')
+    .trim()
+    .toUpperCase();
+
+/**
  * Idempotent insert. A replayed reference is a no-op.
  * @returns {{ stored: boolean, duplicate: boolean, txnId?: number }}
  */
 const storeDeposit = async (pool, payload, rawBody) => {
-  console.log('[YETU] Resolving member:', payload.accountNumber);
-  const { memberId, ccode, allocated } = await resolveMember(pool, payload.accountNumber);
+  const account = canonicalAccount(payload.accountNumber);
+  console.log('[YETU] Resolving member: raw=%s canonical=%s', payload.accountNumber, account);
+  const { memberId, ccode, allocated } = await resolveMember(pool, account);
 
 
   try {
@@ -197,7 +210,8 @@ const storeDeposit = async (pool, payload, rawBody) => {
         ccode || null, // v2.12.8: NULL for unallocated deposits
 
         memberId,
-        payload.accountNumber,
+        account, // v2.12.9: stored canonical (upper-cased, space-free)
+
         payload.reference,
         payload.amount,
         payload.payerName,
