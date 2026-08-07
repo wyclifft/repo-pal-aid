@@ -96,10 +96,21 @@ import("./utils/persistentLogger")
     console.error('[BOOT] Failed to load persistent logger module:', error);
   });
 
-// v2.11.23: hardware Back button on native (exit on root, navigate back otherwise)
+// v2.11.23: hardware Back button on native (exit on dashboard, navigate back otherwise)
 import("./utils/nativeBackButton")
   .then(({ installNativeBackButton }) => { installNativeBackButton(); })
   .catch((error) => { console.warn('[BOOT] Failed to install back button:', error); });
+
+// v2.12.10: restore saved scale/printer connections automatically on native.
+// This installer was never invoked, so nothing reconnected after the app was
+// backgrounded and reopened — users had to pair again from Settings.
+// Web stays manual (Web Bluetooth needs a user gesture).
+if (Capacitor.isNativePlatform()) {
+  import("./services/btConnectionManager")
+    .then(({ installAutoReconnect }) => { installAutoReconnect(); })
+    .catch((error) => { console.warn('[BOOT] Failed to install BT auto-reconnect:', error); });
+}
+
 
 // Prevent zoom on double tap for native feel
 document.addEventListener('touchstart', (e) => {

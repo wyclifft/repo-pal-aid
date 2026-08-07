@@ -408,7 +408,7 @@ async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
     _t0 = Date.now();
     const [pRows] = await conn.query(
       `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
-              IFNULL(MAX(fi.descript), ANY_VALUE(TRIM(t.icode))) as product_name,
+              IFNULL(MAX(fi.descript), MIN(TRIM(t.icode))) as product_name,
               IFNULL(SUM(t.weight), 0) as weight 
        FROM transactions t
        LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
@@ -464,19 +464,40 @@ async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
 /** Schedule (or join) a background warm for one cumulative key. Never awaited by a request. */
 function scheduleCumulativeWarm(ccode, route, periodStart, periodEnd) {
   const key = cumulativeCacheKey(ccode, route, periodStart, periodEnd);
-  cumulativeWarmKeys.set(key, { ccode, route: route || null, periodStart, periodEnd, lastRun: cumulativeWarmKeys.get(key)?.lastRun || 0 });
+  const prev = cumulativeWarmKeys.get(key);
+  cumulativeWarmKeys.set(key, {
+    ccode,
+    route: route || null,
+    periodStart,
+    periodEnd,
+    lastRun: prev?.lastRun || 0,
+    lastAttempt: prev?.lastAttempt || 0,
+    failures: prev?.failures || 0
+  });
 
   if (cumulativeWarmInFlight.has(key)) return cumulativeWarmInFlight.get(key);
 
+  // v2.12.10: never let a permanently failing key hammer the DB — back off
+  // 30s × failures (capped at 5 min) between attempts.
+  const meta0 = cumulativeWarmKeys.get(key);
+  if (meta0.failures > 0) {
+    const backoff = Math.min(5 * 60 * 1000, 30 * 1000 * meta0.failures);
+    if (Date.now() - meta0.lastAttempt < backoff) return null;
+  }
+  meta0.lastAttempt = Date.now();
+
+  console.log(`[CUM:WARM] start ${key}`);
   const job = (async () => {
     try {
       const payload = await computeCumulativeBatch(ccode, route, periodStart, periodEnd);
       cumulativeBatchCache.set(key, payload);
       const meta = cumulativeWarmKeys.get(key);
-      if (meta) meta.lastRun = Date.now();
+      if (meta) { meta.lastRun = Date.now(); meta.failures = 0; }
       return payload;
     } catch (e) {
-      console.error(`[CUM:WARM] failed ${key}:`, e.message);
+      const meta = cumulativeWarmKeys.get(key);
+      if (meta) meta.failures = (meta.failures || 0) + 1;
+      console.error(`[CUM:WARM] failed ${key} (attempt ${meta?.failures}):`, e.message);
       return null;
     } finally {
       cumulativeWarmInFlight.delete(key);
@@ -487,12 +508,24 @@ function scheduleCumulativeWarm(ccode, route, periodStart, periodEnd) {
   return job;
 }
 
-// Periodic re-warm of keys devices actually asked for. Skipped when the pool is
-// under pressure so the warmer never competes with live transaction writes.
+// Periodic re-warm of keys devices actually asked for.
+// v2.12.10: previously this bailed out whenever the pool reported "saturated",
+// which on Contabo is almost always true — so the first warm never ran and the
+// endpoint answered `pending` forever. Now only a genuinely long wait queue
+// defers the warm, and keys that have never produced a snapshot are prioritised.
 setInterval(() => {
   if (cumulativeWarmKeys.size === 0) return;
-  if (poolPressure().saturated) return;
+  if (poolPressure().queued > 20) return;
   const now = Date.now();
+
+  // Priority 1: keys that have never been computed (cold) — these block clients.
+  for (const [, meta] of cumulativeWarmKeys) {
+    if (!meta.lastRun) {
+      scheduleCumulativeWarm(meta.ccode, meta.route, meta.periodStart, meta.periodEnd);
+      return;
+    }
+  }
+
   for (const [key, meta] of cumulativeWarmKeys) {
     // Drop keys nobody has requested for an hour.
     if (meta.lastRun && now - meta.lastRun > 60 * 60 * 1000 && !cumulativeBatchCache.get(key)) {
@@ -504,7 +537,8 @@ setInterval(() => {
       break; // one heavy scan per tick
     }
   }
-}, 30000).unref?.();
+}, 15000).unref?.();
+
 
 
 
@@ -3977,12 +4011,13 @@ if (path === '/api/sales' && method === 'POST') {
         }, 400);
       }
 
-      // v2.12.5: refuse fast when the pool is saturated so the client backs off
-      // instead of adding a heavy season-wide scan to an already queued pool.
+      // v2.12.10: only refuse when the wait queue is genuinely long. The old
+      // `saturated` gate fired on almost every request on Contabo, so the
+      // endpoint never reached the cache/warm path and stayed "pending" forever.
       {
         const pp = poolPressure();
-        if (pp.saturated) {
-          console.warn(`[CUM:BATCH] 503 pool saturated inUse=${pp.inUse} free=${pp.free} queued=${pp.queued}`);
+        if (pp.queued > 30) {
+          console.warn(`[CUM:BATCH] 503 pool queue deep inUse=${pp.inUse} free=${pp.free} queued=${pp.queued}`);
           res.setHeader('Retry-After', '10');
           return sendJSON(res, {
             success: false,
@@ -3991,6 +4026,7 @@ if (path === '/api/sales' && method === 'POST') {
           }, 503);
         }
       }
+
       
 
       
@@ -4078,11 +4114,26 @@ if (path === '/api/sales' && method === 'POST') {
         return sendJSON(res, { success: true, data: cachedBatch });
       }
 
-      scheduleCumulativeWarm(ccode, route, periodStart, periodEnd);
+      // v2.12.10: on a cold miss, kick the warm AND wait a bounded 12 s for it.
+      // Most snapshots finish inside that window, so the client gets real data
+      // on the first call instead of looping on `pending` indefinitely.
+      const warmJob = scheduleCumulativeWarm(ccode, route, periodStart, periodEnd);
+      if (warmJob) {
+        const waited = await Promise.race([
+          warmJob.catch(() => null),
+          new Promise((resolve) => setTimeout(() => resolve(undefined), 12000))
+        ]);
+        if (waited) {
+          console.log(`[CUM:BATCH] warm-served ${cumCacheKey} farmers=${waited.total_farmers}`);
+          return sendJSON(res, { success: true, data: waited });
+        }
+      }
+
       console.log(`[CUM:BATCH] pending (warming) ${cumCacheKey}`);
       return sendJSON(res, {
         success: true,
         pending: true,
+        retry_after: 15,
         data: {
           farmers: [],
           month_start: periodStart,
@@ -4092,6 +4143,7 @@ if (path === '/api/sales' && method === 'POST') {
           pending: true
         }
       });
+
 
     }
 
