@@ -464,19 +464,40 @@ async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
 /** Schedule (or join) a background warm for one cumulative key. Never awaited by a request. */
 function scheduleCumulativeWarm(ccode, route, periodStart, periodEnd) {
   const key = cumulativeCacheKey(ccode, route, periodStart, periodEnd);
-  cumulativeWarmKeys.set(key, { ccode, route: route || null, periodStart, periodEnd, lastRun: cumulativeWarmKeys.get(key)?.lastRun || 0 });
+  const prev = cumulativeWarmKeys.get(key);
+  cumulativeWarmKeys.set(key, {
+    ccode,
+    route: route || null,
+    periodStart,
+    periodEnd,
+    lastRun: prev?.lastRun || 0,
+    lastAttempt: prev?.lastAttempt || 0,
+    failures: prev?.failures || 0
+  });
 
   if (cumulativeWarmInFlight.has(key)) return cumulativeWarmInFlight.get(key);
 
+  // v2.12.10: never let a permanently failing key hammer the DB — back off
+  // 30s × failures (capped at 5 min) between attempts.
+  const meta0 = cumulativeWarmKeys.get(key);
+  if (meta0.failures > 0) {
+    const backoff = Math.min(5 * 60 * 1000, 30 * 1000 * meta0.failures);
+    if (Date.now() - meta0.lastAttempt < backoff) return null;
+  }
+  meta0.lastAttempt = Date.now();
+
+  console.log(`[CUM:WARM] start ${key}`);
   const job = (async () => {
     try {
       const payload = await computeCumulativeBatch(ccode, route, periodStart, periodEnd);
       cumulativeBatchCache.set(key, payload);
       const meta = cumulativeWarmKeys.get(key);
-      if (meta) meta.lastRun = Date.now();
+      if (meta) { meta.lastRun = Date.now(); meta.failures = 0; }
       return payload;
     } catch (e) {
-      console.error(`[CUM:WARM] failed ${key}:`, e.message);
+      const meta = cumulativeWarmKeys.get(key);
+      if (meta) meta.failures = (meta.failures || 0) + 1;
+      console.error(`[CUM:WARM] failed ${key} (attempt ${meta?.failures}):`, e.message);
       return null;
     } finally {
       cumulativeWarmInFlight.delete(key);
@@ -487,12 +508,24 @@ function scheduleCumulativeWarm(ccode, route, periodStart, periodEnd) {
   return job;
 }
 
-// Periodic re-warm of keys devices actually asked for. Skipped when the pool is
-// under pressure so the warmer never competes with live transaction writes.
+// Periodic re-warm of keys devices actually asked for.
+// v2.12.10: previously this bailed out whenever the pool reported "saturated",
+// which on Contabo is almost always true — so the first warm never ran and the
+// endpoint answered `pending` forever. Now only a genuinely long wait queue
+// defers the warm, and keys that have never produced a snapshot are prioritised.
 setInterval(() => {
   if (cumulativeWarmKeys.size === 0) return;
-  if (poolPressure().saturated) return;
+  if (poolPressure().queued > 20) return;
   const now = Date.now();
+
+  // Priority 1: keys that have never been computed (cold) — these block clients.
+  for (const [, meta] of cumulativeWarmKeys) {
+    if (!meta.lastRun) {
+      scheduleCumulativeWarm(meta.ccode, meta.route, meta.periodStart, meta.periodEnd);
+      return;
+    }
+  }
+
   for (const [key, meta] of cumulativeWarmKeys) {
     // Drop keys nobody has requested for an hour.
     if (meta.lastRun && now - meta.lastRun > 60 * 60 * 1000 && !cumulativeBatchCache.get(key)) {
@@ -504,7 +537,8 @@ setInterval(() => {
       break; // one heavy scan per tick
     }
   }
-}, 30000).unref?.();
+}, 15000).unref?.();
+
 
 
 
