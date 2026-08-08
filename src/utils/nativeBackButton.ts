@@ -25,16 +25,43 @@ export const installNativeBackButton = async (): Promise<void> => {
     const { App } = await import('@capacitor/app');
 
     App.addListener('backButton', async () => {
-      const path = window.location.pathname || DASHBOARD_PATH;
-      const hasHistory = window.history.length > 1;
-      console.log(`[BACK] pressed route=${path} historyLen=${window.history.length}`);
+      // v2.12.11: Support HashRouter paths. window.location.pathname is usually
+      // /index.html in Capacitor; the real SPA route is in window.location.hash.
+      const rawHash = window.location.hash || '';
+      const path = rawHash.replace(/^#/, '') || DASHBOARD_PATH;
 
-      // On the Dashboard the back button minimises/closes the app.
-      if (path === DASHBOARD_PATH) {
+      // Normalize: ensure path starts with / for comparison (e.g. "" -> "/", "settings" -> "/settings")
+      const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+
+      const hasHistory = window.history.length > 1;
+      console.log(`[BACK] pressed route=${normalizedPath} (raw=${rawHash}) historyLen=${window.history.length}`);
+
+      // v2.12.12: Dispatch custom event so components can intercept the back button
+      // before we take any action. This allows handling internal UI state like
+      // Buy/Sell portal or modals without changing the URL.
+      const ev = new CustomEvent('ionBackButton', {
+        cancelable: true,
+        detail: {
+          path: normalizedPath,
+          canGoBack: hasHistory
+        }
+      });
+      window.dispatchEvent(ev);
+
+      if (ev.defaultPrevented) {
+        console.log('[BACK] Default prevented by component listener');
+        return;
+      }
+
+      // On the Dashboard the back button fully exits the app.
+      // v2.12.14: Use exitApp() instead of minimizeApp() so that reopening
+      // the APK starts fresh from the Login page.
+      if (normalizedPath === DASHBOARD_PATH || normalizedPath === '' || normalizedPath === '/index.html') {
+        console.log(`[BACK] Dashboard/Root detected (${normalizedPath}), calling exitApp()`);
         try {
-          await App.minimizeApp?.();
-        } catch {
-          try { await App.exitApp(); } catch {}
+          await App.exitApp();
+        } catch (e) {
+          console.error('[BACK] exitApp failed:', e);
         }
         return;
       }
@@ -51,11 +78,10 @@ export const installNativeBackButton = async (): Promise<void> => {
 
       // Fallback: hand control to the router via a history push the SPA listens to.
       try {
-        window.history.pushState({}, '', DASHBOARD_PATH);
-        window.dispatchEvent(new PopStateEvent('popstate'));
+        window.location.hash = DASHBOARD_PATH;
       } catch (e) {
         console.warn('[BACK] dashboard fallback failed:', e);
-        window.location.assign(DASHBOARD_PATH);
+        window.location.assign(`#${DASHBOARD_PATH}`);
       }
     });
 

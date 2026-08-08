@@ -1957,13 +1957,37 @@ const Index = () => {
     setSidebarOpen(false);
   };
 
+  // v2.12.12: Handle hardware back button to close portal instead of exiting app
+  useEffect(() => {
+    const handleBackButton = (e: Event) => {
+      if (showCollection) {
+        e.preventDefault();
+        handleBackToDashboard();
+        console.log('[BACK] Intercepted in Index: closing portal');
+      }
+    };
+
+    window.addEventListener('ionBackButton', handleBackButton);
+    return () => window.removeEventListener('ionBackButton', handleBackButton);
+  }, [showCollection]);
+
   if (!isAuthenticated) {
+    console.log('[INDEX] Not authenticated, showing Login');
     return <Login onLogin={handleLogin} />;
   }
+
+  // v2.12.14: Log authorization state to debug blank screen reports
+  console.log('[INDEX] Auth state:', {
+    isAuthenticated,
+    isDeviceAuthorized,
+    settingsLoading,
+    showCollection
+  });
 
   // Authorization check happens in background - don't block the UI
   // Only block if we've confirmed the device is NOT authorized (not during loading)
   if (isDeviceAuthorized === false && !settingsLoading) {
+    console.log('[INDEX] Device NOT authorized, showing blocking screen');
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-card rounded-lg shadow-lg p-8 text-center border border-amber-500/30">
@@ -2070,24 +2094,25 @@ const Index = () => {
 
   // Show Dashboard first
   if (!showCollection) {
-  const captureMode = getCaptureMode(currentUser?.supervisor);
+    console.log('[INDEX] Rendering Dashboard');
+    const captureMode = getCaptureMode(currentUser?.supervisor);
   
-  return (
-    <>
-      <Dashboard
-        userName={currentUser?.username || currentUser?.user_id || 'User'}
-        companyName={companyName}
-        isOnline={navigator.onLine}
-        pendingCount={pendingCount}
-        pendingMilkCount={pendingMilkCount}
-        pendingSalesCount={pendingSalesCount}
-        conflictedReceiptsCount={conflictedReceiptsCount}
-        onStartCollection={handleStartCollection}
-        onStartSelling={handleStartSelling}
-        onLogout={handleLogout}
-        onOpenRecentReceipts={() => setReprintModalOpen(true)}
-        allowZReport={captureMode.allowZReport}
-      />
+    return (
+      <>
+        <Dashboard
+          userName={currentUser?.username || currentUser?.user_id || 'User'}
+          companyName={companyName}
+          isOnline={navigator.onLine}
+          pendingCount={pendingCount}
+          pendingMilkCount={pendingMilkCount}
+          pendingSalesCount={pendingSalesCount}
+          conflictedReceiptsCount={conflictedReceiptsCount}
+          onStartCollection={handleStartCollection}
+          onStartSelling={handleStartSelling}
+          onLogout={handleLogout}
+          onOpenRecentReceipts={() => setReprintModalOpen(true)}
+          allowZReport={captureMode.allowZReport}
+        />
         
         {/* Reprint Modal - accessible from Dashboard */}
         <ReprintModal
@@ -2106,6 +2131,8 @@ const Index = () => {
       </>
     );
   }
+
+  console.log('[INDEX] Rendering Collection Portal');
 
   // Collection View - render Buy or Sell screen based on mode
   // Get capture mode from supervisor setting

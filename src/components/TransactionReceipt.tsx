@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, X, RefreshCw, Check, AlertTriangle } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
@@ -101,6 +101,20 @@ export const TransactionReceipt = ({
   const [syncingItems, setSyncingItems] = useState<Set<string>>(new Set());
   const [syncedItems, setSyncedItems] = useState<Set<string>>(new Set());
   const [failedItems, setFailedItems] = useState<Set<string>>(new Set());
+
+  // v2.12.12: Handle hardware back button to close modal
+  useEffect(() => {
+    if (!open) return;
+
+    const handleBackButton = (e: Event) => {
+      e.preventDefault();
+      onClose();
+      console.log('[BACK] Intercepted in TransactionReceipt: closing modal');
+    };
+
+    window.addEventListener('ionBackButton', handleBackButton);
+    return () => window.removeEventListener('ionBackButton', handleBackButton);
+  }, [open, onClose]);
 
   if (!data) return null;
 

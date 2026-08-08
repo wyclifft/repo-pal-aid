@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -103,6 +103,25 @@ export const ReprintModal = ({
   const totalPages = Math.ceil(displayReceipts.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedReceipts = displayReceipts.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+  // v2.12.12: Handle hardware back button to close modal
+  useEffect(() => {
+    if (!open) return;
+
+    const handleBackButton = (e: Event) => {
+      // If a sub-modal (TransactionReceipt) is open, it will handle the event first
+      // because it's rendered later in the DOM or higher in the stack.
+      // But just in case, we only handle if viewingReceipt is NOT open.
+      if (!viewingReceipt) {
+        e.preventDefault();
+        onClose();
+        console.log('[BACK] Intercepted in ReprintModal: closing modal');
+      }
+    };
+
+    window.addEventListener('ionBackButton', handleBackButton);
+    return () => window.removeEventListener('ionBackButton', handleBackButton);
+  }, [open, onClose, viewingReceipt]);
 
   const handleReprint = async (receipt: PrintedReceipt) => {
     // For Store/AI receipts, check items; for milk, check collections
