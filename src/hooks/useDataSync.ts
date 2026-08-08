@@ -660,7 +660,17 @@ export const useDataSync = () => {
               if (useNativeStorage) {
                 await markNativeRecordSynced(receipt.reference_no);
               }
+              // v2.12.11: keep the cumulative whole when the row is dropped
+              // as an already-stored duplicate (no cloud refresh happened).
+              await bumpFarmerCumulativeBase(
+                String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+                Number(receipt.weight) || 0,
+                receipt.product_code || (receipt as any).icode,
+                String(receipt.route || '').trim() || undefined,
+                { transrefno: receipt.reference_no, reason: 'exception duplicate (already stored)' }
+              );
               if (receipt.orderId && typeof receipt.orderId === 'number') {
+
                 try {
                   await deleteReceipt(receipt.orderId);
                 } catch (deleteErr) {
