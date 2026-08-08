@@ -1701,10 +1701,28 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
           }
 
           console.log('✅ BACKEND: NEW record INSERTED with reference:', attemptTransrefno, ', uploadrefno:', attemptUploadrefno);
+          // v2.12.11: patch cached cumulative snapshots so a just-synced receipt
+          // is visible to the very next cumulative read (no 90 s warm wait).
+          applyCumulativeDelta({
+            ccode,
+            route: body.route,
+            farmerId: cleanFarmerId,
+            icode: productCode,
+            weight: toNumOrZero(body.weight),
+            transdate,
+            transtype
+          });
           return { success: true, reference_no: attemptTransrefno, uploadrefno: attemptUploadrefno, isNew: true };
         } catch (error) {
-          // Check if it's a duplicate entry error
-          if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
+          // Check if it's a duplicate entry error.
+          // v2.12.11: the Contabo schema also carries a composite
+          // `unique_transaction` (transrefno-time-ccode) key. Previously only
+          // `idx_transrefno_unique` was handled, so re-uploads of an already
+          // stored receipt returned 500 — the device kept the local row, kept
+          // counting it as unsynced, and retried forever. Treat ANY duplicate
+          // on this insert as the idempotency path.
+          if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
+
             // SAFE IDEMPOTENCY: Fetch existing row and compare critical payload fields
             // Only return success if the existing record truly matches this submission
             try {
