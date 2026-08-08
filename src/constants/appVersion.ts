@@ -1,4 +1,18 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.11: CUMULATIVE NO-BACKWARDS AFTER SYNC.
+//   Backend (backend-api/server.js): cumulative delta overlay patches every
+//   cached batch snapshot immediately after a successful transaction insert,
+//   so a just-synced receipt is visible to the next cumulative read instead of
+//   waiting for the 90 s re-warm (20-70 s scan). ER_DUP_ENTRY on the composite
+//   unique_transaction key now returns idempotent success. Remaining ANY_VALUE
+//   replaced with MIN(TRIM()) for MariaDB.
+//   Frontend: new bumpFarmerCumulativeBase (useIndexedDB) carries a confirmed
+//   receipt's weight into baseCount when the local unsynced row is deleted but
+//   the cloud snapshot still lags — applied in the post-sync refresh path and
+//   both duplicate-delete paths (useDataSync). Purely additive; the existing
+//   downward guard still prevents any stale lower value from overwriting it.
+//   No changes to reference generation, transaction creation, or sync matrices.
+//
 // v2.12.6: CONTABO PERFORMANCE + SACCO/SEASON UX.
 //   /api/items: client in-flight de-dup + 5 min memory cache, server 60 s cache
 //     (stops the continuous [ITEMS] request loop); ProductSelector paints from
