@@ -598,7 +598,18 @@ export const useDataSync = () => {
                   if (useNativeStorage) {
                     await markNativeRecordSynced(receipt.reference_no);
                   }
+                  // v2.12.11: this row leaves the unsynced bucket without any
+                  // cloud refresh — carry its weight into the cached base so
+                  // the printed cumulative does not drop.
+                  await bumpFarmerCumulativeBase(
+                    String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+                    Number(receipt.weight) || 0,
+                    receipt.product_code || (receipt as any).icode,
+                    String(receipt.route || '').trim() || undefined,
+                    { transrefno: receipt.reference_no, reason: 'server duplicate (already stored)' }
+                  );
                   if (receipt.orderId && typeof receipt.orderId === 'number') {
+
                     try {
                       await deleteReceipt(receipt.orderId);
                     } catch (deleteErr) {
