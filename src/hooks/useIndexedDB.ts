@@ -1448,6 +1448,8 @@ export const useIndexedDB = () => {
     getSessions,
     getFarmerCumulative,
     updateFarmerCumulative,
+    bumpFarmerCumulativeBase,
+
     getFarmerTotalCumulative,
     getUnsyncedWeightForFarmer,
     getAllUnsyncedRecords,
