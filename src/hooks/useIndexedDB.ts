@@ -1189,7 +1189,90 @@ export const useIndexedDB = () => {
     } catch (error) {
       console.error('Failed to update farmer cumulative:', error);
     }
+
+  /**
+   * v2.12.11: Optimistic base carry-over.
+   *
+   * When a receipt is CONFIRMED stored on the server and its local (unsynced)
+   * row is deleted, that weight instantly stops being counted by
+   * getUnsyncedWeightForFarmer. If the cloud cumulative we hold is still the
+   * pre-sync snapshot (the Contabo batch snapshot re-warms only every ~90 s and
+   * each scan takes 20–70 s), the very next receipt prints a LOWER cumulative
+   * than the previous one.
+   *
+   * bumpFarmerCumulativeBase adds the confirmed weight straight into baseCount
+   * (and the per-icode breakdown) so the total never dips while the cloud
+   * catches up. It is purely additive; the next backend write replaces
+   * baseCount outright, and the existing downward guard makes sure a stale
+   * lower value can never overwrite it.
+   */
+  const bumpFarmerCumulativeBase = useCallback(async (
+    farmerId: string,
+    weight: number,
+    icode?: string,
+    route?: string,
+    options?: { transrefno?: string; reason?: string }
+  ): Promise<number | void> => {
+    if (!db) return;
+    const w = Number(weight);
+    if (!isFinite(w) || w === 0) return;
+    try {
+      const cleanId = String(farmerId || '').replace(/^#/, '').trim();
+      if (!cleanId) return;
+      const now = new Date();
+      const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const routeKey = (route || '').trim().toUpperCase() || 'ALL';
+      const cacheKey = buildCumulativeKey(cleanId, route, month);
+      const ic = String(icode || '').trim().toUpperCase();
+
+      const persisted = await new Promise<number>((resolve, reject) => {
+        const tx = db.transaction('farmer_cumulative', 'readwrite');
+        const store = tx.objectStore('farmer_cumulative');
+        let planned = 0;
+        tx.onabort = () => reject(tx.error || new Error('tx aborted'));
+        const getReq = store.get(cacheKey);
+        getReq.onerror = () => reject(getReq.error);
+        getReq.onsuccess = () => {
+          const existing = getReq.result;
+          const prevBase = Number(existing?.baseCount || 0);
+          const nextBase = Math.round((prevBase + w) * 1000) / 1000;
+          const byProduct = Array.isArray(existing?.byProduct)
+            ? existing.byProduct.map((p: any) => ({ ...p, icode: String(p.icode || '').trim().toUpperCase() }))
+            : [];
+          if (ic) {
+            const hit = byProduct.find((p: any) => p.icode === ic);
+            if (hit) hit.weight = Math.round(((Number(hit.weight) || 0) + w) * 1000) / 1000;
+            else byProduct.push({ icode: ic, product_name: ic, weight: w });
+          }
+          planned = nextBase;
+          const putReq = store.put({
+            cacheKey,
+            farmer_id: cleanId,
+            route: routeKey,
+            month,
+            baseCount: nextBase,
+            localCount: Number(existing?.localCount || 0),
+            byProduct,
+            lastUpdated: new Date().toISOString(),
+            writeSeq: Number(existing?.writeSeq || 0) + 1,
+            lastWriteSource: 'sync-carryover',
+          });
+          putReq.onerror = () => reject(putReq.error);
+        };
+        tx.oncomplete = () => resolve(planned);
+      });
+
+      plog.info('CUM:CARRYOVER',
+        `${cleanId} route=${routeKey} +${w} → base=${persisted} (${options?.reason || 'synced receipt'})`,
+        { farmerId: cleanId, route: routeKey, icode: ic, delta: w, baseCount: persisted, transrefno: options?.transrefno, reason: options?.reason });
+
+      return persisted;
+    } catch (error) {
+      console.warn('[CUM] carry-over failed:', error);
+    }
   }, [db]);
+
+
 
 
 
