@@ -461,6 +461,35 @@ export const useDataSync = () => {
                     // v2.10.116: log the VERIFIED persisted value, not the fetched one.
                     const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W1:postsync-refresh', caller: 'syncReceipts/postSync' });
                     cumulativeRefreshed = true;
+
+                    // v2.12.11: the cloud total can still be the PRE-sync
+                    // snapshot (the season batch re-warms every ~90 s and each
+                    // scan takes 20–70 s). Deleting the local row below would
+                    // then drop this receipt's weight from the printed total
+                    // until the cloud catches up. If the value we persisted
+                    // does not already include this receipt, carry the weight
+                    // into baseCount so the cumulative never goes backwards.
+                    const receiptWeight = Number(receipt.weight) || 0;
+                    if (typeof persisted === 'number' && receiptWeight > 0) {
+                      const includesReceipt = freshTotal >= persisted + receiptWeight - 0.0001
+                        || Math.abs(freshTotal - persisted) < 0.0001 && freshTotal > 0 && persisted >= receiptWeight;
+                      // persisted === freshTotal means the backend value was accepted.
+                      // It only truly includes this receipt when the backend
+                      // total moved up by at least its weight; the guard below
+                      // is intentionally conservative and re-checks the cache.
+                      const cachedNow = await getFarmerCumulative(cleanFarmerId, routeForRefresh || undefined);
+                      const baseNow = Number(cachedNow?.baseCount || 0);
+                      const alreadyCounted = freshTotal >= receiptWeight && baseNow >= receiptWeight && includesReceipt;
+                      if (!alreadyCounted) {
+                        await bumpFarmerCumulativeBase(
+                          cleanFarmerId,
+                          receiptWeight,
+                          receipt.product_code || (receipt as any).icode,
+                          routeForRefresh || undefined,
+                          { transrefno: receipt.reference_no, reason: 'cloud snapshot lagging' }
+                        );
+                      }
+                    }
                     // v2.10.95: log per-icode breakdown + active context so the
                     // device-displayed per-product slice can be reconciled against
                     // the combined backend total recorded here.
@@ -476,6 +505,7 @@ export const useDataSync = () => {
                   } else {
                     console.warn(`[SYNC] Cumulative refresh returned no data for ${cleanFarmerId} — keeping local row for retry`);
                   }
+
                 } catch (cumErr) {
                   console.warn(`[SYNC] Cumulative refresh FAILED for ${receipt.reference_no} — keeping local row for retry:`, cumErr);
                 }
