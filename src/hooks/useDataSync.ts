@@ -63,6 +63,10 @@ export const useDataSync = () => {
     deleteSale,
     getAllUnsyncedRecords,
     updateFarmerCumulative,
+    bumpFarmerCumulativeBase,
+    getFarmerCumulative,
+
+
     isReady 
   } = useIndexedDB();
 
@@ -444,6 +448,12 @@ export const useDataSync = () => {
                 try {
                   const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                   const routeForRefresh = String(receipt.route || '').trim();
+                  // v2.12.11: remember the cached cloud base BEFORE the refresh
+                  // so we can tell whether the fresh cloud value actually
+                  // contains the receipt we just uploaded.
+                  const baseBefore = Number(
+                    (await getFarmerCumulative(cleanFarmerId, routeForRefresh || undefined))?.baseCount || 0
+                  );
                   const refreshResp = await farmerFrequencyApi.getMonthlyFrequency(
                     cleanFarmerId,
                     deviceFingerprint,
@@ -459,6 +469,27 @@ export const useDataSync = () => {
                     // v2.10.116: log the VERIFIED persisted value, not the fetched one.
                     const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W1:postsync-refresh', caller: 'syncReceipts/postSync' });
                     cumulativeRefreshed = true;
+
+                    // v2.12.11: the cloud total can still be the PRE-sync
+                    // snapshot (the season batch re-warms every ~90 s and each
+                    // scan takes 20–70 s). Once the local row is deleted below,
+                    // its weight stops counting as "unsynced", so a lagging
+                    // cloud value would make the NEXT receipt print a lower
+                    // cumulative. Top the base up by whatever is missing.
+                    const receiptWeight = Number(receipt.weight) || 0;
+                    if (typeof persisted === 'number' && receiptWeight > 0) {
+                      const missing = (baseBefore + receiptWeight) - persisted;
+                      if (missing > 0.0001) {
+                        await bumpFarmerCumulativeBase(
+                          cleanFarmerId,
+                          Math.min(missing, receiptWeight),
+                          receipt.product_code || (receipt as any).icode,
+                          routeForRefresh || undefined,
+                          { transrefno: receipt.reference_no, reason: 'cloud snapshot lagging' }
+                        );
+                      }
+                    }
+
                     // v2.10.95: log per-icode breakdown + active context so the
                     // device-displayed per-product slice can be reconciled against
                     // the combined backend total recorded here.
@@ -474,6 +505,7 @@ export const useDataSync = () => {
                   } else {
                     console.warn(`[SYNC] Cumulative refresh returned no data for ${cleanFarmerId} — keeping local row for retry`);
                   }
+
                 } catch (cumErr) {
                   console.warn(`[SYNC] Cumulative refresh FAILED for ${receipt.reference_no} — keeping local row for retry:`, cumErr);
                 }
@@ -566,7 +598,18 @@ export const useDataSync = () => {
                   if (useNativeStorage) {
                     await markNativeRecordSynced(receipt.reference_no);
                   }
+                  // v2.12.11: this row leaves the unsynced bucket without any
+                  // cloud refresh — carry its weight into the cached base so
+                  // the printed cumulative does not drop.
+                  await bumpFarmerCumulativeBase(
+                    String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+                    Number(receipt.weight) || 0,
+                    receipt.product_code || (receipt as any).icode,
+                    String(receipt.route || '').trim() || undefined,
+                    { transrefno: receipt.reference_no, reason: 'server duplicate (already stored)' }
+                  );
                   if (receipt.orderId && typeof receipt.orderId === 'number') {
+
                     try {
                       await deleteReceipt(receipt.orderId);
                     } catch (deleteErr) {
@@ -617,7 +660,17 @@ export const useDataSync = () => {
               if (useNativeStorage) {
                 await markNativeRecordSynced(receipt.reference_no);
               }
+              // v2.12.11: keep the cumulative whole when the row is dropped
+              // as an already-stored duplicate (no cloud refresh happened).
+              await bumpFarmerCumulativeBase(
+                String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+                Number(receipt.weight) || 0,
+                receipt.product_code || (receipt as any).icode,
+                String(receipt.route || '').trim() || undefined,
+                { transrefno: receipt.reference_no, reason: 'exception duplicate (already stored)' }
+              );
               if (receipt.orderId && typeof receipt.orderId === 'number') {
+
                 try {
                   await deleteReceipt(receipt.orderId);
                 } catch (deleteErr) {

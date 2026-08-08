@@ -542,7 +542,77 @@ setInterval(() => {
 
 
 
+// ---------------------------------------------------------------------------
+// v2.12.11: cumulative delta overlay.
+//
+// The batch snapshot is recomputed at most every CUM_BATCH_REWARM_MS and each
+// scan itself takes 20–70 s on Contabo, so a receipt that a device just synced
+// stayed invisible for minutes. The device then wrote that stale total over its
+// local cache, deleted the (already uploaded) unsynced rows, and the NEXT
+// receipt printed a LOWER cumulative than the previous one.
+//
+// applyCumulativeDelta patches every cached snapshot that covers the inserted
+// row (same ccode, same period, route matching or 'ALL') immediately after a
+// successful insert. It is purely additive and is thrown away as soon as the
+// next full snapshot lands, so the cumulative formula itself never changes.
+// ---------------------------------------------------------------------------
+function applyCumulativeDelta({ ccode, route, farmerId, icode, weight, transdate, transtype }) {
+  try {
+    if (Number(transtype) !== 1) return;          // only milk/produce collections count
+    const w = Number(weight);
+    if (!isFinite(w) || w === 0) return;
+    const fid = String(farmerId || '').replace(/^#/, '').trim();
+    if (!fid) return;
+    const ic = String(icode || '').trim().toUpperCase();
+    const rt = String(route || '').trim().toUpperCase();
+    const day = String(transdate || '').slice(0, 10);
+    const cc = String(ccode || '').trim().toUpperCase();
+
+    let patched = 0;
+    for (const [key, meta] of cumulativeWarmKeys) {
+      if (String(meta.ccode || '').trim().toUpperCase() !== cc) continue;
+      // Period must cover the transaction date (string compare on YYYY-MM-DD).
+      if (day && (day < meta.periodStart || day > meta.periodEnd)) continue;
+      // Route-scoped snapshots only take rows from that route; 'ALL' takes all.
+      const metaRoute = meta.route ? String(meta.route).trim().toUpperCase() : null;
+      if (metaRoute && metaRoute !== rt) continue;
+
+      const snapshot = cumulativeBatchCache.get(key);
+      if (!snapshot || !Array.isArray(snapshot.farmers)) continue;
+
+      let row = snapshot.farmers.find(f => String(f.farmer_id || '').trim() === fid);
+      if (!row) {
+        row = { farmer_id: fid, cumulative_weight: 0, by_product: [] };
+        snapshot.farmers.push(row);
+        snapshot.total_farmers = snapshot.farmers.length;
+      }
+      row.cumulative_weight = Math.round(((Number(row.cumulative_weight) || 0) + w) * 1000) / 1000;
+
+      if (!Array.isArray(row.by_product)) row.by_product = [];
+      const prod = row.by_product.find(p => String(p.icode || '').trim().toUpperCase() === ic);
+      if (prod) {
+        prod.weight = Math.round(((Number(prod.weight) || 0) + w) * 1000) / 1000;
+      } else {
+        row.by_product.push({ icode: ic, product_name: ic, weight: w });
+      }
+      patched++;
+
+      // Make the next warmer tick prioritise this key so the overlay is
+      // replaced by a real snapshot promptly.
+      meta.lastRun = Math.min(meta.lastRun || 0, Date.now() - CUM_BATCH_REWARM_MS);
+    }
+
+    if (patched > 0) {
+      console.log(`[CUM:DELTA] +${w}kg ${fid} route=${rt || 'ALL'} icode=${ic} patched ${patched} snapshot(s)`);
+    }
+  } catch (e) {
+    // Overlay is best-effort; never let it break an insert.
+    console.warn('[CUM:DELTA] failed:', e.message);
+  }
+}
+
 const invalidatePayableCache = (ccode) => {
+
   const prefix = `payable:${String(ccode || '').toUpperCase()}:`;
   // Best-effort scan — cache size is capped at 200 so this is cheap.
   // The lruCache module exposes only Map-ish operations via its returned
@@ -1631,10 +1701,28 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
           }
 
           console.log('✅ BACKEND: NEW record INSERTED with reference:', attemptTransrefno, ', uploadrefno:', attemptUploadrefno);
+          // v2.12.11: patch cached cumulative snapshots so a just-synced receipt
+          // is visible to the very next cumulative read (no 90 s warm wait).
+          applyCumulativeDelta({
+            ccode,
+            route: body.route,
+            farmerId: cleanFarmerId,
+            icode: productCode,
+            weight: toNumOrZero(body.weight),
+            transdate,
+            transtype
+          });
           return { success: true, reference_no: attemptTransrefno, uploadrefno: attemptUploadrefno, isNew: true };
         } catch (error) {
-          // Check if it's a duplicate entry error
-          if (error.code === 'ER_DUP_ENTRY' && error.message.includes('idx_transrefno_unique')) {
+          // Check if it's a duplicate entry error.
+          // v2.12.11: the Contabo schema also carries a composite
+          // `unique_transaction` (transrefno-time-ccode) key. Previously only
+          // `idx_transrefno_unique` was handled, so re-uploads of an already
+          // stored receipt returned 500 — the device kept the local row, kept
+          // counting it as unsynced, and retried forever. Treat ANY duplicate
+          // on this insert as the idempotency path.
+          if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
+
             // SAFE IDEMPOTENCY: Fetch existing row and compare critical payload fields
             // Only return success if the existing record truly matches this submission
             try {
@@ -4224,7 +4312,7 @@ if (path === '/api/sales' && method === 'POST') {
       
       const [productRows] = await pool.query(
         `SELECT TRIM(t.icode) as icode, 
-                IFNULL(MAX(fi.descript), ANY_VALUE(TRIM(t.icode))) as product_name,
+                IFNULL(MAX(fi.descript), MIN(TRIM(t.icode))) as product_name,
                 IFNULL(SUM(t.weight), 0) as weight 
          FROM transactions t
          LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
