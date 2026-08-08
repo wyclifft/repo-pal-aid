@@ -1189,6 +1189,9 @@ export const useIndexedDB = () => {
     } catch (error) {
       console.error('Failed to update farmer cumulative:', error);
     }
+  }, [db]);
+
+
 
   /**
    * v2.12.11: Optimistic base carry-over.
