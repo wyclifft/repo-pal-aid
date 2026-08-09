@@ -230,9 +230,12 @@ function enqueue(level: LogLevel, tag: string, message: string, data?: unknown, 
 
   const dataStr = safeStringify(data);
 
-  // Dedupe window: identical (level, tag, message, data) within 2s collapses
+  // Dedupe window: identical (level, tag, message, data) within 2s collapses.
+  // v2.12.12: the uncapped diagnostic tags are never deduped — each carries a
+  // distinct print/write payload and collapsing them loses evidence.
   if (
-    !pinned &&
+    !exempt &&
+
     lastEntry &&
     now - lastEntryAt <= DEDUPE_WINDOW_MS &&
     lastEntry.level === level &&
