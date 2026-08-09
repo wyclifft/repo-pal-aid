@@ -1676,6 +1676,8 @@ const Index = () => {
                   else merged[p.icode] = { ...p };
                 }
                 computedCumulative = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
+                cloudForLog = cloudCumulative;
+                usedForLog = 'cloud';
                 // v2.12.7: the per-product filter yields 0 when the backend has
                 // not yet reported a breakdown row for the selected produce.
                 // Never print 0 when a trusted floor exists.
@@ -1686,6 +1688,7 @@ const Index = () => {
                       ? [{ icode: selectedProduct.icode, product_name: selectedProduct.descript || selectedProduct.icode, weight: trustedFloor }]
                       : [],
                   };
+                  usedForLog = 'floor';
                   plog.warn('CUM:ONLINE-PRINT', `${cleanId} product filter empty → using floor ${trustedFloor}`,
                     { farmerId: cleanId, route: selectedRouteCode, icode: selectedProduct?.icode, cloudCumulative, trustedFloor, used: 'floor', path: 'on-screen' });
                 }
@@ -1701,18 +1704,39 @@ const Index = () => {
                         ? [{ icode: selectedProduct.icode, product_name: selectedProduct.descript || selectedProduct.icode, weight: trustedFloor }]
                         : (filtered?.byProduct || []),
                     };
+                localForLog = filtered?.total ?? 0;
+                usedForLog = (computedCumulative?.total ?? 0) === trustedFloor && (filtered?.total ?? 0) < trustedFloor ? 'floor' : 'local';
                 plog.warn('CUM:ONLINE-PRINT', `${cleanId} cloud unavailable → local=${filtered?.total ?? 0} floor=${trustedFloor}`,
-                  { farmerId: cleanId, route: selectedRouteCode, local: filtered?.total ?? 0, trustedFloor, used: computedCumulative?.total, path: 'on-screen' });
+                  { farmerId: cleanId, route: selectedRouteCode, local: filtered?.total ?? 0, trustedFloor, cachedBase, fallbackScope: fallbackScopeForLog, used: computedCumulative?.total, path: 'on-screen' });
               }
             } else {
               const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
               computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
+              localForLog = total.total;
+              usedForLog = 'local';
             }
           } catch {
             const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
             computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
+            localForLog = total.total;
+            usedForLog = 'local';
           }
+          // v2.12.12: record what actually goes on the receipt.
+          logPrintFinal({
+            farmerId: cleanId,
+            route: selectedRouteCode || undefined,
+            path: 'on-screen',
+            cachedBase: baseForLog,
+            trustedFloor: floorForLog,
+            cloudCumulative: cloudForLog,
+            localTotal: localForLog,
+            finalPrinted: computedCumulative?.total ?? 0,
+            used: usedForLog,
+            icode: selectedProduct?.icode,
+            fallbackScope: fallbackScopeForLog,
+          });
           setCumulativeFrequency(computedCumulative);
+
         }
         setIsSubmitting(false);
         setReceiptModalOpen(true);
