@@ -428,17 +428,67 @@ export interface PrintLogCtx {
   excludedRefs?: string[];
   source?: string; // 'on-screen' | 'background-print' | 'fallback' | ...
   icode?: string;
+  // v2.12.12: scope provenance of the base value used for this print.
+  scope?: string;          // route bucket that was requested (e.g. 'F001')
+  fallbackScope?: string;  // 'ALL' when the route key was absent and ALL was used
+  keyPresent?: boolean;    // whether the route-scoped key existed at all
 }
 
 export function logPrint(ctx: PrintLogCtx): void {
   try {
-    const msg = `${ctx.farmerId} route=${ctx.route || "?"} printed=${+(ctx.finalPrinted || 0).toFixed(3)} (cachedBase=${+(ctx.cachedBase || 0).toFixed(3)} local=${+(ctx.cachedLocal || 0).toFixed(3)} unsynced=${+(ctx.unsyncedWeight || 0).toFixed(3)}${typeof ctx.cloudCumulative === "number" ? ` cloud=${+ctx.cloudCumulative.toFixed(3)}` : ""})`;
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} printed=${+(ctx.finalPrinted || 0).toFixed(3)} (cachedBase=${+(ctx.cachedBase || 0).toFixed(3)} local=${+(ctx.cachedLocal || 0).toFixed(3)} unsynced=${+(ctx.unsyncedWeight || 0).toFixed(3)}${typeof ctx.cloudCumulative === "number" ? ` cloud=${+ctx.cloudCumulative.toFixed(3)}` : ""}${ctx.fallbackScope ? ` scopeFallback=${ctx.fallbackScope}` : ""})`;
     plog.info("CUM:PRINT", msg, {
       ...getActiveContext(),
       ...ctx,
     });
   } catch { /* never throw */ }
 }
+
+// v2.12.12: PRINT-FINAL. CUM:PRINT is emitted inside getFarmerTotalCumulative,
+// i.e. BEFORE the caller applies its trusted floor / cloud value — so a log
+// line saying printed=0 did not necessarily mean 0 went on paper. This records
+// the number the receipt actually carries, with every input that produced it.
+export interface PrintFinalLogCtx {
+  farmerId: string;
+  route?: string;
+  path: string;              // 'on-screen' | 'background-print'
+  cachedBase?: number;
+  trustedFloor?: number;
+  cloudCumulative?: number;
+  localTotal?: number;
+  unsyncedWeight?: number;
+  finalPrinted: number;
+  used?: string;             // 'cloud' | 'floor' | 'local'
+  icode?: string;
+  fallbackScope?: string;
+}
+export function logPrintFinal(ctx: PrintFinalLogCtx): void {
+  try {
+    const n = (v: unknown) => (typeof v === "number" ? +v.toFixed(3) : undefined);
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} FINAL=${+(ctx.finalPrinted || 0).toFixed(3)} path=${ctx.path} used=${ctx.used || "?"} (base=${n(ctx.cachedBase) ?? "?"} floor=${n(ctx.trustedFloor) ?? "?"} cloud=${n(ctx.cloudCumulative) ?? "?"} local=${n(ctx.localTotal) ?? "?"})`;
+    plog.info("CUM:PRINT-FINAL", msg, { ...getActiveContext(), ...ctx });
+  } catch { /* never throw */ }
+}
+
+// v2.12.12: SCOPE-FALLBACK. The route-scoped cumulative key did not exist at
+// all (never warmed) so the ALL bucket was used as the base. Emitted ONLY for
+// an absent key — a key present with 0 is a confirmed zero for that route and
+// must never be replaced by the cross-route total.
+export function logScopeFallback(
+  farmerId: string,
+  route: string | undefined,
+  allValue: number,
+  cacheKey: string,
+): void {
+  try {
+    plog.info(
+      "CUM:SCOPE-FALLBACK",
+      `${farmerId} route=${(route || "").trim().toUpperCase() || "ALL"} key absent → using ALL base=${+(allValue || 0).toFixed(3)}`,
+      { ...getActiveContext(), farmerId, route, allValue, cacheKey, fallbackScope: "ALL" },
+    );
+  } catch { /* never throw */ }
+}
+
 
 // v2.10.116: VERIFY-AFTER-WRITE. The previous "✅ Refreshed cumulative for X: N"
 // log reported the FETCHED value, not the PERSISTED one. If the IndexedDB
@@ -487,13 +537,17 @@ export interface CaptureReadLogCtx {
   localCount: number;
   unsyncedWeight: number;
   source?: string;    // 'getFarmerTotalCumulative' | ...
+  scope?: string;         // v2.12.12
+  fallbackScope?: string; // v2.12.12 — 'ALL' when the route key was absent
+  keyPresent?: boolean;   // v2.12.12
 }
 export function logCaptureRead(ctx: CaptureReadLogCtx): void {
   try {
     const base = +(Number(ctx.baseCount) || 0).toFixed(3);
     const local = +(Number(ctx.localCount) || 0).toFixed(3);
     const unsynced = +(Number(ctx.unsyncedWeight) || 0).toFixed(3);
-    const msg = `${ctx.farmerId} route=${ctx.route || "?"} base=${base} local=${local} unsynced=${unsynced}`;
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} base=${base} local=${local} unsynced=${unsynced}${ctx.fallbackScope ? ` scopeFallback=${ctx.fallbackScope}` : ""}`;
+
     plog.info("CUM:CAPTURE-READ", msg, {
       ...getActiveContext(),
       ...ctx,
@@ -733,6 +787,9 @@ export const cumulativeMonitor = {
   noteReversalIfNegative,
   logWrite,
   logPrint,
+  logPrintFinal,
+  logScopeFallback,
+
   logVerify,
   logCaptureRead,
   logRaceClobber,

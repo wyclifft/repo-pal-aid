@@ -150,27 +150,92 @@ function currentRoute(): string | undefined {
   }
 }
 
+// v2.12.12: per-tag drop accounting so an export states exactly what was lost.
+const droppedByTag = new Map<string, number>();
+
+// v2.12.12 TIERED CAP.
+// The cumulative taxonomy is the evidence we debug receipts with, so it must
+// never be silently thinned. But repeated "unchanged" writes from the periodic
+// prewarm cycles (CUM:WRITE / CUM:STALE-CHECK with delta 0) carry no diagnostic
+// value beyond "still stable" and dominated log volume in the field traces.
+// So: uncapped for the interesting subset, a modest per-tag cap for the Δ0
+// noise, and the existing global cap for everything else.
+const CUM_UNCAPPED_TAGS = new Set([
+  "CUM:PRINT",
+  "CUM:PRINT-FINAL",
+  "CUM:SCOPE-FALLBACK",
+  "CUM:VERIFY-MISMATCH",
+  "CUM:WRITE-ABORT",
+  "CUM:REGRESSION",
+]);
+const CUM_NOISE_TAGS = new Set(["CUM:WRITE", "CUM:STALE-CHECK"]);
+const NOISE_CAP_PER_SEC = 5;
+const noiseWindows = new Map<string, { start: number; count: number }>();
+
+/** True when a CUM:WRITE / CUM:STALE-CHECK entry represents an actual change. */
+function hasNonZeroDelta(data: unknown): boolean {
+  if (!data || typeof data !== "object") return true; // unknown shape → keep
+  const d = data as Record<string, unknown>;
+  const candidates = [d.delta, d.deltaBase, d.diff];
+  for (const c of candidates) {
+    if (typeof c === "number") return Math.abs(c) > 0.0001;
+  }
+  const prev = typeof d.prev === "number" ? d.prev : typeof d.prevBase === "number" ? d.prevBase : undefined;
+  const next = typeof d.next === "number" ? d.next : typeof d.incoming === "number" ? d.incoming : undefined;
+  if (typeof prev === "number" && typeof next === "number") {
+    return Math.abs(next - prev) > 0.0001;
+  }
+  return true; // can't prove it's a no-op → keep it
+}
+
+function noteDropped(tag: string) {
+  droppedSinceLastFlush++;
+  droppedByTag.set(tag, (droppedByTag.get(tag) || 0) + 1);
+}
+
 function enqueue(level: LogLevel, tag: string, message: string, data?: unknown, pinned: 0 | 1 = 0) {
   const now = Date.now();
 
-  // Rate cap: 50/sec — pinned entries bypass to ensure critical evidence is kept
-  if (!pinned) {
+  // v2.12.12: classify before any cap is applied.
+  const uncapped = pinned === 1 || CUM_UNCAPPED_TAGS.has(tag);
+  const isNoiseCandidate = !uncapped && CUM_NOISE_TAGS.has(tag);
+  const interestingCum = isNoiseCandidate && hasNonZeroDelta(data);
+  const exempt = uncapped || interestingCum;
+
+  if (isNoiseCandidate && !interestingCum) {
+    // Δ0 prewarm chatter: modest per-tag cap instead of the global one.
+    const w = noiseWindows.get(tag);
+    if (!w || now - w.start >= 1000) {
+      noiseWindows.set(tag, { start: now, count: 1 });
+    } else {
+      w.count++;
+      if (w.count > NOISE_CAP_PER_SEC) {
+        noteDropped(tag);
+        return;
+      }
+    }
+  } else if (!exempt) {
+    // Global rate cap: 50/sec for everything outside the CUM taxonomy.
     if (now - rateWindowStart >= 1000) {
       rateWindowStart = now;
       rateWindowCount = 0;
     }
     rateWindowCount++;
     if (rateWindowCount > RATE_CAP_PER_SEC) {
-      droppedSinceLastFlush++;
+      noteDropped(tag);
       return;
     }
   }
 
+
   const dataStr = safeStringify(data);
 
-  // Dedupe window: identical (level, tag, message, data) within 2s collapses
+  // Dedupe window: identical (level, tag, message, data) within 2s collapses.
+  // v2.12.12: the uncapped diagnostic tags are never deduped — each carries a
+  // distinct print/write payload and collapsing them loses evidence.
   if (
-    !pinned &&
+    !exempt &&
+
     lastEntry &&
     now - lastEntryAt <= DEDUPE_WINDOW_MS &&
     lastEntry.level === level &&
@@ -216,17 +281,25 @@ async function flush(): Promise<void> {
   }
 
   if (droppedSinceLastFlush > 0) {
+    // v2.12.12: report per-tag counts so an export states exactly what was lost.
+    const breakdown = Array.from(droppedByTag.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([t, n]) => `${t}=${n}`)
+      .join(" ");
     queue.push({
       ts: Date.now(),
       level: "warn",
       tag: "LOGGER",
-      message: `dropped ${droppedSinceLastFlush} log entries (rate cap)`,
+      message: `dropped ${droppedSinceLastFlush} log entries (rate cap): ${breakdown}`,
+      data: safeStringify(Object.fromEntries(droppedByTag)),
       count: 1,
       route: currentRoute(),
       version: appVersion(),
     });
     droppedSinceLastFlush = 0;
+    droppedByTag.clear();
   }
+
 
   const batch = queue.splice(0, queue.length);
   try {
