@@ -281,17 +281,25 @@ async function flush(): Promise<void> {
   }
 
   if (droppedSinceLastFlush > 0) {
+    // v2.12.12: report per-tag counts so an export states exactly what was lost.
+    const breakdown = Array.from(droppedByTag.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([t, n]) => `${t}=${n}`)
+      .join(" ");
     queue.push({
       ts: Date.now(),
       level: "warn",
       tag: "LOGGER",
-      message: `dropped ${droppedSinceLastFlush} log entries (rate cap)`,
+      message: `dropped ${droppedSinceLastFlush} log entries (rate cap): ${breakdown}`,
+      data: safeStringify(Object.fromEntries(droppedByTag)),
       count: 1,
       route: currentRoute(),
       version: appVersion(),
     });
     droppedSinceLastFlush = 0;
+    droppedByTag.clear();
   }
+
 
   const batch = queue.splice(0, queue.length);
   try {
