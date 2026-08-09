@@ -814,52 +814,82 @@ export const useIndexedDB = () => {
 
   /**
    * Get farmer's cumulative count for the current month, scoped to a route/factory.
-   * Returns { baseCount, localCount, month, route, byProduct }.
+   * Returns { baseCount, localCount, month, route, byProduct, keyPresent, fallbackScope }.
+   *
+   * v2.12.12 SCOPE FALLBACK: the cache is keyed farmer__ROUTE__month, so the
+   * route bucket and the ALL bucket are separate rows. When the route bucket was
+   * never warmed (key ABSENT) the print path used to read 0 and print a bare
+   * delta. We now fall back to the ALL bucket in that case only.
+   * A key that EXISTS with baseCount 0 is a confirmed zero for that route (new
+   * to the route, or the result of a decrease guard) and is returned as 0 —
+   * never replaced by the cross-route total. A key present with a non-zero
+   * value is always authoritative.
    */
   const getFarmerCumulative = useCallback(async (
     farmerId: string,
     route?: string
-  ): Promise<{ baseCount: number; localCount: number; month: string; route: string; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | null> => {
+  ): Promise<{ baseCount: number; localCount: number; month: string; route: string; byProduct: Array<{ icode: string; product_name: string; weight: number }>; keyPresent?: boolean; fallbackScope?: string } | null> => {
     if (!db) return null;
     try {
       const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const routeKey = (route || '').trim().toUpperCase() || 'ALL';
       const cacheKey = buildCumulativeKey(cleanId, route, month);
 
-      return new Promise((resolve, reject) => {
+      const readKey = (key: string): Promise<any | null> => new Promise((resolve, reject) => {
         const tx = db.transaction('farmer_cumulative', 'readonly');
         const store = tx.objectStore('farmer_cumulative');
-        const request = store.get(cacheKey);
-        request.onsuccess = () => {
-          if (request.result) {
-            const result = {
-              baseCount: request.result.baseCount || 0,
-              localCount: request.result.localCount || 0,
-              month: request.result.month,
-              route: request.result.route || ((route || '').trim().toUpperCase() || 'ALL'),
-              byProduct: request.result.byProduct || []
-            };
-            if (isFocusedFarmer(cleanId)) {
-              plogFocus('CUM:READ', `${cleanId} route=${result.route} base=${result.baseCount} local=${result.localCount}`,
-                { farmerId: cleanId, route: result.route, source: 'getFarmerCumulative', baseCount: result.baseCount, localCount: result.localCount, byProduct: result.byProduct, lastUpdated: request.result.lastUpdated });
-            }
-            resolve(result);
-          } else {
-            if (isFocusedFarmer(cleanId)) {
-              plogFocus('CUM:READ', `${cleanId} route=${(route||'').trim().toUpperCase()||'ALL'} MISS`,
-                { farmerId: cleanId, route, source: 'getFarmerCumulative', miss: true, cacheKey });
-            }
-            resolve(null);
-          }
-        };
+        const request = store.get(key);
+        request.onsuccess = () => resolve(request.result || null);
         request.onerror = () => reject(request.error);
       });
+
+      const row = await readKey(cacheKey);
+      if (row) {
+        const result = {
+          baseCount: row.baseCount || 0,
+          localCount: row.localCount || 0,
+          month: row.month,
+          route: row.route || routeKey,
+          byProduct: row.byProduct || [],
+          keyPresent: true,
+        };
+        if (isFocusedFarmer(cleanId)) {
+          plogFocus('CUM:READ', `${cleanId} route=${result.route} base=${result.baseCount} local=${result.localCount}`,
+            { farmerId: cleanId, route: result.route, source: 'getFarmerCumulative', baseCount: result.baseCount, localCount: result.localCount, byProduct: result.byProduct, lastUpdated: row.lastUpdated });
+        }
+        return result;
+      }
+
+      // Key absent. If this was a route-scoped read, fall back to the ALL bucket.
+      if (routeKey !== 'ALL') {
+        const allRow = await readKey(buildCumulativeKey(cleanId, undefined, month));
+        if (allRow && (allRow.baseCount || 0) > 0) {
+          logScopeFallback(cleanId, route, allRow.baseCount || 0, cacheKey);
+          return {
+            baseCount: allRow.baseCount || 0,
+            localCount: 0, // localCount is route-specific; never carry it across scopes
+            month: allRow.month || month,
+            route: routeKey,
+            byProduct: allRow.byProduct || [],
+            keyPresent: false,
+            fallbackScope: 'ALL',
+          };
+        }
+      }
+
+      if (isFocusedFarmer(cleanId)) {
+        plogFocus('CUM:READ', `${cleanId} route=${routeKey} MISS`,
+          { farmerId: cleanId, route, source: 'getFarmerCumulative', miss: true, cacheKey });
+      }
+      return null;
     } catch (error) {
       console.warn('Failed to get farmer cumulative:', error);
       return null;
     }
   }, [db]);
+
 
   /**
    * Update farmer's cumulative count for a specific route/factory.
