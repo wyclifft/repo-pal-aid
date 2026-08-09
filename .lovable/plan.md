@@ -97,7 +97,13 @@ existing decrease guards.
   must still print 0 — never the ALL-bucket total.
 - `/debug` must show `CUM:SCOPE-FALLBACK` followed by a `CUM:PRINT-FINAL` whose
   value equals the printed receipt.
+- Offline case specifically: force the cloud call to fail (airplane mode or blocked
+  host) for a farmer whose route key is absent but whose ALL bucket holds a
+  confirmed total, then capture. `CUM:ONLINE-PRINT` must show
+  `trustedFloor` derived from the ALL-fallback base (not 0 + new weight), and
+  `CUM:PRINT-FINAL` must equal that floor plus the new weight.
 - After a background sync clears the unsynced bucket, the next receipt must not
   drop below the previous printed value.
+
 
 - Export logs from a busy session and confirm no `CUM:*` entries were dropped.
