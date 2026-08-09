@@ -44,6 +44,15 @@
   background-print path), recording `cachedBase`, `trustedFloor`, `cloud`,
   `unsynced` and the final printed number. This closes the gap where the log said
   `printed=0` but a floor was applied downstream.
+- Confirmed by reading `src/pages/Index.tsx`: the offline/cloud-unavailable branch
+  is **not** a parallel cache path. Both print paths compute
+  `trustedFloor = Math.max(cachedBase, prevCum) + justSubmitted` where `cachedBase`
+  comes from `getFarmerCumulative(farmerId, route)` (lines 1600 and 1739), and the
+  local fallback total comes from `getFarmerTotalCumulative` (lines 1679, 1814) —
+  both are the getters corrected in §1, so the §1 fix repairs the offline floor as
+  well as the online value. While in the code, keep it that way: no new local
+  reads, and the floor stays downstream of the fixed getter.
+
 
 ### 3. Seed the route bucket eagerly on farmer selection
 
