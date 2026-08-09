@@ -44,6 +44,15 @@
   background-print path), recording `cachedBase`, `trustedFloor`, `cloud`,
   `unsynced` and the final printed number. This closes the gap where the log said
   `printed=0` but a floor was applied downstream.
+- Confirmed by reading `src/pages/Index.tsx`: the offline/cloud-unavailable branch
+  is **not** a parallel cache path. Both print paths compute
+  `trustedFloor = Math.max(cachedBase, prevCum) + justSubmitted` where `cachedBase`
+  comes from `getFarmerCumulative(farmerId, route)` (lines 1600 and 1739), and the
+  local fallback total comes from `getFarmerTotalCumulative` (lines 1679, 1814) —
+  both are the getters corrected in §1, so the §1 fix repairs the offline floor as
+  well as the online value. While in the code, keep it that way: no new local
+  reads, and the floor stays downstream of the fixed getter.
+
 
 ### 3. Seed the route bucket eagerly on farmer selection
 
@@ -88,7 +97,13 @@ existing decrease guards.
   must still print 0 — never the ALL-bucket total.
 - `/debug` must show `CUM:SCOPE-FALLBACK` followed by a `CUM:PRINT-FINAL` whose
   value equals the printed receipt.
+- Offline case specifically: force the cloud call to fail (airplane mode or blocked
+  host) for a farmer whose route key is absent but whose ALL bucket holds a
+  confirmed total, then capture. `CUM:ONLINE-PRINT` must show
+  `trustedFloor` derived from the ALL-fallback base (not 0 + new weight), and
+  `CUM:PRINT-FINAL` must equal that floor plus the new weight.
 - After a background sync clears the unsynced bucket, the next receipt must not
   drop below the previous printed value.
+
 
 - Export logs from a busy session and confirm no `CUM:*` entries were dropped.
