@@ -65,6 +65,13 @@ class BluetoothClassicJsBridge(
 
     @JavascriptInterface
     fun requestBluetoothPermissions(): String = safeJson {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasBluetoothPermissions()) {
+            ActivityCompat.requestPermissions(
+                context as android.app.Activity,
+                arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT),
+                102 // random request code
+            )
+        }
         JSONObject()
             .put("granted", hasBluetoothPermissions())
             .put("legacyInstallTime", Build.VERSION.SDK_INT < Build.VERSION_CODES.S)

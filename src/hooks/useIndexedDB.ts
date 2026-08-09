@@ -804,12 +804,24 @@ export const useIndexedDB = () => {
   /**
    * Build the cache key for a farmer cumulative entry.
    * v2.10.73: includes route to keep per-factory totals strictly isolated.
-   * Falls back to "ALL" when no route is provided so legacy callers still work
-   * (but they will read/write a separate "no-route" bucket).
+   * v2.12.15: includes season (scode) for strict season isolation.
+   * Falls back to "ALL" when no route/season is provided.
    */
-  const buildCumulativeKey = (cleanId: string, route: string | undefined, month: string): string => {
-    const routeKey = (route || '').trim().toUpperCase() || 'ALL';
-    return `${cleanId}__${routeKey}__${month}`;
+  const buildCumulativeKey = (cleanId: string, route: string | undefined, month: string, scode?: string): string => {
+    // v2.12.16: Defensive check for non-string inputs (prevents TypeError on shifted arguments)
+    const r = typeof route === 'string' ? route : '';
+    const s = typeof scode === 'string' ? scode : '';
+    const routeKey = r.trim().toUpperCase() || 'ALL';
+    const seasonKey = s.trim().toUpperCase() || 'ALL';
+
+    if (typeof route !== 'string' && route !== undefined && route !== null) {
+      console.warn(`[CUM] Non-string route passed to buildCumulativeKey:`, route);
+    }
+    if (typeof scode !== 'string' && scode !== undefined && scode !== null) {
+      console.warn(`[CUM] Non-string scode passed to buildCumulativeKey:`, scode);
+    }
+
+    return `${cleanId}__${routeKey}__${month}__${seasonKey}`;
   };
 
   /**
@@ -827,15 +839,17 @@ export const useIndexedDB = () => {
    */
   const getFarmerCumulative = useCallback(async (
     farmerId: string,
-    route?: string
-  ): Promise<{ baseCount: number; localCount: number; month: string; route: string; byProduct: Array<{ icode: string; product_name: string; weight: number }>; keyPresent?: boolean; fallbackScope?: string } | null> => {
+    route?: string,
+    scode?: string
+  ): Promise<{ baseCount: number; localCount: number; month: string; route: string; scode: string; byProduct: Array<{ icode: string; product_name: string; weight: number }>; keyPresent?: boolean; fallbackScope?: string } | null> => {
     if (!db) return null;
     try {
       const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const routeKey = (route || '').trim().toUpperCase() || 'ALL';
-      const cacheKey = buildCumulativeKey(cleanId, route, month);
+      const seasonKey = (scode || '').trim().toUpperCase() || 'ALL';
+      const cacheKey = buildCumulativeKey(cleanId, route, month, scode);
 
       const readKey = (key: string): Promise<any | null> => new Promise((resolve, reject) => {
         const tx = db.transaction('farmer_cumulative', 'readonly');
@@ -852,36 +866,24 @@ export const useIndexedDB = () => {
           localCount: row.localCount || 0,
           month: row.month,
           route: row.route || routeKey,
+          scode: row.scode || seasonKey,
           byProduct: row.byProduct || [],
           keyPresent: true,
         };
         if (isFocusedFarmer(cleanId)) {
-          plogFocus('CUM:READ', `${cleanId} route=${result.route} base=${result.baseCount} local=${result.localCount}`,
-            { farmerId: cleanId, route: result.route, source: 'getFarmerCumulative', baseCount: result.baseCount, localCount: result.localCount, byProduct: result.byProduct, lastUpdated: row.lastUpdated });
+          plogFocus('CUM:READ', `${cleanId} route=${result.route} season=${result.scode} base=${result.baseCount} local=${result.localCount}`,
+            { farmerId: cleanId, route: result.route, scode: result.scode, source: 'getFarmerCumulative', baseCount: result.baseCount, localCount: result.localCount, byProduct: result.byProduct, lastUpdated: row.lastUpdated });
         }
         return result;
       }
 
-      // Key absent. If this was a route-scoped read, fall back to the ALL bucket.
-      if (routeKey !== 'ALL') {
-        const allRow = await readKey(buildCumulativeKey(cleanId, undefined, month));
-        if (allRow && (allRow.baseCount || 0) > 0) {
-          logScopeFallback(cleanId, route, allRow.baseCount || 0, cacheKey);
-          return {
-            baseCount: allRow.baseCount || 0,
-            localCount: 0, // localCount is route-specific; never carry it across scopes
-            month: allRow.month || month,
-            route: routeKey,
-            byProduct: allRow.byProduct || [],
-            keyPresent: false,
-            fallbackScope: 'ALL',
-          };
-        }
-      }
+      // v2.12.16: REMOVED global fallback to ALL bucket. If a specific route
+      // or season is requested, we must only return data for that scope
+      // to prevent global totals from being printed on scoped receipts.
 
       if (isFocusedFarmer(cleanId)) {
-        plogFocus('CUM:READ', `${cleanId} route=${routeKey} MISS`,
-          { farmerId: cleanId, route, source: 'getFarmerCumulative', miss: true, cacheKey });
+        plogFocus('CUM:READ', `${cleanId} route=${routeKey} season=${seasonKey} MISS`,
+          { farmerId: cleanId, route, scode, source: 'getFarmerCumulative', miss: true, cacheKey });
       }
       return null;
     } catch (error) {
@@ -913,6 +915,7 @@ export const useIndexedDB = () => {
     fromBackend: boolean = false,
     byProduct?: Array<{ icode: string; product_name: string; weight: number }>,
     route?: string,
+    scode?: string,
     options?: { transrefno?: string; verifySource?: string; caller?: string; allowDecrease?: boolean }
   ): Promise<number | void> => {
     if (!db) return;
@@ -921,7 +924,8 @@ export const useIndexedDB = () => {
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const routeKey = (route || '').trim().toUpperCase() || 'ALL';
-      const cacheKey = buildCumulativeKey(cleanId, route, month);
+      const seasonKey = (scode || '').trim().toUpperCase() || 'ALL';
+      const cacheKey = buildCumulativeKey(cleanId, route, month, scode);
 
       // Inner writer: performs one get→put inside a single readwrite tx and
       // resolves ONLY on tx.oncomplete (durable commit), rejects on
@@ -1069,6 +1073,7 @@ export const useIndexedDB = () => {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
+              scode: seasonKey,
               month,
               baseCount: Number(count) || 0,
               localCount: preservedLocal,
@@ -1106,6 +1111,7 @@ export const useIndexedDB = () => {
               cacheKey,
               farmer_id: cleanId,
               route: routeKey,
+              scode: seasonKey,
               month,
               // CRITICAL: re-use the freshly-read existing.baseCount so a sync
               // commit that landed between our caller's intent and our get is
@@ -1218,6 +1224,7 @@ export const useIndexedDB = () => {
       return readBackValue;
     } catch (error) {
       console.error('Failed to update farmer cumulative:', error);
+      throw error;
     }
   }, [db]);
 
@@ -1244,6 +1251,7 @@ export const useIndexedDB = () => {
     weight: number,
     icode?: string,
     route?: string,
+    scode?: string,
     options?: { transrefno?: string; reason?: string }
   ): Promise<number | void> => {
     if (!db) return;
@@ -1255,7 +1263,8 @@ export const useIndexedDB = () => {
       const now = new Date();
       const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const routeKey = (route || '').trim().toUpperCase() || 'ALL';
-      const cacheKey = buildCumulativeKey(cleanId, route, month);
+      const seasonKey = (scode || '').trim().toUpperCase() || 'ALL';
+      const cacheKey = buildCumulativeKey(cleanId, route, month, scode);
       const ic = String(icode || '').trim().toUpperCase();
 
       const persisted = await new Promise<number>((resolve, reject) => {
@@ -1282,6 +1291,7 @@ export const useIndexedDB = () => {
             cacheKey,
             farmer_id: cleanId,
             route: routeKey,
+            scode: seasonKey,
             month,
             baseCount: nextBase,
             localCount: Number(existing?.localCount || 0),
@@ -1296,8 +1306,8 @@ export const useIndexedDB = () => {
       });
 
       plog.info('CUM:CARRYOVER',
-        `${cleanId} route=${routeKey} +${w} → base=${persisted} (${options?.reason || 'synced receipt'})`,
-        { farmerId: cleanId, route: routeKey, icode: ic, delta: w, baseCount: persisted, transrefno: options?.transrefno, reason: options?.reason });
+        `${cleanId} route=${routeKey} season=${seasonKey} +${w} → base=${persisted} (${options?.reason || 'synced receipt'})`,
+        { farmerId: cleanId, route: routeKey, scode: seasonKey, icode: ic, delta: w, baseCount: persisted, transrefno: options?.transrefno, reason: options?.reason });
 
       return persisted;
     } catch (error) {
@@ -1316,6 +1326,7 @@ export const useIndexedDB = () => {
   const getUnsyncedWeightForFarmer = useCallback(async (
     farmerId: string,
     routeFilter?: string,
+    seasonFilter?: string,
     opts?: { excludeRefs?: string[] }
   ): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
     if (!db) return { total: 0, byProduct: [] };
@@ -1327,6 +1338,7 @@ export const useIndexedDB = () => {
       // Normalize farmerId consistently
       const cleanFarmerId = farmerId.replace(/^#/, '').trim().toUpperCase();
       const cleanRoute = routeFilter ? routeFilter.trim().toUpperCase() : '';
+      const cleanSeason = seasonFilter ? seasonFilter.trim().toUpperCase() : '';
       // v2.10.107: exclude just-submitted reference_no(s) to prevent double-
       // counting weight that the backend already reflects in cloudCumulative.
       const excludeSet = new Set<string>(
@@ -1350,6 +1362,12 @@ export const useIndexedDB = () => {
         if (cleanRoute) {
           const rRoute = (r.route || '').trim().toUpperCase();
           if (rRoute !== cleanRoute) continue;
+        }
+        // Filter by season if specified
+        if (cleanSeason) {
+          // Receipts store season code in season_code or CAN column
+          const rSeason = String(r.season_code || (r as any).CAN || r.session || '').trim().toUpperCase();
+          if (rSeason && rSeason !== cleanSeason) continue;
         }
         // Check same month
         const rDate = new Date(r.collection_date);
@@ -1377,12 +1395,12 @@ export const useIndexedDB = () => {
    * This avoids double-counting by NOT using localCount (which duplicates unsynced receipt data).
    * Returns { total, byProduct } with merged per-product breakdown.
    */
-  const getFarmerTotalCumulative = useCallback(async (farmerId: string, routeFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
-    const cached = await getFarmerCumulative(farmerId, routeFilter);
+  const getFarmerTotalCumulative = useCallback(async (farmerId: string, routeFilter?: string, seasonFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
+    const cached = await getFarmerCumulative(farmerId, routeFilter, seasonFilter);
     const baseCount = cached?.baseCount || 0;
     const baseProd = cached?.byProduct || [];
     // Always recalculate from actual unsynced receipts instead of using cached localCount
-    const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter);
+    const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter, seasonFilter);
     const total = baseCount + unsynced.total;
     
     // Merge by-product: base + unsynced (normalize icode keys to prevent fragmentation)

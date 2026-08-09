@@ -30,8 +30,12 @@ const filterCumulativeByProduct = (
   cumData: { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined,
   productIcode?: string
 ): { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined => {
-  if (!cumData || !productIcode || cumData.byProduct.length === 0) return cumData;
-  const match = cumData.byProduct.find(p => p.icode.trim().toUpperCase() === productIcode.trim().toUpperCase());
+  if (!cumData || !productIcode) return cumData;
+  // v2.12.16: If a product is specified, we MUST only return weight for that
+  // product. If the breakdown is missing, we return 0 instead of falling back
+  // to the global total, preventing over-reporting of cumulative weight.
+  const cleanIcode = productIcode.trim().toUpperCase();
+  const match = cumData.byProduct.find(p => String(p.icode || '').trim().toUpperCase() === cleanIcode);
   return match
     ? { total: match.weight, byProduct: [match] }
     : { total: 0, byProduct: [] };
@@ -315,7 +319,7 @@ const Index = () => {
 
       try {
         console.log(`🔄 Cumulative refresh (${reason}): using batch API...`);
-        const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
+        const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode);
         // v2.12.6: the backend answers `pending: true` while the background
         // warmer recomputes the season snapshot. It carries an EMPTY farmer
         // list — writing it would zero every cached cumulative. Skip entirely.
@@ -340,6 +344,7 @@ const Index = () => {
 
             const WRITE_BATCH = 50;
             let written = 0;
+            let failedCount = 0;
             for (let i = 0; i < qualifying.length; i += WRITE_BATCH) {
               const batch = qualifying.slice(i, i + WRITE_BATCH);
               await Promise.all(batch.map(async (farmer) => {
@@ -347,14 +352,18 @@ const Index = () => {
                 const weight = batchMap.get(fId) ?? 0;
                 const byProd = batchResult.data.farmers.find(f => f.farmer_id.trim() === fId)?.by_product || [];
                 const vs = reason === 'post-sync' ? 'W5:postcapture-refresh' : `W3:prewarm-batch(${reason})`;
-                await updateFarmerCumulative(fId, weight, true, byProd, selectedRouteCode || undefined, { verifySource: vs, caller: `Index/refreshCumulativesBatch(${reason})` });
+                try {
+                  await updateFarmerCumulative(fId, weight, true, byProd, selectedRouteCode || undefined, activeSeasonCode, { verifySource: vs, caller: `Index/refreshCumulativesBatch(${reason})` });
+                  written++;
+                } catch (e) {
+                  failedCount++;
+                }
               }));
-              written += batch.length;
               if (i + WRITE_BATCH < qualifying.length) {
                 await new Promise(r => setTimeout(r, 0));
               }
             }
-            console.log(`✅ Cumulative refresh (${reason}): ${written}/${qualifying.length} farmers updated completely`);
+            console.log(`✅ Cumulative refresh (${reason}): ${written}/${qualifying.length} farmers updated successfully (${failedCount} failed)`);
           }
         }
 
@@ -531,7 +540,7 @@ const Index = () => {
           let batchResult: any = null;
           let batchPending = false;
           for (let attempt = 1; attempt <= 3; attempt++) {
-            batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined);
+            batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode);
             batchPending = isPending(batchResult);
             if (!batchPending && batchResult?.success && batchResult.data?.farmers?.length) { batchServerBusy = false; break; }
             batchServerBusy = batchPending || isServerBusy(batchResult);
@@ -574,7 +583,7 @@ const Index = () => {
                 coveredFarmerIds.add(fId);
                 const weight = batchMap.get(fId) ?? 0;
                 try {
-                  const persistedAfter = await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch', caller: 'Index/loadCumulativeBatch' });
+                  const persistedAfter = await updateFarmerCumulative(fId, weight, true, batchByProductMap.get(fId) || [], selectedRouteCode || undefined, activeSeasonCode, { verifySource: 'W3:prewarm-batch', caller: 'Index/loadCumulativeBatch' });
                   cumulativeMonitor.batchOk(batchLabel);
                   // Stale-reject signature: returned baseCount strictly greater
                   // than the value we tried to write. Schedule reconfirm AND
@@ -649,7 +658,7 @@ const Index = () => {
                         }
                         const individual = Number(indRes.data.cumulative_weight) || 0;
                         if (individual > t.persisted + 0.0001) {
-                          await updateFarmerCumulative(t.fId, individual, true, indRes.data.by_product || [], selectedRouteCode || undefined, { verifySource: 'W3:reconfirm-heal', caller: 'Index/w3Reconfirm' });
+                          await updateFarmerCumulative(t.fId, individual, true, indRes.data.by_product || [], selectedRouteCode || undefined, activeSeasonCode, { verifySource: 'W3:reconfirm-heal', caller: 'Index/w3Reconfirm' });
                           clearRegressionPin(t.fId, selectedRouteCode || 'ALL');
                           plog.pinned('info', 'CUM:W3-RECONFIRM-HEAL-UP',
                             `${t.fId} route=${selectedRouteCode || 'ALL'} individual=${individual} > persisted=${t.persisted} (batch=${t.batchIncoming})`,
@@ -663,7 +672,7 @@ const Index = () => {
                             unsyncedTotal = u?.total || 0;
                           } catch { /* treat as unknown — block heal-down */ unsyncedTotal = -1; }
                           if (unsyncedTotal === 0) {
-                            await updateFarmerCumulative(t.fId, individual, true, indRes.data.by_product || [], selectedRouteCode || undefined, { verifySource: 'W3:reconfirm-heal-down', caller: 'Index/w3Reconfirm', allowDecrease: true });
+                            await updateFarmerCumulative(t.fId, individual, true, indRes.data.by_product || [], selectedRouteCode || undefined, activeSeasonCode, { verifySource: 'W3:reconfirm-heal-down', caller: 'Index/w3Reconfirm', allowDecrease: true });
                             clearRegressionPin(t.fId, selectedRouteCode || 'ALL');
                             plog.pinned('warn', 'CUM:W3-RECONFIRM-HEAL-DOWN',
                               `${t.fId} route=${selectedRouteCode || 'ALL'} HEAL-DOWN persisted=${t.persisted} → ${individual} (batch=${t.batchIncoming} == individual=${individual})`,
@@ -710,7 +719,7 @@ const Index = () => {
                         if (v1 >= currentPersisted - 0.0001) {
                           // Backend caught up or exceeded cache → pin resolved naturally.
                           if (v1 > currentPersisted + 0.0001) {
-                            await updateFarmerCumulative(pin.farmerId, v1, true, r1.data.by_product || [], pin.route === 'ALL' ? undefined : pin.route, { verifySource: 'W3:reconfirm-heal', caller: 'Index/w3PinReplay' });
+                            await updateFarmerCumulative(pin.farmerId, v1, true, r1.data.by_product || [], pin.route === 'ALL' ? undefined : pin.route, activeSeasonCode, { verifySource: 'W3:reconfirm-heal', caller: 'Index/w3PinReplay' });
                           }
                           clearRegressionPin(pin.farmerId, pin.route);
                           plog.info('CUM:W3-PIN-RESOLVED',
@@ -747,7 +756,7 @@ const Index = () => {
                           unsyncedTotal = u?.total || 0;
                         } catch { unsyncedTotal = -1; }
                         if (unsyncedTotal === 0) {
-                          await updateFarmerCumulative(pin.farmerId, v2, true, r2.data.by_product || [], pin.route === 'ALL' ? undefined : pin.route, { verifySource: 'W3:reconfirm-heal-down', caller: 'Index/w3PinReplay', allowDecrease: true });
+                          await updateFarmerCumulative(pin.farmerId, v2, true, r2.data.by_product || [], pin.route === 'ALL' ? undefined : pin.route, activeSeasonCode, { verifySource: 'W3:reconfirm-heal-down', caller: 'Index/w3PinReplay', allowDecrease: true });
                           clearRegressionPin(pin.farmerId, pin.route);
                           plog.pinned('warn', 'CUM:W3-RECONFIRM-HEAL-DOWN',
                             `${pin.farmerId} route=${pin.route} STAGE-B HEAL-DOWN persisted=${currentPersisted} → ${v2} (two-read confirm v1=${v1}==v2=${v2})`,
@@ -816,11 +825,11 @@ const Index = () => {
                 const results = await Promise.allSettled(batch.map(async (farmer) => {
                   const fId = farmer.farmer_id.replace(/^#/, '').trim();
                   const res = await Promise.race([
-                    mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint, selectedRouteCode || undefined),
+                    mysqlApi.farmerFrequency.getMonthlyFrequency(fId, deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode),
                     new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), TIMEOUT))
                   ]);
                   if (res.success && res.data) {
-                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true, res.data.by_product || [], selectedRouteCode || undefined, { verifySource: 'W3:prewarm-batch-fallback', caller: 'Index/cumulativeFallbackPass' });
+                    await updateFarmerCumulative(fId, res.data.cumulative_weight ?? 0, true, res.data.by_product || [], selectedRouteCode || undefined, activeSeasonCode, { verifySource: 'W3:prewarm-batch-fallback', caller: 'Index/cumulativeFallbackPass' });
                     return true;
                   }
                   return false;
@@ -930,18 +939,18 @@ const Index = () => {
     // Pre-fetch cumulative for this farmer (online: seed cache, offline: use local data)
     if (showCumulative && deviceFingerprint) {
       (async () => {
-        try {
+        try        {
           if (navigator.onLine) {
             const freqResult = await Promise.race([
-              mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint, selectedRouteCode || undefined),
+              mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode),
               new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
             ]);
             if (freqResult.success && freqResult.data) {
               const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
               const cloudByProduct = freqResult.data.by_product || [];
-              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, { verifySource: 'W4:on-select-fetch', caller: 'Index/onFarmerSelect' });
+              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, activeSeasonCode, { verifySource: 'W4:on-select-fetch', caller: 'Index/onFarmerSelect' });
               // Fresh unsynced weight from actual IndexedDB receipts (no cached localCount)
-              const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId, selectedRouteCode || undefined);
+              const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId, selectedRouteCode || undefined, activeSeasonCode);
               // Merge by-product
               const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
               for (const p of cloudByProduct) {
@@ -959,7 +968,7 @@ const Index = () => {
             }
           }
           // Offline or fetch failed: baseCount + fresh unsynced receipts (no double-counting)
-          const total = await getFarmerTotalCumulative(cleanFarmerId, selectedRouteCode || undefined);
+          const total = await getFarmerTotalCumulative(cleanFarmerId, selectedRouteCode || undefined, activeSeasonCode);
           const filtered = filterCumulativeByProduct(total, selectedProduct?.icode);
           setCumulativeFrequency(filtered);
           console.log(`📊 Offline cumulative for ${cleanFarmerId}: total=${total.total}`);
@@ -1040,7 +1049,7 @@ const Index = () => {
 
   // Handle starting collection from Dashboard (Buy Produce)
   const handleStartCollection = (route: Route, session: Session, product: Item | null) => {
-    setSelectedRouteCode(route.tcode);
+    setSelectedRouteCode(String(route.tcode || '').trim());
     setSelectedRouteMprefix(route.mprefix || '');
     setRouteName(route.descript);
     setSession(session.descript);
@@ -1052,7 +1061,7 @@ const Index = () => {
 
   // Handle starting selling from Dashboard (Sell Produce)
   const handleStartSelling = (route: Route, session: Session, product: Item | null) => {
-    setSelectedRouteCode(route.tcode);
+    setSelectedRouteCode(String(route.tcode || '').trim());
     setSelectedRouteMprefix(route.mprefix || '');
     setRouteName(route.descript);
     setSession(session.descript);
@@ -1608,10 +1617,10 @@ const Index = () => {
               // prior-day deliveries. We now anchor the floor to the cached
               // farmer_cumulative.baseCount (updated on every sync) AND retry
               // the cloud read once on a suspected lag.
-              const cachedRow = await getFarmerCumulative(cleanId, selectedRouteCode || undefined);
-              const cachedBase = Number(cachedRow?.baseCount || 0);
-              const trustedFloor = Math.max(cachedBase, previousCumTotal) + justSubmittedWeight;
-              baseForLog = cachedBase;
+              const cachedRow = await getFarmerCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode);
+              const productBase = filterCumulativeByProduct({ total: cachedRow?.baseCount || 0, byProduct: cachedRow?.byProduct || [] }, selectedProduct?.icode)?.total || 0;
+              const trustedFloor = Math.max(productBase, previousCumTotal) + justSubmittedWeight;
+              baseForLog = cachedRow?.baseCount || 0;
               floorForLog = trustedFloor;
               fallbackScopeForLog = cachedRow?.fallbackScope;
 
@@ -1620,7 +1629,7 @@ const Index = () => {
               // A 2s race lost too often, and the offline fallback returns 0
               // when the route cache was never pre-warmed → receipts printed 0.
               const fetchCloud = () => Promise.race([
-                mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint, selectedRouteCode || undefined),
+                mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode),
                 new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 4000))
               ]);
 
@@ -1656,13 +1665,13 @@ const Index = () => {
                 // what we already trust — never let an unconfirmed stale read
                 // lower the persisted baseCount (mirrors v2.10.94/104 spirit).
                 if (cloudCumulative >= cachedBase) {
-                  await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, { verifySource: 'W6:onscreen-print', caller: 'Index/onScreenPrint' });
+                  await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, activeSeasonCode, { verifySource: 'W6:onscreen-print', caller: 'Index/onScreenPrint' });
                 }
                 // v2.10.107: exclude just-submitted refs — cloudCumulative
                 // already includes them, the local pending row would double-count.
                 const submittedRefs = capturedCollections.map((c) => c.reference_no).filter(Boolean) as string[];
-                const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined, { excludeRefs: submittedRefs });
-                const fullUnsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined);
+                const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined, activeSeasonCode, { excludeRefs: submittedRefs });
+                const fullUnsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined, activeSeasonCode);
                 const removed = +(fullUnsynced.total - unsynced.total).toFixed(3);
                 if (removed > 0) {
                   plog.info('CUM:DOUBLE-GUARD',
@@ -1694,7 +1703,7 @@ const Index = () => {
                 }
               } else {
                 // Cloud unavailable: local cache + unsynced, but never below the floor.
-                const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
+                const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode);
                 const filtered = filterCumulativeByProduct(total, selectedProduct?.icode);
                 computedCumulative = (filtered?.total ?? 0) >= trustedFloor || trustedFloor <= 0
                   ? filtered
@@ -1710,13 +1719,13 @@ const Index = () => {
                   { farmerId: cleanId, route: selectedRouteCode, local: filtered?.total ?? 0, trustedFloor, cachedBase, fallbackScope: fallbackScopeForLog, used: computedCumulative?.total, path: 'on-screen' });
               }
             } else {
-              const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
+              const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode);
               computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
               localForLog = total.total;
               usedForLog = 'local';
             }
           } catch {
-            const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined);
+            const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode);
             computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
             localForLog = total.total;
             usedForLog = 'local';
@@ -1783,12 +1792,10 @@ const Index = () => {
           try {
             if (navigator.onLine) {
               // v2.10.106: trusted-floor guard (same as on-screen path above).
-              const cachedRow = await getFarmerCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
-              const cachedBase = Number(cachedRow?.baseCount || 0);
-              const prevCum = printData.previousCumulativeTotal ?? 0;
-              const justSubmitted = printData.justSubmittedWeight ?? 0;
-              const trustedFloor = Math.max(cachedBase, prevCum) + justSubmitted;
-              baseForLog = cachedBase;
+              const cachedRow = await getFarmerCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
+              const productBase = filterCumulativeByProduct({ total: cachedRow?.baseCount || 0, byProduct: cachedRow?.byProduct || [] }, printData.productIcode)?.total || 0;
+              const trustedFloor = Math.max(productBase, prevCum) + justSubmitted;
+              baseForLog = cachedRow?.baseCount || 0;
               floorForLog = trustedFloor;
               fallbackScopeForLog = cachedRow?.fallbackScope;
 
@@ -1796,7 +1803,7 @@ const Index = () => {
               // v2.12.7: longer window + one retry (Contabo latency) so the
               // print path stops falling back to an empty cache (cumulative 0).
               const fetchCloud = () => Promise.race([
-                mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint, printData.routeCode || undefined),
+                mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint, printData.routeCode || undefined, activeSeasonCode),
                 new Promise<{ success: false }>((resolve) =>
                   setTimeout(() => resolve({ success: false }), 4000)
                 )
@@ -1828,8 +1835,8 @@ const Index = () => {
 
                 // v2.10.107: exclude just-submitted refs from unsynced bucket.
                 const submittedRefs = printData.submittedRefs || [];
-                const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined, { excludeRefs: submittedRefs });
-                const fullUnsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined);
+                const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode, { excludeRefs: submittedRefs });
+                const fullUnsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
                 const removed = +(fullUnsynced.total - unsynced.total).toFixed(3);
                 if (removed > 0) {
                   plog.info('CUM:DOUBLE-GUARD',
@@ -1860,12 +1867,12 @@ const Index = () => {
                 }
                 // Update cache only when cloud >= cachedBase (don't lower the cache from a stale read).
                 if (cloudCumulative >= cachedBase) {
-                  updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined, { verifySource: 'W7:background-print', caller: 'Index/backgroundPrint' }).catch(() => {});
+                  updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined, activeSeasonCode, { verifySource: 'W7:background-print', caller: 'Index/backgroundPrint' }).catch(() => {});
                 }
               } else {
                 // v2.12.7: cloud unavailable online — fall back to the trusted
                 // floor rather than an empty cache.
-                const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
+                const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
                 const filtered = filterCumulativeByProduct(total, printData.productIcode);
                 cumulativeForPrint = (filtered?.total ?? 0) >= trustedFloor || trustedFloor <= 0
                   ? filtered
@@ -1884,14 +1891,14 @@ const Index = () => {
 
             // Offline or cloud fetch failed: use baseCount + fresh unsynced receipts
             if (cumulativeForPrint === undefined) {
-              const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
+              const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
               cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
               localForLog = total.total;
               usedForLog = 'local';
             }
           } catch {
             // Fallback: baseCount + unsynced receipts (already includes just-saved offline receipts)
-            const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
+            const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
             cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
             localForLog = total.total;
             usedForLog = 'local';

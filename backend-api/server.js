@@ -4294,17 +4294,35 @@ if (path === '/api/sales' && method === 'POST') {
       let periodStart = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
       let periodEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
       
-      // For coffee orgs, use active season date range instead of calendar month
+      // For coffee orgs, use season date range instead of calendar month
       try {
         const [orgRows] = await pool.query(
           `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(cno) = TRIM(?) LIMIT 1`, [ccode]
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
-          const activeSeason = await findActiveSeason(ccode, today);
-          if (activeSeason) {
-            periodStart = activeSeason.datefrom;
-            periodEnd = activeSeason.dateto;
+          // v2.12.16: allow an explicit season (SCODE) parameter
+          let season = null;
+          const requestedSeason = String(parsedUrl.query.season || '').trim();
+          if (requestedSeason) {
+            try {
+              const [sRows] = await pool.query(
+                `SELECT SCODE, datefrom, dateto FROM Seasons
+                 WHERE TRIM(ccode) = TRIM(?) AND TRIM(SCODE) = TRIM(?) LIMIT 1`,
+                [ccode, requestedSeason]
+              );
+              if (sRows.length > 0) season = sRows[0];
+              else console.log(`⚠️ Requested season ${requestedSeason} not found for ccode=${ccode}`);
+            } catch (e) {
+              console.log('⚠️ Season lookup failed:', e.message);
+            }
+          }
+
+          if (!season) season = await findActiveSeason(ccode, today);
+          if (season) {
+            const ymd = (v) => (typeof v === 'string' ? v.slice(0, 10) : toYmdLocal(new Date(v)));
+            periodStart = ymd(season.datefrom);
+            periodEnd = ymd(season.dateto);
             console.log(`📊 Individual cumulative for ${farmer_id} using season range: ${periodStart} to ${periodEnd}`);
           } else {
             console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);

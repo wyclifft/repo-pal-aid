@@ -349,10 +349,12 @@ export const useDataSync = () => {
                     try {
                       const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                       const routeForRefresh = String(receipt.route || '').trim();
+                      const seasonForRefresh = String(receipt.season_code || '').trim();
                       const refreshResp = await farmerFrequencyApi.getMonthlyFrequency(
                         cleanFarmerId,
                         deviceFingerprint,
-                        routeForRefresh || undefined
+                        routeForRefresh || undefined,
+                        seasonForRefresh || undefined
                       );
                       if (refreshResp.success && refreshResp.data) {
                         const freshTotal = Number(refreshResp.data.cumulative_weight) || 0;
@@ -364,7 +366,7 @@ export const useDataSync = () => {
                         // v2.10.116: capture the verified persisted value so
                         // the success log reflects what IndexedDB actually
                         // committed, not just what we fetched.
-                        const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W2:collision-retry', caller: 'syncReceipts/collisionRetry' });
+                        const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, seasonForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W2:collision-retry', caller: 'syncReceipts/collisionRetry' });
                         const staleStr = typeof persisted === 'number' && Math.abs(persisted - freshTotal) > 0.0001 ? 'reject' : 'accept';
                         console.log(`[SYNC] ✅ Refreshed cumulative (collision retry) for ${cleanFarmerId}: fetched=${freshTotal} kg persisted=${typeof persisted === 'number' ? persisted : 'unverified'} kg stale=${staleStr}`);
                       }
@@ -448,16 +450,18 @@ export const useDataSync = () => {
                 try {
                   const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                   const routeForRefresh = String(receipt.route || '').trim();
+                  const seasonForRefresh = String(receipt.season_code || '').trim();
                   // v2.12.11: remember the cached cloud base BEFORE the refresh
                   // so we can tell whether the fresh cloud value actually
                   // contains the receipt we just uploaded.
                   const baseBefore = Number(
-                    (await getFarmerCumulative(cleanFarmerId, routeForRefresh || undefined))?.baseCount || 0
+                    (await getFarmerCumulative(cleanFarmerId, routeForRefresh || undefined, seasonForRefresh || undefined))?.baseCount || 0
                   );
                   const refreshResp = await farmerFrequencyApi.getMonthlyFrequency(
                     cleanFarmerId,
                     deviceFingerprint,
-                    routeForRefresh || undefined
+                    routeForRefresh || undefined,
+                    seasonForRefresh || undefined
                   );
                   if (refreshResp.success && refreshResp.data) {
                     const freshTotal = Number(refreshResp.data.cumulative_weight) || 0;
@@ -467,7 +471,7 @@ export const useDataSync = () => {
                       weight: Number(p.weight) || 0,
                     }));
                     // v2.10.116: log the VERIFIED persisted value, not the fetched one.
-                    const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W1:postsync-refresh', caller: 'syncReceipts/postSync' });
+                    const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, seasonForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W1:postsync-refresh', caller: 'syncReceipts/postSync' });
                     cumulativeRefreshed = true;
 
                     // v2.12.11: the cloud total can still be the PRE-sync
@@ -485,6 +489,7 @@ export const useDataSync = () => {
                           Math.min(missing, receiptWeight),
                           receipt.product_code || (receipt as any).icode,
                           routeForRefresh || undefined,
+                          seasonForRefresh || undefined,
                           { transrefno: receipt.reference_no, reason: 'cloud snapshot lagging' }
                         );
                       }
@@ -606,6 +611,7 @@ export const useDataSync = () => {
                     Number(receipt.weight) || 0,
                     receipt.product_code || (receipt as any).icode,
                     String(receipt.route || '').trim() || undefined,
+                    String(receipt.season_code || '').trim() || undefined,
                     { transrefno: receipt.reference_no, reason: 'server duplicate (already stored)' }
                   );
                   if (receipt.orderId && typeof receipt.orderId === 'number') {
@@ -667,6 +673,7 @@ export const useDataSync = () => {
                 Number(receipt.weight) || 0,
                 receipt.product_code || (receipt as any).icode,
                 String(receipt.route || '').trim() || undefined,
+                String(receipt.season_code || '').trim() || undefined,
                 { transrefno: receipt.reference_no, reason: 'exception duplicate (already stored)' }
               );
               if (receipt.orderId && typeof receipt.orderId === 'number') {

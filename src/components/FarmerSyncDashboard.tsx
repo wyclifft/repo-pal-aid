@@ -185,7 +185,7 @@ export const FarmerSyncDashboard = () => {
           batch.map(async (bf) => {
             const fId = bf.farmer_id.trim();
             const farmerMeta = nameLookup.get(fId);
-            const cumData = await getFarmerCumulative(fId, route || activeRoute || undefined);
+            const cumData = await getFarmerCumulative(fId, route || activeRoute || undefined, activeScode || undefined);
 
             // v2.10.96: when an active product is selected, restrict baseCount
             // to the matching by_product slice instead of the combined total.
@@ -283,6 +283,8 @@ export const FarmerSyncDashboard = () => {
               if (!fid) continue;
               const rowRoute = String(r.route || '').trim().toUpperCase() || 'ALL';
               if (cleanActiveRoute && rowRoute !== cleanActiveRoute) continue;
+              const rowScode = String(r.scode || '').trim().toUpperCase() || 'ALL';
+              if (cleanScode && rowScode !== cleanScode) continue;
 
               let baseCount = Number(r.baseCount || 0);
               let localCount = Number(r.localCount || 0);
@@ -333,10 +335,10 @@ export const FarmerSyncDashboard = () => {
         if (rIcode !== cleanIcode) continue;
       }
       // v2.10.96: respect selected season (scode) — receipts persist it as
-      // `n_code` (coffee SCODE) or fall back to `session`/`scode`/`season`.
+      // `season_code` or `CAN` column (or legacy session/scode/season).
       if (cleanScode) {
         const rScode = String(
-          (r as any).n_code || (r as any).scode || (r as any).season || (r as any).session || ''
+          (r as any).season_code || (r as any).CAN || (r as any).n_code || (r as any).scode || (r as any).season || (r as any).session || ''
         ).trim().toUpperCase();
         if (rScode && rScode !== cleanScode) continue;
       }
@@ -421,7 +423,7 @@ export const FarmerSyncDashboard = () => {
                 const wb = batchFarmers.slice(i, i + WRITE_BATCH);
                 await Promise.all(wb.map(async (f) => {
                   try {
-                    await updateFarmerCumulative(f.farmer_id.trim(), f.cumulative_weight, true, f.by_product || [], activeRoute || undefined);
+                    await updateFarmerCumulative(f.farmer_id.trim(), f.cumulative_weight, true, f.by_product || [], activeRoute || undefined, activeScode || undefined);
                     cumulativeMonitor.batchOk(batchLabel);
                   } catch {
                     cumulativeMonitor.batchFail(batchLabel);

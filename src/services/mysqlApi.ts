@@ -1100,9 +1100,10 @@ export const farmerFrequencyApi = {
   /**
    * Get farmer's monthly cumulative frequency (collection count for current month)
    */
-  getMonthlyFrequency: async (farmerId: string, uniquedevcode: string, route?: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
+  getMonthlyFrequency: async (farmerId: string, uniquedevcode: string, route?: string, season?: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
     let url = `/farmer-monthly-frequency?farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
     if (route) url += `&route=${encodeURIComponent(route)}`;
+    if (season) url += `&season=${encodeURIComponent(season)}`;
     return apiRequest<FarmerMonthlyFrequency>(url);
   },
 
