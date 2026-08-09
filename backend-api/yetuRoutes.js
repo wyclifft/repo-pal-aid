@@ -193,6 +193,7 @@ const handleYetuRoutes = async ({ pool, path, method, req, res, parsedUrl, sendJ
     const result = await svc.listTransactions(pool, {
       ccode: access.ccode,
       accountNumber: access.accountNumber,
+      allAccounts: access.accounts,
       page: q.page,
       limit: q.limit,
       search: String(q.search || '').slice(0, 80),
@@ -221,7 +222,11 @@ const handleYetuRoutes = async ({ pool, path, method, req, res, parsedUrl, sendJ
     });
     if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403), true;
 
-    const summary = await svc.getSummary(pool, { ccode: access.ccode, accountNumber: access.accountNumber });
+    const summary = await svc.getSummary(pool, {
+      ccode: access.ccode,
+      accountNumber: access.accountNumber,
+      allAccounts: access.accounts,
+    });
     return sendJSON(res, {
       success: true,
       data: { ...summary, account_number: access.accountNumber, accounts: access.accounts },

@@ -54,11 +54,12 @@ const normalizeYetuPayload = (body = {}) => {
   'transaction_reference', 'transactionReference', 'transactionRef', 'trans_ref',
   'reference', 'transactionId', 'transaction_id', 'receipt_number', 'receiptNumber',
 ]));
-  const accountNumber = str(pick(body, [
+  const accountNumberRaw = pick(body, [
   'InvoiceNumber',
   'member_number', 'memberNumber', 'account_number', 'accountNumber',
   'member_no', 'memberNo', 'account', 'billRefNumber', 'bill_ref_number',
-]));
+]);
+  const accountNumber = accountNumberRaw === undefined || accountNumberRaw === null ? '' : String(accountNumberRaw);
   const amountRaw = pick(body, [
   'TransAmount',
   'amount', 'transaction_amount', 'transactionAmount', 'transAmount', 'value'
@@ -169,6 +170,28 @@ const resolveMember = async (pool, accountNumber) => {
     return { memberId: rows[0].member_id, ccode: String(rows[0].ccode || '').trim(), allocated: true };
   }
 
+  // v2.12.10 — Prefix fallback. If '7136#BAD' fails, check if '7136' is linked.
+  // This captures mistyped sub-accounts under the recovery account.
+  if (accountNumber.includes('#')) {
+    const prefix = accountNumber.split('#')[0].trim();
+    if (prefix) {
+      const [prefixRows] = await pool.query(
+        `SELECT member_id, ccode FROM sacco_members
+          WHERE status = 'active'
+            AND FIND_IN_SET(
+                  UPPER(TRIM(?)),
+                  UPPER(REPLACE(REPLACE(account_number, ' ', ''), '&&', ','))
+                ) > 0
+          LIMIT 1`,
+        [prefix]
+      );
+      if (prefixRows.length > 0) {
+        console.log('[YETU] account %s not found, falling back to prefix %s', accountNumber, prefix);
+        return { memberId: prefixRows[0].member_id, ccode: String(prefixRows[0].ccode || '').trim(), allocated: true };
+      }
+    }
+  }
+
   // v2.12.8 — NO fallback company. An unknown account is stored with
   // member_id = NULL and ccode = NULL so it can never be attributed to
   // another Sacco's books. It is reconciled later by an operator.
@@ -193,10 +216,10 @@ const canonicalAccount = (value) =>
  * @returns {{ stored: boolean, duplicate: boolean, txnId?: number }}
  */
 const storeDeposit = async (pool, payload, rawBody) => {
-  const account = canonicalAccount(payload.accountNumber);
-  console.log('[YETU] Resolving member: raw=%s canonical=%s', payload.accountNumber, account);
-  const { memberId, ccode, allocated } = await resolveMember(pool, account);
-
+  // v2.12.11 — Record is stored and resolved EXACTLY as received.
+  // The DB-side UPPER(TRIM(?)) handles normalization for lookup purposes.
+  console.log('[YETU] Resolving member: raw=%s', payload.accountNumber);
+  const { memberId, ccode, allocated } = await resolveMember(pool, payload.accountNumber);
 
   try {
     console.log('[YETU] Inserting into sacco_transactions...');
@@ -208,10 +231,8 @@ const storeDeposit = async (pool, payload, rawBody) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ccode || null, // v2.12.8: NULL for unallocated deposits
-
         memberId,
-        account, // v2.12.9: stored canonical (upper-cased, space-free)
-
+        payload.accountNumber, // v2.12.11: stored RAW exactly as received
         payload.reference,
         payload.amount,
         payload.payerName,
@@ -225,6 +246,7 @@ const storeDeposit = async (pool, payload, rawBody) => {
     );
     return { stored: true, duplicate: false, txnId: result.insertId, ccode, allocated };
   } catch (e) {
+    console.error('[YETU] Inserting into sacco_transactions failed:', e && e.message);
     if (e && (e.code === 'ER_DUP_ENTRY' || e.errno === 1062)) {
       return { stored: false, duplicate: true, ccode, allocated };
     }
@@ -233,6 +255,33 @@ const storeDeposit = async (pool, payload, rawBody) => {
 };
 
 // ── Read models (member portal) ─────────────────────────────────────────────
+
+/**
+ * v2.12.10 — Shared filter logic for recovery accounts.
+ * Prefix accounts (no '#') show mistyped deposits for that prefix,
+ * excluding specific accounts already linked to the user.
+ */
+const buildAccountFilter = (ccode, accountNumber, allAccounts) => {
+  const where = [`UPPER(TRIM(ccode)) = UPPER(TRIM(?))`];
+  const params = [ccode];
+
+  if (accountNumber && !accountNumber.includes('#')) {
+    // v2.12.12 — Recovery matches the prefix itself OR prefix#mistyped
+    where.push(`(account_number_raw = ? OR account_number_raw LIKE ?)`);
+    params.push(accountNumber, `${accountNumber}#%`);
+
+    const specific = (allAccounts || [])
+      .filter((a) => a.includes('#') && a.toUpperCase().startsWith(`${accountNumber.toUpperCase()}#`));
+    if (specific.length > 0) {
+      where.push(`account_number_raw NOT IN (?)`);
+      params.push(specific);
+    }
+  } else {
+    where.push(`UPPER(TRIM(account_number_raw)) = UPPER(TRIM(?))`);
+    params.push(accountNumber);
+  }
+  return { where, params };
+};
 
 const SORTABLE = {
   transaction_date: 'transaction_date',
@@ -245,15 +294,14 @@ const SORTABLE = {
  * Always scoped to (ccode, account_number) resolved server-side from the
  * authenticated user — the client can never request another member's rows.
  */
-const listTransactions = async (pool, { ccode, accountNumber, page, limit, search, from, to, sort, order }) => {
+const listTransactions = async (pool, { ccode, accountNumber, allAccounts, page, limit, search, from, to, sort, order }) => {
   const safePage = Math.max(1, parseInt(page, 10) || 1);
   const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const offset = (safePage - 1) * safeLimit;
   const sortCol = SORTABLE[String(sort || '').toLowerCase()] || 'transaction_date';
   const sortDir = String(order || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
-  const where = [`UPPER(TRIM(ccode)) = UPPER(TRIM(?))`, `UPPER(TRIM(account_number_raw)) = UPPER(TRIM(?))`];
-  const params = [ccode, accountNumber];
+  const { where, params } = buildAccountFilter(ccode, accountNumber, allAccounts);
 
   const term = String(search || '').trim();
   if (term) {
@@ -293,7 +341,10 @@ const listTransactions = async (pool, { ccode, accountNumber, page, limit, searc
   };
 };
 
-const getSummary = async (pool, { ccode, accountNumber }) => {
+const getSummary = async (pool, { ccode, accountNumber, allAccounts }) => {
+  const { where, params } = buildAccountFilter(ccode, accountNumber, allAccounts);
+  const whereSql = where.join(' AND ');
+
   const [rows] = await pool.query(
     `SELECT
         IFNULL(SUM(amount), 0) AS lifetime_total,
@@ -308,9 +359,8 @@ const getSummary = async (pool, { ccode, accountNumber }) => {
                         THEN amount ELSE 0 END), 0) AS year_total,
         MAX(transaction_date) AS last_deposit_date
        FROM sacco_transactions
-      WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
-        AND UPPER(TRIM(account_number_raw)) = UPPER(TRIM(?))`,
-    [ccode, accountNumber]
+      WHERE ${whereSql}`,
+    params
   );
   const r = rows[0] || {};
   return {

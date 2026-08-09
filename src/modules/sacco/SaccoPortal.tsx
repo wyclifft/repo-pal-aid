@@ -76,6 +76,12 @@ const SaccoPortal = () => {
   // v2.12.8: accounts the user may view (from Users.link_account, split on '&&').
   const accounts: string[] =
     summaryQuery.data?.accounts || txnQuery.data?.accounts || [];
+
+  // v2.12.10: Prefix accounts (recovery) are those without a '#' separator.
+  // They are handled via a separate selector.
+  const recoveryAccounts = useMemo(() => accounts.filter((a) => !a.includes('#')), [accounts]);
+  const specificAccounts = useMemo(() => accounts.filter((a) => a.includes('#')), [accounts]);
+
   const activeAccount =
     account || summaryQuery.data?.account_number || txnQuery.data?.account_number || '';
 
@@ -188,18 +194,37 @@ const SaccoPortal = () => {
             </p>
             {/* v2.12.8: picker appears only when the user has several linked
                 accounts. Native select — WebView 51 safe. */}
-            {accounts.length > 1 && (
-              <select
-                aria-label="Select account"
-                className="mt-1 h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                value={activeAccount}
-                onChange={(e) => handleAccountChange(e.target.value)}
-              >
-                {accounts.map((a) => (
-                  <option key={a} value={a}>A/C {a}</option>
-                ))}
-              </select>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {accounts.length > 1 && specificAccounts.length > 0 && (
+                <select
+                  aria-label="Select account"
+                  className="mt-1 h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                  value={specificAccounts.includes(activeAccount) ? activeAccount : ''}
+                  onChange={(e) => handleAccountChange(e.target.value)}
+                >
+                  {!specificAccounts.includes(activeAccount) && (
+                    <option value="" disabled>Select account...</option>
+                  )}
+                  {specificAccounts.map((a) => (
+                    <option key={a} value={a}>A/C {a}</option>
+                  ))}
+                </select>
+              )}
+
+              {recoveryAccounts.length > 0 && (
+                <select
+                  aria-label="Select recovery account"
+                  className="mt-1 h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                  value={recoveryAccounts.includes(activeAccount) ? activeAccount : ''}
+                  onChange={(e) => handleAccountChange(e.target.value)}
+                >
+                  <option value="" disabled>Recovery</option>
+                  {recoveryAccounts.map((a) => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
 
 

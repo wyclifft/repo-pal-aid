@@ -56,7 +56,7 @@ let pool = null;
 async function getPool() {
   if (!pool) {
     pool = mysql.createPool(DB_CONFIG);
-    console.log(`[${new Date().toISOString()}] Database pool created (limit=${SYNC_POOL_LIMIT}, queue=${SYNC_QUEUE_LIMIT})`);
+    console.log(`Database pool created (limit=${SYNC_POOL_LIMIT}, queue=${SYNC_QUEUE_LIMIT})`);
     // Periodic pool snapshot for observability.
     setInterval(() => {
       try {
@@ -129,9 +129,12 @@ async function parseBody(req) {
 }
 
 function log(level, message, data = null) {
-  const timestamp = new Date().toISOString();
+  const timestamp = ts();
   const logEntry = { timestamp, level, message, ...(data && { data }) };
-  console.log(JSON.stringify(logEntry));
+  // Note: console.log is already patched above to prepend ts(), so this will
+  // result in [TS] {"timestamp": "[TS]", ...}.
+  // To avoid duplication in JSON logs, we'll use original log if it's already structured.
+  _log(JSON.stringify(logEntry));
 }
 
 // ============================================================================

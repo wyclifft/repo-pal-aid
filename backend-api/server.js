@@ -13,6 +13,26 @@ const { chargeFarmerViaKCB } = require('./kcbPaymentService');
 // v2.12.0 — Yetu Sacco member payments module (webhook + member portal APIs)
 const { handleYetuRoutes } = require('./yetuRoutes');
 
+// v2.12.13 — Autoritative Nairobi 12HR log timestamps for all backend logs.
+const ts = () => {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Nairobi',
+      year: '2-digit', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+    }).formatToParts(new Date());
+    const p = (type) => parts.find(x => x.type === type).value;
+    return `[${p('year')}:${p('month')}:${p('day')} ${p('hour')}:${p('minute')}:${p('second')} ${p('dayPeriod').toUpperCase()}]`;
+  } catch (e) {
+    return `[${new Date().toISOString()}]`;
+  }
+};
+
+const _log = console.log, _warn = console.warn, _error = console.error;
+console.log = (...a) => _log(ts(), ...a);
+console.warn = (...a) => _warn(ts(), ...a);
+console.error = (...a) => _error(ts(), ...a);
+
 // SECURITY (v2.10.83): require DB credentials from environment.
 // Hardcoded fallback values were removed — they leaked production credentials
 // into source control. Apache/Passenger sets MYSQL_USER & MYSQL_PASSWORD via
