@@ -123,6 +123,33 @@ let lastEntryAt = 0;
 let rateWindowStart = 0;
 let rateWindowCount = 0;
 let droppedSinceLastFlush = 0;
+
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleFlush() {
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void flush();
+  }, FLUSH_EVERY_MS);
+}
+
+let cachedVersion: string | undefined;
+export function _setLoggerAppVersion(v: string) {
+  cachedVersion = v;
+}
+function appVersion(): string | undefined {
+  return cachedVersion;
+}
+
+function currentRoute(): string | undefined {
+  try {
+    return typeof window !== "undefined" ? window.location.pathname : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // v2.12.12: per-tag drop accounting so an export states exactly what was lost.
 const droppedByTag = new Map<string, number>();
 
