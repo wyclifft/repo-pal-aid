@@ -1409,6 +1409,9 @@ export const useIndexedDB = () => {
       localCount: cached?.localCount || 0,
       unsyncedWeight: unsynced.total,
       source: 'getFarmerTotalCumulative',
+      scope: (routeFilter || '').trim().toUpperCase() || 'ALL',
+      fallbackScope: cached?.fallbackScope,
+      keyPresent: cached?.keyPresent,
     });
     // v2.10.115: emit a CUM:PRINT audit row capturing every input to the
     // composed total so any wrong receipt cumulative is traceable later.
@@ -1420,7 +1423,11 @@ export const useIndexedDB = () => {
       unsyncedWeight: unsynced.total,
       finalPrinted: total,
       source: 'getFarmerTotalCumulative',
+      scope: (routeFilter || '').trim().toUpperCase() || 'ALL',
+      fallbackScope: cached?.fallbackScope,
+      keyPresent: cached?.keyPresent,
     });
+
     return { total, byProduct: Object.values(merged) };
   }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
 
