@@ -21,18 +21,21 @@
 
 ## Changes
 
-### 1. Never read a route bucket in isolation (`src/hooks/useIndexedDB.ts`)
+### 1. Fall back to the ALL bucket only when the route key is absent (`src/hooks/useIndexedDB.ts`)
 
-- `getFarmerCumulative(farmerId, route)`: on a route-bucket miss (or a zero
-  `baseCount`), also read the `ALL` bucket for the same farmer/month and, when the
-  route bucket has nothing, return the ALL value with a `fallbackScope: 'ALL'`
-  marker. Never overwrite a non-zero route value with the ALL value — route data
-  stays authoritative when present. This preserves the per-route isolation rule
-  while removing the "prints 0 because this bucket was never warmed" failure.
-- Emit `CUM:SCOPE-FALLBACK` when the ALL bucket is used, so the substitution is
+- `getFarmerCumulative(farmerId, route)`: distinguish **key absent** from **key
+  present with `baseCount: 0`**.
+  - Key absent (never warmed) → read the `ALL` bucket for the same farmer/month and
+    return its value marked `fallbackScope: 'ALL'`.
+  - Key present with 0 → that is a confirmed zero for this route (new to the route,
+    or a decrease guard result). Return 0. No fallback.
+  - Key present with a non-zero value → always authoritative; the ALL bucket never
+    overrides it.
+- Emit `CUM:SCOPE-FALLBACK` only in the key-absent case, so the substitution is
   auditable in `/debug`.
-- `getFarmerTotalCumulative`: include `scope`/`fallbackScope` in the
+- `getFarmerTotalCumulative`: include `scope`/`fallbackScope`/`keyPresent` in the
   `CUM:CAPTURE-READ` and `CUM:PRINT` payloads.
+
 
 ### 2. Log the value actually printed, not the intermediate read
 
