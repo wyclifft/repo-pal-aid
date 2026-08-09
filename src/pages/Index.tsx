@@ -1587,7 +1587,18 @@ const Index = () => {
           const previousCumTotal = cumulativeFrequency?.total ?? 0;
           const justSubmittedWeight = capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0);
 
+          // v2.12.12: captured for CUM:PRINT-FINAL — the value that actually
+          // goes on paper, after the floor/cloud decision (CUM:PRINT is emitted
+          // upstream inside getFarmerTotalCumulative, before this decision).
+          let baseForLog: number | undefined;
+          let floorForLog: number | undefined;
+          let cloudForLog: number | undefined;
+          let localForLog: number | undefined;
+          let usedForLog = 'local';
+          let fallbackScopeForLog: string | undefined;
+
           try {
+
             if (navigator.onLine) {
               // v2.10.106: trusted-floor guard. The old guard trusted only the
               // in-memory `previousCumTotal`, which can lag by days when the
