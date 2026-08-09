@@ -1,4 +1,23 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.12: CUMULATIVE SCOPE FALLBACK + PRINT EVIDENCE (diagnostics + read fix).
+//   The M00003 trace showed cachedBase=0 on all 10 print reads while the
+//   backend had 148.1: the route-scoped key (farmerId__F001__YYYY-MM) had
+//   never been written, only the ALL bucket. getFarmerCumulative now
+//   distinguishes "key absent" (falls back to the ALL bucket and emits
+//   CUM:SCOPE-FALLBACK) from "key present with 0" (an authoritative zero for
+//   that route, never replaced by the cross-route total).
+//   CUM:PRINT is emitted before the caller applies its trusted floor, so it
+//   could report 0 when a non-zero value went on paper. New CUM:PRINT-FINAL
+//   records the value the receipt actually carries plus every input
+//   (base/floor/cloud/local/used/scope) on both the on-screen and the
+//   background-print path.
+//   Logger: tiered rate cap — the diagnostic CUM tags are exempt from the
+//   50/s global cap and from dedupe, Δ0 prewarm chatter (CUM:WRITE /
+//   CUM:STALE-CHECK with no change) is capped at 5/s, and dropped entries are
+//   now reported per tag so an export states exactly what was lost.
+//   Read/observability only — no change to reference generation, transaction
+//   creation, sync matrices, IndexedDB schema, printing, or auth.
+//
 // v2.12.11: CUMULATIVE NO-BACKWARDS AFTER SYNC.
 //   Backend (backend-api/server.js): cumulative delta overlay patches every
 //   cached batch snapshot immediately after a successful transaction insert,
