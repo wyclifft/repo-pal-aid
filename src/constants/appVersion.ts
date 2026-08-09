@@ -1138,8 +1138,8 @@
 //   Dashboard), only the Dashboard minimises/exits the app.
 //   (3) Bluetooth auto-reconnect installer is actually invoked on native, so the
 //   saved scale/printer reconnect when the app is reopened.
-export const APP_VERSION = '2.12.11';
-export const APP_VERSION_CODE = 187;
+export const APP_VERSION = '2.12.12';
+export const APP_VERSION_CODE = 188;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
