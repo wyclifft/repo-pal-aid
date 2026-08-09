@@ -1611,6 +1611,10 @@ const Index = () => {
               const cachedRow = await getFarmerCumulative(cleanId, selectedRouteCode || undefined);
               const cachedBase = Number(cachedRow?.baseCount || 0);
               const trustedFloor = Math.max(cachedBase, previousCumTotal) + justSubmittedWeight;
+              baseForLog = cachedBase;
+              floorForLog = trustedFloor;
+              fallbackScopeForLog = cachedRow?.fallbackScope;
+
 
               // v2.12.7: the Contabo backend is slower than the old cPanel box.
               // A 2s race lost too often, and the offline fallback returns 0
