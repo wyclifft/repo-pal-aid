@@ -1843,6 +1843,8 @@ const Index = () => {
                   else merged[p.icode] = { ...p };
                 }
                 cumulativeForPrint = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, printData.productIcode);
+                cloudForLog = cloudCumulative;
+                usedForLog = 'cloud';
                 // v2.12.7: never print 0 when the backend breakdown for the
                 // selected produce has not landed yet.
                 if ((cumulativeForPrint?.total ?? 0) === 0 && trustedFloor > 0) {
@@ -1852,6 +1854,7 @@ const Index = () => {
                       ? [{ icode: printData.productIcode, product_name: printData.productName || printData.productIcode, weight: trustedFloor }]
                       : [],
                   };
+                  usedForLog = 'floor';
                   plog.warn('CUM:ONLINE-PRINT', `${printData.farmerIdForCumulative} product filter empty → using floor ${trustedFloor}`,
                     { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, icode: printData.productIcode, cloudCumulative, trustedFloor, used: 'floor', path: 'background-print' });
                 }
@@ -1872,22 +1875,43 @@ const Index = () => {
                         ? [{ icode: printData.productIcode, product_name: printData.productName || printData.productIcode, weight: trustedFloor }]
                         : (filtered?.byProduct || []),
                     };
+                localForLog = filtered?.total ?? 0;
+                usedForLog = (cumulativeForPrint?.total ?? 0) === trustedFloor && (filtered?.total ?? 0) < trustedFloor ? 'floor' : 'local';
                 plog.warn('CUM:ONLINE-PRINT', `${printData.farmerIdForCumulative} cloud unavailable → local=${filtered?.total ?? 0} floor=${trustedFloor}`,
-                  { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, local: filtered?.total ?? 0, trustedFloor, used: cumulativeForPrint?.total, path: 'background-print' });
+                  { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, local: filtered?.total ?? 0, trustedFloor, cachedBase, fallbackScope: fallbackScopeForLog, used: cumulativeForPrint?.total, path: 'background-print' });
               }
             }
-            
+
             // Offline or cloud fetch failed: use baseCount + fresh unsynced receipts
             if (cumulativeForPrint === undefined) {
               const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
               cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
+              localForLog = total.total;
+              usedForLog = 'local';
             }
           } catch {
             // Fallback: baseCount + unsynced receipts (already includes just-saved offline receipts)
             const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
             cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
+            localForLog = total.total;
+            usedForLog = 'local';
           }
+          // v2.12.12: record what actually goes on paper.
+          logPrintFinal({
+            farmerId: printData.farmerIdForCumulative,
+            route: printData.routeCode || undefined,
+            path: 'background-print',
+            cachedBase: baseForLog,
+            trustedFloor: floorForLog,
+            cloudCumulative: cloudForLog,
+            localTotal: localForLog,
+            finalPrinted: cumulativeForPrint?.total ?? 0,
+            used: usedForLog,
+            icode: printData.productIcode,
+            fallbackScope: fallbackScopeForLog,
+          });
         }
+
 
         // v2.10.102: Diagnostic — if cumulative was supposed to print but
         // resolved to 0, emit a single warn row so /debug surfaces the gap.
