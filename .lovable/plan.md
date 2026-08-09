@@ -48,18 +48,25 @@
 ### 3. Seed the route bucket eagerly on farmer selection
 
 `Index/onFarmerSelect` (`W4:on-select-fetch`) already fetches the cloud value, but
-when that fetch times out nothing is written. Add: on a route-bucket miss, copy the
-ALL-bucket value into the route bucket as the starting base (marked
-`verifySource: 'W4:scope-seed'`), so the very first receipt of a session has a
-non-zero floor even if the backend is slow.
+when that fetch times out nothing is written. Add: when the route key is **absent**
+(never when it exists with 0), copy the ALL-bucket value into the route bucket as
+the starting base (marked `verifySource: 'W4:scope-seed'`), so the first receipt of
+a session has a non-zero floor even if the backend is slow.
 
-### 4. Stop the logger dropping the tags we debug with (`src/utils/persistentLogger.ts`)
+### 4. Keep the diagnostic subset uncapped, cap the Δ0 noise (`src/utils/persistentLogger.ts`)
 
-- Exempt `CUM:*` and print-path tags from the 50/s rate cap and the 2s dedupe
-  window (they carry distinct payloads, so dedupe is wrong for them anyway).
-- Keep a cap for everything else, and when entries are dropped record the dropped
-  count per tag rather than a single global counter, so a future export shows what
-  was lost.
+- Uncapped and never deduped — the entries the trace actually needed:
+  `CUM:PRINT`, `CUM:PRINT-FINAL`, `CUM:SCOPE-FALLBACK`, `CUM:VERIFY-MISMATCH`,
+  `CUM:WRITE-ABORT`, `CUM:REGRESSION`, and any `CUM:WRITE` / `CUM:STALE-CHECK`
+  with a non-zero delta.
+- Modest per-tag cap (target ~5/s each, tunable constant) for the repeated
+  unchanged writes — `CUM:WRITE` / `CUM:STALE-CHECK` with `Δ0` from periodic
+  prewarm cycles. These say only "still stable" and dominated the 2,388-entry
+  volume in the trace.
+- Everything outside the CUM taxonomy keeps the existing global cap.
+- Record dropped counts **per tag** instead of one global counter, so an export
+  states exactly what was lost and how much.
+
 
 ### 5. Version
 
