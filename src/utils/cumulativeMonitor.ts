@@ -537,13 +537,17 @@ export interface CaptureReadLogCtx {
   localCount: number;
   unsyncedWeight: number;
   source?: string;    // 'getFarmerTotalCumulative' | ...
+  scope?: string;         // v2.12.12
+  fallbackScope?: string; // v2.12.12 — 'ALL' when the route key was absent
+  keyPresent?: boolean;   // v2.12.12
 }
 export function logCaptureRead(ctx: CaptureReadLogCtx): void {
   try {
     const base = +(Number(ctx.baseCount) || 0).toFixed(3);
     const local = +(Number(ctx.localCount) || 0).toFixed(3);
     const unsynced = +(Number(ctx.unsyncedWeight) || 0).toFixed(3);
-    const msg = `${ctx.farmerId} route=${ctx.route || "?"} base=${base} local=${local} unsynced=${unsynced}`;
+    const msg = `${ctx.farmerId} route=${ctx.route || "?"} base=${base} local=${local} unsynced=${unsynced}${ctx.fallbackScope ? ` scopeFallback=${ctx.fallbackScope}` : ""}`;
+
     plog.info("CUM:CAPTURE-READ", msg, {
       ...getActiveContext(),
       ...ctx,
