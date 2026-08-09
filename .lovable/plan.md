@@ -81,11 +81,14 @@ existing decrease guards.
 
 ## Verification
 
-- Select a farmer on route F001 with no prior route-bucket data and capture: the
+- Select a farmer on route F001 whose route key was never warmed and capture: the
   receipt must show the ALL/backend-confirmed base plus the new weight, never a
   bare delta.
+- A farmer with a real, confirmed zero on this route (route key present, value 0)
+  must still print 0 — never the ALL-bucket total.
 - `/debug` must show `CUM:SCOPE-FALLBACK` followed by a `CUM:PRINT-FINAL` whose
   value equals the printed receipt.
 - After a background sync clears the unsynced bucket, the next receipt must not
   drop below the previous printed value.
+
 - Export logs from a busy session and confirm no `CUM:*` entries were dropped.
