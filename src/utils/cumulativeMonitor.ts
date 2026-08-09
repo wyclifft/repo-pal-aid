@@ -787,6 +787,9 @@ export const cumulativeMonitor = {
   noteReversalIfNegative,
   logWrite,
   logPrint,
+  logPrintFinal,
+  logScopeFallback,
+
   logVerify,
   logCaptureRead,
   logRaceClobber,
