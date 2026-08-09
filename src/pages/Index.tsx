@@ -1769,7 +1769,15 @@ const Index = () => {
       // This allows user to immediately start next transaction while printing happens in background
       (async () => {
         let cumulativeForPrint: { total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> } | undefined = undefined;
-        
+
+        // v2.12.12: inputs captured for CUM:PRINT-FINAL.
+        let baseForLog: number | undefined;
+        let floorForLog: number | undefined;
+        let cloudForLog: number | undefined;
+        let localForLog: number | undefined;
+        let usedForLog = 'local';
+        let fallbackScopeForLog: string | undefined;
+
         // Calculate cumulative in background with very short timeout
         if (printData.shouldShowCumulativeForFarmer && deviceFingerprint) {
           try {
@@ -1780,6 +1788,10 @@ const Index = () => {
               const prevCum = printData.previousCumulativeTotal ?? 0;
               const justSubmitted = printData.justSubmittedWeight ?? 0;
               const trustedFloor = Math.max(cachedBase, prevCum) + justSubmitted;
+              baseForLog = cachedBase;
+              floorForLog = trustedFloor;
+              fallbackScopeForLog = cachedRow?.fallbackScope;
+
 
               // v2.12.7: longer window + one retry (Contabo latency) so the
               // print path stops falling back to an empty cache (cumulative 0).
