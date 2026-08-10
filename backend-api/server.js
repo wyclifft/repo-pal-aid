@@ -2895,6 +2895,7 @@ if (path === '/api/sales' && method === 'POST') {
 
         throw error;
       }
+      });
     }
 
     // Batch Sales endpoint - ONE photo, MULTIPLE items, each with unique transrefno
