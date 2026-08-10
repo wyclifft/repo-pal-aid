@@ -1633,6 +1633,8 @@ const Index = () => {
           let fallbackScopeForLog: string | undefined;
 
           try {
+            // v2.12.13: cached farmer_cumulative row anchors the trusted floor.
+            const cachedRow = await getFarmerCumulative(cleanId, selectedRouteCode || undefined);
 
             if (navigator.onLine) {
               // v2.10.106: trusted-floor guard. The old guard trusted only the
@@ -1650,6 +1652,13 @@ const Index = () => {
               floorForLog = trustedFloor;
               fallbackScopeForLog = cachedRow?.fallbackScope;
 
+              // v2.12.7: longer window + one retry (Contabo latency).
+              // v2.12.13: hoisted so the lag-retry below reuses the same fetcher.
+              const fetchCloud = () => Promise.race([
+                mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode),
+                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 6000))
+              ]);
+              let freqResult: any = null;
 
               // v2.12.16: Use cumulative data returned by the POST request if
               // available. This eliminates the "post-sync lag" completely.
@@ -1657,13 +1666,7 @@ const Index = () => {
               let cloudByProduct = lastCumulativeResult?.by_product;
 
               if (cloudCumulative === undefined) {
-                // v2.12.7: longer window + one retry (Contabo latency).
-                const fetchCloud = () => Promise.race([
-                  mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode),
-                  new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 6000))
-                ]);
-
-                let freqResult = await fetchCloud();
+                freqResult = await fetchCloud();
                 if (!freqResult.success) freqResult = await fetchCloud();
                 if (freqResult.success && freqResult.data) {
                   cloudCumulative = freqResult.data.cumulative_weight ?? 0;
