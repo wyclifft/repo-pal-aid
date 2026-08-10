@@ -1344,8 +1344,8 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      const connection = await pool.getConnection();
-      
+      // v2.12.13: withConn guarantees release even if rollback/commit throws.
+      return withConn(async (connection) => {
       try {
         await connection.beginTransaction();
         
@@ -1356,8 +1356,7 @@ const server = http.createServer(async (req, res) => {
         );
         
         if (deviceRows.length === 0) {
-          await connection.rollback();
-          connection.release();
+          try { await connection.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: 'Device not found' 
@@ -1368,8 +1367,7 @@ const server = http.createServer(async (req, res) => {
         const devcode = deviceRows[0].devcode;
         
         if (!devcode) {
-          await connection.rollback();
-          connection.release();
+          try { await connection.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: 'Device has no assigned devcode' 
@@ -1429,7 +1427,6 @@ const server = http.createServer(async (req, res) => {
         );
         
         await connection.commit();
-        connection.release();
         
         console.log(`✅ Reserved batch [${startNumber} to ${endNumber - 1}] - Placeholder: ${placeholderRefNo}`);
         
@@ -1441,14 +1438,14 @@ const server = http.createServer(async (req, res) => {
           } 
         });
       } catch (error) {
-        await connection.rollback();
-        connection.release();
+        try { await connection.rollback(); } catch (_e) {}
         console.error('❌ Error reserving batch:', error);
         return sendJSON(res, { 
           success: false, 
           error: 'Failed to reserve batch' 
         }, 500);
       }
+      });
     }
 
     if (path === '/api/milk-collection' && method === 'POST') {
