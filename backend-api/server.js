@@ -434,82 +434,108 @@ const poolPressure = () => {
 const cumulativeCacheKey = (ccode, route, periodStart, periodEnd) =>
   `cumbatch:${String(ccode).toUpperCase()}:${String(route || 'ALL').toUpperCase()}:${periodStart}:${periodEnd}`;
 
+// v2.12.13: product-name lookup is loaded once per company (60 s TTL) instead of
+// LEFT JOINing fm_items on UPPER(TRIM(...)) inside the heavy cumulative scan.
+// fm_items is tiny; the join was forcing an extra full scan per warm.
+const fmItemsNameCache = new Map(); // ccode → { at, map: Map<UPPER(icode), descript> }
+const FM_ITEMS_NAME_TTL_MS = 60000;
+
+async function getItemNameMap(ccode) {
+  const key = String(ccode || '').trim().toUpperCase();
+  const hit = fmItemsNameCache.get(key);
+  if (hit && Date.now() - hit.at < FM_ITEMS_NAME_TTL_MS) return hit.map;
+  const map = new Map();
+  try {
+    const [rows] = await pool.query(
+      'SELECT TRIM(icode) AS icode, descript FROM fm_items WHERE UPPER(TRIM(ccode)) = ?',
+      [key]
+    );
+    for (const r of rows) {
+      const ic = String(r.icode || '').trim().toUpperCase();
+      if (ic && !map.has(ic)) map.set(ic, r.descript || '');
+    }
+  } catch (e) {
+    console.warn('[CUM:WARM] fm_items name lookup failed:', e?.message);
+  }
+  fmItemsNameCache.set(key, { at: Date.now(), map });
+  return map;
+}
+
 async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
-  const routeFilter = route ? ' AND UPPER(TRIM(route)) = UPPER(TRIM(?))' : '';
-  const baseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
-  const tRouteFilter = route ? ' AND UPPER(TRIM(t.route)) = UPPER(TRIM(?))' : '';
-  const tBaseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
+  // v2.12.13: ONE scan instead of three. Totals and snapshot_max_id are derived
+  // in JS from the same grouped rows, so the formula is unchanged but the table
+  // is read once. Predicates on ccode/transdate are sargable so the new
+  // idx_tx_cum_scan(ccode, transdate, route) can be used.
+  const ccodeParam = String(ccode || '').trim().toUpperCase();
+  const routeParam = route ? String(route).trim().toUpperCase() : null;
+  const routeFilter = routeParam ? ' AND UPPER(TRIM(route)) = ?' : '';
+  const params = routeParam
+    ? [ccodeParam, periodStart, periodEnd, routeParam]
+    : [ccodeParam, periodStart, periodEnd];
 
   const conn = await pool.getConnection();
-  let totalRows = [], productRows = [], snapshotMaxId = 0;
-  let msTotals = 0, msProducts = 0, msSnapshot = 0;
+  let groupRows = [];
+  let msScan = 0;
   try {
     try { await conn.query("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"); } catch (e) { /* non-fatal */ }
 
-    let _t0 = Date.now();
-    const [tRows] = await conn.query(
-      `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
-       FROM transactions 
-       WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
-       AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}
-       GROUP BY TRIM(memberno)`,
-      baseParams
-    );
-    totalRows = tRows;
-    msTotals = Date.now() - _t0;
-
-    _t0 = Date.now();
-    const [pRows] = await conn.query(
-      `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
-              IFNULL(MAX(fi.descript), MIN(TRIM(t.icode))) as product_name,
-              IFNULL(SUM(t.weight), 0) as weight 
-       FROM transactions t
-       LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
-       WHERE UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
-       AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${tRouteFilter}
-       GROUP BY TRIM(t.memberno), TRIM(t.icode)`,
-      tBaseParams
-    );
-    productRows = pRows;
-    msProducts = Date.now() - _t0;
-
-    try {
-      _t0 = Date.now();
-      const [snapRows] = await conn.query(
-        `SELECT IFNULL(MAX(id), 0) as max_id
+    const _t0 = Date.now();
+    const [rows] = await conn.query(
+      `SELECT TRIM(memberno) AS farmer_id,
+              TRIM(icode) AS icode,
+              IFNULL(SUM(weight), 0) AS weight,
+              IFNULL(MAX(id), 0) AS max_id
          FROM transactions
-         WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}`,
-        baseParams
-      );
-      snapshotMaxId = snapRows.length > 0 ? Number(snapRows[0].max_id) || 0 : 0;
-      msSnapshot = Date.now() - _t0;
-    } catch (_e) { /* probe failure is non-fatal */ }
+        WHERE ccode = ?
+          AND CAST(Transtype AS UNSIGNED) = 1
+          AND transdate BETWEEN ? AND ?${routeFilter}
+        GROUP BY TRIM(memberno), TRIM(icode)`,
+      params
+    );
+    groupRows = rows;
+    msScan = Date.now() - _t0;
   } finally {
     try { conn.release(); } catch (_e) {}
   }
 
-  const productMap = {};
-  for (const r of productRows) {
-    if (!productMap[r.farmer_id]) productMap[r.farmer_id] = [];
-    productMap[r.farmer_id].push({
-      icode: r.icode || '',
-      product_name: r.product_name || r.icode || '',
-      weight: parseFloat(r.weight) || 0
+  const nameMap = await getItemNameMap(ccodeParam);
+
+  const totals = new Map();   // farmer_id → weight
+  const productMap = {};      // farmer_id → [{ icode, product_name, weight }]
+  let snapshotMaxId = 0;
+
+  for (const r of groupRows) {
+    const farmerId = r.farmer_id || '';
+    const icode = r.icode || '';
+    const weight = parseFloat(r.weight) || 0;
+    const maxId = Number(r.max_id) || 0;
+    if (maxId > snapshotMaxId) snapshotMaxId = maxId;
+
+    totals.set(farmerId, (totals.get(farmerId) || 0) + weight);
+    if (!productMap[farmerId]) productMap[farmerId] = [];
+    productMap[farmerId].push({
+      icode,
+      product_name: nameMap.get(icode.toUpperCase()) || icode,
+      weight
     });
   }
 
-  console.log(`[CUM:WARM] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totalRows.length} snapshot_max_id=${snapshotMaxId} timings totals=${msTotals}ms products=${msProducts}ms snapshot=${msSnapshot}ms`);
+  console.log(`[CUM:WARM] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totals.size} groups=${groupRows.length} snapshot_max_id=${snapshotMaxId} scan=${msScan}ms`);
+
+  const farmers = [];
+  for (const [farmerId, weight] of totals) {
+    farmers.push({
+      farmer_id: farmerId,
+      cumulative_weight: weight,
+      by_product: productMap[farmerId] || []
+    });
+  }
 
   return {
-    farmers: totalRows.map(r => ({
-      farmer_id: r.farmer_id,
-      cumulative_weight: parseFloat(r.cumulative_weight) || 0,
-      by_product: productMap[r.farmer_id] || []
-    })),
+    farmers,
     month_start: periodStart,
     month_end: periodEnd,
-    total_farmers: totalRows.length,
+    total_farmers: farmers.length,
     snapshot_max_id: snapshotMaxId
   };
 }
