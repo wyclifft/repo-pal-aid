@@ -85,10 +85,42 @@ const pool = mysql.createPool({
   connectionLimit: POOL_LIMIT,
   waitForConnections: true,
   queueLimit: QUEUE_LIMIT,
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 10000,
+  // v2.12.13: reap idle sockets instead of parking them forever.
+  idleTimeout: 30000,
+  maxIdle: 5,
+  enableKeepAlive: false,
   connectTimeout: 10000,
 });
+
+/**
+ * v2.12.13 — Connection lifecycle helpers.
+ * Guarantees release even when the query, commit or rollback itself throws.
+ * Previously several handlers did `await conn.rollback(); conn.release();`
+ * inside catch — a failing rollback leaked the connection permanently.
+ */
+async function withConn(fn) {
+  const conn = await pool.getConnection();
+  try {
+    return await fn(conn);
+  } finally {
+    try { conn.release(); } catch (_e) { /* already released */ }
+  }
+}
+
+async function withTx(fn) {
+  return withConn(async (conn) => {
+    await conn.beginTransaction();
+    try {
+      const result = await fn(conn);
+      await conn.commit();
+      return result;
+    } catch (err) {
+      try { await conn.rollback(); } catch (_e) { /* rollback best-effort */ }
+      throw err;
+    }
+  });
+}
+
 
 // Identify pool-pressure / DB-busy errors so the request handler can return a
 // retryable 503 instead of letting the client hang. Mirrors the codes that
