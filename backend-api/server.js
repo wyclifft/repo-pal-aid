@@ -1805,11 +1805,79 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
 
       try {
         const result = await attemptInsert(transrefno, uploadrefno);
+
+        // v2.12.16: return the farmer's updated cumulative in the same response
+        // so the receipt prints without "post-sync lag" or extra fetch calls.
+        let cumulativeData = null;
+        try {
+          // Re-use logic from /api/farmer-monthly-frequency
+          let periodStart = toYmdLocal(new Date(collectionDate.getFullYear(), collectionDate.getMonth(), 1));
+          let periodEnd = toYmdLocal(new Date(collectionDate.getFullYear(), collectionDate.getMonth() + 1, 0));
+
+          if (orgtype === 'C') {
+            let season = null;
+            const requestedSeason = String(body.season_code || '').trim();
+            if (requestedSeason) {
+              const [sRows] = await pool.query(
+                `SELECT SCODE, datefrom, dateto FROM Seasons
+                 WHERE TRIM(ccode) = TRIM(?) AND TRIM(SCODE) = TRIM(?) LIMIT 1`,
+                [ccode, requestedSeason]
+              );
+              if (sRows.length > 0) season = sRows[0];
+            }
+            if (!season) season = await findActiveSeason(ccode, transdate);
+            if (season) {
+              const ymd = (v) => (typeof v === 'string' ? v.slice(0, 10) : toYmdLocal(new Date(v)));
+              periodStart = ymd(season.datefrom);
+              periodEnd = ymd(season.dateto);
+            }
+          }
+
+          const route = body.route;
+          const farmer_id = body.farmer_id;
+
+          const indRouteFilter = route ? ' AND UPPER(TRIM(route)) = UPPER(TRIM(?))' : '';
+          const indParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
+
+          const [sumRows] = await pool.query(
+            `SELECT IFNULL(SUM(weight), 0) as cumulative_weight
+             FROM transactions
+             WHERE UPPER(TRIM(memberno)) = UPPER(TRIM(?)) AND UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
+             AND CAST(transdate AS DATE) BETWEEN ? AND ?${indRouteFilter}`,
+            indParams
+          );
+
+          const [productRows] = await pool.query(
+            `SELECT TRIM(t.icode) as icode,
+                    IFNULL(MAX(fi.descript), MIN(TRIM(t.icode))) as product_name,
+                    IFNULL(SUM(t.weight), 0) as weight
+             FROM transactions t
+             LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
+             WHERE UPPER(TRIM(t.memberno)) = UPPER(TRIM(?)) AND UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
+             AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${indRouteFilter.replace('route', 't.route')}
+             GROUP BY TRIM(t.icode)`,
+            indParams
+          );
+
+          cumulativeData = {
+            cumulative_weight: sumRows.length > 0 ? parseFloat(sumRows[0].cumulative_weight) || 0 : 0,
+            by_product: productRows.map(r => ({
+              icode: r.icode || '',
+              product_name: r.product_name || r.icode || '',
+              weight: parseFloat(r.weight) || 0
+            }))
+          };
+        } catch (cumErr) {
+          console.warn('[CUM] post-insert cumulative calculation failed:', cumErr.message);
+        }
+
         return sendJSON(res, {
           success: true,
           message: 'Collection created',
           reference_no: result.reference_no,
-          uploadrefno: result.uploadrefno
+          uploadrefno: result.uploadrefno,
+          cumulative_weight: cumulativeData?.cumulative_weight,
+          by_product: cumulativeData?.by_product
         }, 201);
       } catch (error) {
         // SECURITY (v2.10.83): log SQL details server-side; return generic message to client.

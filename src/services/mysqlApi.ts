@@ -449,9 +449,17 @@ export const milkCollectionApi = {
     error?: string;
     message?: string;
     existing_reference?: string;
+    cumulative_weight?: number;
+    by_product?: ProductCumulative[];
   }> => {
     // OPTIMIZED: Use 8s timeout for submissions (faster than default 15s)
-    const response = await apiRequest<{ reference_no: string; uploadrefno?: string; existing_reference?: string }>('/milk-collection', {
+    const response = await apiRequest<{
+      reference_no: string;
+      uploadrefno?: string;
+      existing_reference?: string;
+      cumulative_weight?: number;
+      by_product?: ProductCumulative[];
+    }>('/milk-collection', {
       method: 'POST',
       body: JSON.stringify(collection),
     }, 8000);
@@ -461,7 +469,9 @@ export const milkCollectionApi = {
       uploadrefno: response.data?.uploadrefno || collection.uploadrefno,
       error: response.error,
       message: response.message,
-      existing_reference: response.data?.existing_reference
+      existing_reference: response.data?.existing_reference,
+      cumulative_weight: response.data?.cumulative_weight,
+      by_product: response.data?.by_product
     };
   },
 

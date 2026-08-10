@@ -350,15 +350,27 @@ export const useDataSync = () => {
                       const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                       const routeForRefresh = String(receipt.route || '').trim();
                       const seasonForRefresh = String(receipt.season_code || '').trim();
-                      const refreshResp = await farmerFrequencyApi.getMonthlyFrequency(
-                        cleanFarmerId,
-                        deviceFingerprint,
-                        routeForRefresh || undefined,
-                        seasonForRefresh || undefined
-                      );
-                      if (refreshResp.success && refreshResp.data) {
-                        const freshTotal = Number(refreshResp.data.cumulative_weight) || 0;
-                        const freshByProduct = (refreshResp.data.by_product || []).map((p: any) => ({
+
+                      // v2.12.16: Use cumulative data returned by backend if available.
+                      let cloudCumulative = (retryResult as any)?.cumulative_weight;
+                      let cloudByProduct = (retryResult as any)?.by_product;
+
+                      if (cloudCumulative === undefined) {
+                        const refreshResp = await farmerFrequencyApi.getMonthlyFrequency(
+                          cleanFarmerId,
+                          deviceFingerprint,
+                          routeForRefresh || undefined,
+                          seasonForRefresh || undefined
+                        );
+                        if (refreshResp.success && refreshResp.data) {
+                          cloudCumulative = refreshResp.data.cumulative_weight;
+                          cloudByProduct = refreshResp.data.by_product;
+                        }
+                      }
+
+                      if (cloudCumulative !== undefined) {
+                        const freshTotal = Number(cloudCumulative) || 0;
+                        const freshByProduct = (cloudByProduct || []).map((p: any) => ({
                           icode: String(p.icode || '').trim().toUpperCase(),
                           product_name: String(p.product_name || p.icode || ''),
                           weight: Number(p.weight) || 0,
@@ -451,21 +463,28 @@ export const useDataSync = () => {
                   const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                   const routeForRefresh = String(receipt.route || '').trim();
                   const seasonForRefresh = String(receipt.season_code || '').trim();
-                  // v2.12.11: remember the cached cloud base BEFORE the refresh
-                  // so we can tell whether the fresh cloud value actually
-                  // contains the receipt we just uploaded.
-                  const baseBefore = Number(
-                    (await getFarmerCumulative(cleanFarmerId, routeForRefresh || undefined, seasonForRefresh || undefined))?.baseCount || 0
-                  );
-                  const refreshResp = await farmerFrequencyApi.getMonthlyFrequency(
-                    cleanFarmerId,
-                    deviceFingerprint,
-                    routeForRefresh || undefined,
-                    seasonForRefresh || undefined
-                  );
-                  if (refreshResp.success && refreshResp.data) {
-                    const freshTotal = Number(refreshResp.data.cumulative_weight) || 0;
-                    const freshByProduct = (refreshResp.data.by_product || []).map((p: any) => ({
+
+                  // v2.12.16: Use cumulative data returned by the POST request
+                  // if available. This avoids redundant fetch calls.
+                  let cloudCumulative = (result as any)?.cumulative_weight;
+                  let cloudByProduct = (result as any)?.by_product;
+
+                  if (cloudCumulative === undefined) {
+                    const refreshResp = await farmerFrequencyApi.getMonthlyFrequency(
+                      cleanFarmerId,
+                      deviceFingerprint,
+                      routeForRefresh || undefined,
+                      seasonForRefresh || undefined
+                    );
+                    if (refreshResp.success && refreshResp.data) {
+                      cloudCumulative = refreshResp.data.cumulative_weight;
+                      cloudByProduct = refreshResp.data.by_product;
+                    }
+                  }
+
+                  if (cloudCumulative !== undefined) {
+                    const freshTotal = Number(cloudCumulative) || 0;
+                    const freshByProduct = (cloudByProduct || []).map((p: any) => ({
                       icode: String(p.icode || '').trim().toUpperCase(),
                       product_name: String(p.product_name || p.icode || ''),
                       weight: Number(p.weight) || 0,
@@ -473,27 +492,6 @@ export const useDataSync = () => {
                     // v2.10.116: log the VERIFIED persisted value, not the fetched one.
                     const persisted = await updateFarmerCumulative(cleanFarmerId, freshTotal, true, freshByProduct, routeForRefresh || undefined, seasonForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W1:postsync-refresh', caller: 'syncReceipts/postSync' });
                     cumulativeRefreshed = true;
-
-                    // v2.12.11: the cloud total can still be the PRE-sync
-                    // snapshot (the season batch re-warms every ~90 s and each
-                    // scan takes 20–70 s). Once the local row is deleted below,
-                    // its weight stops counting as "unsynced", so a lagging
-                    // cloud value would make the NEXT receipt print a lower
-                    // cumulative. Top the base up by whatever is missing.
-                    const receiptWeight = Number(receipt.weight) || 0;
-                    if (typeof persisted === 'number' && receiptWeight > 0) {
-                      const missing = (baseBefore + receiptWeight) - persisted;
-                      if (missing > 0.0001) {
-                        await bumpFarmerCumulativeBase(
-                          cleanFarmerId,
-                          Math.min(missing, receiptWeight),
-                          receipt.product_code || (receipt as any).icode,
-                          routeForRefresh || undefined,
-                          seasonForRefresh || undefined,
-                          { transrefno: receipt.reference_no, reason: 'cloud snapshot lagging' }
-                        );
-                      }
-                    }
 
                     // v2.10.95: log per-icode breakdown + active context so the
                     // device-displayed per-product slice can be reconciled against

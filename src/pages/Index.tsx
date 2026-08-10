@@ -123,7 +123,8 @@ const Index = () => {
     updateFarmerCumulative,
     getFarmerCumulative,
     getFarmerTotalCumulative,
-    getUnsyncedWeightForFarmer
+    getUnsyncedWeightForFarmer,
+    bumpFarmerCumulativeBase
   } = useIndexedDB();
   
   // Data sync hook for background syncing
@@ -648,7 +649,7 @@ const Index = () => {
                         const indPromise = mysqlApi.farmerFrequency.getMonthlyFrequency(t.fId, deviceFingerprint, selectedRouteCode || undefined);
                         const indRes: any = await Promise.race([
                           indPromise,
-                          new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 2000))
+                          new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 6000))
                         ]);
                         if (!indRes || !indRes.success || !indRes.data) {
                           plog.info('CUM:W3-RECONFIRM-TIMEOUT',
@@ -707,7 +708,7 @@ const Index = () => {
                         const r1Promise = mysqlApi.farmerFrequency.getMonthlyFrequency(pin.farmerId, deviceFingerprint, pin.route === 'ALL' ? undefined : pin.route);
                         const r1: any = await Promise.race([
                           r1Promise,
-                          new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 2000))
+                          new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 6000))
                         ]);
                         if (!r1 || !r1.success || !r1.data) {
                           plog.info('CUM:W3-PIN-TIMEOUT',
@@ -733,7 +734,7 @@ const Index = () => {
                         const r2Promise = mysqlApi.farmerFrequency.getMonthlyFrequency(pin.farmerId, deviceFingerprint, pin.route === 'ALL' ? undefined : pin.route);
                         const r2: any = await Promise.race([
                           r2Promise,
-                          new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 2000))
+                          new Promise((resolve) => setTimeout(() => resolve({ success: false, _timeout: true }), 6000))
                         ]);
                         if (!r2 || !r2.success || !r2.data) {
                           plog.info('CUM:W3-PIN-TIMEOUT',
@@ -943,7 +944,7 @@ const Index = () => {
           if (navigator.onLine) {
             const freqResult = await Promise.race([
               mysqlApi.farmerFrequency.getMonthlyFrequency(cleanFarmerId, deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode),
-              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 3000))
+              new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 6000))
             ]);
             if (freqResult.success && freqResult.data) {
               const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
@@ -1363,7 +1364,7 @@ const Index = () => {
       deliveredBy: deliveredBy || 'owner', // Pass deliveredBy for receipt printing
     };
 
-    // OPTIMIZED: Process submissions in parallel batches for faster throughput
+    let lastCumulativeResult: { cumulative_weight?: number; by_product?: any[] } | null = null;
 
     for (const capture of capturedCollections) {
       if (isOnline) {
@@ -1420,6 +1421,31 @@ const Index = () => {
           if (result.success) {
             successCount++;
             console.log('✅ Submitted to database:', referenceNo);
+            lastCumulativeResult = result;
+
+            // v2.12.16: Authoritative cache update from backend response.
+            // This eliminates "post-sync lag" and redundant API calls.
+            if (result.cumulative_weight !== undefined) {
+              updateFarmerCumulative(
+                capture.farmer_id.replace(/^#/, '').trim(),
+                result.cumulative_weight,
+                true, // fromBackend
+                result.by_product,
+                capture.route.trim(),
+                capture.season_code,
+                { transrefno: referenceNo, verifySource: 'W1:submit-direct', caller: 'Index/handleSubmit' }
+              ).catch(() => {});
+            } else {
+              // Fallback to optimistic bump if backend didn't return cumulative
+              bumpFarmerCumulativeBase(
+                capture.farmer_id.replace(/^#/, '').trim(),
+                capture.weight,
+                capture.product_code,
+                capture.route.trim(),
+                capture.season_code,
+                { transrefno: referenceNo, reason: 'online submit success (fallback)' }
+              ).catch(() => {});
+            }
           } else {
             // Check if it's a duplicate session delivery error
             if (result.error === 'DUPLICATE_SESSION_DELIVERY') {
@@ -1617,31 +1643,35 @@ const Index = () => {
               // prior-day deliveries. We now anchor the floor to the cached
               // farmer_cumulative.baseCount (updated on every sync) AND retry
               // the cloud read once on a suspected lag.
-              const cachedRow = await getFarmerCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode);
-              const productBase = filterCumulativeByProduct({ total: cachedRow?.baseCount || 0, byProduct: cachedRow?.byProduct || [] }, selectedProduct?.icode)?.total || 0;
+              const cachedBase = Number(cachedRow?.baseCount || 0);
+              const productBase = filterCumulativeByProduct({ total: cachedBase, byProduct: cachedRow?.byProduct || [] }, selectedProduct?.icode)?.total || 0;
               const trustedFloor = Math.max(productBase, previousCumTotal) + justSubmittedWeight;
-              baseForLog = cachedRow?.baseCount || 0;
+              baseForLog = cachedBase;
               floorForLog = trustedFloor;
               fallbackScopeForLog = cachedRow?.fallbackScope;
 
 
-              // v2.12.7: the Contabo backend is slower than the old cPanel box.
-              // A 2s race lost too often, and the offline fallback returns 0
-              // when the route cache was never pre-warmed → receipts printed 0.
-              const fetchCloud = () => Promise.race([
-                mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode),
-                new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 4000))
-              ]);
+              // v2.12.16: Use cumulative data returned by the POST request if
+              // available. This eliminates the "post-sync lag" completely.
+              let cloudCumulative = lastCumulativeResult?.cumulative_weight;
+              let cloudByProduct = lastCumulativeResult?.by_product;
 
-              let freqResult = await fetchCloud();
-              if (!freqResult.success) {
-                // One retry — a single slow read must not zero the receipt.
-                freqResult = await fetchCloud();
+              if (cloudCumulative === undefined) {
+                // v2.12.7: longer window + one retry (Contabo latency).
+                const fetchCloud = () => Promise.race([
+                  mysqlApi.farmerFrequency.getMonthlyFrequency(cleanId, deviceFingerprint, selectedRouteCode || undefined, activeSeasonCode),
+                  new Promise<{ success: false }>((resolve) => setTimeout(() => resolve({ success: false }), 6000))
+                ]);
+
+                let freqResult = await fetchCloud();
+                if (!freqResult.success) freqResult = await fetchCloud();
+                if (freqResult.success && freqResult.data) {
+                  cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+                  cloudByProduct = freqResult.data.by_product || [];
+                }
               }
-              if (freqResult.success && freqResult.data) {
-                let cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-                let cloudByProduct = freqResult.data.by_product || [];
 
+              if (cloudCumulative !== undefined) {
                 if (cloudCumulative < trustedFloor) {
                   // Suspected read-replica lag: retry once after a short pause.
                   await new Promise((r) => setTimeout(r, 700));
@@ -1687,18 +1717,19 @@ const Index = () => {
                 computedCumulative = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode);
                 cloudForLog = cloudCumulative;
                 usedForLog = 'cloud';
-                // v2.12.7: the per-product filter yields 0 when the backend has
-                // not yet reported a breakdown row for the selected produce.
-                // Never print 0 when a trusted floor exists.
-                if ((computedCumulative?.total ?? 0) === 0 && trustedFloor > 0) {
+                // v2.12.16: the per-product filter yields a value LOWER than
+                // the trusted floor when the backend has not yet reported
+                // a breakdown row for the just-submitted receipt, or is
+                // returning a stale snapshot. Correct it to the floor.
+                if ((computedCumulative?.total ?? 0) < trustedFloor && trustedFloor > 0) {
                   computedCumulative = {
                     total: trustedFloor,
                     byProduct: selectedProduct?.icode
                       ? [{ icode: selectedProduct.icode, product_name: selectedProduct.descript || selectedProduct.icode, weight: trustedFloor }]
-                      : [],
+                      : (computedCumulative?.byProduct || []),
                   };
                   usedForLog = 'floor';
-                  plog.warn('CUM:ONLINE-PRINT', `${cleanId} product filter empty → using floor ${trustedFloor}`,
+                  plog.warn('CUM:ONLINE-PRINT', `${cleanId} product total < floor → using floor ${trustedFloor}`,
                     { farmerId: cleanId, route: selectedRouteCode, icode: selectedProduct?.icode, cloudCumulative, trustedFloor, used: 'floor', path: 'on-screen' });
                 }
               } else {
@@ -1792,29 +1823,36 @@ const Index = () => {
           try {
             if (navigator.onLine) {
               // v2.10.106: trusted-floor guard (same as on-screen path above).
-              const cachedRow = await getFarmerCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
-              const productBase = filterCumulativeByProduct({ total: cachedRow?.baseCount || 0, byProduct: cachedRow?.byProduct || [] }, printData.productIcode)?.total || 0;
+              const cachedBase = Number(cachedRow?.baseCount || 0);
+              const productBase = filterCumulativeByProduct({ total: cachedBase, byProduct: cachedRow?.byProduct || [] }, printData.productIcode)?.total || 0;
               const trustedFloor = Math.max(productBase, prevCum) + justSubmitted;
-              baseForLog = cachedRow?.baseCount || 0;
+              baseForLog = cachedBase;
               floorForLog = trustedFloor;
               fallbackScopeForLog = cachedRow?.fallbackScope;
 
 
-              // v2.12.7: longer window + one retry (Contabo latency) so the
-              // print path stops falling back to an empty cache (cumulative 0).
-              const fetchCloud = () => Promise.race([
-                mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint, printData.routeCode || undefined, activeSeasonCode),
-                new Promise<{ success: false }>((resolve) =>
-                  setTimeout(() => resolve({ success: false }), 4000)
-                )
-              ]);
+              // v2.12.16: Use cumulative returned from POST response if available.
+              let cloudCumulative = lastCumulativeResult?.cumulative_weight;
+              let cloudByProduct = lastCumulativeResult?.by_product;
 
-              let freqResult = await fetchCloud();
-              if (!freqResult.success) freqResult = await fetchCloud();
-              if (freqResult.success && freqResult.data) {
-                let cloudCumulative = freqResult.data.cumulative_weight ?? 0;
-                let cloudByProduct = freqResult.data.by_product || [];
+              if (cloudCumulative === undefined) {
+                // v2.12.7: longer window + one retry (Contabo latency).
+                const fetchCloud = () => Promise.race([
+                  mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint, printData.routeCode || undefined, activeSeasonCode),
+                  new Promise<{ success: false }>((resolve) =>
+                    setTimeout(() => resolve({ success: false }), 6000)
+                  )
+                ]);
 
+                let freqResult = await fetchCloud();
+                if (!freqResult.success) freqResult = await fetchCloud();
+                if (freqResult.success && freqResult.data) {
+                  cloudCumulative = freqResult.data.cumulative_weight ?? 0;
+                  cloudByProduct = freqResult.data.by_product || [];
+                }
+              }
+
+              if (cloudCumulative !== undefined) {
                 if (cloudCumulative < trustedFloor) {
                   await new Promise((r) => setTimeout(r, 700));
                   const retry = await fetchCloud();
@@ -1852,17 +1890,17 @@ const Index = () => {
                 cumulativeForPrint = filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, printData.productIcode);
                 cloudForLog = cloudCumulative;
                 usedForLog = 'cloud';
-                // v2.12.7: never print 0 when the backend breakdown for the
-                // selected produce has not landed yet.
-                if ((cumulativeForPrint?.total ?? 0) === 0 && trustedFloor > 0) {
+                // v2.12.16: corrected check — if the cloud response is LOWER
+                // than the trusted floor (stale read), use the floor.
+                if ((cumulativeForPrint?.total ?? 0) < trustedFloor && trustedFloor > 0) {
                   cumulativeForPrint = {
                     total: trustedFloor,
                     byProduct: printData.productIcode
                       ? [{ icode: printData.productIcode, product_name: printData.productName || printData.productIcode, weight: trustedFloor }]
-                      : [],
+                      : (cumulativeForPrint?.byProduct || []),
                   };
                   usedForLog = 'floor';
-                  plog.warn('CUM:ONLINE-PRINT', `${printData.farmerIdForCumulative} product filter empty → using floor ${trustedFloor}`,
+                  plog.warn('CUM:ONLINE-PRINT', `${printData.farmerIdForCumulative} product total < floor → using floor ${trustedFloor}`,
                     { farmerId: printData.farmerIdForCumulative, route: printData.routeCode, icode: printData.productIcode, cloudCumulative, trustedFloor, used: 'floor', path: 'background-print' });
                 }
                 // Update cache only when cloud >= cachedBase (don't lower the cache from a stale read).

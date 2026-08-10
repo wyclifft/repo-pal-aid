@@ -12,7 +12,7 @@ import { plog } from '@/utils/persistentLogger';
 // for farmer_cumulative — we only drop the store if its keyPath isn't
 // already the v2.10.73 'cacheKey' shape.
 export const DB_NAME = 'milkCollectionDB';
-export const DB_VERSION = 15;
+export const DB_VERSION = 16;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -54,178 +54,191 @@ export const useIndexedDB = () => {
     const openDatabase = () => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onupgradeneeded = (event) => {
-      const database = (event.target as IDBOpenDBRequest).result;
+      request.onupgradeneeded = (event) => {
+        const database = (event.target as IDBOpenDBRequest).result;
 
-      if (!database.objectStoreNames.contains('receipts')) {
-        const store = database.createObjectStore('receipts', { keyPath: 'orderId' });
-        store.createIndex('synced', 'synced', { unique: false });
-      }
+        if (!database.objectStoreNames.contains('receipts')) {
+          const store = database.createObjectStore('receipts', { keyPath: 'orderId' });
+          store.createIndex('synced', 'synced', { unique: false });
+        }
 
-      if (!database.objectStoreNames.contains('farmers')) {
-        database.createObjectStore('farmers', { keyPath: 'farmer_id' });
-      }
+        if (!database.objectStoreNames.contains('farmers')) {
+          database.createObjectStore('farmers', { keyPath: 'farmer_id' });
+        }
 
-      if (!database.objectStoreNames.contains('app_users')) {
-        database.createObjectStore('app_users', { keyPath: 'user_id' });
-      }
+        if (!database.objectStoreNames.contains('app_users')) {
+          database.createObjectStore('app_users', { keyPath: 'user_id' });
+        }
 
-      // Only recreate device_approvals if keyPath is wrong — preserve data on normal upgrades
-      if (database.objectStoreNames.contains('device_approvals')) {
-        try {
-          const existingStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('device_approvals');
-          if (existingStore.keyPath !== 'device_fingerprint') {
-            console.log('[DB] device_approvals keyPath mismatch, recreating store');
+        // Only recreate device_approvals if keyPath is wrong — preserve data on normal upgrades
+        if (database.objectStoreNames.contains('device_approvals')) {
+          try {
+            const existingStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('device_approvals');
+            if (existingStore.keyPath !== 'device_fingerprint') {
+              console.log('[DB] device_approvals keyPath mismatch, recreating store');
+              database.deleteObjectStore('device_approvals');
+              database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
+            } else {
+              console.log('[DB] device_approvals store preserved with correct keyPath');
+            }
+          } catch (e) {
+            console.warn('[DB] Could not verify device_approvals, recreating:', e);
             database.deleteObjectStore('device_approvals');
             database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
-          } else {
-            console.log('[DB] device_approvals store preserved with correct keyPath');
           }
-        } catch (e) {
-          console.warn('[DB] Could not verify device_approvals, recreating:', e);
-          database.deleteObjectStore('device_approvals');
+        } else {
           database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
+          console.log('[DB] Created device_approvals store with keyPath: device_fingerprint');
         }
-      } else {
-        database.createObjectStore('device_approvals', { keyPath: 'device_fingerprint' });
-        console.log('[DB] Created device_approvals store with keyPath: device_fingerprint');
-      }
 
-      // Add items store for offline caching
-      if (!database.objectStoreNames.contains('items')) {
-        database.createObjectStore('items', { keyPath: 'ID' });
-      }
-
-      // Add z_reports store for offline Z Reports
-      if (!database.objectStoreNames.contains('z_reports')) {
-        database.createObjectStore('z_reports', { keyPath: 'date' });
-      }
-
-      // Add periodic_reports store for offline Periodic Reports
-      if (!database.objectStoreNames.contains('periodic_reports')) {
-        database.createObjectStore('periodic_reports', { keyPath: 'cacheKey' });
-      }
-
-      // Add routes store for offline route caching (fm_tanks)
-      if (!database.objectStoreNames.contains('routes')) {
-        database.createObjectStore('routes', { keyPath: 'tcode' });
-      }
-
-      // Add sessions store for offline session caching
-      if (!database.objectStoreNames.contains('sessions')) {
-        database.createObjectStore('sessions', { keyPath: 'descript' });
-      }
-
-      // Add device_config store for offline reference generation
-      if (!database.objectStoreNames.contains('device_config')) {
-        database.createObjectStore('device_config', { keyPath: 'id' });
-        console.log('[DB] Created device_config store');
-      }
-
-      // farmer_cumulative store for offline cumulative tracking
-      // v2.10.73: cacheKey now includes route for per-factory isolation.
-      // v2.10.94: idempotent migration — only drop the store if it's the legacy
-      // (pre-v2.10.73) shape with a different keyPath. Otherwise preserve rows
-      // so we don't lose cached base totals on every version bump.
-      if (database.objectStoreNames.contains('farmer_cumulative')) {
-        try {
-          const existingStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('farmer_cumulative');
-          if (existingStore.keyPath !== 'cacheKey') {
-            database.deleteObjectStore('farmer_cumulative');
-            const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
-            cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
-            console.log('[DB] v2.10.94 migration: legacy farmer_cumulative keyPath replaced (rows rebuild from backend)');
-          } else {
-            console.log('[DB] farmer_cumulative store preserved (cacheKey schema intact)');
-          }
-        } catch (e) {
-          console.warn('[DB] farmer_cumulative migration check failed, recreating:', e);
-          try { database.deleteObjectStore('farmer_cumulative'); } catch {}
-          const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
-          cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
+        // Add items store for offline caching
+        if (!database.objectStoreNames.contains('items')) {
+          database.createObjectStore('items', { keyPath: 'ID' });
         }
-      } else {
-        const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
-        cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month'], { unique: true });
-        console.log('[DB] Created farmer_cumulative store (v2.10.73 schema: farmer+route+month key)');
-      }
 
-      // Add dedicated printed_receipts store (Bug 4 fix: remove mixed-type key from receipts store)
-      if (!database.objectStoreNames.contains('printed_receipts')) {
-        database.createObjectStore('printed_receipts', { keyPath: 'id' });
-        console.log('[DB] Created printed_receipts store');
-        
-        // Migrate existing PRINTED_RECEIPTS from receipts store if it exists
-        if (database.objectStoreNames.contains('receipts')) {
+        // Add z_reports store for offline Z Reports
+        if (!database.objectStoreNames.contains('z_reports')) {
+          database.createObjectStore('z_reports', { keyPath: 'date' });
+        }
+
+        // Add periodic_reports store for offline Periodic Reports
+        if (!database.objectStoreNames.contains('periodic_reports')) {
+          database.createObjectStore('periodic_reports', { keyPath: 'cacheKey' });
+        }
+
+        // Add routes store for offline route caching (fm_tanks)
+        if (!database.objectStoreNames.contains('routes')) {
+          database.createObjectStore('routes', { keyPath: 'tcode' });
+        }
+
+        // Add sessions store for offline session caching
+        if (!database.objectStoreNames.contains('sessions')) {
+          database.createObjectStore('sessions', { keyPath: 'descript' });
+        }
+
+        // Add device_config store for offline reference generation
+        if (!database.objectStoreNames.contains('device_config')) {
+          database.createObjectStore('device_config', { keyPath: 'id' });
+          console.log('[DB] Created device_config store');
+        }
+
+        // farmer_cumulative store for offline cumulative tracking
+        // v2.10.73: cacheKey now includes route for per-factory isolation.
+        // v2.12.16: unique index now includes scode to support multiple seasons in one month.
+        if (database.objectStoreNames.contains('farmer_cumulative')) {
           try {
-            const receiptStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('receipts');
-            const getReq = receiptStore.get('PRINTED_RECEIPTS');
-            getReq.onsuccess = () => {
-              if (getReq.result) {
-                const printedStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('printed_receipts');
-                printedStore.put({ id: 'default', receipts: getReq.result.receipts || [], lastUpdated: new Date() });
-                receiptStore.delete('PRINTED_RECEIPTS');
-                console.log('[DB] Migrated PRINTED_RECEIPTS to dedicated store');
+            const tx = (event.target as IDBOpenDBRequest).transaction!;
+            const store = tx.objectStore('farmer_cumulative');
+
+            // Re-create index if scode is missing from its definition
+            if (store.indexNames.contains('farmer_route_month')) {
+              const idx = store.index('farmer_route_month');
+              const keyPath = Array.isArray(idx.keyPath) ? idx.keyPath : [idx.keyPath];
+              if (!keyPath.includes('scode')) {
+                console.log('[DB] v2.12.16: Updating farmer_cumulative index to include scode');
+                store.deleteIndex('farmer_route_month');
+                store.createIndex('farmer_route_month', ['farmer_id', 'route', 'month', 'scode'], { unique: true });
               }
-            };
-          } catch (migErr) {
-            console.warn('[DB] Could not migrate printed receipts:', migErr);
+            } else {
+              store.createIndex('farmer_route_month', ['farmer_id', 'route', 'month', 'scode'], { unique: true });
+            }
+
+            if (store.keyPath !== 'cacheKey') {
+              database.deleteObjectStore('farmer_cumulative');
+              const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+              cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month', 'scode'], { unique: true });
+              console.log('[DB] v2.10.94 migration: legacy farmer_cumulative keyPath replaced (rows rebuild from backend)');
+            } else {
+              console.log('[DB] farmer_cumulative store preserved (cacheKey schema intact)');
+            }
+          } catch (e) {
+            console.warn('[DB] farmer_cumulative migration check failed, recreating:', e);
+            try { database.deleteObjectStore('farmer_cumulative'); } catch {}
+            const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+            cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month', 'scode'], { unique: true });
+          }
+        } else {
+          const cumStore = database.createObjectStore('farmer_cumulative', { keyPath: 'cacheKey' });
+          cumStore.createIndex('farmer_route_month', ['farmer_id', 'route', 'month', 'scode'], { unique: true });
+          console.log('[DB] Created farmer_cumulative store (v2.12.16 schema: farmer+route+month+scode key)');
+        }
+
+        // Add dedicated printed_receipts store (Bug 4 fix: remove mixed-type key from receipts store)
+        if (!database.objectStoreNames.contains('printed_receipts')) {
+          database.createObjectStore('printed_receipts', { keyPath: 'id' });
+          console.log('[DB] Created printed_receipts store');
+
+          // Migrate existing PRINTED_RECEIPTS from receipts store if it exists
+          if (database.objectStoreNames.contains('receipts')) {
+            try {
+              const receiptStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('receipts');
+              const getReq = receiptStore.get('PRINTED_RECEIPTS');
+              getReq.onsuccess = () => {
+                if (getReq.result) {
+                  const printedStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('printed_receipts');
+                  printedStore.put({ id: 'default', receipts: getReq.result.receipts || [], lastUpdated: new Date() });
+                  receiptStore.delete('PRINTED_RECEIPTS');
+                  console.log('[DB] Migrated PRINTED_RECEIPTS to dedicated store');
+                }
+              };
+            } catch (migErr) {
+              console.warn('[DB] Could not migrate printed receipts:', migErr);
+            }
           }
         }
-      }
-    };
+      };
 
-    request.onsuccess = (event) => {
-      try {
-        const database = (event.target as IDBOpenDBRequest).result;
-        
-        // Verify device_approvals store configuration
-        if (database.objectStoreNames.contains('device_approvals')) {
-          const tx = database.transaction('device_approvals', 'readonly');
-          const store = tx.objectStore('device_approvals');
-          console.log('[DB] device_approvals keyPath confirmed:', store.keyPath);
+      request.onsuccess = (event) => {
+        try {
+          const database = (event.target as IDBOpenDBRequest).result;
           
-          // Check if keyPath is correct
-          if (store.keyPath !== 'device_fingerprint') {
-            console.error('[DB] SCHEMA MISMATCH: keyPath is', store.keyPath, 'but should be device_fingerprint');
-            setSchemaError(true);
-            database.close();
-            // Clear and recreate database
-            clearDatabase().then(() => {
-              console.log('[DB] Retrying database initialization...');
-              setTimeout(() => openDatabase(), 100);
-            }).catch(err => {
-              console.error('[DB] Failed to clear database:', err);
-            });
-            return;
+          // Verify device_approvals store configuration
+          if (database.objectStoreNames.contains('device_approvals')) {
+            const tx = database.transaction('device_approvals', 'readonly');
+            const store = tx.objectStore('device_approvals');
+            console.log('[DB] device_approvals keyPath confirmed:', store.keyPath);
+
+            // Check if keyPath is correct
+            if (store.keyPath !== 'device_fingerprint') {
+              console.error('[DB] SCHEMA MISMATCH: keyPath is', store.keyPath, 'but should be device_fingerprint');
+              setSchemaError(true);
+              database.close();
+              // Clear and recreate database
+              clearDatabase().then(() => {
+                console.log('[DB] Retrying database initialization...');
+                setTimeout(() => openDatabase(), 100);
+              }).catch(err => {
+                console.error('[DB] Failed to clear database:', err);
+              });
+              return;
+            }
           }
+
+          dbInstance = database;
+          setDb(database);
+          setIsReady(true);
+          setSchemaError(false);
+          console.log('[DB] IndexedDB ready. Version:', database.version);
+        } catch (error) {
+          console.error('[DB] Error during database initialization:', error);
+          setSchemaError(true);
         }
-        
-        dbInstance = database;
-        setDb(database);
-        setIsReady(true);
-        setSchemaError(false);
-        console.log('[DB] IndexedDB ready. Version:', database.version);
-      } catch (error) {
-        console.error('[DB] Error during database initialization:', error);
+      };
+
+      request.onerror = (event) => {
+        console.error('[DB] IndexedDB error:', (event.target as IDBOpenDBRequest).error);
         setSchemaError(true);
-      }
+      };
+
+      request.onblocked = () => {
+        console.warn('[DB] IndexedDB upgrade blocked - close other tabs');
+      };
+
+      // NOTE: No cleanup — dbInstance is a singleton shared across all components.
+      // Closing it here would break other components using useIndexedDB().
     };
 
-    request.onerror = (event) => {
-      console.error('[DB] IndexedDB error:', (event.target as IDBOpenDBRequest).error);
-      setSchemaError(true);
-    };
-
-    request.onblocked = () => {
-      console.warn('[DB] IndexedDB upgrade blocked - close other tabs');
-    };
-
-    // NOTE: No cleanup — dbInstance is a singleton shared across all components.
-    // Closing it here would break other components using useIndexedDB().
-  };
-  
-  openDatabase();
+    openDatabase();
   }, [schemaError]);
 
   const saveFarmers = useCallback((farmers: Farmer[]) => {
