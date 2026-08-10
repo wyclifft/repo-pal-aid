@@ -21,16 +21,17 @@ never closes it either. Once a burst of sync traffic pushes the pool to its
 high-water mark, those sockets stay open forever in `Sleep`. The server log
 `[POOL] limit=100 inUse=75` matches: the pool grew to its peak and stayed there.
 
-**How many pools**
+**How many pools (confirmed on the server)**
 
+- `backend-api` runs as a single PM2 **fork** instance — not a worker multiplier.
 - One pool per `server.js` process. `yetuRoutes.js`, `yetuService.js`,
-  `kcbPaymentService.js` all receive the pool as a parameter — no extra pools.
+  `kcbPaymentService.js` all receive that pool as a parameter — no extra pools.
 - `sync-service/server.js` creates its own separate pool (lazily, line 58).
-- So the real multiplier is the process count: every PM2 instance/cluster worker
-  of `backend-api` opens up to 80 more sockets. This needs to be confirmed on the
-  box (`pm2 list`, `pm2 describe backend-api` → `instances`), plus whether Node
-  connects direct to MySQL or via ProxySQL (ProxySQL keeps its own backend
-  connection pool that also shows as long `Sleep` sessions from `root@localhost`).
+- MySQL: `max_connections=151`, `wait_timeout=interactive_timeout=28800`.
+  Observed 139 sleeping local `root` connections (owned by the Node backend) plus
+  11 `rt_scale` ones, many idle ~4 hours, and `ERROR 1040 Too many connections`.
+  ProxySQL is present but out of scope for this change.
+
 
 **Real leaks (connections never returned, not just idle)**
 
