@@ -42,11 +42,12 @@ if (!process.env.MYSQL_USER || !process.env.MYSQL_PASSWORD) {
 }
 
 // Database connection pool
-// v2.10.108: Sized to live within cPanel `max_user_connections = 40` shared
-// across both Node apps (backend-api + sync-service) on the same MySQL user.
-// Worst case: 2 Passenger workers × pool 8 = 16 conns for this app.
-// Tunable via .htaccess env without code changes.
-const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 80);
+// v2.12.13: Contabo MySQL (max_connections=151, wait_timeout=28800) was holding
+// 139 idle `root` sockets for hours → "ERROR 1040 Too many connections".
+// Root cause: mysql2 never retires idle pooled sockets unless idleTimeout/maxIdle
+// are set, and enableKeepAlive kept pinging them so the server never closed them
+// either. Pool is now small + self-trimming. Still tunable via env.
+const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 12);
 const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 100);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 
