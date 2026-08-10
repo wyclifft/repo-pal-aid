@@ -42,11 +42,12 @@ if (!process.env.MYSQL_USER || !process.env.MYSQL_PASSWORD) {
 }
 
 // Database connection pool
-// v2.10.108: Sized to live within cPanel `max_user_connections = 40` shared
-// across both Node apps (backend-api + sync-service) on the same MySQL user.
-// Worst case: 2 Passenger workers × pool 8 = 16 conns for this app.
-// Tunable via .htaccess env without code changes.
-const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 80);
+// v2.12.13: Contabo MySQL (max_connections=151, wait_timeout=28800) was holding
+// 139 idle `root` sockets for hours → "ERROR 1040 Too many connections".
+// Root cause: mysql2 never retires idle pooled sockets unless idleTimeout/maxIdle
+// are set, and enableKeepAlive kept pinging them so the server never closed them
+// either. Pool is now small + self-trimming. Still tunable via env.
+const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 12);
 const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 100);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 
@@ -84,10 +85,42 @@ const pool = mysql.createPool({
   connectionLimit: POOL_LIMIT,
   waitForConnections: true,
   queueLimit: QUEUE_LIMIT,
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 10000,
+  // v2.12.13: reap idle sockets instead of parking them forever.
+  idleTimeout: 30000,
+  maxIdle: 5,
+  enableKeepAlive: false,
   connectTimeout: 10000,
 });
+
+/**
+ * v2.12.13 — Connection lifecycle helpers.
+ * Guarantees release even when the query, commit or rollback itself throws.
+ * Previously several handlers did `await conn.rollback(); conn.release();`
+ * inside catch — a failing rollback leaked the connection permanently.
+ */
+async function withConn(fn) {
+  const conn = await pool.getConnection();
+  try {
+    return await fn(conn);
+  } finally {
+    try { conn.release(); } catch (_e) { /* already released */ }
+  }
+}
+
+async function withTx(fn) {
+  return withConn(async (conn) => {
+    await conn.beginTransaction();
+    try {
+      const result = await fn(conn);
+      await conn.commit();
+      return result;
+    } catch (err) {
+      try { await conn.rollback(); } catch (_e) { /* rollback best-effort */ }
+      throw err;
+    }
+  });
+}
+
 
 // Identify pool-pressure / DB-busy errors so the request handler can return a
 // retryable 503 instead of letting the client hang. Mirrors the codes that
@@ -401,82 +434,108 @@ const poolPressure = () => {
 const cumulativeCacheKey = (ccode, route, periodStart, periodEnd) =>
   `cumbatch:${String(ccode).toUpperCase()}:${String(route || 'ALL').toUpperCase()}:${periodStart}:${periodEnd}`;
 
+// v2.12.13: product-name lookup is loaded once per company (60 s TTL) instead of
+// LEFT JOINing fm_items on UPPER(TRIM(...)) inside the heavy cumulative scan.
+// fm_items is tiny; the join was forcing an extra full scan per warm.
+const fmItemsNameCache = new Map(); // ccode → { at, map: Map<UPPER(icode), descript> }
+const FM_ITEMS_NAME_TTL_MS = 60000;
+
+async function getItemNameMap(ccode) {
+  const key = String(ccode || '').trim().toUpperCase();
+  const hit = fmItemsNameCache.get(key);
+  if (hit && Date.now() - hit.at < FM_ITEMS_NAME_TTL_MS) return hit.map;
+  const map = new Map();
+  try {
+    const [rows] = await pool.query(
+      'SELECT TRIM(icode) AS icode, descript FROM fm_items WHERE UPPER(TRIM(ccode)) = ?',
+      [key]
+    );
+    for (const r of rows) {
+      const ic = String(r.icode || '').trim().toUpperCase();
+      if (ic && !map.has(ic)) map.set(ic, r.descript || '');
+    }
+  } catch (e) {
+    console.warn('[CUM:WARM] fm_items name lookup failed:', e?.message);
+  }
+  fmItemsNameCache.set(key, { at: Date.now(), map });
+  return map;
+}
+
 async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
-  const routeFilter = route ? ' AND UPPER(TRIM(route)) = UPPER(TRIM(?))' : '';
-  const baseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
-  const tRouteFilter = route ? ' AND UPPER(TRIM(t.route)) = UPPER(TRIM(?))' : '';
-  const tBaseParams = route ? [ccode, periodStart, periodEnd, route] : [ccode, periodStart, periodEnd];
+  // v2.12.13: ONE scan instead of three. Totals and snapshot_max_id are derived
+  // in JS from the same grouped rows, so the formula is unchanged but the table
+  // is read once. Predicates on ccode/transdate are sargable so the new
+  // idx_tx_cum_scan(ccode, transdate, route) can be used.
+  const ccodeParam = String(ccode || '').trim().toUpperCase();
+  const routeParam = route ? String(route).trim().toUpperCase() : null;
+  const routeFilter = routeParam ? ' AND UPPER(TRIM(route)) = ?' : '';
+  const params = routeParam
+    ? [ccodeParam, periodStart, periodEnd, routeParam]
+    : [ccodeParam, periodStart, periodEnd];
 
   const conn = await pool.getConnection();
-  let totalRows = [], productRows = [], snapshotMaxId = 0;
-  let msTotals = 0, msProducts = 0, msSnapshot = 0;
+  let groupRows = [];
+  let msScan = 0;
   try {
     try { await conn.query("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"); } catch (e) { /* non-fatal */ }
 
-    let _t0 = Date.now();
-    const [tRows] = await conn.query(
-      `SELECT TRIM(memberno) as farmer_id, IFNULL(SUM(weight), 0) as cumulative_weight 
-       FROM transactions 
-       WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
-       AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}
-       GROUP BY TRIM(memberno)`,
-      baseParams
-    );
-    totalRows = tRows;
-    msTotals = Date.now() - _t0;
-
-    _t0 = Date.now();
-    const [pRows] = await conn.query(
-      `SELECT TRIM(t.memberno) as farmer_id, TRIM(t.icode) as icode, 
-              IFNULL(MAX(fi.descript), MIN(TRIM(t.icode))) as product_name,
-              IFNULL(SUM(t.weight), 0) as weight 
-       FROM transactions t
-       LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
-       WHERE UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
-       AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${tRouteFilter}
-       GROUP BY TRIM(t.memberno), TRIM(t.icode)`,
-      tBaseParams
-    );
-    productRows = pRows;
-    msProducts = Date.now() - _t0;
-
-    try {
-      _t0 = Date.now();
-      const [snapRows] = await conn.query(
-        `SELECT IFNULL(MAX(id), 0) as max_id
+    const _t0 = Date.now();
+    const [rows] = await conn.query(
+      `SELECT TRIM(memberno) AS farmer_id,
+              TRIM(icode) AS icode,
+              IFNULL(SUM(weight), 0) AS weight,
+              IFNULL(MAX(id), 0) AS max_id
          FROM transactions
-         WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?${routeFilter}`,
-        baseParams
-      );
-      snapshotMaxId = snapRows.length > 0 ? Number(snapRows[0].max_id) || 0 : 0;
-      msSnapshot = Date.now() - _t0;
-    } catch (_e) { /* probe failure is non-fatal */ }
+        WHERE ccode = ?
+          AND CAST(Transtype AS UNSIGNED) = 1
+          AND transdate BETWEEN ? AND ?${routeFilter}
+        GROUP BY TRIM(memberno), TRIM(icode)`,
+      params
+    );
+    groupRows = rows;
+    msScan = Date.now() - _t0;
   } finally {
     try { conn.release(); } catch (_e) {}
   }
 
-  const productMap = {};
-  for (const r of productRows) {
-    if (!productMap[r.farmer_id]) productMap[r.farmer_id] = [];
-    productMap[r.farmer_id].push({
-      icode: r.icode || '',
-      product_name: r.product_name || r.icode || '',
-      weight: parseFloat(r.weight) || 0
+  const nameMap = await getItemNameMap(ccodeParam);
+
+  const totals = new Map();   // farmer_id → weight
+  const productMap = {};      // farmer_id → [{ icode, product_name, weight }]
+  let snapshotMaxId = 0;
+
+  for (const r of groupRows) {
+    const farmerId = r.farmer_id || '';
+    const icode = r.icode || '';
+    const weight = parseFloat(r.weight) || 0;
+    const maxId = Number(r.max_id) || 0;
+    if (maxId > snapshotMaxId) snapshotMaxId = maxId;
+
+    totals.set(farmerId, (totals.get(farmerId) || 0) + weight);
+    if (!productMap[farmerId]) productMap[farmerId] = [];
+    productMap[farmerId].push({
+      icode,
+      product_name: nameMap.get(icode.toUpperCase()) || icode,
+      weight
     });
   }
 
-  console.log(`[CUM:WARM] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totalRows.length} snapshot_max_id=${snapshotMaxId} timings totals=${msTotals}ms products=${msProducts}ms snapshot=${msSnapshot}ms`);
+  console.log(`[CUM:WARM] ccode=${ccode} route=${route || 'ALL'} period=${periodStart}→${periodEnd} farmers=${totals.size} groups=${groupRows.length} snapshot_max_id=${snapshotMaxId} scan=${msScan}ms`);
+
+  const farmers = [];
+  for (const [farmerId, weight] of totals) {
+    farmers.push({
+      farmer_id: farmerId,
+      cumulative_weight: weight,
+      by_product: productMap[farmerId] || []
+    });
+  }
 
   return {
-    farmers: totalRows.map(r => ({
-      farmer_id: r.farmer_id,
-      cumulative_weight: parseFloat(r.cumulative_weight) || 0,
-      by_product: productMap[r.farmer_id] || []
-    })),
+    farmers,
     month_start: periodStart,
     month_end: periodEnd,
-    total_farmers: totalRows.length,
+    total_farmers: farmers.length,
     snapshot_max_id: snapshotMaxId
   };
 }
@@ -1222,83 +1281,80 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      // Get connection for transaction
-      const connection = await pool.getConnection();
-      
-      try {
-        // Start transaction
-        await connection.beginTransaction();
-        
-        // Get devcode from devSettings for reference generation
-        const [deviceRows] = await connection.query(
-          'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
-          [deviceserial]
-        );
-        
-        if (deviceRows.length === 0) {
-          await connection.rollback();
-          connection.release();
-          return sendJSON(res, { 
-            success: false, 
-            error: 'Device not found' 
-          }, 404);
-        }
-        
-        const devcode = deviceRows[0].devcode;
-        
-        if (!devcode) {
-          await connection.rollback();
-          connection.release();
-          return sendJSON(res, { 
-            success: false, 
-            error: 'Device has no assigned devcode. Please re-register the device.' 
-          }, 400);
-        }
-        
-        // Get the last transaction number for THIS DEVICE with row lock
-        const [lastTransRows] = await connection.query(
-          'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
-          [`${devcode}%`]
-        );
-        
-        let nextTrnId = 1; // Starting number for this device
-        
-        if (lastTransRows.length > 0) {
-          const lastRef = lastTransRows[0].transrefno;
-          // Extract trnid using last 8 digits to avoid clientFetch corruption
-          const lastNumber = parseInt(lastRef.slice(-8), 10);
-          if (!isNaN(lastNumber)) {
-            nextTrnId = lastNumber + 1;
+      // v2.12.13: withConn guarantees release even if rollback/commit throws.
+      return withConn(async (connection) => {
+        try {
+          // Start transaction
+          await connection.beginTransaction();
+
+          // Get devcode from devSettings for reference generation
+          const [deviceRows] = await connection.query(
+            'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
+            [deviceserial]
+          );
+
+          if (deviceRows.length === 0) {
+            try { await connection.rollback(); } catch (_e) {}
+            return sendJSON(res, {
+              success: false,
+              error: 'Device not found'
+            }, 404);
           }
+
+          const devcode = deviceRows[0].devcode;
+
+          if (!devcode) {
+            try { await connection.rollback(); } catch (_e) {}
+            return sendJSON(res, {
+              success: false,
+              error: 'Device has no assigned devcode. Please re-register the device.'
+            }, 400);
+          }
+
+          // Get the last transaction number for THIS DEVICE with row lock
+          const [lastTransRows] = await connection.query(
+            'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
+            [`${devcode}%`]
+          );
+
+          let nextTrnId = 1; // Starting number for this device
+
+          if (lastTransRows.length > 0) {
+            const lastRef = lastTransRows[0].transrefno;
+            // Extract trnid using last 8 digits to avoid clientFetch corruption
+            const lastNumber = parseInt(lastRef.slice(-8), 10);
+            if (!isNaN(lastNumber)) {
+              nextTrnId = lastNumber + 1;
+            }
+          }
+
+          // Generate reference: devcode + 8-digit trnid padded
+          const transrefno = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
+
+          // Update trnid in devSettings
+          await connection.query(
+            'UPDATE devSettings SET trnid = ? WHERE uniquedevcode = ?',
+            [nextTrnId, deviceserial]
+          );
+
+          // Commit transaction
+          await connection.commit();
+
+          return sendJSON(res, {
+            success: true,
+            data: { reference_no: transrefno }
+          });
+        } catch (error) {
+          try { await connection.rollback(); } catch (_e) {}
+          console.error('Reference generation error:', error);
+          return sendJSON(res, {
+            success: false,
+            error: 'Failed to generate reference number'
+          }, 500);
         }
-        
-        // Generate reference: devcode + 8-digit trnid padded
-        const transrefno = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
-        
-        // Update trnid in devSettings
-        await connection.query(
-          'UPDATE devSettings SET trnid = ? WHERE uniquedevcode = ?',
-          [nextTrnId, deviceserial]
-        );
-        
-        // Commit transaction
-        await connection.commit();
-        connection.release();
-        
-        return sendJSON(res, { 
-          success: true, 
-          data: { reference_no: transrefno }
-        });
-      } catch (error) {
-        await connection.rollback();
-        connection.release();
-        console.error('Reference generation error:', error);
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Failed to generate reference number' 
-        }, 500);
-      }
+      });
     }
+
 
     // NEW: Reserve batch of reference numbers for fast offline generation
     // DUPLICATE-SAFE: Inserts placeholder records to prevent overlapping reservations
@@ -1314,8 +1370,8 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      const connection = await pool.getConnection();
-      
+      // v2.12.13: withConn guarantees release even if rollback/commit throws.
+      return withConn(async (connection) => {
       try {
         await connection.beginTransaction();
         
@@ -1326,8 +1382,7 @@ const server = http.createServer(async (req, res) => {
         );
         
         if (deviceRows.length === 0) {
-          await connection.rollback();
-          connection.release();
+          try { await connection.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: 'Device not found' 
@@ -1338,8 +1393,7 @@ const server = http.createServer(async (req, res) => {
         const devcode = deviceRows[0].devcode;
         
         if (!devcode) {
-          await connection.rollback();
-          connection.release();
+          try { await connection.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: 'Device has no assigned devcode' 
@@ -1399,7 +1453,6 @@ const server = http.createServer(async (req, res) => {
         );
         
         await connection.commit();
-        connection.release();
         
         console.log(`✅ Reserved batch [${startNumber} to ${endNumber - 1}] - Placeholder: ${placeholderRefNo}`);
         
@@ -1411,14 +1464,14 @@ const server = http.createServer(async (req, res) => {
           } 
         });
       } catch (error) {
-        await connection.rollback();
-        connection.release();
+        try { await connection.rollback(); } catch (_e) {}
         console.error('❌ Error reserving batch:', error);
         return sendJSON(res, { 
           success: false, 
           error: 'Failed to reserve batch' 
         }, 500);
       }
+      });
     }
 
     if (path === '/api/milk-collection' && method === 'POST') {
@@ -2560,8 +2613,8 @@ return sendJSON(res, { success: true, data: rows });
  // Sales endpoints - Unified for Store (transtype=2) and AI (transtype=3)
 if (path === '/api/sales' && method === 'POST') {
       const body = await parseBody(req);
-      const conn = await pool.getConnection();
-      
+      // v2.12.13: withConn guarantees release even if rollback/commit throws.
+      return withConn(async (conn) => {
       try {
         await conn.beginTransaction();
         
@@ -2597,8 +2650,7 @@ if (path === '/api/sales' && method === 'POST') {
         
         // Check device authorization
         if (!authorized) {
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: 'Device not authorized' 
@@ -2617,8 +2669,7 @@ if (path === '/api/sales' && method === 'POST') {
         if (allowedRoutes.length === 0) {
           const serviceName = transtype === 3 ? 'AI Services' : 'Store';
           console.log(`❌ clientFetch enforcement: ${serviceName} disabled for company ${ccode} (no routes with clientFetch=${requiredClientFetch})`);
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
@@ -2648,8 +2699,7 @@ if (path === '/api/sales' && method === 'POST') {
         );
 
         if (existingSaleRows.length > 0) {
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, {
             success: true,
             duplicate: true,
@@ -2823,7 +2873,6 @@ if (path === '/api/sales' && method === 'POST') {
         );
         
         await conn.commit();
-        conn.release();
         
         // Update storeid/aiid counter in devSettings (same pattern as milk collection)
         if (body.device_fingerprint) {
@@ -2859,8 +2908,7 @@ if (path === '/api/sales' && method === 'POST') {
           error?.code === 'ER_DUP_ENTRY' &&
           String(error?.sqlMessage || error?.message || '').includes('idx_transrefno_unique');
 
-        await conn.rollback();
-        conn.release();
+        try { await conn.rollback(); } catch (_e) {}
 
         if (isDuplicateRef) {
           return sendJSON(res, {
@@ -2873,21 +2921,21 @@ if (path === '/api/sales' && method === 'POST') {
 
         throw error;
       }
+      });
     }
 
     // Batch Sales endpoint - ONE photo, MULTIPLE items, each with unique transrefno
     // Used by Store when selling multiple items to a single buyer
     if (path === '/api/sales/batch' && method === 'POST') {
       const body = await parseBody(req);
-      const conn = await pool.getConnection();
-      
+      // v2.12.13: withConn guarantees release even if rollback/commit throws.
+      return withConn(async (conn) => {
       try {
         await conn.beginTransaction();
         
         // Validate required fields
         if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { success: false, error: 'No items provided' }, 400);
         }
         
@@ -2915,8 +2963,7 @@ if (path === '/api/sales' && method === 'POST') {
         }
         
         if (!authorized) {
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { success: false, error: 'Device not authorized' }, 403);
         }
         
@@ -2929,8 +2976,7 @@ if (path === '/api/sales' && method === 'POST') {
         
         if (allowedRoutes.length === 0) {
           const serviceName = transtype === 3 ? 'AI Services' : 'Store';
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
@@ -3123,7 +3169,6 @@ if (path === '/api/sales' && method === 'POST') {
         }
         
         await conn.commit();
-        conn.release();
 
         // Update storeid/aiid counter in devSettings (same pattern as milk collection)
         if (body.device_fingerprint && insertedRefs.length > 0) {
@@ -3165,10 +3210,10 @@ if (path === '/api/sales' && method === 'POST') {
         }, allWereDuplicates ? 200 : 201);
         
       } catch (error) {
-        await conn.rollback();
-        conn.release();
+        try { await conn.rollback(); } catch (_e) {}
         throw error;
       }
+      });
     }
 
     // Background Photo Upload endpoint - for uploading photos after transaction is saved

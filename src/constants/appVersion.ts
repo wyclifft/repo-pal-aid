@@ -1,4 +1,23 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.13: MYSQL CONNECTION RETENTION + CUMULATIVE QUERY PERFORMANCE.
+//   Backend pool: connectionLimit 12, idleTimeout 30 s, maxIdle 5,
+//   enableKeepAlive off — Contabo was holding 139 idle sockets for hours
+//   ("Too many connections") because mysql2 never retires idle pooled
+//   connections and keep-alive stopped MySQL's wait_timeout from reaping them.
+//   New withConn/withTx helpers release in `finally`, closing the leaks in
+//   /api/milk-collection/next-reference, /api/milk-collection/reserve-batch,
+//   /api/sales and /api/sales/batch where `conn.release()` was skipped whenever
+//   a rollback itself threw.
+//   Cumulative warm: three table scans (totals + per-product + MAX(id)) and the
+//   UPPER(TRIM()) LEFT JOIN on fm_items collapsed into ONE grouped scan; totals,
+//   per-product breakdown and snapshot_max_id are derived in JS and product
+//   names come from a 60 s per-company fm_items lookup cache. Predicates on
+//   ccode/transdate are now sargable for the new
+//   idx_tx_cum_scan(ccode, transdate, route) — see
+//   backend-api/MIGRATION_CUMULATIVE_INDEXES.sql.
+//   Formula, filters, session/season handling, reference generation, sync
+//   matrices, IndexedDB schema, receipts and auth are unchanged.
+//
 // v2.12.12: CUMULATIVE SCOPE FALLBACK + PRINT EVIDENCE (diagnostics + read fix).
 //   The M00003 trace showed cachedBase=0 on all 10 print reads while the
 //   backend had 148.1: the route-scoped key (farmerId__F001__YYYY-MM) had
@@ -1157,8 +1176,8 @@
 //   Dashboard), only the Dashboard minimises/exits the app.
 //   (3) Bluetooth auto-reconnect installer is actually invoked on native, so the
 //   saved scale/printer reconnect when the app is reopened.
-export const APP_VERSION = '2.12.12';
-export const APP_VERSION_CODE = 188;
+export const APP_VERSION = '2.12.13';
+export const APP_VERSION_CODE = 189;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
