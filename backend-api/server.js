@@ -1255,83 +1255,80 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      // Get connection for transaction
-      const connection = await pool.getConnection();
-      
-      try {
-        // Start transaction
-        await connection.beginTransaction();
-        
-        // Get devcode from devSettings for reference generation
-        const [deviceRows] = await connection.query(
-          'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
-          [deviceserial]
-        );
-        
-        if (deviceRows.length === 0) {
-          await connection.rollback();
-          connection.release();
-          return sendJSON(res, { 
-            success: false, 
-            error: 'Device not found' 
-          }, 404);
-        }
-        
-        const devcode = deviceRows[0].devcode;
-        
-        if (!devcode) {
-          await connection.rollback();
-          connection.release();
-          return sendJSON(res, { 
-            success: false, 
-            error: 'Device has no assigned devcode. Please re-register the device.' 
-          }, 400);
-        }
-        
-        // Get the last transaction number for THIS DEVICE with row lock
-        const [lastTransRows] = await connection.query(
-          'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
-          [`${devcode}%`]
-        );
-        
-        let nextTrnId = 1; // Starting number for this device
-        
-        if (lastTransRows.length > 0) {
-          const lastRef = lastTransRows[0].transrefno;
-          // Extract trnid using last 8 digits to avoid clientFetch corruption
-          const lastNumber = parseInt(lastRef.slice(-8), 10);
-          if (!isNaN(lastNumber)) {
-            nextTrnId = lastNumber + 1;
+      // v2.12.13: withConn guarantees release even if rollback/commit throws.
+      return withConn(async (connection) => {
+        try {
+          // Start transaction
+          await connection.beginTransaction();
+
+          // Get devcode from devSettings for reference generation
+          const [deviceRows] = await connection.query(
+            'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
+            [deviceserial]
+          );
+
+          if (deviceRows.length === 0) {
+            try { await connection.rollback(); } catch (_e) {}
+            return sendJSON(res, {
+              success: false,
+              error: 'Device not found'
+            }, 404);
           }
+
+          const devcode = deviceRows[0].devcode;
+
+          if (!devcode) {
+            try { await connection.rollback(); } catch (_e) {}
+            return sendJSON(res, {
+              success: false,
+              error: 'Device has no assigned devcode. Please re-register the device.'
+            }, 400);
+          }
+
+          // Get the last transaction number for THIS DEVICE with row lock
+          const [lastTransRows] = await connection.query(
+            'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
+            [`${devcode}%`]
+          );
+
+          let nextTrnId = 1; // Starting number for this device
+
+          if (lastTransRows.length > 0) {
+            const lastRef = lastTransRows[0].transrefno;
+            // Extract trnid using last 8 digits to avoid clientFetch corruption
+            const lastNumber = parseInt(lastRef.slice(-8), 10);
+            if (!isNaN(lastNumber)) {
+              nextTrnId = lastNumber + 1;
+            }
+          }
+
+          // Generate reference: devcode + 8-digit trnid padded
+          const transrefno = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
+
+          // Update trnid in devSettings
+          await connection.query(
+            'UPDATE devSettings SET trnid = ? WHERE uniquedevcode = ?',
+            [nextTrnId, deviceserial]
+          );
+
+          // Commit transaction
+          await connection.commit();
+
+          return sendJSON(res, {
+            success: true,
+            data: { reference_no: transrefno }
+          });
+        } catch (error) {
+          try { await connection.rollback(); } catch (_e) {}
+          console.error('Reference generation error:', error);
+          return sendJSON(res, {
+            success: false,
+            error: 'Failed to generate reference number'
+          }, 500);
         }
-        
-        // Generate reference: devcode + 8-digit trnid padded
-        const transrefno = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
-        
-        // Update trnid in devSettings
-        await connection.query(
-          'UPDATE devSettings SET trnid = ? WHERE uniquedevcode = ?',
-          [nextTrnId, deviceserial]
-        );
-        
-        // Commit transaction
-        await connection.commit();
-        connection.release();
-        
-        return sendJSON(res, { 
-          success: true, 
-          data: { reference_no: transrefno }
-        });
-      } catch (error) {
-        await connection.rollback();
-        connection.release();
-        console.error('Reference generation error:', error);
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Failed to generate reference number' 
-        }, 500);
-      }
+      });
     }
+
 
     // NEW: Reserve batch of reference numbers for fast offline generation
     // DUPLICATE-SAFE: Inserts placeholder records to prevent overlapping reservations
