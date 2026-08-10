@@ -2587,8 +2587,8 @@ return sendJSON(res, { success: true, data: rows });
  // Sales endpoints - Unified for Store (transtype=2) and AI (transtype=3)
 if (path === '/api/sales' && method === 'POST') {
       const body = await parseBody(req);
-      const conn = await pool.getConnection();
-      
+      // v2.12.13: withConn guarantees release even if rollback/commit throws.
+      return withConn(async (conn) => {
       try {
         await conn.beginTransaction();
         
@@ -2624,8 +2624,7 @@ if (path === '/api/sales' && method === 'POST') {
         
         // Check device authorization
         if (!authorized) {
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: 'Device not authorized' 
@@ -2644,8 +2643,7 @@ if (path === '/api/sales' && method === 'POST') {
         if (allowedRoutes.length === 0) {
           const serviceName = transtype === 3 ? 'AI Services' : 'Store';
           console.log(`❌ clientFetch enforcement: ${serviceName} disabled for company ${ccode} (no routes with clientFetch=${requiredClientFetch})`);
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
@@ -2675,8 +2673,7 @@ if (path === '/api/sales' && method === 'POST') {
         );
 
         if (existingSaleRows.length > 0) {
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, {
             success: true,
             duplicate: true,
@@ -2850,7 +2847,6 @@ if (path === '/api/sales' && method === 'POST') {
         );
         
         await conn.commit();
-        conn.release();
         
         // Update storeid/aiid counter in devSettings (same pattern as milk collection)
         if (body.device_fingerprint) {
@@ -2886,8 +2882,7 @@ if (path === '/api/sales' && method === 'POST') {
           error?.code === 'ER_DUP_ENTRY' &&
           String(error?.sqlMessage || error?.message || '').includes('idx_transrefno_unique');
 
-        await conn.rollback();
-        conn.release();
+        try { await conn.rollback(); } catch (_e) {}
 
         if (isDuplicateRef) {
           return sendJSON(res, {
