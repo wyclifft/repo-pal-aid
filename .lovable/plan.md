@@ -166,3 +166,17 @@ release scaffolding, SQL predicate form, and warm scheduling.
 
 Bump to v2.12.13 (code 189); backend redeploy to Contabo + run the index
 migration required for the query change to take effect.
+
+## 6. Blocker to clear first (frontend build errors)
+
+`src/pages/Index.tsx` currently fails typecheck after the v2.12.12 edits — the
+receipt cumulative blocks reference `cachedRow`, `fetchCloud`, `freqResult`,
+`prevCum`, `justSubmitted` which are no longer in scope (on-screen path ~1646-1690,
+background-print path ~1826-1870). Fix as part of this change:
+
+- re-add `const cachedRow = await getFarmerCumulative(<farmerId>, <route>)` at the
+  top of each `try` block
+- hoist `fetchCloud` and `let freqResult` out of the `if (cloudCumulative === undefined)`
+  block so the lag-retry below can use them
+- in the background-print block, read `prevCum = printData.previousCumulativeTotal`
+  and `justSubmitted = printData.justSubmittedWeight` (both already carried on `printData`)
