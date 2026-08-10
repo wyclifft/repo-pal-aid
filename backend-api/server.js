@@ -2902,15 +2902,14 @@ if (path === '/api/sales' && method === 'POST') {
     // Used by Store when selling multiple items to a single buyer
     if (path === '/api/sales/batch' && method === 'POST') {
       const body = await parseBody(req);
-      const conn = await pool.getConnection();
-      
+      // v2.12.13: withConn guarantees release even if rollback/commit throws.
+      return withConn(async (conn) => {
       try {
         await conn.beginTransaction();
         
         // Validate required fields
         if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { success: false, error: 'No items provided' }, 400);
         }
         
@@ -2938,8 +2937,7 @@ if (path === '/api/sales' && method === 'POST') {
         }
         
         if (!authorized) {
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { success: false, error: 'Device not authorized' }, 403);
         }
         
@@ -2952,8 +2950,7 @@ if (path === '/api/sales' && method === 'POST') {
         
         if (allowedRoutes.length === 0) {
           const serviceName = transtype === 3 ? 'AI Services' : 'Store';
-          await conn.rollback();
-          conn.release();
+          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { 
             success: false, 
             error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
@@ -3146,7 +3143,6 @@ if (path === '/api/sales' && method === 'POST') {
         }
         
         await conn.commit();
-        conn.release();
 
         // Update storeid/aiid counter in devSettings (same pattern as milk collection)
         if (body.device_fingerprint && insertedRefs.length > 0) {
@@ -3188,10 +3184,10 @@ if (path === '/api/sales' && method === 'POST') {
         }, allWereDuplicates ? 200 : 201);
         
       } catch (error) {
-        await conn.rollback();
-        conn.release();
+        try { await conn.rollback(); } catch (_e) {}
         throw error;
       }
+      });
     }
 
     // Background Photo Upload endpoint - for uploading photos after transaction is saved
