@@ -1824,6 +1824,11 @@ const Index = () => {
         // Calculate cumulative in background with very short timeout
         if (printData.shouldShowCumulativeForFarmer && deviceFingerprint) {
           try {
+            // v2.12.13: values already carried on printData — single source of truth.
+            const prevCum = printData.previousCumulativeTotal;
+            const justSubmitted = printData.justSubmittedWeight;
+            const cachedRow = await getFarmerCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
+
             if (navigator.onLine) {
               // v2.10.106: trusted-floor guard (same as on-screen path above).
               const cachedBase = Number(cachedRow?.baseCount || 0);
@@ -1833,21 +1838,22 @@ const Index = () => {
               floorForLog = trustedFloor;
               fallbackScopeForLog = cachedRow?.fallbackScope;
 
+              // v2.12.7: longer window + one retry (Contabo latency).
+              // v2.12.13: hoisted so the lag-retry below reuses the same fetcher.
+              const fetchCloud = () => Promise.race([
+                mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint, printData.routeCode || undefined, activeSeasonCode),
+                new Promise<{ success: false }>((resolve) =>
+                  setTimeout(() => resolve({ success: false }), 6000)
+                )
+              ]);
+              let freqResult: any = null;
 
               // v2.12.16: Use cumulative returned from POST response if available.
               let cloudCumulative = lastCumulativeResult?.cumulative_weight;
               let cloudByProduct = lastCumulativeResult?.by_product;
 
               if (cloudCumulative === undefined) {
-                // v2.12.7: longer window + one retry (Contabo latency).
-                const fetchCloud = () => Promise.race([
-                  mysqlApi.farmerFrequency.getMonthlyFrequency(printData.farmerIdForCumulative, deviceFingerprint, printData.routeCode || undefined, activeSeasonCode),
-                  new Promise<{ success: false }>((resolve) =>
-                    setTimeout(() => resolve({ success: false }), 6000)
-                  )
-                ]);
-
-                let freqResult = await fetchCloud();
+                freqResult = await fetchCloud();
                 if (!freqResult.success) freqResult = await fetchCloud();
                 if (freqResult.success && freqResult.data) {
                   cloudCumulative = freqResult.data.cumulative_weight ?? 0;
