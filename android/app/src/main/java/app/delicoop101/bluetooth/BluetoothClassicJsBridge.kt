@@ -11,6 +11,7 @@ import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.core.app.ActivityCompat
+import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -45,6 +46,8 @@ class BluetoothClassicJsBridge(
         "scale" to RoleConnection(),
         "printer" to RoleConnection()
     )
+
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private fun adapter(): BluetoothAdapter? = try {
         BluetoothAdapter.getDefaultAdapter()
@@ -102,40 +105,70 @@ class BluetoothClassicJsBridge(
 
     @JavascriptInterface
     fun connect(payload: String?): String = safeJson {
-        val options = JSONObject(payload ?: "{}")
-        val address = options.optString("address").trim()
-        val role = normalizeRole(options.optString("role", "scale"))
-        val insecureRequested = options.optBoolean("insecure", false)
+        scope.launch {
+            try {
+                val options = JSONObject(payload ?: "{}")
+                val address = options.optString("address").trim()
+                val role = normalizeRole(options.optString("role", "scale"))
+                val insecureRequested = options.optBoolean("insecure", false)
 
-        if (address.isEmpty()) throw IllegalArgumentException("Device address is required")
-        if (!hasBluetoothPermissions()) throw IllegalStateException("Bluetooth permissions not granted")
+                if (address.isEmpty()) {
+                    reportConnectError(role, "Device address is required")
+                    return@launch
+                }
+                if (!hasBluetoothPermissions()) {
+                    reportConnectError(role, "Bluetooth permissions not granted")
+                    return@launch
+                }
 
-        val adapter = adapter() ?: throw IllegalStateException("Bluetooth adapter unavailable")
-        if (!adapter.isEnabled) throw IllegalStateException("Bluetooth is disabled")
-        adapter.cancelDiscovery()
+                val adapter = adapter()
+                if (adapter == null) {
+                    reportConnectError(role, "Bluetooth adapter unavailable")
+                    return@launch
+                }
+                if (!adapter.isEnabled) {
+                    reportConnectError(role, "Bluetooth is disabled")
+                    return@launch
+                }
 
-        disconnectRole(role, notify = false)
-        val device = adapter.getRemoteDevice(address)
-        val socket = connectSocket(device, insecureRequested)
-        val connection = connections.getOrPut(role) { RoleConnection() }
-        connection.socket = socket
-        connection.device = device
-        connection.inputStream = socket.inputStream
-        startReading(role)
+                adapter.cancelDiscovery()
+                disconnectRole(role, notify = false)
 
-        emit("BluetoothClassic:connectionStateChanged", JSONObject()
-            .put("connected", true)
-            .put("role", role)
-            .put("address", device.address)
-            .put("name", device.name ?: "Unknown"))
+                val device = adapter.getRemoteDevice(address)
+                Log.d(TAG, "[BT][JS][$role] Initiating async connection to ${device.name ?: "Unknown"} ($address)...")
 
-        Log.d(TAG, "[BT][JS][$role] Connected to ${device.name ?: "Unknown"} ($address)")
+                val socket = connectSocket(device, insecureRequested)
+                val connection = connections.getOrPut(role) { RoleConnection() }
+                connection.socket = socket
+                connection.device = device
+                connection.inputStream = socket.inputStream
+                startReading(role)
+
+                emit("BluetoothClassic:connectionStateChanged", JSONObject()
+                    .put("connected", true)
+                    .put("role", role)
+                    .put("address", device.address)
+                    .put("name", device.name ?: "Unknown"))
+
+                Log.d(TAG, "[BT][JS][$role] Connected successfully to ${device.name ?: "Unknown"}")
+            } catch (t: Throwable) {
+                val role = try { JSONObject(payload ?: "{}").optString("role", "scale") } catch (e: Exception) { "scale" }
+                val msg = t.message ?: t.javaClass.simpleName
+                Log.e(TAG, "[BT][JS][$role] Async connect failed: $msg", t)
+                reportConnectError(role, msg)
+            }
+        }
+
         JSONObject()
-            .put("connected", true)
-            .put("name", device.name ?: "Unknown")
-            .put("address", device.address)
-            .put("role", role)
+            .put("initiated", true)
             .put("fallback", true)
+    }
+
+    private fun reportConnectError(role: String, error: String) {
+        emit("BluetoothClassic:connectionStateChanged", JSONObject()
+            .put("connected", false)
+            .put("role", role)
+            .put("error", error))
     }
 
     @JavascriptInterface
@@ -167,32 +200,35 @@ class BluetoothClassicJsBridge(
 
     @JavascriptInterface
     fun write(payload: String?): String = safeJson {
-        val options = JSONObject(payload ?: "{}")
-        val role = normalizeRole(options.optString("role", "scale"))
-        val data = options.optString("data", "")
-        if (data.isEmpty()) throw IllegalArgumentException("Data is required")
+        scope.launch {
+            try {
+                val options = JSONObject(payload ?: "{}")
+                val role = normalizeRole(options.optString("role", "scale"))
+                val data = options.optString("data", "")
+                if (data.isEmpty()) return@launch
 
-        val connection = connections[role]
-        val socket = connection?.socket
-        if (socket == null || !socket.isConnected) throw IllegalStateException("$role not connected")
+                val connection = connections[role]
+                val socket = connection?.socket
+                if (socket == null || !socket.isConnected) {
+                    Log.e(TAG, "[BT][JS][$role] Async write failed: Not connected")
+                    handleRoleConnectionLost(role, connection?.device?.address, "not connected")
+                    return@launch
+                }
 
-        try {
-            socket.outputStream.write(data.toByteArray())
-            socket.outputStream.flush()
-            JSONObject().put("success", true).put("role", role).put("fallback", true)
-        } catch (e: IOException) {
-            val reason = e.message ?: "write failed"
-            Log.e(TAG, "[BT][JS][$role] Write failed, clearing stale socket: $reason", e)
-            handleRoleConnectionLost(role, connection.device?.address, reason)
-            JSONObject()
-                .put("error", "$role socket closed: $reason")
-                .put("disconnected", true)
-                .put("role", role)
-                .put("fallback", true)
+                socket.outputStream.write(data.toByteArray())
+                socket.outputStream.flush()
+            } catch (e: IOException) {
+                val role = try { JSONObject(payload ?: "{}").optString("role", "scale") } catch(ex: Exception) { "scale" }
+                val reason = e.message ?: "write failed"
+                Log.e(TAG, "[BT][JS][$role] Async write failed, clearing stale socket: $reason", e)
+                handleRoleConnectionLost(role, connections[role]?.device?.address, reason)
+            }
         }
+        JSONObject().put("success", true).put("initiated", true).put("fallback", true)
     }
 
     fun shutdown() {
+        scope.cancel()
         disconnectRole("scale", notify = true)
         disconnectRole("printer", notify = true)
     }

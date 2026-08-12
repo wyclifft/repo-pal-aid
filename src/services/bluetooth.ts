@@ -90,7 +90,7 @@ const BTM_SERIES_PATTERNS = [
   'BT-', 'BT_', 'BTLE', 'BLE-',
   'HC-', 'HM-', 'JDY-', 'CC41',
   // Generic scale prefixes
-  'SCALE', 'WEIGHT', 'BALANCE',
+  'SCALE', 'WEIGHT', 'BALANCE', 'TY',
 ];
 
 // Check if device name matches DR series
@@ -156,6 +156,21 @@ let scale: BluetoothScale = {
   connectionType: 'ble',
 };
 
+// v2.10.101: Session state tracker for strict sequential GATT flow
+type BLESessionState = 'IDLE' | 'CONNECTING' | 'CONNECTED' | 'DISCOVERING' | 'NOTIFYING' | 'HANDSHAKING' | 'READY';
+let bleSessionState: BLESessionState = 'IDLE';
+
+const setBleState = (state: BLESessionState) => {
+  console.log(`📡 [BLE-STATE] Transition: ${bleSessionState} -> ${state}`);
+  bleSessionState = state;
+};
+
+// Check if a GATT error is status 201 (Device Not Ready)
+const isGattNotReadyError = (error: any): boolean => {
+  const msg = error?.message || String(error);
+  return msg.includes('status 201') || msg.includes('GATT_INTERNAL_ERROR') || msg.includes('Not ready');
+};
+
 interface BluetoothPrinter {
   device: BleDevice | any | null;
   deviceId: string | null;
@@ -209,7 +224,7 @@ interface StoredPrinterInfo {
   timestamp: number;
 }
 
-// Debounce mechanism for BLE verification to prevent Android Bluetooth stack issues
+// Debounce mechanism for BLE verification to prevent Android Bluetooth stack issues from frequent calls
 let lastVerificationTime = 0;
 const VERIFICATION_DEBOUNCE_MS = 2000; // Minimum 2 seconds between verifications
 
@@ -278,6 +293,8 @@ export const clearStoredPrinter = () => {
 
 const SERVICE_UUID_HC05 = numberToUUID(0xffe0);
 const SERVICE_UUID_HM10 = numberToUUID(0xfee7);
+const SERVICE_UUID_TUYA = numberToUUID(0xA201);
+const SERVICE_UUID_TUYA_SMART = numberToUUID(0x1910);
 
 // Expanded list of known scale service UUIDs for broader compatibility
 // Including T-Scale DR series (DR 10-150), ACS, and other common digital scale modules
@@ -285,6 +302,9 @@ const GENERIC_SCALE_SERVICES = [
   // Standard HC-05 / HM-10 modules
   numberToUUID(0xffe0),
   numberToUUID(0xfee7),
+  // Tuya Scale Services
+  numberToUUID(0xA201),
+  numberToUUID(0x1910),
   // Generic Access / Device Info (for discovery)
   numberToUUID(0x1800),
   numberToUUID(0x180a),
@@ -330,6 +350,13 @@ const DR_SERIES_CHARACTERISTIC_PATTERNS = [
   'ffe1', 'ffe2', 'ffe3', 'ffe4', 'ffe5',
   'fff1', 'fff2', 'fff3', 'fff4', 'fff5',
   'fee1', 'fee2',
+];
+
+// Tuya-specific characteristic patterns
+const TUYA_CHARACTERISTIC_PATTERNS = [
+  '2b10', // Command/Write
+  '2b11', // Data/Notify
+  '2b12',
 ];
 
 // Parse weight data from DR Series scales (DR 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150)
@@ -432,6 +459,56 @@ const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null 
   return null;
 };
 
+// Parse weight data from Tuya BLE scales (TY)
+const parseTuyaWeight = (rawBytes: Uint8Array, text: string): number | null => {
+  console.log(`📊 Tuya Parser input - bytes: [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
+
+  // Tuya protocol often has weight in bytes 3-4 or 4-5 (Big Endian)
+  // Standard report: [Header][Type][Len][W1][W0][Unit][...]
+  // Common headers: 0x01 0x03 or 0x00 0x03 or just 0x03
+  if (rawBytes.length >= 4) {
+    // Check for weight report command (0x03)
+    let weightOffset = -1;
+
+    if (rawBytes[0] === 0x03 && rawBytes.length >= 3) {
+      weightOffset = 1;
+    } else if ((rawBytes[0] === 0x01 || rawBytes[0] === 0x00) && rawBytes[1] === 0x03 && rawBytes.length >= 4) {
+      weightOffset = 2;
+    } else if (rawBytes[2] === 0x03 && rawBytes.length >= 5) {
+      weightOffset = 3;
+    }
+
+    if (weightOffset !== -1 && rawBytes.length >= weightOffset + 2) {
+      const weightInt = (rawBytes[weightOffset] << 8) | rawBytes[weightOffset + 1];
+
+      // Conversion depends on the scale.
+      // Try 0.1kg first (common for industrial) then 0.01kg (common for kitchen/body)
+      let weight = weightInt / 10;
+      if (weight > 500) weight = weightInt / 100;
+
+      if (weight >= 0 && weight <= 500) {
+        console.log(`✅ Tuya parsed weight: ${weight} kg`);
+        return weight;
+      }
+    }
+
+    // Strategy: Look for 2-byte sequence that looks like weight (Big Endian)
+    // Most industrial scales are 0-150kg, so 0-1500 in 0.1 units.
+    for (let i = 0; i < rawBytes.length - 1; i++) {
+      const val = (rawBytes[i] << 8) | rawBytes[i+1];
+      if (val > 10 && val < 5000) { // Reasonable range 1.0kg to 500.0kg
+        // Check if the previous byte is a known Tuya header
+        if (i > 0 && (rawBytes[i-1] === 0x03 || rawBytes[i-1] === 0x01)) {
+           console.log(`✅ Tuya heuristic parsed at offset ${i}: ${val/10} kg`);
+           return val/10;
+        }
+      }
+    }
+  }
+
+  return null;
+};
+
 // Clear scale state and broadcast disconnection
 const clearScaleState = () => {
   scale = {
@@ -443,6 +520,7 @@ const clearScaleState = () => {
     isConnected: false,
     connectionType: 'ble',
   };
+  setBleState('IDLE');
   broadcastScaleConnectionChange(false);
 };
 
@@ -567,7 +645,12 @@ export const resubscribeScaleNotifications = async (
       
       // Use DR/BTM parser
       parsed = parseDRSeriesWeight(rawBytes, text);
-      
+
+      if (parsed === null) {
+        // Try Tuya parser
+        parsed = parseTuyaWeight(rawBytes, text);
+      }
+
       if (parsed === null) {
         // Standard decimal format
         const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
@@ -633,6 +716,11 @@ export const verifyScaleConnection = async (): Promise<boolean> => {
   if (!scale.deviceId || !scale.isConnected) {
     return false;
   }
+
+  // v2.10.101: If we are in the middle of a connection flow, don't interrupt
+  if (bleSessionState !== 'READY' && bleSessionState !== 'IDLE') {
+     return true;
+  }
   
   // Skip verification if called too frequently (return cached state)
   if (!canVerifyConnection()) {
@@ -641,21 +729,20 @@ export const verifyScaleConnection = async (): Promise<boolean> => {
   
   if (Capacitor.isNativePlatform()) {
     try {
-      // Try to get services - this will fail if disconnected
-      // Use a timeout to prevent hanging on some Android devices
-      const timeoutPromise = new Promise<boolean>((resolve) => 
-        setTimeout(() => resolve(true), 3000) // On timeout, assume still connected
-      );
+      // v2.10.101: use getServices as a real GATT health check.
+      // If it fails with status 201 or any error, the GATT session is dead.
       const verifyPromise = BleClient.getServices(scale.deviceId).then(() => true).catch(() => false);
-      const result = await Promise.race([verifyPromise, timeoutPromise]);
-      if (!result) {
-        console.warn('⚠️ Scale verification failed but not clearing state');
+      const timeoutPromise = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000));
+      const ok = await Promise.race([verifyPromise, timeoutPromise]);
+
+      if (!ok) {
+        console.warn('⚠️ Scale GATT health check failed (timeout or error)');
+        return false;
       }
-      return result;
+      return true;
     } catch (error) {
       console.warn('⚠️ Scale connection verification error:', error);
-      // Don't clear state aggressively - let actual operations fail gracefully
-      return scale.isConnected;
+      return false;
     }
   }
   
@@ -726,473 +813,292 @@ export const verifyPrinterConnection = async (): Promise<boolean> => {
 export const connectBluetoothScale = async (
   onWeightUpdate: (weight: number, scaleType: ScaleType) => void
 ): Promise<{ success: boolean; type: ScaleType; error?: string }> => {
-  try {
-    // Disconnect existing connection first
-    if (scale.isConnected && scale.deviceId) {
-      try {
-        await disconnectBluetoothScale(false);
-      } catch (e) {
-        console.warn('Failed to disconnect existing scale:', e);
-      }
-    }
-
-    if (Capacitor.isNativePlatform()) {
-      await BleClient.initialize();
+  return runBleOp('connectBluetoothScale', async () => {
+    try {
+      setBleState('IDLE');
       
-      console.log('🔍 Requesting Bluetooth scale device...');
-
-      const device = await BleClient.requestDevice({
-        optionalServices: GENERIC_SCALE_SERVICES,
-      });
-
-      console.log(`📱 Device selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
-
-      // v2.10.99: Reject the BLE half of dual-mode scales (e.g. HC-04BLE).
-      // The user must pair the Classic SPP port (HC-04) with PIN 1234 in
-      // Android Bluetooth settings and connect via "Classic BT (Paired)".
-      if (isBleHalfOfDualModeScale(device.name)) {
-        console.warn(`🚫 Rejected BLE half of dual-mode scale: ${device.name}. Use Classic BT and pair the SPP port (e.g. HC-04) with PIN 1234.`);
-        try { await BleClient.disconnect(device.deviceId); } catch {}
-        return {
-          success: false,
-          type: 'Unknown',
-          error: `${device.name} is the BLE port and does not transmit weight. Pair the SPP port (e.g. HC-04) with PIN 1234 in Android Bluetooth settings, then use "Connect via Classic BT (Paired)".`,
-        };
-      }
-
-      
-      // Connect with device-scoped disconnect callback (v2.10.54)
-      await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
-        if (disconnectedDeviceId !== scale.deviceId) {
-          console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active scale (${scale.deviceId})`);
-          return;
+      // Disconnect existing connection first to ensure clean state
+      if (scale.isConnected && scale.deviceId) {
+        try {
+          console.log('🧹 Cleaning up existing BLE connection before new attempt...');
+          await BleClient.disconnect(scale.deviceId);
+        } catch (e) {
+          console.warn('Failed to disconnect existing scale (ignoring):', e);
         }
-        console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
-        clearScaleState();
-      });
-      console.log('✅ Connected to device');
-
-      let scaleType: ScaleType = 'Unknown';
-      let serviceUuid = '';
-      let characteristicUuid = '';
-      
-      // Check if this is a BTM Series scale by name (e.g., BTM0304C1H)
-      const isBTMScale = isBTMSeriesScale(device.name);
-      if (isBTMScale) {
-        console.log(`🎯 Detected BTM Series scale by name: ${device.name}`);
-        scaleType = 'BTM-Series';
       }
-      
-      // Check if this is a DR Series scale by name
-      const isDRScale = isDRSeriesScale(device.name);
-      if (isDRScale) {
-        console.log(`🎯 Detected DR Series scale by name: ${device.name}`);
-        scaleType = 'DR-Series';
-      }
-      
-      // Combined detection for compatible scales
-      const isCompatible = isBTMScale || isDRScale;
+      clearScaleState();
 
-      const services = await BleClient.getServices(device.deviceId);
-      console.log(`📋 Found ${services.length} services`);
+      if (Capacitor.isNativePlatform()) {
+        await BleClient.initialize();
 
-      // For BTM Series or DR Series scales, prioritize FFE0-FFE5 and SPP-like services
-      if (isCompatible) {
-        console.log(`🔍 Scanning services for ${scaleType} scale...`);
+        console.log('🔍 Requesting Bluetooth scale device...');
+        setBleState('CONNECTING');
+
+        const device = await BleClient.requestDevice({
+          optionalServices: GENERIC_SCALE_SERVICES,
+        });
+
+        console.log(`📱 Device selected: ${device.name || 'Unknown'} (ID: ${device.deviceId})`);
+
+        if (isBleHalfOfDualModeScale(device.name)) {
+          console.warn(`🚫 Rejected BLE half of dual-mode scale: ${device.name}`);
+          try { await BleClient.disconnect(device.deviceId); } catch {}
+          setBleState('IDLE');
+          return {
+            success: false,
+            type: 'Unknown',
+            error: `${device.name} is the BLE port and does not transmit weight.`,
+          };
+        }
+
+        // 1. CONNECT
+        await BleClient.connect(device.deviceId, (disconnectedDeviceId) => {
+          if (disconnectedDeviceId === scale.deviceId) {
+            console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
+            clearScaleState();
+            setBleState('IDLE');
+          }
+        });
+        setBleState('CONNECTED');
+        console.log('✅ [STEP 1/4] Connected to GATT server');
+
+        // 2. DISCOVER & VERIFY
+        setBleState('DISCOVERING');
+        const services = await BleClient.getServices(device.deviceId);
+        console.log(`📋 [STEP 2/4] Discovered ${services.length} services`);
+
+        // Log all for debugging
+        console.log('📋 Full Discovered Services/Characteristics:');
+        for (const s of services) {
+          console.log(`  Service: ${s.uuid}`);
+          for (const c of s.characteristics) {
+            console.log(`    📌 Char: ${c.uuid} [notify:${c.properties.notify}, indicate:${c.properties.indicate}, read:${c.properties.read}, write:${c.properties.write}]`);
+          }
+        }
+
+        let scaleType: ScaleType = 'Unknown';
+        let serviceUuid = '';
+        let characteristicUuid = '';
+        let writeUuid = '';
+
+        const isBTMScale = isBTMSeriesScale(device.name);
+        const isDRScale = isDRSeriesScale(device.name);
+        const isTuyaDevice = (device.name && device.name.toUpperCase().includes('TY')) ||
+            services.some(s => s.uuid.toLowerCase().includes('1910') || s.uuid.toLowerCase().includes('a201'));
+
+        if (isTuyaDevice) scaleType = 'Unknown';
+        if (isBTMScale) scaleType = 'BTM-Series';
+        if (isDRScale) scaleType = 'DR-Series';
+
+        // Find Target Service and Characteristics
         for (const service of services) {
           const uuid = service.uuid.toLowerCase();
-          console.log(`  📋 Service: ${uuid} with ${service.characteristics.length} characteristics`);
-          
-          // Check for common scale characteristic patterns (FFE0, FFF0, FEE0, SPP)
-          const isScaleService = DR_SERIES_CHARACTERISTIC_PATTERNS.some(pattern => uuid.includes(pattern)) ||
+          const isScaleService = DR_SERIES_CHARACTERISTIC_PATTERNS.some(p => uuid.includes(p)) ||
               uuid.includes('ffe0') || uuid.includes('fff0') || uuid.includes('fee0') ||
-              uuid.includes('ffe1') || uuid.includes('fff1') || uuid.includes('fee1') ||
-              uuid.includes('1101'); // SPP-like service
+              uuid.includes('1910') || uuid.includes('a201') ||
+              uuid.includes('1101');
               
-          if (isScaleService || service.characteristics.length > 0) {
-            // Log all characteristics for debugging
-            for (const char of service.characteristics) {
-              console.log(`    📌 Char: ${char.uuid} - notify:${char.properties.notify}, indicate:${char.properties.indicate}, read:${char.properties.read}, write:${char.properties.write}`);
+          if (isScaleService) {
+            if (isTuyaDevice) {
+               // v2.10.101: 2b10 = Notify/Data, 2b11 = Write/Command
+               const tuyaNotify = service.characteristics.find(c => c.uuid.toLowerCase().includes('2b10') && c.properties.notify);
+               const tuyaWrite = service.characteristics.find(c => c.uuid.toLowerCase().includes('2b11') && (c.properties.write || c.properties.writeWithoutResponse));
+
+               if (tuyaNotify) {
+                  serviceUuid = service.uuid;
+                  characteristicUuid = tuyaNotify.uuid;
+                  writeUuid = tuyaWrite?.uuid || '';
+                  console.log(`🎯 Identified Tuya Data Char: ${characteristicUuid}, Command Char: ${writeUuid}`);
+                  break;
+               }
             }
-            
-            const notifyChar = service.characteristics.find((c: any) => c.properties.notify);
-            const indicateChar = service.characteristics.find((c: any) => c.properties.indicate);
-            const readChar = service.characteristics.find((c: any) => c.properties.read);
-            
+
+            const notifyChar = service.characteristics.find(c => c.properties.notify);
             if (notifyChar) {
               serviceUuid = service.uuid;
               characteristicUuid = notifyChar.uuid;
-              console.log(`✅ ${scaleType} notify service found: ${service.uuid}, char: ${characteristicUuid}`);
               break;
-            } else if (indicateChar && !serviceUuid) {
-              serviceUuid = service.uuid;
-              characteristicUuid = indicateChar.uuid;
-              console.log(`✅ ${scaleType} indicate service found: ${service.uuid}, char: ${characteristicUuid}`);
-            } else if (readChar && !serviceUuid) {
-              // Some scales use read-only characteristics with polling
-              serviceUuid = service.uuid;
-              characteristicUuid = readChar.uuid;
-              console.log(`✅ ${scaleType} read-only service found: ${service.uuid}`);
             }
           }
         }
-      }
 
-      // Try HC-05 if not already found
-      if (!serviceUuid) {
-        const hc05Service = services.find(s => 
-          s.uuid.toLowerCase().includes(SERVICE_UUID_HC05.toLowerCase()) ||
-          s.uuid.toLowerCase().includes('ffe0')
-        );
-        if (hc05Service && hc05Service.characteristics.length > 0) {
-          const notifyChar = hc05Service.characteristics.find(c => c.properties.notify);
-          if (notifyChar) {
-            serviceUuid = hc05Service.uuid;
-            characteristicUuid = notifyChar.uuid;
-            if (!isCompatible) scaleType = 'HC-05';
-            console.log('✅ Detected HC-05 compatible scale');
-          }
+        if (!serviceUuid || !characteristicUuid) {
+           console.log('⚠️ Primary target not found, using generic notify discovery');
+           for (const service of services) {
+             const char = service.characteristics.find(c => c.properties.notify);
+             if (char && !isGenericGattService(service.uuid)) {
+               serviceUuid = service.uuid;
+               characteristicUuid = char.uuid;
+               break;
+             }
+           }
         }
-      }
 
-      // Try HM-10 if HC-05 not found
-      if (!serviceUuid) {
-        const hm10Service = services.find(s => 
-          s.uuid.toLowerCase().includes(SERVICE_UUID_HM10.toLowerCase()) ||
-          s.uuid.toLowerCase().includes('fee7')
-        );
-        if (hm10Service && hm10Service.characteristics.length > 0) {
-          const notifyChar = hm10Service.characteristics.find(c => c.properties.notify);
-          if (notifyChar) {
-            serviceUuid = hm10Service.uuid;
-            characteristicUuid = notifyChar.uuid;
-            if (!isCompatible) scaleType = 'HM-10';
-            console.log('✅ Detected HM-10 compatible scale');
-          }
+        if (!serviceUuid || !characteristicUuid) {
+          console.error('❌ Could not find any compatible scale service');
+          await BleClient.disconnect(device.deviceId);
+          setBleState('IDLE');
+          throw new Error('Compatible service not found.');
         }
-      }
 
-      // Try generic discovery
-      if (!serviceUuid) {
-        console.log('⚠️ Standard services not found, trying generic discovery...');
-        for (const service of services) {
-          if (service.uuid.toLowerCase().includes('1800') || 
-              service.uuid.toLowerCase().includes('1801') ||
-              service.uuid.toLowerCase().includes('180a')) {
-            continue;
+        // 3. ENABLE NOTIFICATIONS
+        setBleState('NOTIFYING');
+        console.log(`📡 [STEP 3/4] Starting notifications on ${characteristicUuid}...`);
+
+        const handleWeightData = (value: DataView) => {
+          const rawBytes = new Uint8Array(value.buffer);
+          const hex = Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+          console.log(`📊 BLE Notification [${characteristicUuid}]: ${hex}`);
+          
+          const text = new TextDecoder().decode(value);
+          let parsed: number | null = null;
+          if (isTuyaDevice || (device.name && device.name.includes('TY'))) {
+             parsed = parseTuyaWeight(rawBytes, text);
+          } else {
+             parsed = parseDRSeriesWeight(rawBytes, text);
           }
           
-          const notifyChar = service.characteristics.find((c: any) => c.properties.notify);
-          if (notifyChar) {
-            serviceUuid = service.uuid;
-            characteristicUuid = notifyChar.uuid;
-            scaleType = 'Unknown';
-            console.log(`✅ Found generic scale service: ${service.uuid}`);
-            break;
+          if (parsed === null) {
+            const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
+            if (decimalMatch) parsed = parseFloat(decimalMatch[1]);
           }
-        }
-      }
 
-      // Also try finding a characteristic with indicate if notify not found
-      if (!serviceUuid) {
-        console.log('⚠️ No notify characteristic, trying indicate...');
-        for (const service of services) {
-          if (service.uuid.toLowerCase().includes('1800') || 
-              service.uuid.toLowerCase().includes('1801') ||
-              service.uuid.toLowerCase().includes('180a')) {
-            continue;
-          }
-          
-          const indicateChar = service.characteristics.find((c: any) => c.properties.indicate);
-          if (indicateChar) {
-            serviceUuid = service.uuid;
-            characteristicUuid = indicateChar.uuid;
-            scaleType = 'Unknown';
-            console.log(`✅ Found scale service with indicate: ${service.uuid}`);
-            break;
-          }
-        }
-      }
-
-      if (!serviceUuid || !characteristicUuid) {
-        // Log all discovered services for debugging
-        console.log('📋 All discovered services for debugging:');
-        for (const service of services) {
-          console.log(`  Service: ${service.uuid}`);
-          for (const char of service.characteristics) {
-            console.log(`    Char: ${char.uuid} - notify:${char.properties.notify}, indicate:${char.properties.indicate}, read:${char.properties.read}, write:${char.properties.write}`);
-          }
-        }
-        console.error('❌ Could not find any compatible scale service');
-        await BleClient.disconnect(device.deviceId);
-        throw new Error('Could not find compatible Bluetooth scale service. Check console for discovered services.');
-      }
-
-      console.log(`📡 Starting notifications on ${serviceUuid}/${characteristicUuid}`);
-      
-      // Helper function to handle weight data
-      const handleWeightData = (value: DataView) => {
-        const rawBytes = new Uint8Array(value.buffer);
-        const text = new TextDecoder().decode(value);
-        console.log(`📊 Raw scale data: "${text}" (${rawBytes.length} bytes) [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
-        
-        let parsed: number | null = null;
-        
-        // Use specialized parser for BTM Series or DR Series scales
-        if (scaleType === 'BTM-Series' || scaleType === 'DR-Series' || isBTMScale || isDRScale) {
-          parsed = parseDRSeriesWeight(rawBytes, text);
-          if (parsed !== null) {
-            console.log(`✅ ${scaleType} weight: ${parsed} kg`);
+          if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
             broadcastScaleWeightUpdate(parsed, scaleType);
-            try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback, global broadcast still works */ }
-            return;
+            try { onWeightUpdate(parsed, scaleType); } catch {}
           }
-        }
-        
-        // Check for negative values first - return 0 for negative readings
-        const negativeMatch = text.match(/-\s*(\d+\.?\d*)/);
-        if (negativeMatch) {
-          console.log(`⚠️ Negative weight detected (-${negativeMatch[1]}), returning 0`);
-          broadcastScaleWeightUpdate(0, scaleType);
-          try { onWeightUpdate(0, scaleType); } catch (e) { /* Stale callback, global broadcast still works */ }
-          return;
-        }
-        
-        // Strategy 1: Standard decimal format "12.34" or "12.34 kg" or "+12.34" (positive only)
-        const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
-        if (decimalMatch) {
-          parsed = parseFloat(decimalMatch[1]);
-          console.log(`📊 Strategy 1 (decimal): ${parsed} kg`);
-        }
-        
-        // Strategy 2: Try matching "0.0" or "0" explicitly (zero readings)
-        if (parsed === null || isNaN(parsed)) {
-          const zeroMatch = text.match(/^\s*\+?\s*0+\.?0*\s*$/);
-          if (zeroMatch) {
-            parsed = 0;
-            console.log(`📊 Strategy 2 (zero match): 0 kg`);
-          }
-        }
-        
-        // Strategy 3: Integer format - could be kg or grams
-        if (parsed === null || isNaN(parsed)) {
-          const intMatch = text.match(/(\d+)/);
-          if (intMatch) {
-            const intValue = parseInt(intMatch[1]);
-            // If value > 100, assume grams and convert to kg
-            parsed = intValue > 100 ? intValue / 1000 : intValue;
-            console.log(`📊 Strategy 3 (integer ${intValue}): ${parsed} kg`);
-          }
-        }
-        
-        // Strategy 4: T-Scale DR format - binary with weight in specific bytes
-        if (parsed === null || isNaN(parsed)) {
-          if (rawBytes.length >= 6) {
-            // Some scales send weight as 2-byte integer at offset 4-5 (big endian)
-            const weightInt = (rawBytes[4] << 8) | rawBytes[5];
-            if (weightInt >= 0 && weightInt < 50000) {
-              parsed = weightInt / 100; // Assume centgrams
-              console.log(`📊 Strategy 4 (binary format): ${parsed} kg`);
-            }
-          }
-        }
-        
-        // Strategy 5: Try parsing from hex representation (some Chinese scales)
-        if (parsed === null || isNaN(parsed)) {
-          const hexWeight = text.replace(/[^0-9A-Fa-f]/g, '');
-          if (hexWeight.length >= 4) {
-            const hexValue = parseInt(hexWeight.slice(0, 4), 16);
-            if (hexValue >= 0 && hexValue < 50000) {
-              parsed = hexValue / 100;
-              console.log(`📊 Strategy 5 (hex format): ${parsed} kg`);
-            }
-          }
-        }
-        
-        // Broadcast if we have a valid weight (including 0)
-        if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
-          console.log(`✅ Broadcasting weight: ${parsed} kg from ${scaleType}`);
-          broadcastScaleWeightUpdate(parsed, scaleType);
-          try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback, global broadcast still works */ }
-        } else {
-          // Log unparseable data for debugging
-          console.warn(`⚠️ Could not parse weight from: "${text}" (hex: ${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')})`);
-        }
-      };
+        };
 
-      // Add a small delay before enabling notifications - some scales need settling time
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Try to enable notifications with retry and fallback logic
-      let notificationStarted = false;
-      let lastError: Error | null = null;
-      
-      // Find both notify and indicate characteristics for fallback
-      const targetService = services.find(s => s.uuid.toLowerCase() === serviceUuid.toLowerCase());
-      const notifyChars = targetService?.characteristics.filter(c => c.properties.notify) || [];
-      const indicateChars = targetService?.characteristics.filter(c => c.properties.indicate) || [];
-      
-      // Build list of characteristics to try: selected first, then other notify, then indicate
-      const charsToTry: Array<{uuid: string, useIndicate: boolean}> = [];
-      charsToTry.push({ uuid: characteristicUuid, useIndicate: false });
-      
-      for (const char of notifyChars) {
-        if (char.uuid !== characteristicUuid) {
-          charsToTry.push({ uuid: char.uuid, useIndicate: false });
-        }
-      }
-      for (const char of indicateChars) {
-        charsToTry.push({ uuid: char.uuid, useIndicate: true });
-      }
-      
-      console.log(`🔍 Will try ${charsToTry.length} characteristic(s) for notifications`);
-      
-      for (const charAttempt of charsToTry) {
-        if (notificationStarted) break;
-        
         try {
-          console.log(`📡 Attempting ${charAttempt.useIndicate ? 'indications' : 'notifications'} on ${charAttempt.uuid}...`);
-          
-          // Some scales need a "start" command written before they send data
-          // Try writing common start commands (ignore failures - most chars are read-only)
-          const writeChar = targetService?.characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse);
-          if (writeChar) {
+          await BleClient.startNotifications(device.deviceId, serviceUuid, characteristicUuid, handleWeightData);
+          console.log('✅ Notifications enabled successfully');
+        } catch (err) {
+          console.error('❌ Failed to enable notifications:', err);
+          if (isGattNotReadyError(err)) {
+            console.log('🛑 Aborting: GATT stack not ready (status 201)');
+          }
+          await BleClient.disconnect(device.deviceId);
+          setBleState('IDLE');
+          throw err;
+        }
+
+        // 4. HANDSHAKE
+        setBleState('HANDSHAKING');
+        console.log('📤 [STEP 4/4] Sending handshake commands...');
+
+        if (!writeUuid) {
+           const targetService = services.find(s => s.uuid.toLowerCase() === serviceUuid.toLowerCase());
+           const wChar = targetService?.characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse);
+           writeUuid = wChar?.uuid || '';
+        }
+
+        if (writeUuid) {
+          const startCommands = [
+            new Uint8Array([0x55]),
+            new Uint8Array([0x01]),
+            new Uint8Array([0x01, 0x01]),
+            new Uint8Array([0x01, 0x03]),
+            new Uint8Array([0x00, 0x01]),
+            new Uint8Array([0x01, 0x03, 0x00, 0x00, 0x00, 0x01])
+          ];
+          for (const cmd of startCommands) {
             try {
-              // Common "start sending" commands used by various scales
-              const startCommands = [
-                new Uint8Array([0x01]),           // Simple start
-                new Uint8Array([0x53]),           // 'S' character
-                new Uint8Array([0x52]),           // 'R' for read
-                new Uint8Array([0x00, 0x01]),     // Two-byte start
-              ];
-              
-              for (const cmd of startCommands) {
-                try {
-                  await BleClient.write(
-                    device.deviceId,
-                    serviceUuid,
-                    writeChar.uuid,
-                    new DataView(cmd.buffer),
-                    { timeout: 500 }
-                  );
-                  console.log(`📤 Sent start command to ${writeChar.uuid}`);
-                  break; // One successful write is enough
-                } catch {
-                  // Ignore individual command failures
-                }
+              console.log(`📤 Writing command [${Array.from(cmd).map(b => b.toString(16)).join(' ')}] to ${writeUuid}`);
+              await BleClient.write(device.deviceId, serviceUuid, writeUuid, new DataView(cmd.buffer), { timeout: 500 });
+              await new Promise(r => setTimeout(r, 100));
+            } catch (e) {
+              if (isGattNotReadyError(e)) {
+                console.error('🛑 Handshake failed: GATT not ready (status 201)');
+                await BleClient.disconnect(device.deviceId);
+                setBleState('IDLE');
+                throw e;
               }
-            } catch (writeErr) {
-              console.log('ℹ️ No writable characteristic or write failed (normal for most scales)');
             }
           }
-          
-          await BleClient.startNotifications(
-            device.deviceId,
-            serviceUuid,
-            charAttempt.uuid,
-            handleWeightData
-          );
-          
-          characteristicUuid = charAttempt.uuid;
-          notificationStarted = true;
-          console.log(`✅ ${charAttempt.useIndicate ? 'Indications' : 'Notifications'} started successfully on ${charAttempt.uuid}`);
-          
-        } catch (err: any) {
-          lastError = err;
-          const errorMsg = err?.message || String(err);
-          console.warn(`⚠️ Failed to start on ${charAttempt.uuid}: ${errorMsg}`);
-          
-          // Small delay before trying next characteristic
-          await new Promise(resolve => setTimeout(resolve, 100));
         }
-      }
-      
-      if (!notificationStarted) {
-        console.error('❌ Failed to start notifications on any characteristic');
-        console.log('💡 Tip: If BLE fails, try Classic Bluetooth connection from Settings');
-        await BleClient.disconnect(device.deviceId);
-        throw new Error(`Failed to enable scale notifications: ${lastError?.message || 'CCCD write failed'}. Try Classic Bluetooth instead.`);
-      }
 
-      // Update scale state
-      scale = { 
-        device, 
-        deviceId: device.deviceId,
-        serviceUuid,
-        characteristic: characteristicUuid, 
-        type: scaleType,
-        isConnected: true,
-        connectionType: 'ble',
-      };
-      
-      saveDeviceInfo(device.deviceId, device.name || 'Unknown Scale', scaleType, 'ble');
-      broadcastScaleConnectionChange(true);
-      
-      console.log('✅ Scale connection successful');
-      return { success: true, type: scaleType };
-    } else {
-      // Web Bluetooth fallback
-      const device = await (navigator as any).bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: [0xffe0, 0xfee7],
-      });
+        // FINISH
+        scale = {
+          device,
+          deviceId: device.deviceId,
+          serviceUuid,
+          characteristic: characteristicUuid,
+          type: scaleType,
+          isConnected: true,
+          connectionType: 'ble',
+        };
 
-      const server = await device.gatt!.connect();
-      let service;
-      let scaleType: ScaleType = 'Unknown';
+        saveDeviceInfo(device.deviceId, device.name || 'Unknown Scale', scaleType, 'ble');
+        broadcastScaleConnectionChange(true);
+        setBleState('READY');
+        console.log('🎉 Scale READY for use');
+        return { success: true, type: scaleType };
 
-      try {
-        service = await server.getPrimaryService(0xffe0);
-        scaleType = 'HC-05';
-      } catch {
-        service = await server.getPrimaryService(0xfee7);
-        scaleType = 'HM-10';
-      }
+      } else {
+        // Web Bluetooth fallback
+        const device = await (navigator as any).bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [0xffe0, 0xfee7],
+        });
 
-      const characteristics = await service.getCharacteristics();
-      const characteristic = characteristics[0];
+        const server = await device.gatt!.connect();
+        let service;
+        let scaleType: ScaleType = 'Unknown';
 
-      characteristic.addEventListener('characteristicvaluechanged', (event: Event) => {
-        const target = event.target as any;
-        const text = new TextDecoder().decode(target.value);
-        const match = text.match(/(\d+\.\d+)/);
-        if (match) {
-          const parsed = parseFloat(match[1]);
-          if (!isNaN(parsed)) {
-            onWeightUpdate(parsed, scaleType);
+        try {
+          service = await server.getPrimaryService(0xffe0);
+          scaleType = 'HC-05';
+        } catch {
+          service = await server.getPrimaryService(0xfee7);
+          scaleType = 'HM-10';
+        }
+
+        const characteristics = await service.getCharacteristics();
+        const characteristic = characteristics[0];
+
+        characteristic.addEventListener('characteristicvaluechanged', (event: Event) => {
+          const target = event.target as any;
+          const text = new TextDecoder().decode(target.value);
+          const match = text.match(/(\d+\.\d+)/);
+          if (match) {
+            const parsed = parseFloat(match[1]);
+            if (!isNaN(parsed)) {
+              onWeightUpdate(parsed, scaleType);
+            }
           }
-        }
-      });
-      await characteristic.startNotifications();
+        });
+        await characteristic.startNotifications();
 
-      // Handle disconnect for web
-      device.addEventListener('gattserverdisconnected', () => {
-        console.log('⚠️ Scale disconnected (Web Bluetooth)');
-        clearScaleState();
-      });
+        device.addEventListener('gattserverdisconnected', () => {
+          console.log('⚠️ Scale disconnected (Web Bluetooth)');
+          clearScaleState();
+        });
 
-      scale = { 
-        device, 
-        deviceId: device.id,
-        serviceUuid: null,
-        characteristic, 
-        type: scaleType,
-        isConnected: true,
-        connectionType: 'ble',
+        scale = {
+          device,
+          deviceId: device.id,
+          serviceUuid: null,
+          characteristic,
+          type: scaleType,
+          isConnected: true,
+          connectionType: 'ble',
+        };
+
+        broadcastScaleConnectionChange(true);
+        setBleState('READY');
+        return { success: true, type: scaleType };
+      }
+    } catch (err) {
+      console.error('❌ Bluetooth connection error:', err);
+      clearScaleState();
+      setBleState('IDLE');
+      return {
+        success: false,
+        type: 'Unknown',
+        error: err instanceof Error ? err.message : 'Connection failed',
       };
-      
-      broadcastScaleConnectionChange(true);
-      return { success: true, type: scaleType };
     }
-  } catch (err) {
-    console.error('❌ Bluetooth connection error:', err);
-    clearScaleState();
-    return {
-      success: false,
-      type: 'Unknown',
-      error: err instanceof Error ? err.message : 'Connection failed',
-    };
-  }
+  });
 };
 
 export const disconnectBluetoothScale = async (clearSaved: boolean = false): Promise<void> => {
@@ -1235,285 +1141,220 @@ export const quickReconnect = async (
   onWeightUpdate: (weight: number, scaleType: ScaleType) => void,
   retries: number = 3
 ): Promise<{ success: boolean; type: ScaleType; error?: string }> => {
-  // v2.10.99: If the persisted device is the BLE half of a dual-mode scale
-  // (e.g. HC-04BLE), do NOT attempt to reconnect. Clear it so the retry
-  // loop in btConnectionManager does not flood the log every 2-4 s.
-  const storedInfoForBleCheck = getStoredDeviceInfo();
-  if (storedInfoForBleCheck && isBleHalfOfDualModeScale(storedInfoForBleCheck.deviceName)) {
-    console.warn(`🚫 [v2.10.99] Stored scale "${storedInfoForBleCheck.deviceName}" is the BLE half of a dual-mode scale — clearing and requiring Classic SPP pairing.`);
-    clearStoredDevice();
-    return { success: false, type: 'Unknown', error: 'BLE_HALF_BLOCKED' };
-  }
-  let lastError: any = null;
-  
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      if (Capacitor.isNativePlatform()) {
-        await BleClient.initialize();
-        
-        console.log(`🔄 Quick reconnecting to scale: ${deviceId} (attempt ${attempt}/${retries})`);
-        
-        // v2.10.54: Only disconnect if this id matches our current scale slot.
-        // Calling BleClient.disconnect on an unrelated id can reset the shared
-        // Android GATT client and kill the printer connection.
-        if (scale.deviceId === deviceId) {
-          try {
-            await BleClient.disconnect(deviceId);
-            console.log('🔌 Disconnected stale scale connection');
-          } catch {
-            // Ignore — device may not be connected
-          }
-        } else {
-          console.log(`ℹ️ Skipping stale-disconnect: ${deviceId} is not the active scale slot`);
-        }
-        
-        await new Promise(resolve => setTimeout(resolve, 300 * attempt));
-        
-        await BleClient.connect(deviceId, (disconnectedDeviceId) => {
-          if (disconnectedDeviceId !== scale.deviceId) {
-            console.log(`ℹ️ Ignoring disconnect for ${disconnectedDeviceId} — not our active scale`);
-            return;
-          }
-          console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
-          clearScaleState();
-        });
-        
-        const storedInfo = getStoredDeviceInfo();
-        if (!storedInfo) {
-          return { success: false, type: 'Unknown', error: 'No stored device info' };
-        }
+  return runBleOp('quickReconnect', async () => {
+    // v2.10.99: If the persisted device is the BLE half of a dual-mode scale
+    // (e.g. HC-04BLE), do NOT attempt to reconnect. Clear it so the retry
+    // loop in btConnectionManager does not flood the log every 2-4 s.
+    const storedInfoForBleCheck = getStoredDeviceInfo();
+    if (storedInfoForBleCheck && isBleHalfOfDualModeScale(storedInfoForBleCheck.deviceName)) {
+      console.warn(`🚫 [v2.10.99] Stored scale "${storedInfoForBleCheck.deviceName}" is the BLE half of a dual-mode scale — clearing and requiring Classic SPP pairing.`);
+      clearStoredDevice();
+      return { success: false, type: 'Unknown', error: 'BLE_HALF_BLOCKED' };
+    }
+    let lastError: any = null;
 
-        let serviceUuid = '';
-        let characteristicUuid = '';
-        const scaleType = storedInfo.scaleType;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        setBleState('IDLE');
+        if (Capacitor.isNativePlatform()) {
+          await BleClient.initialize();
 
-        const services = await BleClient.getServices(deviceId);
-        console.log(`📋 Scale has ${services.length} services`);
-        
-        const targetServiceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
-        let service = services.find(s => s.uuid.toLowerCase().includes(targetServiceUuid.toLowerCase()));
-        
-        if (!service) {
-          for (const svc of services) {
-            if (svc.uuid.toLowerCase().includes('1800') || 
-                svc.uuid.toLowerCase().includes('1801') ||
-                svc.uuid.toLowerCase().includes('180a')) {
-              continue;
-            }
-            const notifyChar = svc.characteristics.find(c => c.properties.notify);
-            if (notifyChar) {
-              service = svc;
-              break;
-            }
-          }
-        }
-        
-        if (!service || service.characteristics.length === 0) {
-          throw new Error('Compatible scale service not found');
-        }
+          console.log(`🔄 Quick reconnecting to scale: ${deviceId} (attempt ${attempt}/${retries})`);
 
-        serviceUuid = service.uuid;
-        
-        // Helper for weight parsing - mirrors main connection logic
-        const handleReconnectWeight = (value: DataView) => {
-          const rawBytes = new Uint8Array(value.buffer);
-          const text = new TextDecoder().decode(value);
-          console.log(`📊 Reconnect data: "${text}" (${rawBytes.length} bytes) [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
-          
-          let parsed: number | null = null;
-          
-          // Check for negative values first - return 0 for negative readings
-          const negativeMatch = text.match(/-\s*(\d+\.?\d*)/);
-          if (negativeMatch) {
-            console.log(`⚠️ Negative weight detected, returning 0`);
-            broadcastScaleWeightUpdate(0, scaleType);
-            try { onWeightUpdate(0, scaleType); } catch (e) { /* Stale callback */ }
-            return;
-          }
-          
-          // Try DR/BTM parser first
-          parsed = parseDRSeriesWeight(rawBytes, text);
-          if (parsed !== null) {
-            console.log(`✅ Reconnect DR/BTM parsed: ${parsed} kg`);
-            broadcastScaleWeightUpdate(parsed, scaleType);
-            try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
-            return;
-          }
-          
-          // Strategy 1: Standard decimal format
-          const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
-          if (decimalMatch) {
-            parsed = parseFloat(decimalMatch[1]);
-            console.log(`📊 Reconnect decimal: ${parsed} kg`);
-          }
-          
-          // Strategy 2: Zero match
-          if (parsed === null || isNaN(parsed)) {
-            const zeroMatch = text.match(/^\s*\+?\s*0+\.?0*\s*$/);
-            if (zeroMatch) {
-              parsed = 0;
-              console.log(`📊 Reconnect zero match: 0 kg`);
+          // v2.10.54: Only disconnect if this id matches our current scale slot.
+          // Calling BleClient.disconnect on an unrelated id can reset the shared
+          // Android GATT client and kill the printer connection.
+          if (scale.deviceId === deviceId) {
+            try {
+              await BleClient.disconnect(deviceId);
+              console.log('🔌 Disconnected stale scale connection');
+            } catch {
+              // Ignore — device may not be connected
             }
-          }
-          
-          // Strategy 3: Integer
-          if (parsed === null || isNaN(parsed)) {
-            const intMatch = text.match(/(\d+)/);
-            if (intMatch) {
-              const intValue = parseInt(intMatch[1]);
-              parsed = intValue > 1000 ? intValue / 1000 : intValue;
-              console.log(`📊 Reconnect integer: ${parsed} kg`);
-            }
-          }
-          
-          // Broadcast if valid (including 0)
-          if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
-            console.log(`✅ Reconnect broadcasting: ${parsed} kg`);
-            broadcastScaleWeightUpdate(parsed, scaleType);
-            try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
           } else {
-            console.warn(`⚠️ Reconnect: could not parse "${text}"`);
+            console.log(`ℹ️ Skipping stale-disconnect: ${deviceId} is not the active scale slot`);
           }
-        };
 
-        // Build list of characteristics to try with fallback
-        const notifyChars = service.characteristics.filter(c => c.properties.notify);
-        const indicateChars = service.characteristics.filter(c => c.properties.indicate);
-        const charsToTry: string[] = [];
-        
-        // Add notify chars first
-        for (const char of notifyChars) {
-          charsToTry.push(char.uuid);
-        }
-        // Then indicate chars
-        for (const char of indicateChars) {
-          if (!charsToTry.includes(char.uuid)) {
-            charsToTry.push(char.uuid);
+          await new Promise(resolve => setTimeout(resolve, 300 * attempt));
+
+          setBleState('CONNECTING');
+          await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+            if (disconnectedDeviceId === scale.deviceId) {
+              console.log(`⚠️ Scale ${disconnectedDeviceId} disconnected unexpectedly`);
+              clearScaleState();
+              setBleState('IDLE');
+            }
+          });
+          setBleState('CONNECTED');
+
+          const storedInfo = getStoredDeviceInfo();
+          if (!storedInfo) {
+            setBleState('IDLE');
+            return { success: false, type: 'Unknown', error: 'No stored device info' };
           }
-        }
-        // Fallback to first characteristic
-        if (charsToTry.length === 0 && service.characteristics.length > 0) {
-          charsToTry.push(service.characteristics[0].uuid);
-        }
-        
-        console.log(`🔍 Reconnect: trying ${charsToTry.length} characteristic(s)`);
-        
-        let notificationStarted = false;
-        let lastError: Error | null = null;
-        
-        // Add settling delay
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
-        for (const charUuid of charsToTry) {
-          if (notificationStarted) break;
-          
-          try {
-            console.log(`📡 Reconnect: trying notifications on ${charUuid}...`);
-            
-            await BleClient.startNotifications(
-              deviceId,
-              serviceUuid,
-              charUuid,
-              handleReconnectWeight
-            );
-            
-            characteristicUuid = charUuid;
-            notificationStarted = true;
-            console.log(`✅ Reconnect: notifications started on ${charUuid}`);
-            
-          } catch (err: any) {
-            lastError = err;
-            console.warn(`⚠️ Reconnect: failed on ${charUuid}: ${err?.message || err}`);
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-        }
-        
-        if (!notificationStarted) {
-          throw new Error(`Reconnect notification failed: ${lastError?.message || 'CCCD write failed'}`);
-        }
 
-        scale = { 
-          device: { deviceId } as BleDevice, 
-          deviceId,
-          serviceUuid,
-          characteristic: characteristicUuid, 
-          type: scaleType,
-          isConnected: true,
-          connectionType: 'ble',
-        };
-        
-        broadcastScaleConnectionChange(true);
-        console.log('✅ Reconnected to scale successfully');
-        return { success: true, type: scaleType };
-      } else if ('bluetooth' in navigator) {
-        const storedInfo = getStoredDeviceInfo();
-        if (!storedInfo) {
-          return { success: false, type: 'Unknown', error: 'No stored device info' };
-        }
+          let serviceUuid = '';
+          let characteristicUuid = '';
+          let writeUuid = '';
+          const scaleType = storedInfo.scaleType;
 
-        const scaleType = storedInfo.scaleType;
-        const serviceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
+          setBleState('DISCOVERING');
+          const services = await BleClient.getServices(deviceId);
+          console.log(`📋 Scale has ${services.length} services`);
 
-        const device = await (navigator as any).bluetooth.requestDevice({
-          filters: [{ services: [serviceUuid] }],
-        });
-
-        const server = await device.gatt.connect();
-        const service = await server.getPrimaryService(serviceUuid);
-        const characteristics = await service.getCharacteristics();
-        const notifyCharacteristic = characteristics.find((c: any) => c.properties.notify);
-        
-        if (!notifyCharacteristic) {
-          return { success: false, type: 'Unknown', error: 'No notify characteristic found' };
-        }
-
-        await notifyCharacteristic.startNotifications();
-        notifyCharacteristic.addEventListener('characteristicvaluechanged', (event: any) => {
-          const value = event.target.value;
-          const text = new TextDecoder().decode(value);
-          const match = text.match(/(\d+\.\d+)/);
-          if (match) {
-            const parsed = parseFloat(match[1]);
-            if (!isNaN(parsed)) {
-              broadcastScaleWeightUpdate(parsed, scaleType);
-              onWeightUpdate(parsed, scaleType);
+          // Log all discovered services for debugging (v2.10.101)
+          console.log('📋 Discovered Characteristics (Reconnect):');
+          for (const s of services) {
+            console.log(`  S: ${s.uuid}`);
+            for (const c of s.characteristics) {
+              console.log(`    C: ${c.uuid} [N:${c.properties.notify}, I:${c.properties.indicate}, W:${c.properties.write}]`);
             }
           }
-        });
 
-        device.addEventListener('gattserverdisconnected', () => {
-          console.log('⚠️ Scale disconnected (Web Bluetooth)');
-          clearScaleState();
-        });
+          const isTuyaDevice = storedInfo.deviceName.toUpperCase().includes('TY') ||
+              services.some(s => s.uuid.toLowerCase().includes('1910') || s.uuid.toLowerCase().includes('a201'));
 
-        scale = { 
-          device, 
-          deviceId: device.id,
-          serviceUuid: null,
-          characteristic: notifyCharacteristic.uuid, 
-          type: scaleType,
-          isConnected: true,
-          connectionType: 'ble',
-        };
-        
-        broadcastScaleConnectionChange(true);
-        return { success: true, type: scaleType };
-      } else {
-        return { success: false, type: 'Unknown', error: 'Bluetooth not available on this device' };
-      }
-    } catch (error: any) {
-      console.error(`❌ Scale reconnect attempt ${attempt} failed:`, error.message);
-      lastError = error;
-      
-      if (attempt < retries) {
-        await new Promise(resolve => setTimeout(resolve, 800 * attempt));
+          const targetServiceUuid = scaleType === 'HC-05' ? SERVICE_UUID_HC05 : SERVICE_UUID_HM10;
+          let service = services.find(s =>
+            s.uuid.toLowerCase().includes(targetServiceUuid.toLowerCase()) ||
+            (isTuyaDevice && (s.uuid.toLowerCase().includes('1910') || s.uuid.toLowerCase().includes('a201')))
+          );
+
+          if (!service) {
+            for (const svc of services) {
+              if (isGenericGattService(svc.uuid)) continue;
+              const notifyChar = svc.characteristics.find(c => c.properties.notify);
+              if (notifyChar) {
+                service = svc;
+                break;
+              }
+            }
+          }
+
+          if (!service || service.characteristics.length === 0) {
+            throw new Error('Compatible scale service not found');
+          }
+
+          serviceUuid = service.uuid;
+
+          // Identify Notify and Write
+          if (isTuyaDevice) {
+             const tuyaNotify = service.characteristics.find(c => c.uuid.toLowerCase().includes('2b10') && c.properties.notify);
+             const tuyaWrite = service.characteristics.find(c => c.uuid.toLowerCase().includes('2b11') && (c.properties.write || c.properties.writeWithoutResponse));
+             if (tuyaNotify) {
+               characteristicUuid = tuyaNotify.uuid;
+               writeUuid = tuyaWrite?.uuid || '';
+             }
+          }
+
+          if (!characteristicUuid) {
+             const n = service.characteristics.find(c => c.properties.notify);
+             characteristicUuid = n?.uuid || '';
+          }
+          
+          // Helper for weight parsing - mirrors main connection logic
+          const handleReconnectWeight = (value: DataView) => {
+            const rawBytes = new Uint8Array(value.buffer);
+            const hex = Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            console.log(`📊 BLE Reconnect Notification [${characteristicUuid}]: ${hex}`);
+
+            const text = new TextDecoder().decode(value);
+            let parsed: number | null = null;
+            if (isTuyaDevice) {
+               parsed = parseTuyaWeight(rawBytes, text);
+            } else {
+               parsed = parseDRSeriesWeight(rawBytes, text);
+            }
+
+            if (parsed === null) {
+              const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
+              if (decimalMatch) parsed = parseFloat(decimalMatch[1]);
+            }
+
+            if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
+              broadcastScaleWeightUpdate(parsed, scaleType);
+              try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
+            }
+          };
+
+          // 3. ENABLE NOTIFICATIONS
+          setBleState('NOTIFYING');
+          console.log(`📡 [STEP 3/4] Reconnect: trying notifications on ${characteristicUuid}...`);
+          try {
+            await BleClient.startNotifications(deviceId, serviceUuid, characteristicUuid, handleReconnectWeight);
+            console.log('✅ Reconnect notifications started');
+          } catch (e) {
+            if (isGattNotReadyError(e)) {
+               console.error('🛑 Reconnect: GATT not ready (status 201)');
+               await BleClient.disconnect(deviceId);
+               setBleState('IDLE');
+               throw e;
+            }
+            throw e;
+          }
+
+          // 4. HANDSHAKE
+          setBleState('HANDSHAKING');
+          if (!writeUuid) {
+             const wChar = service.characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse);
+             writeUuid = wChar?.uuid || '';
+          }
+
+          if (writeUuid) {
+            const startCommands = [
+              new Uint8Array([0x55]),
+              new Uint8Array([0x01]),
+              new Uint8Array([0x01, 0x01]),
+              new Uint8Array([0x01, 0x03]),
+              new Uint8Array([0x00, 0x01]),
+              new Uint8Array([0x01, 0x03, 0x00, 0x00, 0x00, 0x01])
+            ];
+            for (const cmd of startCommands) {
+              try {
+                console.log(`📤 Sending Reconnect Tuya start command [${Array.from(cmd).map(b => b.toString(16)).join(' ')}] to ${writeUuid}`);
+                await BleClient.write(deviceId, serviceUuid, writeUuid, new DataView(cmd.buffer), { timeout: 300 });
+              } catch (e) {
+                if (isGattNotReadyError(e)) {
+                   console.error('🛑 Reconnect handshake failed: status 201');
+                   await BleClient.disconnect(deviceId);
+                   setBleState('IDLE');
+                   throw e;
+                }
+              }
+            }
+          }
+
+          scale = {
+            device: { deviceId } as BleDevice,
+            deviceId,
+            serviceUuid,
+            characteristic: characteristicUuid,
+            type: scaleType,
+            isConnected: true,
+            connectionType: 'ble',
+          };
+
+          broadcastScaleConnectionChange(true);
+          setBleState('READY');
+          console.log('✅ Reconnected to scale successfully');
+          return { success: true, type: scaleType };
+        } else {
+           return { success: false, type: 'Unknown', error: 'Bluetooth not available on this device' };
+        }
+      } catch (error: any) {
+        console.error(`❌ Scale reconnect attempt ${attempt} failed:`, error.message);
+        lastError = error;
+        setBleState('IDLE');
+        if (attempt < retries) {
+          await new Promise(resolve => setTimeout(resolve, 800 * attempt));
+        }
       }
     }
-  }
-  
-  clearScaleState();
-  console.error('❌ All scale reconnect attempts failed');
-  return { success: false, type: 'Unknown', error: lastError?.message || 'Failed to reconnect after multiple attempts' };
+
+    clearScaleState();
+    console.error('❌ All scale reconnect attempts failed');
+    return { success: false, type: 'Unknown', error: lastError?.message || 'Failed to reconnect after multiple attempts' };
+  });
 };
 
 // Check if scale is currently connected (BLE or Classic SPP)
@@ -1803,7 +1644,7 @@ export const connectBluetoothPrinter = async (): Promise<{
         optionalServices: COMMON_PRINTER_SERVICES,
       });
 
-      const server = await device.gatt.connect();
+      const server = await device.gatt!.connect();
       console.log('✅ Connected to printer via Web Bluetooth');
       
       device.addEventListener('gattserverdisconnected', () => {

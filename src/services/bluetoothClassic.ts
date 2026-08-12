@@ -111,6 +111,43 @@ const parseAndroidClassicResult = <T,>(action: string, raw: string): T => {
   return parsed as T;
 };
 
+/**
+ * v2.11.35: bridge.connect is now non-blocking (async on native side).
+ * This helper waits for the connectionStateChanged event or timeout.
+ */
+const asyncAndroidConnect = async (bridge: AndroidClassicBridge, action: string, options: any): Promise<{ connected: boolean }> => {
+  return new Promise<{ connected: boolean }>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      window.removeEventListener('BluetoothClassic:connectionStateChanged', handler);
+      reject(new Error(`[BT][JS-FALLBACK] ${action} timeout (20s)`));
+    }, 20000);
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      const expectedRole = options.role || 'scale';
+      if (detail.role === expectedRole) {
+        clearTimeout(timeout);
+        window.removeEventListener('BluetoothClassic:connectionStateChanged', handler);
+        if (detail.connected) {
+          resolve({ connected: true });
+        } else {
+          reject(new Error(`[BT][JS-FALLBACK] ${action} failed: ${detail.error || 'Unknown error'}`));
+        }
+      }
+    };
+
+    window.addEventListener('BluetoothClassic:connectionStateChanged', handler);
+
+    try {
+      parseAndroidClassicResult(action, bridge.connect(JSON.stringify(options)));
+    } catch (e) {
+      clearTimeout(timeout);
+      window.removeEventListener('BluetoothClassic:connectionStateChanged', handler);
+      reject(e);
+    }
+  });
+};
+
 const androidFallbackBluetoothClassic: BluetoothClassicPlugin = {
   async isAvailable() {
     const bridge = androidClassicBridge();
@@ -130,27 +167,27 @@ const androidFallbackBluetoothClassic: BluetoothClassicPlugin = {
   async connect(options: { address: string; role?: 'scale' | 'printer' }) {
     const bridge = androidClassicBridge();
     if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
-    return parseAndroidClassicResult('connect', bridge.connect(JSON.stringify(options)));
+    return asyncAndroidConnect(bridge, 'connect', options);
   },
   async connectScale(options: { address: string }) {
     const bridge = androidClassicBridge();
     if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
-    return parseAndroidClassicResult('connectScale', bridge.connect(JSON.stringify({ ...options, role: 'scale' })));
+    return asyncAndroidConnect(bridge, 'connectScale', { ...options, role: 'scale' });
   },
   async connectPrinter(options: { address: string }) {
     const bridge = androidClassicBridge();
     if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
-    return parseAndroidClassicResult('connectPrinter', bridge.connect(JSON.stringify({ ...options, role: 'printer' })));
+    return asyncAndroidConnect(bridge, 'connectPrinter', { ...options, role: 'printer' });
   },
   async connectInsecure(options: { address: string; role?: 'scale' | 'printer' }) {
     const bridge = androidClassicBridge();
     if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
-    return parseAndroidClassicResult('connectInsecure', bridge.connect(JSON.stringify({ ...options, insecure: true })));
+    return asyncAndroidConnect(bridge, 'connectInsecure', { ...options, insecure: true });
   },
   async connectPrinterInsecure(options: { address: string }) {
     const bridge = androidClassicBridge();
     if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
-    return parseAndroidClassicResult('connectPrinterInsecure', bridge.connect(JSON.stringify({ ...options, role: 'printer', insecure: true })));
+    return asyncAndroidConnect(bridge, 'connectPrinterInsecure', { ...options, role: 'printer', insecure: true });
   },
   async disconnect(options?: { role?: 'scale' | 'printer' }) {
     const bridge = androidClassicBridge();
@@ -165,6 +202,7 @@ const androidFallbackBluetoothClassic: BluetoothClassicPlugin = {
   async write(options: { data: string; role?: 'scale' | 'printer' }) {
     const bridge = androidClassicBridge();
     if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
+    // v2.11.35: bridge.write is now fire-and-forget on JS side (non-blocking).
     parseAndroidClassicResult('write', bridge.write(JSON.stringify(options)));
   },
   async writePrinter(options: { data: string }) {
