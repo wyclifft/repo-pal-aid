@@ -6,9 +6,11 @@ import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client
 import { HashRouter, Routes, Route, useLocation } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ReprintProvider } from "@/contexts/ReprintContext";
+import { SyncProvider, useSync } from "@/contexts/SyncContext";
+import { IndexedDBProvider } from "@/hooks/useIndexedDB";
+import { AppSettingsProvider } from "@/hooks/useAppSettings";
 import { SplashScreen } from "@/components/SplashScreen";
-import { useDataSync } from "@/hooks/useDataSync";
-// OfflineIndicator is rendered inside Dashboard component for proper layout positioning
+import { SyncOverlay } from "@/components/SyncOverlay";
 import { BackendStatusBanner } from "@/components/BackendStatusBanner";
 import { ServiceWorkerUpdateBanner } from "@/components/ServiceWorkerUpdateBanner";
 import { preloadCriticalAssets } from "@/utils/precachePages";
@@ -16,37 +18,8 @@ import { requestAllPermissions } from "@/utils/permissionRequests";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useSaccoAccess } from "@/modules/sacco/useSaccoAccess";
 
-// Error boundary specifically for ReprintProvider — falls back to rendering children without reprint
-class ReprintErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
-  state = { hasError: false };
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(error: Error) {
-    console.error('[ReprintErrorBoundary] ReprintProvider crashed, sync will still work:', error);
-  }
-  render() {
-    if (this.state.hasError) {
-      // Render children without ReprintProvider so sync/core app still works
-      return this.props.children;
-    }
-    return this.props.children;
-  }
-}
-
-// Lazy load route components for better performance
-const Index = lazy(() => import("./pages/Index"));
-const ZReport = lazy(() => import("./pages/ZReport"));
-const Store = lazy(() => import("./pages/Store"));
-const AIPage = lazy(() => import("./pages/AIPage"));
-const PeriodicReport = lazy(() => import("./pages/PeriodicReport"));
-const Settings = lazy(() => import("./pages/Settings"));
-const NotFound = lazy(() => import("./pages/NotFound"));
-const DebugConsole = lazy(() => import("./pages/DebugConsole"));
-const PaymentsScreen = lazy(() => import("./modules/payments/PaymentsScreen"));
-// v2.12.0 — Yetu Sacco member portal (orgtype = 'S')
-const SaccoPortal = lazy(() => import("./modules/sacco/SaccoPortal"));
-
 // Configure QueryClient with aggressive caching and better error handling
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       gcTime: 1000 * 60 * 60 * 24 * 7, // 7 days
@@ -112,6 +85,35 @@ const persister = {
   },
 };
 
+// Error boundary specifically for ReprintProvider — falls back to rendering children without reprint
+class ReprintErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error: Error) {
+    console.error('[ReprintErrorBoundary] ReprintProvider crashed, sync will still work:', error);
+  }
+  render() {
+    if (this.state.hasError) {
+      // Render children without ReprintProvider so sync/core app still works
+      return this.props.children;
+    }
+    return this.props.children;
+  }
+}
+
+// Lazy load route components for better performance
+const Index = lazy(() => import("./pages/Index"));
+const ZReport = lazy(() => import("./pages/ZReport"));
+const Store = lazy(() => import("./pages/Store"));
+const AIPage = lazy(() => import("./pages/AIPage"));
+const PeriodicReport = lazy(() => import("./pages/PeriodicReport"));
+const Settings = lazy(() => import("./pages/Settings"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const DebugConsole = lazy(() => import("./pages/DebugConsole"));
+const PaymentsScreen = lazy(() => import("./modules/payments/PaymentsScreen"));
+// v2.12.0 — Yetu Sacco member portal (orgtype = 'S')
+const SaccoPortal = lazy(() => import("./modules/sacco/SaccoPortal"));
+
 // Loading skeleton component
 const PageLoader = () => (
   <div className="h-full flex items-center justify-center bg-background">
@@ -125,10 +127,10 @@ const PageLoader = () => (
 // Page transition wrapper with fixed viewport
 const PageWrapper = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
-  
+
   return (
-    <div 
-      key={location.pathname} 
+    <div
+      key={location.pathname}
       className="h-full overflow-y-auto overflow-x-hidden animate-fade-in gpu-accelerated"
       style={{ WebkitOverflowScrolling: 'touch' }}
     >
@@ -146,7 +148,13 @@ const AppContent = () => {
   const { portalMode } = useSaccoAccess();
 
   // Initialize global data sync
-  useDataSync();
+  const {
+    isBlockingSync,
+    syncStatus,
+    syncProgress,
+    syncSubCount,
+    syncSubLabel
+  } = useSync();
 
   // Listen for app becoming visible to refresh data
   useEffect(() => {
@@ -174,29 +182,30 @@ const AppContent = () => {
 
   return (
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <SyncOverlay
+        isVisible={isBlockingSync}
+        status={syncStatus}
+        progress={syncProgress}
+        subCount={syncSubCount}
+        subLabel={syncSubLabel}
+      />
       <ServiceWorkerUpdateBanner />
       <BackendStatusBanner />
       {/* OfflineIndicator now rendered inside Dashboard for proper layout positioning */}
       <Suspense fallback={<PageLoader />}>
-        {portalMode ? (
-          <Routes>
-            <Route path="*" element={<PageWrapper><SaccoPortal /></PageWrapper>} />
-          </Routes>
-        ) : (
-          <Routes>
-            <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />
-            <Route path="/z-report" element={<PageWrapper><ZReport /></PageWrapper>} />
-            <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
-            <Route path="/ai" element={<PageWrapper><AIPage /></PageWrapper>} />
-            <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
-            <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
-            <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
-            <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
-            <Route path="/payments" element={<PageWrapper><PaymentsScreen /></PageWrapper>} />
-            <Route path="/sacco" element={<PageWrapper><SaccoPortal /></PageWrapper>} />
-            <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
-          </Routes>
-        )}
+        <Routes>
+          <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />
+          <Route path="/z-report" element={<PageWrapper><ZReport /></PageWrapper>} />
+          <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
+          <Route path="/ai" element={<PageWrapper><AIPage /></PageWrapper>} />
+          <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
+          <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
+          <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
+          <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
+          <Route path="/payments" element={<PageWrapper><PaymentsScreen /></PageWrapper>} />
+          <Route path="/sacco" element={<PageWrapper><SaccoPortal /></PageWrapper>} />
+          <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
+        </Routes>
       </Suspense>
     </HashRouter>
   );
@@ -338,13 +347,19 @@ const App = () => {
       }}
     >
       <AuthProvider>
-        <ReprintErrorBoundary>
-          <ReprintProvider>
-            <Toaster />
-            <Sonner position="top-center" richColors closeButton />
-            <AppContent />
-          </ReprintProvider>
-        </ReprintErrorBoundary>
+        <IndexedDBProvider>
+          <AppSettingsProvider>
+            <SyncProvider>
+              <ReprintErrorBoundary>
+                <ReprintProvider>
+                  <Toaster />
+                  <Sonner position="top-center" richColors closeButton />
+                  <AppContent />
+                </ReprintProvider>
+              </ReprintErrorBoundary>
+            </SyncProvider>
+          </AppSettingsProvider>
+        </IndexedDBProvider>
       </AuthProvider>
     </PersistQueryClientProvider>
   );

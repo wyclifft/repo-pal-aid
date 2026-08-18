@@ -41,11 +41,11 @@ const formatClock = (ts: number): string => {
 const SaccoPortal = () => {
   const { currentUser, isAuthenticated, login, logout } = useAuth();
   // v2.12.6: header text comes from psettings (company name), never hardcoded.
-  const { companyName } = useAppSettings();
+  const { companyName, saccoModuleActive } = useAppSettings();
   const portalTitle = (companyName || '').trim()
     ? `${companyName.trim()} Payments`
     : 'Member Payments';
-  const { isSacco, paymentsActive, canAccessPayments } = useSaccoAccess();
+  const { canAccessPayments } = useSaccoAccess();
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [page, setPage] = useState(1);
@@ -100,19 +100,17 @@ const SaccoPortal = () => {
     return <Login onLogin={handleLogin} />;
   }
 
-  // Gate: company must be a Sacco with payments active, user must be permitted.
-  if (!isSacco || !paymentsActive || !canAccessPayments) {
+  // Gate: module must be active for organization, user must be permitted.
+  if (!saccoModuleActive || !canAccessPayments) {
     return (
       <div className="flex min-h-[80vh] items-center justify-center p-6">
         <Alert className="max-w-md">
           <ShieldAlert className="h-4 w-4" />
           <AlertTitle>Member portal unavailable</AlertTitle>
           <AlertDescription>
-            {!isSacco
-              ? 'This organisation is not configured as a Sacco.'
-              : !paymentsActive
-                ? 'The payments module is not active for this organisation.'
-                : 'Your account does not have permission to view Sacco payments.'}
+            {!saccoModuleActive
+              ? 'The Sacco module is not active for this organisation.'
+              : 'Your account does not have permission to view Sacco payments.'}
           </AlertDescription>
         </Alert>
       </div>

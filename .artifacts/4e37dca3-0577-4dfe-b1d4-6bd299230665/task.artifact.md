@@ -1,0 +1,9 @@
+- [x] Implement robust idempotent detection in `useDataSync.ts` (handle `error` + `message`)
+- [x] Add `idempotent` to success criteria in `processReceiptSync`
+- [x] Normalize reference numbers (`trim().toUpperCase()`) in sync and cleanup paths
+- [x] Ensure `markNativeRecordSynced` is called for all successful/idempotent paths
+- [x] Add post-sync verification check using `getUnsyncedRecords`
+- [x] Update `updatePendingCount` to rely strictly on native DB/IDB state
+- [x] Add detailed logging for the sync flow
+- [x] Fix `mysqlApi.ts` to correctly handle non-wrapped backend responses
+- [x] Verify fix by simulating idempotent response

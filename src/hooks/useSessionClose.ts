@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
-import { useDataSync } from '@/hooks/useDataSync';
+import { useSync } from '@/contexts/SyncContext';
 import { toast } from 'sonner';
 
 export interface SessionCloseState {
@@ -30,7 +30,7 @@ export const useSessionClose = (
 ): SessionCloseState => {
   const navigate = useNavigate();
   const { sessionPrintOnly } = useAppSettings();
-  const { syncOfflineReceipts, isSyncing, pendingCount } = useDataSync();
+  const { syncOfflineReceipts, isSyncing, pendingCount } = useSync();
   const { getUnsyncedReceipts, isReady } = useIndexedDB();
   
   const [isClosing, setIsClosing] = useState(false);

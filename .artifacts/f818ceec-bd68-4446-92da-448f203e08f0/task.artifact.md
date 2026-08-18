@@ -1,0 +1,5 @@
+- [x] Integrate `zlib` and implement Gzip compression in `sendJSON`
+- [x] Implement ETag support for conditional caching (304 Not Modified)
+- [x] Optimize background warmer pacing and re-warm intervals
+- [x] Create and apply scalability database indexes
+- [x] Add slow query instrumentation

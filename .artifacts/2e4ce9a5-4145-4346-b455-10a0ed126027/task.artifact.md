@@ -1,0 +1,3 @@
+- [x] Update `src/modules/sacco/SaccoPortal.tsx` to use `saccoModuleActive` and `canAccessPayments` as gates
+- [x] Update `backend-api/yetuRoutes.js` to use `sacco_module_active` and `can_access_payments` in `resolveSaccoAccess`
+- [x] Verify access logic on frontend and backend

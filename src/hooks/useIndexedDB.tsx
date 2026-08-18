@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, createContext, useContext } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative, logWrite, logPrint, logVerify, logCaptureRead, logScopeFallback, logStaleCheck, logStaleReject, logBackendDecrease, logStaleReconcile } from '@/utils/cumulativeMonitor';
 import { plog } from '@/utils/persistentLogger';
@@ -39,8 +39,65 @@ const clearDatabase = async (): Promise<void> => {
   });
 };
 
+// Context definition
+interface IndexedDBContextType {
+  db: IDBDatabase | null;
+  isReady: boolean;
+  saveFarmers: (farmers: Farmer[]) => void;
+  getFarmers: () => Promise<Farmer[]>;
+  saveUser: (user: AppUser) => void;
+  getUser: (userId: string) => Promise<AppUser | undefined>;
+  saveReceipt: (receipt: MilkCollection) => Promise<{ success: boolean; orderId: number }>;
+  getUnsyncedReceipts: () => Promise<MilkCollection[]>;
+  deleteReceipt: (orderId: number) => Promise<void>;
+  saveDeviceApproval: (deviceFingerprint: string, backendId: number | null, userId: string, approved: boolean) => Promise<void>;
+  getDeviceApproval: (deviceFingerprint: string) => Promise<{ device_fingerprint: string; backend_id: number | null; user_id: string; approved: boolean; last_synced: string } | undefined>;
+  saveSale: (sale: any) => Promise<void>;
+  getUnsyncedSales: () => Promise<any[]>;
+  deleteSale: (orderId: number) => Promise<void>;
+  saveItems: (items: any[]) => void;
+  getItems: () => Promise<any[]>;
+  saveZReport: (date: string, data: any) => Promise<void>;
+  getZReport: (date: string) => Promise<any | null>;
+  savePeriodicReport: (cacheKey: string, data: any) => Promise<void>;
+  getPeriodicReport: (cacheKey: string) => Promise<any | null>;
+  savePrintedReceipts: (receipts: any[]) => Promise<void>;
+  getPrintedReceipts: () => Promise<any[]>;
+  clearUnsyncedReceipts: () => Promise<number>;
+  saveRoutes: (routes: any[]) => void;
+  getRoutes: () => Promise<any[]>;
+  saveSessions: (sessions: any[]) => void;
+  getSessions: () => Promise<any[]>;
+  getFarmerCumulative: (farmerId: string, route?: string, scode?: string, monthOverride?: string) => Promise<any>;
+  updateFarmerCumulative: (farmerId: string, count: number, fromBackend?: boolean, byProduct?: any[], route?: string, scode?: string, options?: any) => Promise<number | void>;
+  bumpFarmerCumulativeBase: (farmerId: string, weight: number, icode?: string, route?: string, scode?: string, options?: any) => Promise<number | void>;
+  getFarmerTotalCumulative: (farmerId: string, routeFilter?: string, seasonFilter?: string, monthOverride?: string) => Promise<any>;
+  getUnsyncedWeightForFarmer: (farmerId: string, routeFilter?: string, seasonFilter?: string, opts?: any) => Promise<any>;
+  getAllUnsyncedRecords: () => Promise<any[]>;
+}
+
+const IndexedDBContext = createContext<IndexedDBContextType | null>(null);
+
+export const IndexedDBProvider = ({ children }: { children: React.ReactNode }) => {
+  const value = useIndexedDBStandalone();
+  return (
+    <IndexedDBContext.Provider value={value}>
+      {children}
+    </IndexedDBContext.Provider>
+  );
+};
+
 export const useIndexedDB = () => {
+  const context = useContext(IndexedDBContext);
+  if (!context) {
+    throw new Error('useIndexedDB must be used within an IndexedDBProvider');
+  }
+  return context;
+};
+
+export const useIndexedDBStandalone = () => {
   const [db, setDb] = useState<IDBDatabase | null>(null);
+// ...
   const [isReady, setIsReady] = useState(false);
   const [schemaError, setSchemaError] = useState(false);
 
@@ -853,13 +910,15 @@ export const useIndexedDB = () => {
   const getFarmerCumulative = useCallback(async (
     farmerId: string,
     route?: string,
-    scode?: string
+    scode?: string,
+    monthOverride?: string
   ): Promise<{ baseCount: number; localCount: number; month: string; route: string; scode: string; byProduct: Array<{ icode: string; product_name: string; weight: number }>; keyPresent?: boolean; fallbackScope?: string } | null> => {
     if (!db) return null;
     try {
       const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
-      const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      // v2.12.23: Use override month (e.g. for past seasons) or current system month.
+      const month = monthOverride || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const routeKey = (route || '').trim().toUpperCase() || 'ALL';
       const seasonKey = (scode || '').trim().toUpperCase() || 'ALL';
       const cacheKey = buildCumulativeKey(cleanId, route, month, scode);
@@ -873,7 +932,7 @@ export const useIndexedDB = () => {
       });
 
       const row = await readKey(cacheKey);
-      if (row) {
+      if (row && (row.baseCount > 0 || (routeKey === 'ALL' && seasonKey === 'ALL'))) {
         const result = {
           baseCount: row.baseCount || 0,
           localCount: row.localCount || 0,
@@ -890,9 +949,43 @@ export const useIndexedDB = () => {
         return result;
       }
 
-      // v2.12.16: REMOVED global fallback to ALL bucket. If a specific route
-      // or season is requested, we must only return data for that scope
-      // to prevent global totals from being printed on scoped receipts.
+      // v2.12.31: Improved SCOPE FALLBACK. If the specific route/season bucket
+      // is missing OR shows 0 weight, check the global bucket (ALL for route, but CURRENT scode).
+      // This prevents members from "starting from 0" if center-specific sync data is stale,
+      // while ensuring we don't accidentally pull data from a DIFFERENT season.
+      if (routeKey !== 'ALL') {
+        const globalKey = buildCumulativeKey(cleanId, undefined, month, scode);
+        const globalRow = await readKey(globalKey);
+        if (globalRow && globalRow.baseCount > 0) {
+          if (isFocusedFarmer(cleanId)) {
+            plogFocus('CUM:READ-FALLBACK', `${cleanId} scope=${routeKey}/${seasonKey} MISS/ZERO → using global bucket (base=${globalRow.baseCount})`,
+              { farmerId: cleanId, route: routeKey, season: seasonKey, globalBase: globalRow.baseCount });
+          }
+          return {
+            baseCount: globalRow.baseCount || 0,
+            localCount: globalRow.localCount || 0,
+            month: globalRow.month,
+            route: routeKey, // report back requested scope
+            scode: seasonKey, // report back requested scope
+            byProduct: globalRow.byProduct || [],
+            keyPresent: true,
+            fallbackScope: 'ALL',
+          };
+        }
+      }
+
+      // Fallback: if we had a specific row with 0 and no global data better than it, return it.
+      if (row) {
+        return {
+          baseCount: 0,
+          localCount: row.localCount || 0,
+          month: row.month,
+          route: row.route || routeKey,
+          scode: row.scode || seasonKey,
+          byProduct: row.byProduct || [],
+          keyPresent: true,
+        };
+      }
 
       if (isFocusedFarmer(cleanId)) {
         plogFocus('CUM:READ', `${cleanId} route=${routeKey} season=${seasonKey} MISS`,
@@ -929,13 +1022,14 @@ export const useIndexedDB = () => {
     byProduct?: Array<{ icode: string; product_name: string; weight: number }>,
     route?: string,
     scode?: string,
-    options?: { transrefno?: string; verifySource?: string; caller?: string; allowDecrease?: boolean }
+    options?: { transrefno?: string; verifySource?: string; caller?: string; allowDecrease?: boolean; monthOverride?: string }
   ): Promise<number | void> => {
     if (!db) return;
     try {
       const cleanId = farmerId.replace(/^#/, '').trim();
       const now = new Date();
-      const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      // v2.12.21: Month derived from override (e.g. backend month_start) or current system time.
+      const month = options?.monthOverride || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const routeKey = (route || '').trim().toUpperCase() || 'ALL';
       const seasonKey = (scode || '').trim().toUpperCase() || 'ALL';
       const cacheKey = buildCumulativeKey(cleanId, route, month, scode);
@@ -1021,10 +1115,9 @@ export const useIndexedDB = () => {
             // explicit confirmed reconciliation that passes allowDecrease=true
             // (W3:reconfirm-heal-down via Index/w3Reconfirm / w3PinReplay,
             // already gated by two-read confirmation + zero-unsynced check).
-            // This stops the "valid captured weight disappears" regression
-            // where a single stale backend read on W5:postcapture-refresh
-            // (or any other source) silently demoted the cumulative.
-            const HEAL_SOURCES = new Set<string>(); // intentionally empty
+            // v2.12.33: Re-enable authoritative heals for sync sources to recover
+            // from stale local states when the server total is definitively lower.
+            const HEAL_SOURCES = new Set(['W1', 'W3', 'W4', 'W5', 'W6', 'W7']);
             const isOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
             const canHeal = decreaseAttempt
               && !options?.allowDecrease
@@ -1340,14 +1433,26 @@ export const useIndexedDB = () => {
     farmerId: string,
     routeFilter?: string,
     seasonFilter?: string,
-    opts?: { excludeRefs?: string[] }
+    opts?: { excludeRefs?: string[]; monthOverride?: string }
   ): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
     if (!db) return { total: 0, byProduct: [] };
     try {
       const unsynced = await getUnsyncedReceipts();
       const now = new Date();
-      const currentMonth = now.getMonth();
-      const currentYear = now.getFullYear();
+
+      // v2.12.23: Determine target month/year for filtering.
+      let targetMonth: number;
+      let targetYear: number;
+
+      if (opts?.monthOverride) {
+        const [y, m] = opts.monthOverride.split('-').map(n => parseInt(n, 10));
+        targetYear = y;
+        targetMonth = m - 1; // 0-indexed for Date.getMonth()
+      } else {
+        targetMonth = now.getMonth();
+        targetYear = now.getFullYear();
+      }
+
       // Normalize farmerId consistently
       const cleanFarmerId = farmerId.replace(/^#/, '').trim().toUpperCase();
       const cleanRoute = routeFilter ? routeFilter.trim().toUpperCase() : '';
@@ -1376,15 +1481,30 @@ export const useIndexedDB = () => {
           const rRoute = (r.route || '').trim().toUpperCase();
           if (rRoute !== cleanRoute) continue;
         }
+
+        // v2.12.24: Identify the record's season.
+        const rSeason = String(r.season_code || (r as any).CAN || r.session || '').trim().toUpperCase();
+
         // Filter by season if specified
         if (cleanSeason) {
-          // Receipts store season code in season_code or CAN column
-          const rSeason = String(r.season_code || (r as any).CAN || r.session || '').trim().toUpperCase();
           if (rSeason && rSeason !== cleanSeason) continue;
         }
-        // Check same month
+
+        // v2.12.24: Heuristic to distinguish specific season codes (Coffee) from generic sessions (Dairy).
+        const isGenericSession = rSeason === 'AM' || rSeason === 'PM' || rSeason === '';
+
+        // Check same month/year
         const rDate = new Date(r.collection_date);
-        if (rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear) {
+        const isTargetMonth = rDate.getMonth() === targetMonth && rDate.getFullYear() === targetYear;
+        const isToday = rDate.toDateString() === now.toDateString();
+
+        // Include if:
+        // 1. It matches the target month of the bucket.
+        // 2. OR it was captured TODAY (handles past-season data entry where today != target month).
+        // 3. OR it's a specific season code match (trust the season binding over the clock).
+        const shouldInclude = isTargetMonth || isToday || (!isGenericSession && rSeason === cleanSeason);
+
+        if (shouldInclude) {
           totalWeight += r.weight || 0;
           // Track per-product weights
           const icode = (r.product_code || '').trim().toUpperCase();
@@ -1408,12 +1528,19 @@ export const useIndexedDB = () => {
    * This avoids double-counting by NOT using localCount (which duplicates unsynced receipt data).
    * Returns { total, byProduct } with merged per-product breakdown.
    */
-  const getFarmerTotalCumulative = useCallback(async (farmerId: string, routeFilter?: string, seasonFilter?: string): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
-    const cached = await getFarmerCumulative(farmerId, routeFilter, seasonFilter);
+  const getFarmerTotalCumulative = useCallback(async (
+    farmerId: string,
+    routeFilter?: string,
+    seasonFilter?: string,
+    monthOverride?: string
+  ): Promise<{ total: number; byProduct: Array<{ icode: string; product_name: string; weight: number }> }> => {
+    // v2.12.21: Explicitly pass scope and monthOverride to both cached read and unsynced calculation.
+    const cached = await getFarmerCumulative(farmerId, routeFilter, seasonFilter, monthOverride);
     const baseCount = cached?.baseCount || 0;
     const baseProd = cached?.byProduct || [];
-    // Always recalculate from actual unsynced receipts instead of using cached localCount
-    const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter, seasonFilter);
+
+    // Recalculate from actual unsynced receipts for the EXACT SAME scope and month.
+    const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter, seasonFilter, { monthOverride });
     const total = baseCount + unsynced.total;
     
     // Merge by-product: base + unsynced (normalize icode keys to prevent fragmentation)

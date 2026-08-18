@@ -446,32 +446,38 @@ export const milkCollectionApi = {
     success: boolean; 
     reference_no?: string;
     uploadrefno?: string;
+    backend_id?: number;
     error?: string;
     message?: string;
     existing_reference?: string;
     cumulative_weight?: number;
     by_product?: ProductCumulative[];
   }> => {
-    // OPTIMIZED: Use 8s timeout for submissions (faster than default 15s)
+    // OPTIMIZED: Use 15s timeout for submissions (standard default)
     const response = await apiRequest<{
       reference_no: string;
       uploadrefno?: string;
+      backend_id?: number;
       existing_reference?: string;
       cumulative_weight?: number;
       by_product?: ProductCumulative[];
     }>('/milk-collection', {
       method: 'POST',
       body: JSON.stringify(collection),
-    }, 8000);
-    return { 
+    }, 15000);
+    // v2.12.35: Handle responses that might not be wrapped in a 'data' property
+    const rawData = response.data || (response as any);
+
+    return {
       success: response.success || false,
-      reference_no: response.data?.reference_no || collection.reference_no,
-      uploadrefno: response.data?.uploadrefno || collection.uploadrefno,
+      reference_no: rawData?.reference_no || collection.reference_no,
+      uploadrefno: rawData?.uploadrefno || collection.uploadrefno,
+      backend_id: rawData?.backend_id,
       error: response.error,
       message: response.message,
-      existing_reference: response.data?.existing_reference,
-      cumulative_weight: response.data?.cumulative_weight,
-      by_product: response.data?.by_product
+      existing_reference: rawData?.existing_reference,
+      cumulative_weight: rawData?.cumulative_weight,
+      by_product: rawData?.by_product
     };
   },
 
@@ -499,6 +505,61 @@ export const milkCollectionApi = {
     });
     return response.success;
   },
+};
+
+// ==================== SUPERVISOR API (v2.12.17) ====================
+
+export interface SupervisorStore {
+  tcode: string;
+  name: string;
+}
+
+export interface SupervisorTransaction {
+  ID: number;
+  transrefno: string;
+  memberno: string;
+  farmer_name?: string;
+  item_name?: string;
+  weight: number;
+  iprice: number;
+  amount: number;
+  transdate: string;
+  transtime: string;
+  clerk: string;
+  ccode: string;
+  icode: string;
+}
+
+export const supervisorApi = {
+  /**
+   * Get stores authorized for a supervisor
+   */
+  getAuthorizedStores: async (userid: string, deviceFingerprint?: string): Promise<ApiResponse<SupervisorStore[]>> => {
+    let url = `/supervisor/stores?userid=${encodeURIComponent(userid)}`;
+    if (deviceFingerprint) url += `&device_fingerprint=${encodeURIComponent(deviceFingerprint)}`;
+    return apiRequest<SupervisorStore[]>(url);
+  },
+
+  /**
+   * Get Store transactions (Transtype=2) with filtering
+   */
+  getTransactions: async (params: {
+    userid: string;
+    device_fingerprint?: string;
+    store_tcode?: string;
+    search?: string;
+    date_from?: string;
+    date_to?: string;
+  }): Promise<ApiResponse<SupervisorTransaction[]>> => {
+    const qs = new URLSearchParams({ userid: params.userid });
+    if (params.device_fingerprint) qs.append('device_fingerprint', params.device_fingerprint);
+    if (params.store_tcode) qs.append('store_tcode', params.store_tcode);
+    if (params.search) qs.append('search', params.search);
+    if (params.date_from) qs.append('date_from', params.date_from);
+    if (params.date_to) qs.append('date_to', params.date_to);
+
+    return apiRequest<SupervisorTransaction[]>(`/supervisor/transactions?${qs.toString()}`);
+  }
 };
 
 // ==================== APPROVED DEVICES API ====================
@@ -1207,4 +1268,5 @@ export const mysqlApi = {
   sessions: sessionsApi,
   farmerFrequency: farmerFrequencyApi,
   members: membersApi,
+  supervisor: supervisorApi,
 };

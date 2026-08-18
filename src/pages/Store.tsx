@@ -22,7 +22,7 @@ import { getTimeoutSignal } from '@/utils/abortUtils';
 import { resolveSessionMetadata, resolveDashboardActiveSession } from '@/utils/sessionMetadata';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
-import { saveToLocalDB } from '@/services/offlineStorage';
+import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
 
 interface CartItem {
   item: Item;
@@ -646,7 +646,12 @@ const Store = () => {
           throw new Error(result.error || 'Batch sale failed');
         }
         console.log(`✅ Batch sale complete: ${batchItems.length} items, uploadrefno=${refs.uploadrefno}`);
-        
+
+        // v2.12.30: Clear items from native storage if they were there
+        for (const item of batchItems) {
+          markNativeRecordSynced(item.transrefno).catch(() => {});
+        }
+
         // Queue photo for background upload - doesn't block transaction
         queuePhotoUpload(refs.uploadrefno, photoToUse.blob);
         console.log(`📷 Photo queued for background upload: ${refs.uploadrefno}`);

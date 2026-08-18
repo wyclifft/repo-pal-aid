@@ -19,16 +19,20 @@ export const useSaccoAccess = (): {
   visible: boolean;
   portalMode: boolean;
 } => {
-  const { isSacco, paymentsActive } = useAppSettings();
+  const { isSacco, paymentsActive, saccoModuleActive } = useAppSettings();
   const { currentUser } = useAuth();
   const canAccessPayments = currentUser?.can_access_payments === true;
-  const visible = isSacco && paymentsActive && canAccessPayments;
+
+  // v2.12.18: Visibility is now determined ONLY by the sacco_module_active flag.
+  // The orgtype requirement (isSacco) and user permissions are no longer gates.
+  const visible = saccoModuleActive;
+
   return {
     isSacco,
     paymentsActive,
     canAccessPayments,
     visible,
-    // Sacco installs are dedicated member portals — nothing else is shown.
-    portalMode: isSacco,
+    // v2.12.18: Sacco UI takeover disabled. The portal is now accessed via the menu.
+    portalMode: false,
   };
 };

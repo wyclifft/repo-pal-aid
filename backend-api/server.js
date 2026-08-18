@@ -8,6 +8,8 @@ require('dotenv').config({ path: __dirname + '/.env' });
 const mysql = require('mysql2/promise');
 const http = require('http');
 const url = require('url');
+const zlib = require('zlib');
+const crypto = require('crypto');
 const { createCache } = require('./lib/lruCache');
 const { chargeFarmerViaKCB } = require('./kcbPaymentService');
 // v2.12.0 — Yetu Sacco member payments module (webhook + member portal APIs)
@@ -42,13 +44,11 @@ if (!process.env.MYSQL_USER || !process.env.MYSQL_PASSWORD) {
 }
 
 // Database connection pool
-// v2.12.13: Contabo MySQL (max_connections=151, wait_timeout=28800) was holding
-// 139 idle `root` sockets for hours → "ERROR 1040 Too many connections".
-// Root cause: mysql2 never retires idle pooled sockets unless idleTimeout/maxIdle
-// are set, and enableKeepAlive kept pinging them so the server never closed them
-// either. Pool is now small + self-trimming. Still tunable via env.
-const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 12);
-const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 100);
+// v2.12.19: Tuning for high concurrency (100+ users).
+// Increased POOL_LIMIT to 40 to accommodate more concurrent I/O.
+// Increased QUEUE_LIMIT to 200 to buffer spikes without immediate 503s.
+const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 40);
+const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 200);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 
 /**
@@ -76,6 +76,34 @@ const toNumOrZero = (value, fallback = 0) => {
   return Number.isFinite(num) ? num : fallback;
 };
 
+/**
+ * v2.12.19 — Normalize input for SARGable queries.
+ * Prevents needing UPPER(TRIM(col)) in WHERE clauses which kills index usage.
+ */
+const norm = (v) => (v ? String(v).trim().toUpperCase() : '');
+const normL = (v) => (v ? String(v).trim().toLowerCase() : '');
+
+/**
+ * v2.12.17: SECURE DEVICE BINDING HELPER.
+ * Verifies that the supplied userId is authorized to use this device.
+ */
+const verifyDeviceOwnership = async (deviceserial, userId, conn = pool) => {
+  if (!deviceserial || !userId) return false;
+  try {
+    const [rows] = await conn.query(
+      'SELECT userId FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
+      [deviceserial]
+    );
+    if (rows.length === 0) return false;
+    // If userId in devSettings is null, it hasn't been bound yet
+    if (!rows[0].userId) return true;
+    return String(rows[0].userId).trim() === String(userId).trim();
+  } catch (err) {
+    console.error('[SECURITY] Device ownership check failed:', err);
+    return false;
+  }
+};
+
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST || 'localhost',
   user: process.env.MYSQL_USER,
@@ -85,11 +113,17 @@ const pool = mysql.createPool({
   connectionLimit: POOL_LIMIT,
   waitForConnections: true,
   queueLimit: QUEUE_LIMIT,
-  // v2.12.13: reap idle sockets instead of parking them forever.
-  idleTimeout: 30000,
-  maxIdle: 5,
+  // v2.12.19: Aggressive idle reaping to free up slots for 100+ users.
+  idleTimeout: 15000,
+  maxIdle: 10,
   enableKeepAlive: false,
-  connectTimeout: 10000,
+  connectTimeout: 5000,
+});
+
+// v2.12.18: Pool instrumentation to detect connection exhaustion
+pool.on('enqueue', () => {
+  const p = poolPressure();
+  console.warn(`[POOL] Waiting for connection slot (inUse=${p.inUse} free=${p.free} queued=${p.queued})`);
 });
 
 /**
@@ -99,9 +133,19 @@ const pool = mysql.createPool({
  * inside catch — a failing rollback leaked the connection permanently.
  */
 async function withConn(fn) {
+  const start = Date.now();
   const conn = await pool.getConnection();
+  const wait = Date.now() - start;
+  if (wait > 1000) console.warn(`[POOL] slow acquire: ${wait}ms`);
+
   try {
-    return await fn(conn);
+    const result = await fn(conn);
+    const duration = Date.now() - start;
+    // v2.12.18: Slow query instrumentation (logs requests taking > 5s)
+    if (duration > 5000) {
+      console.warn(`[PERF] Slow request detected: ${duration}ms`);
+    }
+    return result;
   } finally {
     try { conn.release(); } catch (_e) { /* already released */ }
   }
@@ -178,14 +222,45 @@ const getCorsHeaders = (origin) => {
   };
 };
 
-// Helper: Send JSON response
-const sendJSON = (res, data, status = 200, origin) => {
+// Helper: Send JSON response with Gzip support and ETag
+const sendJSON = (res, data, status = 200, origin, reqHeaders = {}) => {
   const corsHeaders = getCorsHeaders(origin);
-  res.writeHead(status, {
+  const body = JSON.stringify(data);
+
+  // v2.12.18: ETag generation for conditional GETs (304 Not Modified)
+  const etag = crypto.createHash('md5').update(body).digest('hex');
+
+  if (reqHeaders['if-none-match'] === etag && status === 200) {
+    res.writeHead(304, corsHeaders);
+    return res.end();
+  }
+
+  const headers = {
     'Content-Type': 'application/json',
+    'ETag': etag,
     ...corsHeaders,
-  });
-  res.end(JSON.stringify(data));
+  };
+
+  // v2.12.18: Gzip compression for responses > 2KB
+  const acceptEncoding = reqHeaders['accept-encoding'] || '';
+  if (acceptEncoding.includes('gzip') && body.length > 2048) {
+    zlib.gzip(body, (err, compressed) => {
+      if (err) {
+        res.writeHead(status, headers);
+        res.end(body);
+      } else {
+        res.writeHead(status, {
+          ...headers,
+          'Content-Encoding': 'gzip',
+          'Content-Length': compressed.length
+        });
+        res.end(compressed);
+      }
+    });
+  } else {
+    res.writeHead(status, headers);
+    res.end(body);
+  }
 };
 
 const APP_VERSION = process.env.APP_VERSION || `serverjs-${new Date().toISOString()}`;
@@ -205,6 +280,75 @@ const toYmdLocal = (d) => {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 };
+
+/**
+ * v2.12.32: Shared helper to calculate farmer's monthly/seasonal cumulative totals.
+ * Returns { cumulative_weight, by_product }.
+ */
+async function getFarmerCumulativeStats(conn, ccode, farmer_id, route, transdate, orgtype, season_code) {
+  try {
+    const collDate = new Date(transdate);
+    let periodStart = toYmdLocal(new Date(collDate.getFullYear(), collDate.getMonth(), 1));
+    let periodEnd = toYmdLocal(new Date(collDate.getFullYear(), collDate.getMonth() + 1, 0));
+
+    if (orgtype === 'C') {
+      let season = null;
+      const requestedSeason = String(season_code || '').trim();
+      if (requestedSeason) {
+        const [sRows] = await conn.query(
+          `SELECT SCODE, datefrom, dateto FROM Seasons
+           WHERE TRIM(ccode) = TRIM(?) AND TRIM(SCODE) = TRIM(?) LIMIT 1`,
+          [ccode, requestedSeason]
+        );
+        if (sRows.length > 0) season = sRows[0];
+      }
+      if (!season) season = await findActiveSeason(ccode, transdate, conn);
+      if (season) {
+        const ymd = (v) => (typeof v === 'string' ? v.slice(0, 10) : toYmdLocal(new Date(v)));
+        periodStart = ymd(season.datefrom);
+        periodEnd = ymd(season.dateto);
+      }
+    }
+
+    const nFarmerId = norm(farmer_id);
+    const nCcode = norm(ccode);
+    const nRoute = route ? norm(route) : null;
+    const indRouteFilter = nRoute ? ' AND route = ?' : '';
+    const indParams = nRoute ? [nFarmerId, nCcode, periodStart, periodEnd, nRoute] : [nFarmerId, nCcode, periodStart, periodEnd];
+
+    const [sumRows] = await conn.query(
+      `SELECT IFNULL(SUM(weight), 0) as cumulative_weight
+       FROM transactions
+       WHERE memberno = ? AND ccode = ? AND Transtype = 1
+       AND transdate BETWEEN ? AND ?${indRouteFilter}`,
+      indParams
+    );
+
+    const [productRows] = await conn.query(
+      `SELECT t.icode as icode,
+              IFNULL(MAX(fi.descript), MIN(t.icode)) as product_name,
+              IFNULL(SUM(t.weight), 0) as weight
+       FROM transactions t
+       LEFT JOIN fm_items fi ON fi.icode = t.icode AND fi.ccode = t.ccode
+       WHERE t.memberno = ? AND t.ccode = ? AND t.Transtype = 1
+       AND t.transdate BETWEEN ? AND ?${indRouteFilter.replace('route', 't.route')}
+       GROUP BY t.icode`,
+      indParams
+    );
+
+    return {
+      cumulative_weight: sumRows.length > 0 ? parseFloat(sumRows[0].cumulative_weight) || 0 : 0,
+      by_product: productRows.map(r => ({
+        icode: r.icode || '',
+        product_name: r.product_name || r.icode || '',
+        weight: parseFloat(r.weight) || 0
+      }))
+    };
+  } catch (err) {
+    console.warn('[CUM] Helper calculation failed:', err.message);
+    return null;
+  }
+}
 
 /**
  * v2.12.4 — Contabo schema split:
@@ -245,7 +389,7 @@ const findActiveSeason = async (ccode, date, conn = pool) => {
               DATE_FORMAT(datefrom, '%Y-%m-%d') AS datefrom,
               DATE_FORMAT(dateto, '%Y-%m-%d') AS dateto
          FROM Seasons
-        WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+        WHERE ccode = ?
           AND DATE(datefrom) <= ? AND DATE(dateto) >= ?
         ORDER BY datefrom DESC, id DESC LIMIT 1`,
       [ccode, date, date]
@@ -268,8 +412,8 @@ const findSeasonDescript = async (scode, ccode, conn = pool) => {
   try {
     const [rows] = await conn.query(
       `SELECT descript FROM Seasons
-        WHERE UPPER(TRIM(scode)) = UPPER(TRIM(?)) AND TRIM(ccode) = TRIM(?) LIMIT 1`,
-      [scode, ccode]
+        WHERE scode = ? AND ccode = ? LIMIT 1`,
+      [norm(scode), norm(ccode)]
     );
     return rows.length ? rows[0].descript : null;
   } catch (e) {
@@ -325,8 +469,8 @@ const resolvePaymentsAccess = async ({ deviceFingerprint, userid }) => {
   if (!ccode) return { ok: false, status: 403, error: 'Device company not configured' };
 
   const [settingsRows] = await pool.query(
-    'SELECT IFNULL(payments_active, 0) AS payments_active FROM psettings WHERE UPPER(TRIM(cno)) = UPPER(TRIM(?)) LIMIT 1',
-    [ccode]
+    'SELECT IFNULL(payments_active, 0) AS payments_active FROM psettings WHERE cno = ? LIMIT 1',
+    [norm(ccode)]
   );
   if (settingsRows.length === 0 || !toDbBool(settingsRows[0].payments_active)) {
     return { ok: false, status: 403, error: 'Payments not active for this company' };
@@ -335,9 +479,9 @@ const resolvePaymentsAccess = async ({ deviceFingerprint, userid }) => {
   const [userRows] = await pool.query(
     `SELECT IFNULL(can_access_payments, 0) AS can_access_payments
        FROM Users
-      WHERE TRIM(userid) = ? AND UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+      WHERE userid = ? AND ccode = ?
       LIMIT 1`,
-    [userId, ccode]
+    [userId, norm(ccode)]
   );
   if (userRows.length === 0 || !toDbBool(userRows[0].can_access_payments)) {
     return { ok: false, status: 403, error: 'Payment permission denied' };
@@ -391,7 +535,7 @@ const payablePayableCache = createCache({ max: 200, ttlMs: 60000 });
 // recomputes each recently requested (ccode, route, period) key. TTL is long
 // enough to always have a snapshot to serve, and the warmer keeps it fresh.
 const CUM_BATCH_TTL_MS = 5 * 60 * 1000;      // served snapshot lifetime
-const CUM_BATCH_REWARM_MS = 90 * 1000;       // background recompute interval
+const CUM_BATCH_REWARM_MS = 120 * 1000;       // v2.12.18: Increased to 120s to reduce DB load
 const cumulativeBatchCache = createCache({ max: 50, ttlMs: CUM_BATCH_TTL_MS });
 
 // Warm-job bookkeeping: key -> { ccode, route, periodStart, periodEnd, lastRun }
@@ -447,8 +591,8 @@ async function getItemNameMap(ccode) {
   const map = new Map();
   try {
     const [rows] = await pool.query(
-      'SELECT TRIM(icode) AS icode, descript FROM fm_items WHERE UPPER(TRIM(ccode)) = ?',
-      [key]
+      'SELECT icode, descript FROM fm_items WHERE ccode = ?',
+      [norm(key)]
     );
     for (const r of rows) {
       const ic = String(r.icode || '').trim().toUpperCase();
@@ -461,14 +605,18 @@ async function getItemNameMap(ccode) {
   return map;
 }
 
+// v2.12.18: global concurrency limit for heavy seasonal scans to prevent DB connection exhaustion.
+let activeBackgroundScans = 0;
+const MAX_CONCURRENT_SCANS = 2;
+
 async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
   // v2.12.13: ONE scan instead of three. Totals and snapshot_max_id are derived
   // in JS from the same grouped rows, so the formula is unchanged but the table
   // is read once. Predicates on ccode/transdate are sargable so the new
   // idx_tx_cum_scan(ccode, transdate, route) can be used.
-  const ccodeParam = String(ccode || '').trim().toUpperCase();
-  const routeParam = route ? String(route).trim().toUpperCase() : null;
-  const routeFilter = routeParam ? ' AND UPPER(TRIM(route)) = ?' : '';
+  const ccodeParam = norm(ccode);
+  const routeParam = route ? norm(route) : null;
+  const routeFilter = routeParam ? ' AND route = ?' : '';
   const params = routeParam
     ? [ccodeParam, periodStart, periodEnd, routeParam]
     : [ccodeParam, periodStart, periodEnd];
@@ -481,15 +629,15 @@ async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
 
     const _t0 = Date.now();
     const [rows] = await conn.query(
-      `SELECT TRIM(memberno) AS farmer_id,
-              TRIM(icode) AS icode,
+      `SELECT memberno AS farmer_id,
+              icode AS icode,
               IFNULL(SUM(weight), 0) AS weight,
               IFNULL(MAX(id), 0) AS max_id
          FROM transactions
         WHERE ccode = ?
-          AND CAST(Transtype AS UNSIGNED) = 1
+          AND Transtype = 1
           AND transdate BETWEEN ? AND ?${routeFilter}
-        GROUP BY TRIM(memberno), TRIM(icode)`,
+        GROUP BY memberno, icode`,
       params
     );
     groupRows = rows;
@@ -556,6 +704,13 @@ function scheduleCumulativeWarm(ccode, route, periodStart, periodEnd) {
 
   if (cumulativeWarmInFlight.has(key)) return cumulativeWarmInFlight.get(key);
 
+  // v2.12.18: never start a new scan if the concurrency limit is reached.
+  // The re-warmer loop will pick this up in a subsequent tick.
+  if (activeBackgroundScans >= MAX_CONCURRENT_SCANS) {
+    console.log(`[CUM:WARM] deferred ${key} (limit reached: ${activeBackgroundScans}/${MAX_CONCURRENT_SCANS})`);
+    return null;
+  }
+
   // v2.12.10: never let a permanently failing key hammer the DB — back off
   // 30s × failures (capped at 5 min) between attempts.
   const meta0 = cumulativeWarmKeys.get(key);
@@ -567,6 +722,7 @@ function scheduleCumulativeWarm(ccode, route, periodStart, periodEnd) {
 
   console.log(`[CUM:WARM] start ${key}`);
   const job = (async () => {
+    activeBackgroundScans++;
     try {
       const payload = await computeCumulativeBatch(ccode, route, periodStart, periodEnd);
       cumulativeBatchCache.set(key, payload);
@@ -579,6 +735,7 @@ function scheduleCumulativeWarm(ccode, route, periodStart, periodEnd) {
       console.error(`[CUM:WARM] failed ${key} (attempt ${meta?.failures}):`, e.message);
       return null;
     } finally {
+      activeBackgroundScans = Math.max(0, activeBackgroundScans - 1);
       cumulativeWarmInFlight.delete(key);
     }
   })();
@@ -594,7 +751,8 @@ function scheduleCumulativeWarm(ccode, route, periodStart, periodEnd) {
 // defers the warm, and keys that have never produced a snapshot are prioritised.
 setInterval(() => {
   if (cumulativeWarmKeys.size === 0) return;
-  if (poolPressure().queued > 20) return;
+  // v2.12.18: check both pool pressure AND concurrency limit.
+  if (poolPressure().queued > 20 || activeBackgroundScans >= MAX_CONCURRENT_SCANS) return;
   const now = Date.now();
 
   // Priority 1: keys that have never been computed (cold) — these block clients.
@@ -738,8 +896,8 @@ const addOneDay = (ymd) => {
 
 const getCompanyPricePerKg = async (executor, ccode) => {
   const [rows] = await executor.query(
-    'SELECT IFNULL(price_per_kg, 0) AS price_per_kg FROM psettings WHERE UPPER(TRIM(cno)) = UPPER(TRIM(?)) LIMIT 1',
-    [ccode]
+    'SELECT IFNULL(price_per_kg, 0) AS price_per_kg FROM psettings WHERE cno = ? LIMIT 1',
+    [norm(ccode)]
   );
   return Number(rows[0]?.price_per_kg || 0);
 };
@@ -749,20 +907,20 @@ const computeFarmerPayment = async (executor, ccode, farmerCode, range, pricePer
     `SELECT ROUND(SUM(CAST(IFNULL(weight, 0) AS DECIMAL(14,4))), 4) AS total_qty,
             COUNT(*) AS unpaid_count
        FROM transactions
-      WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
-        AND UPPER(TRIM(memberno)) = UPPER(TRIM(?))
+      WHERE ccode = ?
+        AND memberno = ?
         AND transtype = 1
         AND IFNULL(payment_status, 'unpaid') = 'unpaid'
-        AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
-    [ccode, farmerCode, range.start, range.end]
+        AND transdate BETWEEN ? AND ?`,
+    [norm(ccode), norm(farmerCode), range.start, range.end]
   );
   const [[memberRow]] = await executor.query(
     `SELECT IFNULL(crbal, '') AS crbal, IFNULL(descript, '') AS descript
        FROM cm_members
-      WHERE UPPER(TRIM(mcode)) = UPPER(TRIM(?))
-        AND UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+      WHERE mcode = ?
+        AND ccode = ?
       LIMIT 1`,
-    [farmerCode, ccode]
+    [norm(farmerCode), norm(ccode)]
   );
 
   const totalQty = Number(sumRow?.total_qty || 0);
@@ -1124,7 +1282,7 @@ const server = http.createServer(async (req, res) => {
       
       query += ' ORDER BY descript';
       const [rows] = await pool.query(query, params);
-      return sendJSON(res, { success: true, data: rows, ccode });
+      return sendJSON(res, { success: true, data: rows, ccode }, 200, origin, req.headers);
     }
     
     // Original farmers endpoint (kept for backward compatibility)
@@ -1138,7 +1296,7 @@ const server = http.createServer(async (req, res) => {
       }
       query += ' ORDER BY descript';
       const [rows] = await pool.query(query, params);
-      return sendJSON(res, { success: true, data: rows });
+      return sendJSON(res, { success: true, data: rows }, 200, origin, req.headers);
     }
 
     if (path.startsWith('/api/farmers/') && method === 'GET') {
@@ -1247,26 +1405,28 @@ const server = http.createServer(async (req, res) => {
 
     if (path.startsWith('/api/milk-collection/') && method === 'GET') {
       const ref = path.split('/')[3];
-      const [rows] = await pool.query('SELECT * FROM transactions WHERE transrefno = ?', [ref]);
-      if (rows.length === 0) return sendJSON(res, { success: false, error: 'Collection not found' }, 404);
-      
-      // Map transaction fields back to expected format
-      // DB columns → Frontend fields
-      const mapped = {
-        reference_no: rows[0].transrefno,    // DB: transrefno
-        uploadrefno: rows[0].Uploadrefno,    // DB: Uploadrefno
-        farmer_id: rows[0].memberno,         // DB: memberno
-        farmer_name: rows[0].memberno,       // Display placeholder
-        route: rows[0].route,                // DB: route
-        session: rows[0].session,            // DB: session
-        weight: rows[0].weight,              // DB: weight
-        clerk_name: rows[0].clerk,           // DB: clerk
-        collection_date: rows[0].transdate,  // DB: transdate
-        product_code: rows[0].icode,         // DB: icode
-        entry_type: rows[0].entry_type       // DB: entry_type
-      };
-      
-      return sendJSON(res, { success: true, data: mapped });
+      // v2.12.18: wrap in withConn to ensure single connection use
+      return withConn(async (conn) => {
+        const [rows] = await conn.query('SELECT * FROM transactions WHERE transrefno = ?', [ref]);
+        if (rows.length === 0) return sendJSON(res, { success: false, error: 'Collection not found' }, 404);
+
+        // Map transaction fields back to expected format
+        const mapped = {
+          reference_no: rows[0].transrefno,    // DB: transrefno
+          uploadrefno: rows[0].Uploadrefno,    // DB: Uploadrefno
+          farmer_id: rows[0].memberno,         // DB: memberno
+          farmer_name: rows[0].memberno,       // Display placeholder
+          route: rows[0].route,                // DB: route
+          session: rows[0].session,            // DB: session
+          weight: rows[0].weight,              // DB: weight
+          clerk_name: rows[0].clerk,           // DB: clerk
+          collection_date: rows[0].transdate,  // DB: transdate
+          product_code: rows[0].icode,         // DB: icode
+          entry_type: rows[0].entry_type       // DB: entry_type
+        };
+
+        return sendJSON(res, { success: true, data: mapped });
+      });
     }
 
     // NEW: Generate next reference number endpoint
@@ -1281,77 +1441,60 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      // v2.12.13: withConn guarantees release even if rollback/commit throws.
-      return withConn(async (connection) => {
-        try {
-          // Start transaction
-          await connection.beginTransaction();
+      // v2.12.18: use withTx for safe transaction management
+      return withTx(async (connection) => {
+        // Get devcode from devSettings for reference generation
+        const [deviceRows] = await connection.query(
+          'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
+          [deviceserial]
+        );
 
-          // Get devcode from devSettings for reference generation
-          const [deviceRows] = await connection.query(
-            'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
-            [deviceserial]
-          );
-
-          if (deviceRows.length === 0) {
-            try { await connection.rollback(); } catch (_e) {}
-            return sendJSON(res, {
-              success: false,
-              error: 'Device not found'
-            }, 404);
-          }
-
-          const devcode = deviceRows[0].devcode;
-
-          if (!devcode) {
-            try { await connection.rollback(); } catch (_e) {}
-            return sendJSON(res, {
-              success: false,
-              error: 'Device has no assigned devcode. Please re-register the device.'
-            }, 400);
-          }
-
-          // Get the last transaction number for THIS DEVICE with row lock
-          const [lastTransRows] = await connection.query(
-            'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
-            [`${devcode}%`]
-          );
-
-          let nextTrnId = 1; // Starting number for this device
-
-          if (lastTransRows.length > 0) {
-            const lastRef = lastTransRows[0].transrefno;
-            // Extract trnid using last 8 digits to avoid clientFetch corruption
-            const lastNumber = parseInt(lastRef.slice(-8), 10);
-            if (!isNaN(lastNumber)) {
-              nextTrnId = lastNumber + 1;
-            }
-          }
-
-          // Generate reference: devcode + 8-digit trnid padded
-          const transrefno = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
-
-          // Update trnid in devSettings
-          await connection.query(
-            'UPDATE devSettings SET trnid = ? WHERE uniquedevcode = ?',
-            [nextTrnId, deviceserial]
-          );
-
-          // Commit transaction
-          await connection.commit();
-
-          return sendJSON(res, {
-            success: true,
-            data: { reference_no: transrefno }
-          });
-        } catch (error) {
-          try { await connection.rollback(); } catch (_e) {}
-          console.error('Reference generation error:', error);
+        if (deviceRows.length === 0) {
           return sendJSON(res, {
             success: false,
-            error: 'Failed to generate reference number'
-          }, 500);
+            error: 'Device not found'
+          }, 404);
         }
+
+        const devcode = deviceRows[0].devcode;
+
+        if (!devcode) {
+          return sendJSON(res, {
+            success: false,
+            error: 'Device has no assigned devcode. Please re-register the device.'
+          }, 400);
+        }
+
+        // Get the last transaction number for THIS DEVICE with row lock
+        const [lastTransRows] = await connection.query(
+          'SELECT transrefno FROM transactions WHERE transrefno LIKE ? ORDER BY transrefno DESC LIMIT 1 FOR UPDATE',
+          [`${devcode}%`]
+        );
+
+        let nextTrnId = 1; // Starting number for this device
+
+        if (lastTransRows.length > 0) {
+          const lastRef = lastTransRows[0].transrefno;
+          // Extract trnid using last 8 digits to avoid clientFetch corruption
+          const lastNumber = parseInt(lastRef.slice(-8), 10);
+          if (!isNaN(lastNumber)) {
+            nextTrnId = lastNumber + 1;
+          }
+        }
+
+        // Generate reference: devcode + 8-digit trnid padded
+        const transrefno = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
+
+        // Update trnid in devSettings
+        await connection.query(
+          'UPDATE devSettings SET trnid = ? WHERE uniquedevcode = ?',
+          [nextTrnId, deviceserial]
+        );
+
+        return sendJSON(res, {
+          success: true,
+          data: { reference_no: transrefno }
+        });
       });
     }
 
@@ -1370,11 +1513,8 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
       
-      // v2.12.13: withConn guarantees release even if rollback/commit throws.
-      return withConn(async (connection) => {
-      try {
-        await connection.beginTransaction();
-        
+      // v2.12.18: use withTx for safe transaction management
+      return withTx(async (connection) => {
         // Get devcode from devSettings
         const [deviceRows] = await connection.query(
           'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
@@ -1382,8 +1522,7 @@ const server = http.createServer(async (req, res) => {
         );
         
         if (deviceRows.length === 0) {
-          try { await connection.rollback(); } catch (_e) {}
-          return sendJSON(res, { 
+          return sendJSON(res, {
             success: false, 
             error: 'Device not found' 
           }, 404);
@@ -1393,8 +1532,7 @@ const server = http.createServer(async (req, res) => {
         const devcode = deviceRows[0].devcode;
         
         if (!devcode) {
-          try { await connection.rollback(); } catch (_e) {}
-          return sendJSON(res, { 
+          return sendJSON(res, {
             success: false, 
             error: 'Device has no assigned devcode' 
           }, 400);
@@ -1420,15 +1558,14 @@ const server = http.createServer(async (req, res) => {
         const endNumber = startNumber + batchSize;
         
         // DUPLICATE PREVENTION: Insert a placeholder record at the end of the batch
-        // Format: devcode + 8-digit padded trnid
         const placeholderRefNo = `${devcode}${String(endNumber - 1).padStart(8, '0')}`;
         
         await connection.query(
           `INSERT INTO transactions (
-            transrefno, memberno, itemcode, weight, sprice, amount, 
-            Transdate, Transtype, ccode, deviceserial, clerk, 
+            transrefno, memberno, icode, weight, sprice, amount,
+            Transdate, Transtime, Transtype, ccode, deviceserial, clerk,
             session, route, entry_type
-          ) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, ?, ?)`,
           [
             placeholderRefNo,
             'BATCH_RESERVATION',
@@ -1451,9 +1588,7 @@ const server = http.createServer(async (req, res) => {
           'UPDATE devSettings SET trnid = ? WHERE uniquedevcode = ?',
           [endNumber - 1, deviceserial]
         );
-        
-        await connection.commit();
-        
+
         console.log(`✅ Reserved batch [${startNumber} to ${endNumber - 1}] - Placeholder: ${placeholderRefNo}`);
         
         return sendJSON(res, { 
@@ -1463,484 +1598,378 @@ const server = http.createServer(async (req, res) => {
             end: endNumber
           } 
         });
-      } catch (error) {
-        try { await connection.rollback(); } catch (_e) {}
-        console.error('❌ Error reserving batch:', error);
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Failed to reserve batch' 
-        }, 500);
-      }
       });
     }
 
     if (path === '/api/milk-collection' && method === 'POST') {
       const body = await parseBody(req);
     
-      // Use provided transrefno from frontend (initial attempt)
-      let transrefno = body.reference_no;
-      if (!transrefno) {
-        return sendJSON(res, { 
-          success: false, 
-          error: 'reference_no is required' 
-        }, 400);
-      }
-      
-      // uploadrefno is the type-specific ID (milkid) for approval workflow
-      // It's generated on frontend and passed in, or backend generates it
-      let uploadrefno = body.uploadrefno || null;
-      
-      console.log('🟢 BACKEND: Creating NEW transaction');
-      console.log('📝 Reference:', transrefno);
-      console.log('📝 UploadRef (milkId):', uploadrefno);
-      console.log('👤 Farmer:', body.farmer_id);
-      console.log('⚖️ Weight:', body.weight, 'Kg');
-      console.log('📅 Session:', body.session);
-      
-      // user_id maps to userId column (login user_id for tracking)
-      // clerk_name maps to clerk column (display name/username)
-      const userId = body.user_id || body.clerk_name || 'unknown';
-      const clerk = body.clerk_name || 'unknown';
-      const deviceserial = body.device_fingerprint || 'web';
-      
-      // Fetch ccode from devSettings using uniquedevcode
-      const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized, milkid FROM devSettings WHERE uniquedevcode = ?',
-        [deviceserial]
-      );
-      
-      if (deviceRows.length === 0 || !deviceRows[0].authorized) {
-        console.log('❌ Device not authorized:', deviceserial);
-        return sendJSON(res, { 
-          success: false, 
-          error: 'Device not authorized' 
-        }, 403);
-      }
-      
-      const ccode = deviceRows[0].ccode;
-      const currentMilkId = deviceRows[0].milkid || 0;
-      console.log('🏢 Company Code:', ccode);
-      
-      // BACKEND VALIDATION: Enforce psettings rules
-      // Fetch psettings for this company to validate business rules
-      const [psettingsRows] = await pool.query(
-        'SELECT IFNULL(AutoW, 0) as AutoW, IFNULL(zeroopt, 0) as zeroopt FROM psettings WHERE cno = ?',
-        [ccode]
-      );
-      
-      const psettings = psettingsRows.length > 0 ? psettingsRows[0] : { AutoW: 0, zeroopt: 0 };
-      
-      // ENFORCE AutoW: If autow=1, reject manual entry_type
-      const entryType = (body.entry_type || 'manual').toLowerCase();
-      if (psettings.AutoW === 1 && entryType === 'manual') {
-        console.log('❌ AutoW enforcement: Manual entry rejected for company', ccode);
-        return sendJSON(res, { 
-          success: false, 
-          error: 'MANUAL_ENTRY_DISABLED',
-          message: 'Manual weight entry is disabled. Please use the digital scale.' 
-        }, 400);
-      }
-      
-      // ENFORCE clientFetch: Validate that the route allows Buy/Sell (clientFetch = 1)
-      // This prevents bypassing UI controls via direct API calls
-      const routeCode = (body.route || '').trim();
-      if (routeCode) {
-        const [routeRows] = await pool.query(
-          'SELECT IFNULL(clientFetch, 1) as clientFetch FROM fm_tanks WHERE tcode = ? AND ccode = ?',
-          [routeCode, ccode]
+      // v2.12.18: wrap in withConn to reduce connection churn
+      return withConn(async (conn) => {
+        // Use provided transrefno from frontend (initial attempt)
+        let transrefno = body.reference_no;
+        if (!transrefno) {
+          return sendJSON(res, {
+            success: false,
+            error: 'reference_no is required'
+          }, 400);
+        }
+
+        // uploadrefno is the type-specific ID (milkid) for approval workflow
+        let uploadrefno = body.uploadrefno || null;
+
+        console.log('🟢 BACKEND: Creating NEW transaction');
+        console.log('📝 Reference:', transrefno);
+        console.log('📝 UploadRef (milkId):', uploadrefno);
+        console.log('👤 Farmer:', body.farmer_id);
+        console.log('⚖️ Weight:', body.weight, 'Kg');
+        console.log('📅 Session:', body.session);
+
+        const userId = body.user_id || body.clerk_name || 'unknown';
+        const clerk = body.clerk_name || 'unknown';
+        const deviceserial = body.device_fingerprint || 'web';
+
+        // Fetch ccode from devSettings using uniquedevcode
+        const [deviceRows] = await conn.query(
+          'SELECT ccode, authorized, milkid FROM devSettings WHERE uniquedevcode = ?',
+          [deviceserial]
         );
         
-        if (routeRows.length > 0) {
-          const clientFetch = routeRows[0].clientFetch;
-          // clientFetch = 1: Buy/Sell allowed, Store disabled
-          // clientFetch = 2: Store allowed, Buy/Sell disabled
-          if (clientFetch !== 1) {
-            console.log(`❌ clientFetch enforcement: Buy/Sell disabled for route ${routeCode} (clientFetch=${clientFetch})`);
-            return sendJSON(res, { 
-              success: false, 
-              error: 'ROUTE_BUY_SELL_DISABLED',
-              message: 'Buy/Sell operations are not allowed for this route. Please use Store instead.' 
-            }, 403);
-          }
+        if (deviceRows.length === 0 || !deviceRows[0].authorized) {
+          console.log('❌ Device not authorized:', deviceserial);
+          return sendJSON(res, {
+            success: false,
+            error: 'Device not authorized'
+          }, 403);
         }
-      }
-      
-      // Parse date and time (LOCAL date, not UTC)
-      // NOTE: toISOString() can shift date due to timezone, which breaks monthly cumulative queries.
-      const collectionDate = new Date(body.collection_date);
-      const pad2 = (n) => String(n).padStart(2, '0');
-      const transdate = `${collectionDate.getFullYear()}-${pad2(collectionDate.getMonth() + 1)}-${pad2(collectionDate.getDate())}`; // YYYY-MM-DD local
-      const transtime = `${pad2(collectionDate.getHours())}:${pad2(collectionDate.getMinutes())}:${pad2(collectionDate.getSeconds())}`; // HH:MM:SS local
-      const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
-      
-      // CHECK multOpt: If member has multOpt = 0, check for existing transaction in this session
-      // NOTE: Sell Portal (transtype=2) is EXEMPT from multOpt restrictions
-      const cleanFarmerId = (body.farmer_id || '').replace(/^#/, '').trim();
-      const rawSession = (body.session || '').trim();
-      
-      // Parse transtype early to check for Sell Portal exemption
-      // Transtype: 1 = Buy Produce, 2 = Sell Produce (default: 1 for backwards compatibility)
-      const transtype = parseInt(body.transtype) || 1;
 
-      // v2.10.39: Look up orgtype to gate session normalization.
-      // Dairy (orgtype='D'): collapse to AM/PM (existing behavior).
-      // Coffee (orgtype='C'): preserve season descript (e.g. "MAIN HARVEST 2025").
-      let orgtype = 'D';
-      try {
-        const [orgRows] = await pool.query(
-          'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE cno = ? LIMIT 1',
+        // v2.12.17: SECURE DEVICE BINDING.
+        const isOwner = await verifyDeviceOwnership(deviceserial, userId, conn);
+        if (!isOwner) {
+          console.warn(`[SECURITY] Unauthorized userId=${userId} for device=${deviceserial}`);
+          return sendJSON(res, {
+            success: false,
+            error: 'Authorization error. This device is bound to another user.'
+          }, 403);
+        }
+
+        const ccode = deviceRows[0].ccode;
+        const currentMilkId = deviceRows[0].milkid || 0;
+        console.log('🏢 Company Code:', ccode);
+
+        // BACKEND VALIDATION: Enforce psettings rules
+        const [psettingsRows] = await conn.query(
+          'SELECT IFNULL(AutoW, 0) as AutoW, IFNULL(zeroopt, 0) as zeroopt FROM psettings WHERE cno = ?',
           [ccode]
         );
-        if (orgRows.length > 0) orgtype = (orgRows[0].orgtype || 'D').toString().toUpperCase();
-      } catch (e) {
-        console.warn('[WARN] orgtype lookup failed, defaulting to D:', e?.message);
-      }
 
-      let normalizedSession = rawSession.toUpperCase();
-      if (orgtype === 'C') {
-        // v2.10.50: Coffee — NEVER store AM/PM in session. Prefer SCODE, then descript.
-        // If both are missing/AM/PM, look up the active SCODE for this ccode+date.
-        const scode = (body.season_code || '').toString().trim();
-        const descript = (body.session_descript || rawSession || '').toString().trim();
-        normalizedSession = (scode || descript).toUpperCase();
-        if (!normalizedSession || normalizedSession === 'AM' || normalizedSession === 'PM') {
-          try {
-            const season = await findActiveSeason(ccode, transdate);
-            if (season && season.SCODE) normalizedSession = String(season.SCODE).toUpperCase();
-          } catch (e) { console.warn('Coffee SCODE rescue lookup failed:', e?.message); }
+        const psettings = psettingsRows.length > 0 ? psettingsRows[0] : { AutoW: 0, zeroopt: 0 };
+
+        const entryType = (body.entry_type || 'manual').toLowerCase();
+        if (psettings.AutoW === 1 && entryType === 'manual') {
+          console.log('❌ AutoW enforcement: Manual entry rejected for company', ccode);
+          return sendJSON(res, {
+            success: false,
+            error: 'MANUAL_ENTRY_DISABLED',
+            message: 'Manual weight entry is disabled. Please use the digital scale.'
+          }, 400);
         }
-        console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, session_descript: body.session_descript, normalizedSession });
-      } else {
-        if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
-          normalizedSession = 'PM';
-        } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
-          normalizedSession = 'AM';
-        }
-      }
 
-      console.log('🧼 Normalized values:', {
-        farmer_id: { raw: body.farmer_id, clean: cleanFarmerId },
-        session: { raw: body.session, normalized: normalizedSession },
-        transtype: transtype,
-      });
-
-      // Skip multOpt check for Sell Portal (transtype=2) - unlimited sells per session allowed
-      if (transtype === 2) {
-        console.log('📦 Sell Portal transaction (transtype=2) - skipping multOpt validation');
-      } else {
-        // Get member's multOpt setting (only for Buy Produce transactions)
-        const [memberRows] = await pool.query(
-          'SELECT multOpt FROM cm_members WHERE mcode = ? AND ccode = ?',
-          [cleanFarmerId, ccode]
-        );
-
-        // Default to allowing multiple if member not found or multOpt not set
-        const multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null 
-          ? parseInt(memberRows[0].multOpt) 
-          : 1;
-
-        console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
-
-        if (multOpt === 0) {
-          // multOpt=0 means: only ONE "workflow" per session/day.
-          // However, a workflow may include multiple bucket rows.
-          // Rule:
-          // - If a row already exists for this farmer+session+date, then ONLY allow inserts that
-          //   share the SAME Uploadrefno (i.e., same workflow/batch).
-          // - Any different Uploadrefno is treated as a duplicate session delivery.
-          const [existingTransRows] = await pool.query(
-            `SELECT transrefno, Uploadrefno FROM transactions 
-             WHERE memberno = ?
-               AND UPPER(TRIM(session)) = ?
-               AND transdate = ?
-               AND Transtype = 1
-               AND ccode = ?
-             ORDER BY transrefno ASC
-             LIMIT 1`,
-            [cleanFarmerId, normalizedSession, transdate, ccode]
+        const routeCode = (body.route || '').trim();
+        if (routeCode) {
+          const [routeRows] = await conn.query(
+            'SELECT IFNULL(clientFetch, 1) as clientFetch FROM fm_tanks WHERE tcode = ? AND ccode = ?',
+            [routeCode, ccode]
           );
 
-          if (existingTransRows.length > 0) {
-            const existingRef = existingTransRows[0].transrefno;
-            const existingUploadRef = existingTransRows[0].Uploadrefno;
-
-            // If client didn't send uploadrefno, we cannot safely group; treat as duplicate.
-            if (!uploadrefno) {
-              console.log(
-                `⚠️ multOpt=0: existing delivery found but request has no uploadrefno. Rejecting. existingUploadRef=${existingUploadRef}`
-              );
+          if (routeRows.length > 0) {
+            const clientFetch = routeRows[0].clientFetch;
+            if (clientFetch !== 1) {
+              console.log(`❌ clientFetch enforcement: Buy/Sell disabled for route ${routeCode} (clientFetch=${clientFetch})`);
               return sendJSON(res, {
                 success: false,
-                error: 'DUPLICATE_SESSION_DELIVERY',
-                message: `Member already delivered in ${normalizedSession} session today`,
-                existing_reference: existingRef,
-                existing_uploadrefno: existingUploadRef,
-                farmer_id: cleanFarmerId,
-                session: normalizedSession,
-                date: transdate,
-              }, 409);
+                error: 'ROUTE_BUY_SELL_DISABLED',
+                message: 'Buy/Sell operations are not allowed for this route. Please use Store instead.'
+              }, 403);
             }
-
-            // Allow only if uploadrefno matches the already-open workflow for the day/session.
-            if (String(uploadrefno) !== String(existingUploadRef)) {
-              console.log(
-                `⚠️ Member ${cleanFarmerId} already delivered in ${normalizedSession} today with Uploadrefno=${existingUploadRef}. ` +
-                `Rejecting new Uploadrefno=${uploadrefno}. Existing ref: ${existingRef}`
-              );
-              return sendJSON(res, {
-                success: false,
-                error: 'DUPLICATE_SESSION_DELIVERY',
-                message: `Member already delivered in ${normalizedSession} session today`,
-                existing_reference: existingRef,
-                existing_uploadrefno: existingUploadRef,
-                farmer_id: cleanFarmerId,
-                session: normalizedSession,
-                date: transdate,
-              }, 409);
-            }
-
-            console.log(
-              `✅ multOpt=0: existing delivery found, but Uploadrefno matches (${uploadrefno}). Allowing additional row.`
-            );
           }
         }
-      }
 
-      // Helper function to attempt insert - NO LONGER auto-regenerates on duplicate
-      // If duplicate detected, return success acknowledging record exists (idempotent)
-      // This prevents infinite retry loops that create multiple records
-      const attemptInsert = async (attemptTransrefno, attemptUploadrefno) => {
+        const collectionDate = new Date(body.collection_date);
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const transdate = `${collectionDate.getFullYear()}-${pad2(collectionDate.getMonth() + 1)}-${pad2(collectionDate.getDate())}`; // YYYY-MM-DD local
+        const transtime = `${pad2(collectionDate.getHours())}:${pad2(collectionDate.getMinutes())}:${pad2(collectionDate.getSeconds())}`; // HH:MM:SS local
+        const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
+
+        const cleanFarmerId = (body.farmer_id || '').replace(/^#/, '').trim();
+        const rawSession = (body.session || '').trim();
+        const transtype = parseInt(body.transtype) || 1;
+
+        let orgtype = 'D';
         try {
-          // Attempt the insert with current reference
-          const productCode = body.product_code || '';
-          const seasonCAN = body.season_code || '';
-          
-          const deliveredBy = body.delivered_by || 'owner';
-          
-          await pool.query(
-            `INSERT INTO transactions 
-              (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
-               transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
-               amount, icode, CAN, time, capType, entry_type, deliveredby)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?)`,
-            [
-              attemptTransrefno,
-              attemptUploadrefno ? String(attemptUploadrefno) : '',
-              userId,
-              clerk,
-              deviceserial,
-              cleanFarmerId,
-              body.route,
-              toNumOrZero(body.weight),           // v2.12.7: never '' into numeric column
-              normalizedSession,
-              transdate,
-              transtime,
-              transtype,
-              ccode,
-              productCode,
-              seasonCAN,
-              timestamp,
-              body.entry_type || 'manual',
-              deliveredBy,
-            ]
+          const [orgRows] = await conn.query(
+            'SELECT IFNULL(orgtype, "D") as orgtype FROM psettings WHERE cno = ? LIMIT 1',
+            [ccode]
+          );
+          if (orgRows.length > 0) orgtype = (orgRows[0].orgtype || 'D').toString().toUpperCase();
+        } catch (e) {
+          console.warn('[WARN] orgtype lookup failed, defaulting to D:', e?.message);
+        }
+
+        let normalizedSession = rawSession.toUpperCase();
+        if (orgtype === 'C') {
+          const scode = (body.season_code || '').toString().trim();
+          const descript = (body.session_descript || rawSession || '').toString().trim();
+          normalizedSession = (scode || descript).toUpperCase();
+          if (!normalizedSession || normalizedSession === 'AM' || normalizedSession === 'PM') {
+            try {
+              const season = await findActiveSeason(ccode, transdate, conn);
+              if (season && season.SCODE) normalizedSession = String(season.SCODE).toUpperCase();
+            } catch (e) { console.warn('Coffee SCODE rescue lookup failed:', e?.message); }
+          }
+          console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, session_descript: body.session_descript, normalizedSession });
+        } else {
+          if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
+            normalizedSession = 'PM';
+          } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
+            normalizedSession = 'AM';
+          }
+        }
+
+        console.log('🧼 Normalized values:', {
+          farmer_id: { raw: body.farmer_id, clean: cleanFarmerId },
+          session: { raw: body.session, normalized: normalizedSession },
+          transtype: transtype,
+        });
+
+        if (transtype === 2) {
+          console.log('📦 Sell Portal transaction (transtype=2) - skipping multOpt validation');
+        } else {
+          const [memberRows] = await conn.query(
+            'SELECT multOpt FROM cm_members WHERE mcode = ? AND ccode = ?',
+            [cleanFarmerId, ccode]
           );
 
-          // SUCCESS: Update trnid AND milkid AFTER successful insert
-          const [devRows] = await pool.query(
-            'SELECT devcode FROM devSettings WHERE uniquedevcode = ?',
-            [deviceserial]
-          );
-          if (devRows.length > 0 && devRows[0].devcode) {
-            const devcode = devRows[0].devcode;
-            // Extract trnid using last 8 digits to avoid clientFetch corruption
-            const insertedTrnId = parseInt(attemptTransrefno.slice(-8), 10);
-const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 10);
-            if (!isNaN(insertedTrnId)) {
-              await pool.query(
-                `UPDATE devSettings SET
-                  trnid = GREATEST(IFNULL(trnid, 0), ?),
-                  milkid = GREATEST(IFNULL(milkid, 0), ?)
-                 WHERE uniquedevcode = ?`,
-                [
-  insertedTrnId,
-  isNaN(insertedMilkId) ? 0 : insertedMilkId,
-  deviceserial
-]
-              );
+          const multOpt = memberRows.length > 0 && memberRows[0].multOpt !== null
+            ? parseInt(memberRows[0].multOpt)
+            : 1;
+
+          console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
+
+          if (multOpt === 0) {
+            const [existingTransRows] = await conn.query(
+              `SELECT transrefno, Uploadrefno FROM transactions
+               WHERE memberno = ?
+                 AND session = ?
+                 AND transdate = ?
+                 AND Transtype = 1
+                 AND ccode = ?
+               ORDER BY transrefno ASC
+               LIMIT 1`,
+              [cleanFarmerId, normalizedSession, transdate, ccode]
+            );
+
+            if (existingTransRows.length > 0) {
+              const existingRef = existingTransRows[0].transrefno;
+              const existingUploadRef = existingTransRows[0].Uploadrefno;
+
+              if (!uploadrefno) {
+                console.log(
+                  `⚠️ multOpt=0: existing delivery found but request has no uploadrefno. Rejecting. existingUploadRef=${existingUploadRef}`
+                );
+                return sendJSON(res, {
+                  success: false,
+                  error: 'DUPLICATE_SESSION_DELIVERY',
+                  message: `Member already delivered in ${normalizedSession} session today`,
+                  existing_reference: existingRef,
+                  existing_uploadrefno: existingUploadRef,
+                  farmer_id: cleanFarmerId,
+                  session: normalizedSession,
+                  date: transdate,
+                }, 409);
+              }
+
+              if (String(uploadrefno) !== String(existingUploadRef)) {
+                console.log(
+                  `⚠️ Member ${cleanFarmerId} already delivered in ${normalizedSession} today with Uploadrefno=${existingUploadRef}. ` +
+                  `Rejecting new Uploadrefno=${uploadrefno}. Existing ref: ${existingRef}`
+                );
+                return sendJSON(res, {
+                  success: false,
+                  error: 'DUPLICATE_SESSION_DELIVERY',
+                  message: `Member already delivered in ${normalizedSession} session today`,
+                  existing_reference: existingRef,
+                  existing_uploadrefno: existingUploadRef,
+                  farmer_id: cleanFarmerId,
+                  session: normalizedSession,
+                  date: transdate,
+                }, 409);
+              }
+
               console.log(
-  `✅ Updated trnid to ${insertedTrnId}, milkid to ${insertedMilkId} for device`
-);
+                `✅ multOpt=0: existing delivery found, but Uploadrefno matches (${uploadrefno}). Allowing additional row.`
+              );
             }
           }
+        }
 
-          console.log('✅ BACKEND: NEW record INSERTED with reference:', attemptTransrefno, ', uploadrefno:', attemptUploadrefno);
-          // v2.12.11: patch cached cumulative snapshots so a just-synced receipt
-          // is visible to the very next cumulative read (no 90 s warm wait).
-          applyCumulativeDelta({
-            ccode,
-            route: body.route,
-            farmerId: cleanFarmerId,
-            icode: productCode,
-            weight: toNumOrZero(body.weight),
-            transdate,
-            transtype
-          });
-          return { success: true, reference_no: attemptTransrefno, uploadrefno: attemptUploadrefno, isNew: true };
-        } catch (error) {
-          // Check if it's a duplicate entry error.
-          // v2.12.11: the Contabo schema also carries a composite
-          // `unique_transaction` (transrefno-time-ccode) key. Previously only
-          // `idx_transrefno_unique` was handled, so re-uploads of an already
-          // stored receipt returned 500 — the device kept the local row, kept
-          // counting it as unsynced, and retried forever. Treat ANY duplicate
-          // on this insert as the idempotency path.
-          if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
+        const attemptInsert = async (attemptTransrefno, attemptUploadrefno) => {
+          try {
+            const productCode = body.product_code || '';
+            const seasonCAN = body.season_code || '';
+            const deliveredBy = body.delivered_by || 'owner';
 
-            // SAFE IDEMPOTENCY: Fetch existing row and compare critical payload fields
-            // Only return success if the existing record truly matches this submission
-            try {
-              const [existingRows] = await pool.query(
-                'SELECT transrefno, memberno, route, weight, session, transdate, Uploadrefno, icode, ccode FROM transactions WHERE transrefno = ? LIMIT 1',
-                [attemptTransrefno]
-              );
-              if (existingRows.length > 0) {
-                const existing = existingRows[0];
-                const payloadMatch = (
-                  String(existing.memberno || '').trim() === String(cleanFarmerId || '').trim() &&
-                  Math.abs(Number(existing.weight || 0) - Number(body.weight || 0)) < 0.01 &&
-                  String(existing.session || '').trim().toUpperCase() === String(normalizedSession || '').trim().toUpperCase()
+            const [result] = await conn.query(
+              `INSERT INTO transactions
+                (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session,
+                 transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice,
+                 amount, icode, CAN, time, capType, entry_type, deliveredby)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?)`,
+              [
+                attemptTransrefno,
+                attemptUploadrefno ? String(attemptUploadrefno) : '',
+                userId,
+                clerk,
+                deviceserial,
+                cleanFarmerId,
+                body.route,
+                toNumOrZero(body.weight),
+                normalizedSession,
+                transdate,
+                transtime,
+                transtype,
+                ccode,
+                productCode,
+                seasonCAN,
+                timestamp,
+                body.entry_type || 'manual',
+                deliveredBy,
+              ]
+            );
+
+            const [devRows] = await conn.query(
+              'SELECT devcode FROM devSettings WHERE uniquedevcode = ?',
+              [deviceserial]
+            );
+            if (devRows.length > 0 && devRows[0].devcode) {
+              const devcode = devRows[0].devcode;
+              const insertedTrnId = parseInt(attemptTransrefno.slice(-8), 10);
+              const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 10);
+              if (!isNaN(insertedTrnId)) {
+                await conn.query(
+                  `UPDATE devSettings SET
+                    trnid = GREATEST(IFNULL(trnid, 0), ?),
+                    milkid = GREATEST(IFNULL(milkid, 0), ?)
+                   WHERE uniquedevcode = ?`,
+                  [
+                    insertedTrnId,
+                    isNaN(insertedMilkId) ? 0 : insertedMilkId,
+                    deviceserial
+                  ]
                 );
-                if (payloadMatch) {
-                  console.log(`ℹ️ Record ${attemptTransrefno} already exists with matching payload (true idempotent retry)`);
-                  return {
-                    success: true,
-                    reference_no: attemptTransrefno,
-                    uploadrefno: attemptUploadrefno,
-                    isNew: false,
-                    message: 'Record already exists (duplicate reference)'
-                  };
-                } else {
-                  // Payload mismatch — this is a reference COLLISION, not a retry
-                  console.warn(`⚠️ Reference collision: ${attemptTransrefno} exists with different payload. Existing: member=${existing.memberno}, weight=${existing.weight}. New: member=${cleanFarmerId}, weight=${body.weight}`);
-                  return {
-                    success: false,
-                    collision: true,
-                    reference_no: attemptTransrefno,
-                    error: 'REFERENCE_COLLISION',
-                    message: 'Reference number belongs to a different transaction. Please regenerate reference and retry.'
-                  };
-                }
+                console.log(`✅ Updated trnid to ${insertedTrnId}, milkid to ${insertedMilkId} for device`);
               }
-            } catch (lookupErr) {
-              console.error('❌ Failed to lookup existing record for collision check:', lookupErr);
             }
-            // Fallback: if lookup fails, treat as idempotent success to avoid data loss
-            console.log(`ℹ️ Record with reference ${attemptTransrefno} already exists (idempotent fallback)`);
+
+            console.log('✅ BACKEND: NEW record INSERTED with reference:', attemptTransrefno, ', uploadrefno:', attemptUploadrefno);
+            applyCumulativeDelta({
+              ccode,
+              route: body.route,
+              farmerId: cleanFarmerId,
+              icode: productCode,
+              weight: toNumOrZero(body.weight),
+              transdate,
+              transtype
+            });
             return {
               success: true,
               reference_no: attemptTransrefno,
               uploadrefno: attemptUploadrefno,
-              isNew: false,
-              message: 'Record already exists (duplicate reference)'
+              backend_id: result.insertId,
+              isNew: true
             };
-          } else {
-            // Not a duplicate error - rethrow
-            throw error;
+          } catch (error) {
+            if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) {
+              try {
+                const [existingRows] = await conn.query(
+                  'SELECT ID, transrefno, memberno, route, weight, session, transdate, Uploadrefno, icode, ccode FROM transactions WHERE transrefno = ? LIMIT 1',
+                  [attemptTransrefno]
+                );
+                if (existingRows.length > 0) {
+                  const existing = existingRows[0];
+                  const payloadMatch = (
+                    String(existing.memberno || '').trim() === String(cleanFarmerId || '').trim() &&
+                    Math.abs(Number(existing.weight || 0) - Number(body.weight || 0)) < 0.01 &&
+                    String(existing.session || '').trim().toUpperCase() === String(normalizedSession || '').trim().toUpperCase()
+                  );
+                  if (payloadMatch) {
+                    console.log(`ℹ️ Record ${attemptTransrefno} already exists with matching payload (true idempotent retry)`);
+                    const cumulativeData = await getFarmerCumulativeStats(conn, ccode, cleanFarmerId, body.route, transdate, orgtype, body.season_code);
+
+                    return {
+                      success: true,
+                      reference_no: attemptTransrefno,
+                      uploadrefno: attemptUploadrefno,
+                      backend_id: existing.ID,
+                      cumulative_weight: cumulativeData?.cumulative_weight,
+                      by_product: cumulativeData?.by_product,
+                      isNew: false,
+                      message: 'Record already exists (duplicate reference)'
+                    };
+                  } else {
+                    console.warn(`⚠️ Reference collision: ${attemptTransrefno} exists with different payload.`);
+                    return {
+                      success: false,
+                      collision: true,
+                      reference_no: attemptTransrefno,
+                      error: 'REFERENCE_COLLISION',
+                      message: 'Reference number belongs to a different transaction.'
+                    };
+                  }
+                }
+              } catch (lookupErr) {
+                console.error('❌ Failed to lookup existing record for collision check:', lookupErr);
+              }
+              console.log(`ℹ️ Record with reference ${attemptTransrefno} already exists (idempotent fallback)`);
+              return {
+                success: true,
+                reference_no: attemptTransrefno,
+                uploadrefno: attemptUploadrefno,
+                isNew: false,
+                message: 'Record already exists (duplicate reference)'
+              };
+            } else {
+              throw error;
+            }
           }
+        };
+
+        if (!uploadrefno) {
+          uploadrefno = currentMilkId + 1;
+          console.log('📝 Backend generated milkId:', uploadrefno);
         }
-      };
 
-      // If uploadrefno not provided by frontend, generate from backend
-      if (!uploadrefno) {
-        uploadrefno = currentMilkId + 1;
-        console.log('📝 Backend generated milkId:', uploadrefno);
-      }
-
-      try {
-        const result = await attemptInsert(transrefno, uploadrefno);
-
-        // v2.12.16: return the farmer's updated cumulative in the same response
-        // so the receipt prints without "post-sync lag" or extra fetch calls.
-        let cumulativeData = null;
         try {
-          // Re-use logic from /api/farmer-monthly-frequency
-          let periodStart = toYmdLocal(new Date(collectionDate.getFullYear(), collectionDate.getMonth(), 1));
-          let periodEnd = toYmdLocal(new Date(collectionDate.getFullYear(), collectionDate.getMonth() + 1, 0));
+          const result = await attemptInsert(transrefno, uploadrefno);
+          const cumulativeData = await getFarmerCumulativeStats(conn, ccode, body.farmer_id, body.route, transdate, orgtype, body.season_code);
 
-          if (orgtype === 'C') {
-            let season = null;
-            const requestedSeason = String(body.season_code || '').trim();
-            if (requestedSeason) {
-              const [sRows] = await pool.query(
-                `SELECT SCODE, datefrom, dateto FROM Seasons
-                 WHERE TRIM(ccode) = TRIM(?) AND TRIM(SCODE) = TRIM(?) LIMIT 1`,
-                [ccode, requestedSeason]
-              );
-              if (sRows.length > 0) season = sRows[0];
-            }
-            if (!season) season = await findActiveSeason(ccode, transdate);
-            if (season) {
-              const ymd = (v) => (typeof v === 'string' ? v.slice(0, 10) : toYmdLocal(new Date(v)));
-              periodStart = ymd(season.datefrom);
-              periodEnd = ymd(season.dateto);
-            }
-          }
-
-          const route = body.route;
-          const farmer_id = body.farmer_id;
-
-          const indRouteFilter = route ? ' AND UPPER(TRIM(route)) = UPPER(TRIM(?))' : '';
-          const indParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
-
-          const [sumRows] = await pool.query(
-            `SELECT IFNULL(SUM(weight), 0) as cumulative_weight
-             FROM transactions
-             WHERE UPPER(TRIM(memberno)) = UPPER(TRIM(?)) AND UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
-             AND CAST(transdate AS DATE) BETWEEN ? AND ?${indRouteFilter}`,
-            indParams
-          );
-
-          const [productRows] = await pool.query(
-            `SELECT TRIM(t.icode) as icode,
-                    IFNULL(MAX(fi.descript), MIN(TRIM(t.icode))) as product_name,
-                    IFNULL(SUM(t.weight), 0) as weight
-             FROM transactions t
-             LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
-             WHERE UPPER(TRIM(t.memberno)) = UPPER(TRIM(?)) AND UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
-             AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${indRouteFilter.replace('route', 't.route')}
-             GROUP BY TRIM(t.icode)`,
-            indParams
-          );
-
-          cumulativeData = {
-            cumulative_weight: sumRows.length > 0 ? parseFloat(sumRows[0].cumulative_weight) || 0 : 0,
-            by_product: productRows.map(r => ({
-              icode: r.icode || '',
-              product_name: r.product_name || r.icode || '',
-              weight: parseFloat(r.weight) || 0
-            }))
-          };
-        } catch (cumErr) {
-          console.warn('[CUM] post-insert cumulative calculation failed:', cumErr.message);
+          return sendJSON(res, {
+            success: true,
+            message: 'Collection created',
+            reference_no: result.reference_no,
+            uploadrefno: result.uploadrefno,
+            backend_id: result.backend_id,
+            cumulative_weight: cumulativeData?.cumulative_weight,
+            by_product: cumulativeData?.by_product
+          }, 201);
+        } catch (error) {
+          console.error('❌ BACKEND INSERT ERROR:', error.message);
+          return sendJSON(res, {
+            success: false,
+            error: 'Insert failed'
+          }, 500);
         }
-
-        return sendJSON(res, {
-          success: true,
-          message: 'Collection created',
-          reference_no: result.reference_no,
-          uploadrefno: result.uploadrefno,
-          cumulative_weight: cumulativeData?.cumulative_weight,
-          by_product: cumulativeData?.by_product
-        }, 201);
-      } catch (error) {
-        // SECURITY (v2.10.83): log SQL details server-side; return generic message to client.
-        console.error('❌ BACKEND INSERT ERROR:', error.message);
-        console.error('Error code:', error.code);
-        return sendJSON(res, {
-          success: false,
-          error: 'Insert failed'
-        }, 500);
-      }
+      });
     }
 
     if (path.startsWith('/api/milk-collection/') && method === 'PUT') {
@@ -2069,7 +2098,7 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
       query += ` GROUP BY t.memberno, cm.descript, cm.route ORDER BY cm.descript`;
 
       const [rows] = await pool.query(query, params);
-      return sendJSON(res, { success: true, data: rows });
+      return sendJSON(res, { success: true, data: rows }, 200, origin, req.headers);
     }
 
     // Farmer Detail Report endpoint - individual transactions for a farmer in date range
@@ -2133,45 +2162,47 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
       // v2.10.53: Cross-device visibility — filter by ccode (+ optional route),
       // not deviceserial. Old clients omit `route` and get full ccode results.
       const routeFilter = (parsedUrl.query.route || '').toString().trim();
+      const nRouteFilter = routeFilter ? norm(routeFilter) : null;
+      const nFarmerId = norm(farmerId);
+      const nCcode = norm(ccode);
 
-      const produceParams = [ccode, farmerId, startDate, endDate, ccode];
+      const produceParams = [nCcode, nFarmerId, startDate, endDate, nCcode];
       let produceSql = `SELECT DISTINCT i.descript as produce_name
          FROM transactions t
-         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
+         LEFT JOIN fm_items i ON i.icode = t.icode AND i.ccode = ?
          WHERE t.memberno = ?
-           AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+           AND t.transdate BETWEEN ? AND ?
            AND t.Transtype = 1
            AND t.ccode = ?`;
-      if (routeFilter) {
-        produceSql += ` AND TRIM(t.route) = TRIM(?)`;
-        produceParams.push(routeFilter);
+      if (nRouteFilter) {
+        produceSql += ` AND t.route = ?`;
+        produceParams.push(nRouteFilter);
       }
       produceSql += ` LIMIT 1`;
       const [produceRows] = await pool.query(produceSql, produceParams);
 
       const produceName = produceRows.length > 0 && produceRows[0].produce_name ? produceRows[0].produce_name : 'PRODUCE';
 
-      // v2.10.77: include icode + product_name per transaction so the receipt
-      // can group rows by produce. Additive — old clients ignore extra fields.
-      const txParams = [ccode, farmerId, startDate, endDate, ccode];
+      // v2.12.19: include icode + product_name per transaction (SARGable)
+      const txParams = [nCcode, nFarmerId, startDate, endDate, nCcode];
       let txSql = `SELECT
           t.transdate as date,
           t.transrefno as rec_no,
           t.weight as quantity,
           t.transtime as time,
-          UPPER(TRIM(t.icode)) as icode,
+          t.icode as icode,
           i.descript as product_name
         FROM transactions t
-        LEFT JOIN fm_items i ON UPPER(TRIM(i.icode)) = UPPER(TRIM(t.icode)) AND i.ccode = ?
+        LEFT JOIN fm_items i ON i.icode = t.icode AND i.ccode = ?
         WHERE t.memberno = ?
           AND t.Transtype = 1
-          AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+          AND t.transdate BETWEEN ? AND ?
           AND t.ccode = ?`;
-      if (routeFilter) {
-        txSql += ` AND TRIM(t.route) = TRIM(?)`;
-        txParams.push(routeFilter);
+      if (nRouteFilter) {
+        txSql += ` AND t.route = ?`;
+        txParams.push(nRouteFilter);
       }
-      txSql += ` ORDER BY UPPER(TRIM(t.icode)) ASC, t.transdate ASC, t.transtime ASC`;
+      txSql += ` ORDER BY t.icode ASC, t.transdate ASC, t.transtime ASC`;
       const [transactions] = await pool.query(txSql, txParams);
 
       // Calculate total weight
@@ -2182,16 +2213,16 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
       // didn't pick a route on the dashboard.
       let transactionRoute = '';
       let transactionRouteName = '';
-      const lastRouteParams = [farmerId, startDate, endDate, ccode];
-      let lastRouteSql = `SELECT TRIM(t.route) AS route
+      const lastRouteParams = [nFarmerId, startDate, endDate, nCcode];
+      let lastRouteSql = `SELECT t.route AS route
         FROM transactions t
         WHERE t.memberno = ?
           AND t.Transtype = 1
-          AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+          AND t.transdate BETWEEN ? AND ?
           AND t.ccode = ?`;
-      if (routeFilter) {
-        lastRouteSql += ` AND TRIM(t.route) = TRIM(?)`;
-        lastRouteParams.push(routeFilter);
+      if (nRouteFilter) {
+        lastRouteSql += ` AND t.route = ?`;
+        lastRouteParams.push(nRouteFilter);
       }
       lastRouteSql += ` ORDER BY t.transdate DESC, t.transtime DESC LIMIT 1`;
       const [lastRouteRows] = await pool.query(lastRouteSql, lastRouteParams);
@@ -2245,7 +2276,7 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
         }, 401);
       }
 
-      const ccode = deviceRows[0].ccode;
+      const nCcode = norm(deviceRows[0].ccode);
 
       // Fetch all collections for the specified date and company
       // DB columns → Frontend fields mapping
@@ -2255,7 +2286,7 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
          FROM transactions
          WHERE transdate = ? AND Transtype = 1 AND ccode = ?
          ORDER BY session, route, memberno`,
-        [date, ccode]
+        [date, nCcode]
       );
 
       // Calculate totals
@@ -2405,7 +2436,7 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
         LEFT JOIN fm_tanks r ON t.route = r.tcode AND r.ccode = ?
         WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND t.deviceserial = ?
       `;
-      const queryParams = [ccode, ccode, date, deviceSerial];
+      const queryParams = [norm(ccode), norm(ccode), date, deviceSerial];
 
       // Add period filter if provided
       // CRITICAL: Use CAN column for accurate filtering because session column is normalized
@@ -2413,11 +2444,10 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
       if (periodFilter && periodFilter !== 'all' && periodCANCodes[periodFilter]) {
         const canCodes = periodCANCodes[periodFilter];
         // Build OR condition to match CAN column against period codes
-        // Use UPPER() for case-insensitive matching
-        const canConditions = canCodes.map(() => 'UPPER(TRIM(t.CAN)) = ?').join(' OR ');
+        const canConditions = canCodes.map(() => 't.CAN = ?').join(' OR ');
         query += ` AND (${canConditions})`;
         // Add CAN codes for filtering
-        queryParams.push(...canCodes.map(s => s.toUpperCase()));
+        queryParams.push(...canCodes.map(s => norm(s)));
       } else if (seasonFilter) {
         // Legacy exact session filter
         query += ` AND t.session = ?`;
@@ -2579,45 +2609,15 @@ const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 
       const [rows] = await pool.query(query, params);
 
       itemsCache.set(itemsKey, rows);
-
-      // v2.12.5: diagnostics — when a filtered request comes back empty it is
-      // usually because Contabo's fm_items rows are not tagged with the expected
-      // invtype (new schema defaults invtype to '05'). Logged on cache miss only.
-      console.log(`[ITEMS] ccode=${ccode} invtype=${invtype || 'ALL'} rows=${rows.length} (cache miss)`);
-
-if (rows.length === 0) {
-  try {
-    const [spread] = await pool.query(
-      `SELECT IFNULL(invtype, "(null)") AS invtype,
-              COUNT(*) AS n
-       FROM fm_items
-       WHERE ccode = ?
-       GROUP BY invtype`,
-      [ccode]
-    );
-
-    console.log(
-      `[ITEMS] ccode=${ccode} invtype spread: ${
-        spread.map(r => `${r.invtype}=${r.n}`).join(', ') || 'no rows'
-      }`
-    );
-  } catch (e) {
-    console.log('[ITEMS] invtype spread probe failed:', e.message);
-  }
-}
-
-return sendJSON(res, { success: true, data: rows });
+      return sendJSON(res, { success: true, data: rows }, 200, origin, req.headers);
 
 }
 
  // Sales endpoints - Unified for Store (transtype=2) and AI (transtype=3)
 if (path === '/api/sales' && method === 'POST') {
       const body = await parseBody(req);
-      // v2.12.13: withConn guarantees release even if rollback/commit throws.
-      return withConn(async (conn) => {
-      try {
-        await conn.beginTransaction();
-        
+      // v2.12.18: use withTx for safe transaction management and single connection
+      return withTx(async (conn) => {
         // Use frontend-provided references (same logic as Buy module)
         const transrefno = body.transrefno || body.sale_ref || `SALE-${Date.now()}`;
         const uploadrefno = body.uploadrefno || '';
@@ -2650,16 +2650,24 @@ if (path === '/api/sales' && method === 'POST') {
         
         // Check device authorization
         if (!authorized) {
-          try { await conn.rollback(); } catch (_e) {}
-          return sendJSON(res, { 
+          return sendJSON(res, {
             success: false, 
             error: 'Device not authorized' 
           }, 403);
         }
+
+        // v2.12.17: SECURE DEVICE BINDING.
+        const userId = body.user_id || body.sold_by || 'unknown';
+        const isOwner = await verifyDeviceOwnership(body.device_fingerprint, userId, conn);
+        if (!isOwner) {
+          console.warn(`[SECURITY] Unauthorized userId=${userId} for device=${body.device_fingerprint}`);
+          return sendJSON(res, {
+            success: false,
+            error: 'Authorization error. This device is bound to another user.'
+          }, 403);
+        }
         
         // ENFORCE clientFetch based on transtype
-        // transtype 2 (Store): requires clientFetch = 2
-        // transtype 3 (AI): requires clientFetch = 3
         const requiredClientFetch = transtype;
         const [allowedRoutes] = await conn.query(
           'SELECT tcode FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
@@ -2668,12 +2676,11 @@ if (path === '/api/sales' && method === 'POST') {
         
         if (allowedRoutes.length === 0) {
           const serviceName = transtype === 3 ? 'AI Services' : 'Store';
-          console.log(`❌ clientFetch enforcement: ${serviceName} disabled for company ${ccode} (no routes with clientFetch=${requiredClientFetch})`);
-          try { await conn.rollback(); } catch (_e) {}
+          console.log(`❌ clientFetch enforcement: ${serviceName} disabled for company ${ccode}`);
           return sendJSON(res, { 
             success: false, 
             error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
-            message: `${serviceName} operations are not enabled for this company. Please contact administrator.` 
+            message: `${serviceName} operations are not enabled for this company.`
           }, 403);
         }
         
@@ -2699,7 +2706,6 @@ if (path === '/api/sales' && method === 'POST') {
         );
 
         if (existingSaleRows.length > 0) {
-          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, {
             success: true,
             duplicate: true,
@@ -2709,13 +2715,8 @@ if (path === '/api/sales' && method === 'POST') {
         }
         
         console.log(`🟢 BACKEND: Creating ${transtype === 3 ? 'AI' : 'Store'} transaction`);
-        console.log('📝 TransRefNo:', transrefno);
-        console.log('📝 UploadRefNo:', uploadrefno);
-        console.log('👤 Member:', body.farmer_id);
-        console.log('📦 Item:', body.item_code, body.item_name);
-        console.log('💰 Amount:', amount);
-        
-        // Handle photo upload if provided
+
+        // Photo upload logic ...
         let photoFilename = null;
         let photoDirectory = null;
         
@@ -2723,49 +2724,28 @@ if (path === '/api/sales' && method === 'POST') {
           try {
             const fs = require('fs');
             const path = require('path');
-            
-            // Extract base64 data from data URL
             const matches = body.photo.match(/^data:image\/(\w+);base64,(.+)$/);
             if (matches) {
               const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
               const base64Data = matches[2];
               const buffer = Buffer.from(base64Data, 'base64');
-              
-              // Create directory structure: uploads/store-photos/YYYY/MM
               const uploadsDir = path.join(__dirname, 'uploads', 'store-photos');
               const yearDir = String(now.getFullYear());
               const monthDir = String(now.getMonth() + 1).padStart(2, '0');
               const fullDir = path.join(uploadsDir, yearDir, monthDir);
-              
-              // Create directories if they don't exist
-              if (!fs.existsSync(fullDir)) {
-                fs.mkdirSync(fullDir, { recursive: true });
-              }
-              
-              // Generate unique filename
+              if (!fs.existsSync(fullDir)) fs.mkdirSync(fullDir, { recursive: true });
               photoFilename = `${transrefno}_${timestamp}.${ext}`;
               photoDirectory = `uploads/store-photos/${yearDir}/${monthDir}`;
-              
-              // Write file
               const filePath = path.join(fullDir, photoFilename);
               fs.writeFileSync(filePath, buffer);
-              
-              console.log(`📷 Photo saved: ${photoDirectory}/${photoFilename}`);
             }
           } catch (photoError) {
             console.error('❌ Photo upload error:', photoError);
-            // Continue without photo - don't fail the sale
           }
         }
         
-        // Insert into transactions table (including photo columns, AI cow details, season, and icode)
-        // Column names match EXACTLY the transactions table schema:
-        // cowname, cowbreed, noofcalfs, aibreed, CAN (season)
-        // Get season (CAN) from request body for consistency across all transaction types
         const seasonCAN = body.season || '';
 
-        // v2.10.50: Coffee orgs must NEVER store AM/PM in session column.
-        // Look up orgtype and normalize session accordingly.
         let salesOrgtype = 'D';
         try {
           const [orgRows] = await conn.query(
@@ -2778,52 +2758,31 @@ if (path === '/api/sales' && method === 'POST') {
         let salesSessionVal = (body.session_label || body.session || '').toString().trim();
         let salesSeasonVal  = (seasonCAN || '').toString().trim();
         if (salesOrgtype === 'C') {
-          // v2.10.56: Authoritative SCODE resolution for legacy clients (e.g. v2.10.32)
-          // that were sending a stale/wrong SCODE for Store/AI. We force session=CAN
-          // and pick the canonical SCODE in this priority:
-          //   (a) Most recent Buy (Transtype=1) for the same ccode + transdate → CAN
-          //   (b) sessions row whose datefrom..dateto covers the row's transdate
-          //   (c) Whatever the device sent (fallback, never destructive)
           const sentScode    = (seasonCAN || '').toString().trim().toUpperCase();
           const sentDescript = (body.session_descript || salesSessionVal || '').toString().trim();
           let canonical = '';
 
-          // (a) Look up today's Buy SCODE for this ccode — what the operator actually used
           try {
             const [buyRows] = await conn.query(
-              `SELECT TRIM(CAN) AS CAN
-                 FROM transactions
-                WHERE ccode = ?
-                  AND Transtype = 1
-                  AND CAST(transdate AS DATE) = CAST(? AS DATE)
+              `SELECT TRIM(CAN) AS CAN FROM transactions
+                WHERE ccode = ? AND Transtype = 1 AND CAST(transdate AS DATE) = CAST(? AS DATE)
                   AND CAN IS NOT NULL AND TRIM(CAN) <> ''
-                ORDER BY transdate DESC, transtime DESC
-                LIMIT 1`,
+                ORDER BY transdate DESC, transtime DESC LIMIT 1`,
               [ccode, transdate]
             );
             if (buyRows.length && buyRows[0].CAN) canonical = String(buyRows[0].CAN).toUpperCase();
-          } catch (e) { console.warn('[/api/sales] coffee Buy-SCODE lookup failed:', e?.message); }
+          } catch (e) {}
 
-          // (b) sessions table fallback (date-range)
           if (!canonical) {
             try {
               const season = await findActiveSeason(ccode, transdate, conn);
               if (season && season.SCODE) canonical = String(season.SCODE).toUpperCase();
-            } catch (e) { console.warn('[/api/sales] coffee SCODE rescue failed:', e?.message); }
+            } catch (e) {}
           }
 
-          // (c) Last resort: trust whatever the device sent (don't write garbage)
-          if (!canonical) {
-            canonical = (sentScode || sentDescript || '').toUpperCase();
-          }
-
-          if (canonical && (sentScode !== canonical || salesSessionVal.toUpperCase() !== canonical)) {
-            console.log(`[NORMALIZE] /api/sales coffee: dev=${body.device_fingerprint || ''} ref=${transrefno} session=${salesSessionVal} CAN=${sentScode} → ${canonical}`);
-          }
-
+          if (!canonical) canonical = (sentScode || sentDescript || '').toUpperCase();
           salesSessionVal = canonical;
           salesSeasonVal  = canonical;
-          console.log('☕ /api/sales coffee session normalization:', { sentScode, sentSession: body.session_label || body.session, canonical });
         }
 
         await conn.query(
@@ -2834,66 +2793,53 @@ if (path === '/api/sales' && method === 'POST') {
              cowname, cowbreed, noofcalfs, aibreed)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            transrefno,                         // transrefno (from frontend)
-            uploadrefno,                        // Uploadrefno (from frontend)
-            body.user_id || body.sold_by || '', // userId (login user_id for tracking)
-            body.sold_by || '',                 // clerk (display name/username)
-            body.device_fingerprint || '',      // deviceserial
-            body.farmer_id || '',               // memberno
-            storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
-            toNumOrZero(body.quantity),         // weight (using quantity)
-            salesSessionVal,                    // v2.10.50: session (SCODE for coffee, label for dairy)
-            transdate,                          // transdate
-            transtime,                          // transtime
-            toIntOrNull(transtype, 2),          // Transtype: 2 for Store, 3 for AI
-            0,                                  // processed
-            0,                                  // uploaded
-            ccode,                              // ccode (from device's devSettings)
-            0,                                  // ivat
-            toNumOrZero(body.price),            // iprice
-            toNumOrZero(amount),                // amount
-            body.item_code || '',               // icode (from body)
-            salesSeasonVal,                     // v2.10.56: CAN (canonical SCODE for coffee, raw season for dairy)
-            timestamp,                          // time
-            0,                                  // capType
-            0,                                  // v2.12.7: milk_session_id is INT — 0, never ''
-            photoFilename,                      // photo_filename
-            photoDirectory,                     // photo_directory
-            body.cow_name || '',                // cowname (AI) - maps from frontend cow_name
-            body.cow_breed || '',               // cowbreed (AI) - maps from frontend cow_breed
-            toIntOrNull(body.number_of_calves), // v2.12.7: noofcalfs is INT — 0, never ''
-            body.other_details || ''            // aibreed (AI) - maps from frontend other_details
+            transrefno,
+            uploadrefno,
+            body.user_id || body.sold_by || '',
+            body.sold_by || '',
+            body.device_fingerprint || '',
+            body.farmer_id || '',
+            storeRoute,
+            toNumOrZero(body.quantity),
+            salesSessionVal,
+            transdate,
+            transtime,
+            toIntOrNull(transtype, 2),
+            0, 0, ccode, 0,
+            toNumOrZero(body.price),
+            toNumOrZero(amount),
+            body.item_code || '',
+            salesSeasonVal,
+            timestamp, 0, 0,
+            photoFilename,
+            photoDirectory,
+            body.cow_name || '',
+            body.cow_breed || '',
+            toIntOrNull(body.number_of_calves),
+            body.other_details || ''
           ]
         );
         
-        // Update stock balance
         await conn.query(
           'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
           [body.quantity, body.item_code]
         );
-        
-        await conn.commit();
-        
-        // Update storeid/aiid counter in devSettings (same pattern as milk collection)
+
         if (body.device_fingerprint) {
           try {
             const insertedTrnId = parseInt(transrefno.slice(-8), 10);
             const typeId = uploadrefno ? parseInt(String(uploadrefno).slice(-8), 10) : 0;
             const counterField = transtype === 3 ? 'aiid' : 'storeid';
             if (!isNaN(insertedTrnId)) {
-              await pool.query(
+              await conn.query(
                 `UPDATE devSettings SET 
                   trnid = GREATEST(IFNULL(trnid, 0), ?),
                   ${counterField} = GREATEST(IFNULL(${counterField}, 0), ?)
                  WHERE uniquedevcode = ?`,
                 [insertedTrnId, typeId, body.device_fingerprint]
               );
-              console.log(`📊 Updated devSettings: trnid=${insertedTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
             }
-          } catch (counterErr) {
-            console.error('⚠️ Failed to update sale counters in devSettings:', counterErr);
-            // Don't fail the sale response - counter update is non-critical
-          }
+          } catch (counterErr) {}
         }
         
         return sendJSON(res, { 
@@ -2903,52 +2849,26 @@ if (path === '/api/sales' && method === 'POST') {
           photo_saved: !!photoFilename,
           photo_path: photoFilename ? `${photoDirectory}/${photoFilename}` : null
         }, 201);
-      } catch (error) {
-        const isDuplicateRef =
-          error?.code === 'ER_DUP_ENTRY' &&
-          String(error?.sqlMessage || error?.message || '').includes('idx_transrefno_unique');
-
-        try { await conn.rollback(); } catch (_e) {}
-
-        if (isDuplicateRef) {
-          return sendJSON(res, {
-            success: true,
-            duplicate: true,
-            sale_ref: body.transrefno || body.sale_ref || '',
-            message: 'Sale already exists, treated as synced'
-          }, 200);
-        }
-
-        throw error;
-      }
       });
     }
 
-    // Batch Sales endpoint - ONE photo, MULTIPLE items, each with unique transrefno
-    // Used by Store when selling multiple items to a single buyer
     if (path === '/api/sales/batch' && method === 'POST') {
       const body = await parseBody(req);
-      // v2.12.13: withConn guarantees release even if rollback/commit throws.
-      return withConn(async (conn) => {
-      try {
-        await conn.beginTransaction();
-        
+      // v2.12.18: use withTx for safe transaction management and single connection
+      return withTx(async (conn) => {
         // Validate required fields
         if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { success: false, error: 'No items provided' }, 400);
         }
         
         const uploadrefno = body.uploadrefno || '';
         const transtype = body.transtype === 3 ? 3 : 2;
         
-        // Get current date and time
         const now = new Date();
         const transdate = now.toISOString().split('T')[0];
         const transtime = now.toTimeString().split(' ')[0];
         const timestamp = Math.floor(now.getTime() / 1000);
         
-        // Get device's ccode from devSettings
         let ccode = '';
         let authorized = false;
         if (body.device_fingerprint) {
@@ -2963,11 +2883,19 @@ if (path === '/api/sales' && method === 'POST') {
         }
         
         if (!authorized) {
-          try { await conn.rollback(); } catch (_e) {}
           return sendJSON(res, { success: false, error: 'Device not authorized' }, 403);
         }
+
+        const userId = body.user_id || body.sold_by || 'unknown';
+        const isOwner = await verifyDeviceOwnership(body.device_fingerprint, userId, conn);
+        if (!isOwner) {
+          console.warn(`[SECURITY] Unauthorized userId=${userId} for device=${body.device_fingerprint}`);
+          return sendJSON(res, {
+            success: false,
+            error: 'Authorization error. This device is bound to another user.'
+          }, 403);
+        }
         
-        // clientFetch enforcement for Store/AI
         const requiredClientFetch = transtype;
         const [allowedRoutes] = await conn.query(
           'SELECT tcode FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
@@ -2976,15 +2904,13 @@ if (path === '/api/sales' && method === 'POST') {
         
         if (allowedRoutes.length === 0) {
           const serviceName = transtype === 3 ? 'AI Services' : 'Store';
-          try { await conn.rollback(); } catch (_e) {}
-          return sendJSON(res, { 
+          return sendJSON(res, {
             success: false, 
             error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
             message: `${serviceName} operations are not enabled for this company.` 
           }, 403);
         }
         
-        // Use fm_tanks.tcode for route — prefer frontend-selected route_tcode if valid
         let storeRoute = '';
         if (body.route_tcode) {
           const [matchedRoute] = await conn.query(
@@ -2999,55 +2925,34 @@ if (path === '/api/sales' && method === 'POST') {
           storeRoute = (allowedRoutes[0].tcode || '').toString().trim() || (body.route || '');
         }
         
-        // Handle photo upload ONCE (shared by all items)
         let photoFilename = null;
         let photoDirectory = null;
-        
         if (body.photo && typeof body.photo === 'string' && body.photo.startsWith('data:image/')) {
           try {
             const fs = require('fs');
             const path = require('path');
-            
             const matches = body.photo.match(/^data:image\/(\w+);base64,(.+)$/);
             if (matches) {
               const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
               const base64Data = matches[2];
               const buffer = Buffer.from(base64Data, 'base64');
-              
               const uploadsDir = path.join(__dirname, 'uploads', 'store-photos');
               const yearDir = String(now.getFullYear());
               const monthDir = String(now.getMonth() + 1).padStart(2, '0');
               const fullDir = path.join(uploadsDir, yearDir, monthDir);
-              
-              if (!fs.existsSync(fullDir)) {
-                fs.mkdirSync(fullDir, { recursive: true });
-              }
-              
-              // Use uploadrefno for batch photo filename
+              if (!fs.existsSync(fullDir)) fs.mkdirSync(fullDir, { recursive: true });
               photoFilename = `${uploadrefno}_${timestamp}.${ext}`;
               photoDirectory = `uploads/store-photos/${yearDir}/${monthDir}`;
-              
               const filePath = path.join(fullDir, photoFilename);
               fs.writeFileSync(filePath, buffer);
-              
-              console.log(`📷 Batch photo saved: ${photoDirectory}/${photoFilename}`);
             }
-          } catch (photoError) {
-            console.error('❌ Batch photo upload error:', photoError);
-            // Continue without photo
-          }
+          } catch (photoError) {}
         }
-        
-        console.log(`🛒 Batch sale: ${body.items.length} items, uploadrefno=${uploadrefno}`);
-        
+
         const insertedRefs = [];
         const duplicateRefs = [];
-        
-        // Insert each item with its unique transrefno
-        // Get season (CAN) from request body for consistency across all transaction types
         const seasonCAN = body.season || '';
 
-        // v2.10.50: Coffee orgs must NEVER store AM/PM in session column.
         let batchOrgtype = 'D';
         try {
           const [orgRows] = await conn.query(
@@ -3055,55 +2960,38 @@ if (path === '/api/sales' && method === 'POST') {
             [ccode]
           );
           if (orgRows.length > 0) batchOrgtype = (orgRows[0].orgtype || 'D').toString().toUpperCase();
-        } catch (e) { console.warn('[/api/sales/batch] orgtype lookup failed:', e?.message); }
+        } catch (e) {}
 
         let batchSessionVal = (body.session_label || body.session || '').toString().trim();
         let batchSeasonVal  = (seasonCAN || '').toString().trim();
         if (batchOrgtype === 'C') {
-          // v2.10.56: Authoritative SCODE resolution for legacy clients (e.g. v2.10.32)
-          // Force session=CAN, prefer today's Buy SCODE for the same ccode (what the
-          // operator actually used for produce), then sessions date-range, then sent.
           const sentScode    = (seasonCAN || '').toString().trim().toUpperCase();
           const sentDescript = (body.session_descript || batchSessionVal || '').toString().trim();
           let canonical = '';
-
           try {
             const [buyRows] = await conn.query(
-              `SELECT TRIM(CAN) AS CAN
-                 FROM transactions
-                WHERE ccode = ?
-                  AND Transtype = 1
-                  AND CAST(transdate AS DATE) = CAST(? AS DATE)
+              `SELECT TRIM(CAN) AS CAN FROM transactions
+                WHERE ccode = ? AND Transtype = 1 AND CAST(transdate AS DATE) = CAST(? AS DATE)
                   AND CAN IS NOT NULL AND TRIM(CAN) <> ''
-                ORDER BY transdate DESC, transtime DESC
-                LIMIT 1`,
+                ORDER BY transdate DESC, transtime DESC LIMIT 1`,
               [ccode, transdate]
             );
             if (buyRows.length && buyRows[0].CAN) canonical = String(buyRows[0].CAN).toUpperCase();
-          } catch (e) { console.warn('[/api/sales/batch] coffee Buy-SCODE lookup failed:', e?.message); }
-
+          } catch (e) {}
           if (!canonical) {
             try {
               const season = await findActiveSeason(ccode, transdate, conn);
               if (season && season.SCODE) canonical = String(season.SCODE).toUpperCase();
-            } catch (e) { console.warn('[/api/sales/batch] coffee SCODE rescue failed:', e?.message); }
+            } catch (e) {}
           }
-
           if (!canonical) canonical = (sentScode || sentDescript || '').toUpperCase();
-
-          if (canonical && (sentScode !== canonical || batchSessionVal.toUpperCase() !== canonical)) {
-            console.log(`[NORMALIZE] /api/sales/batch coffee: dev=${body.device_fingerprint || ''} session=${batchSessionVal} CAN=${sentScode} → ${canonical}`);
-          }
-
           batchSessionVal = canonical;
           batchSeasonVal  = canonical;
-          console.log('☕ /api/sales/batch coffee session normalization:', { sentScode, sentSession: body.session_label || body.session, canonical });
         }
 
         for (const item of body.items) {
           const transrefno = item.transrefno;
           const amount = (item.quantity || 0) * (item.price || 0);
-
           try {
             await conn.query(
               `INSERT INTO transactions 
@@ -3113,82 +3001,57 @@ if (path === '/api/sales' && method === 'POST') {
                  cowname, cowbreed, noofcalfs, aibreed)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
-                transrefno,
-                uploadrefno,
-                body.user_id || body.sold_by || '', // userId (login user_id for tracking)
-                body.sold_by || '',                 // clerk (display name/username)
+                transrefno, uploadrefno,
+                body.user_id || body.sold_by || '',
+                body.sold_by || '',
                 body.device_fingerprint || '',
                 body.farmer_id || '',
-                storeRoute,                         // route (from fm_tanks.tcode, fallback to body.route)
+                storeRoute,
                 toNumOrZero(item.quantity),
-                batchSessionVal,                  // session (SCODE for coffee, label for dairy)
-                transdate,
-                transtime,
+                batchSessionVal,
+                transdate, transtime,
                 toIntOrNull(transtype, 2),
-                0,
-                0,
-                ccode,
-                0,
+                0, 0, ccode, 0,
                 toNumOrZero(item.price),
                 toNumOrZero(amount),
                 item.item_code || '',
-                batchSeasonVal,                   // v2.10.56: CAN (canonical SCODE for coffee, raw season for dairy)
-                timestamp,
-                0,
-                0,                                // v2.12.7: milk_session_id is INT — 0, never ''
-                photoFilename,  // Same photo for all items
-                photoDirectory,
-                item.cow_name || '',
-                item.cow_breed || '',
-                toIntOrNull(item.number_of_calves), // v2.12.7: noofcalfs is INT — 0, never ''
+                batchSeasonVal,
+                timestamp, 0, 0,
+                photoFilename, photoDirectory,
+                item.cow_name || '', item.cow_breed || '',
+                toIntOrNull(item.number_of_calves),
                 item.other_details || ''
               ]
             );
-
-            // Update stock balance only for newly inserted rows
             await conn.query(
               'UPDATE fm_items SET stockbal = stockbal - ? WHERE icode = ?',
               [item.quantity || 0, item.item_code]
             );
-
             insertedRefs.push(transrefno);
-            console.log(`✅ Inserted item: ${transrefno} - ${item.item_code} x ${item.quantity}`);
           } catch (itemError) {
-            const isDuplicateRef =
-              itemError?.code === 'ER_DUP_ENTRY' &&
-              String(itemError?.sqlMessage || itemError?.message || '').includes('idx_transrefno_unique');
-
-            if (isDuplicateRef) {
+            if (itemError?.code === 'ER_DUP_ENTRY') {
               duplicateRefs.push(transrefno);
-              console.warn(`⚠️ Duplicate item skipped (already synced): ${transrefno}`);
               continue;
             }
-
             throw itemError;
           }
         }
-        
-        await conn.commit();
 
-        // Update storeid/aiid counter in devSettings (same pattern as milk collection)
         if (body.device_fingerprint && insertedRefs.length > 0) {
           try {
             const maxTrnId = Math.max(...insertedRefs.map(ref => parseInt(ref.slice(-8), 10)));
             const typeId = uploadrefno ? parseInt(String(uploadrefno).slice(-8), 10) : 0;
             const counterField = transtype === 3 ? 'aiid' : 'storeid';
             if (!isNaN(maxTrnId)) {
-              await pool.query(
+              await conn.query(
                 `UPDATE devSettings SET 
                   trnid = GREATEST(IFNULL(trnid, 0), ?),
                   ${counterField} = GREATEST(IFNULL(${counterField}, 0), ?)
                  WHERE uniquedevcode = ?`,
                 [maxTrnId, typeId, body.device_fingerprint]
               );
-              console.log(`📊 Batch: Updated devSettings: trnid=${maxTrnId}, ${counterField}=${typeId} for ${body.device_fingerprint}`);
             }
-          } catch (counterErr) {
-            console.error('⚠️ Failed to update batch sale counters in devSettings:', counterErr);
-          }
+          } catch (counterErr) {}
         }
 
         const insertedCount = insertedRefs.length;
@@ -3197,9 +3060,7 @@ if (path === '/api/sales' && method === 'POST') {
         
         return sendJSON(res, { 
           success: true, 
-          message: allWereDuplicates
-            ? `Batch already synced (${duplicateCount} duplicate item${duplicateCount === 1 ? '' : 's'})`
-            : `Batch sale recorded: ${insertedCount} inserted, ${duplicateCount} duplicate`,
+          message: allWereDuplicates ? 'Batch already synced' : `Batch sale recorded: ${insertedCount} inserted`,
           uploadrefno,
           transrefnos: insertedRefs,
           duplicate_transrefnos: duplicateRefs,
@@ -3208,11 +3069,6 @@ if (path === '/api/sales' && method === 'POST') {
           photo_saved: !!photoFilename,
           photo_path: photoFilename ? `${photoDirectory}/${photoFilename}` : null
         }, allWereDuplicates ? 200 : 201);
-        
-      } catch (error) {
-        try { await conn.rollback(); } catch (_e) {}
-        throw error;
-      }
       });
     }
 
@@ -3405,7 +3261,7 @@ if (path === '/api/sales' && method === 'POST') {
             if (ccodeHint) {
               [rows] = await pool.query(
                 `SELECT * FROM approved_devices
-                   WHERE ssaid = ? AND UPPER(TRIM(IFNULL(ccode, ""))) = ?
+                   WHERE ssaid = ? AND ccode = ?
                    ORDER BY approved DESC,
                             (CASE WHEN user_id IS NULL OR user_id = '' OR LOWER(user_id) = 'pending' THEN 1 ELSE 0 END) ASC,
                             last_seen_at DESC, id DESC
@@ -3633,7 +3489,8 @@ if (path === '/api/sales' && method === 'POST') {
             IFNULL(zeroopt, 0) as zeroopt,
             IFNULL(sackTare, 1) as sackTare,
             IFNULL(sackEdit, 0) as sackEdit,
-            IFNULL(payments_active, 0) as payments_active
+            IFNULL(payments_active, 0) as payments_active,
+            IFNULL(sacco_module_active, 0) as sacco_module_active
           FROM psettings WHERE cno = ?`,
           [deviceData.ccode]);
         
@@ -3655,6 +3512,7 @@ if (path === '/api/sales' && method === 'POST') {
             sackTare: companyRows[0].sackTare,
             sackEdit: companyRows[0].sackEdit,
             payments_active: companyRows[0].payments_active,
+            sacco_module_active: companyRows[0].sacco_module_active,
             // Derived labels from orgtype
             periodLabel: orgtype === 'C' ? 'Season' : 'Session',
             // Additional company info
@@ -3712,18 +3570,130 @@ if (path === '/api/sales' && method === 'POST') {
       }
       deviceData.trnid = lastTrnId;
       
-      return sendJSON(res, { success: true, data: deviceData });
+      return sendJSON(res, { success: true, data: deviceData }, 200, origin, req.headers);
     }
 
     if (path.startsWith('/api/devices/') && method === 'GET' && path.split('/').length === 4) {
       const deviceId = path.split('/')[3];
       const [rows] = await pool.query('SELECT * FROM approved_devices WHERE id = ?', [deviceId]);
-      if (rows.length === 0) return sendJSON(res, { success: false, error: 'Device not found' }, 404);
-      return sendJSON(res, { success: true, data: rows[0] });
+      if (rows.length === 0) return sendJSON(res, { success: false, error: 'Device not found' }, 404, origin, req.headers);
+      return sendJSON(res, { success: true, data: rows[0] }, 200, origin, req.headers);
     }
 
     if (path === '/api/devices' && method === 'GET') {
       const [rows] = await pool.query('SELECT * FROM approved_devices ORDER BY created_at DESC');
+      return sendJSON(res, { success: true, data: rows }, 200, origin, req.headers);
+    }
+
+    // ==================== SUPERVISOR API (v2.12.17) ====================
+    // GET /api/supervisor/stores - Get stores (routes) authorized for a supervisor
+    // A store is defined as an fm_tanks record with clientFetch = 2
+    if (path === '/api/supervisor/stores' && method === 'GET') {
+      const { userid, device_fingerprint } = parsedUrl.query;
+      if (!userid) return sendJSON(res, { success: false, error: 'userid required' }, 400);
+
+      // v2.12.19: Resolve authoritative ccode from device fingerprint if supplied
+      let deviceCcode = '';
+      if (device_fingerprint) {
+        try {
+          const [devRows] = await pool.query(
+            'SELECT ccode FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
+            [String(device_fingerprint).trim()]
+          );
+          deviceCcode = (devRows[0]?.ccode || '').toString().trim();
+        } catch (e) {}
+      }
+
+      // Scope user lookup by ccode if known to prevent prefix/duplicate matches
+      let userQuery = 'SELECT supervisor, ccode FROM Users WHERE userid = ?';
+      let userParams = [userid];
+      if (deviceCcode) {
+        userQuery += ' AND ccode = ?';
+        userParams.push(norm(deviceCcode));
+      }
+      userQuery += ' LIMIT 1';
+
+      const [userRows] = await pool.query(userQuery, userParams);
+      if (userRows.length === 0 || userRows[0].supervisor !== 6) {
+        return sendJSON(res, { success: false, error: 'Unauthorized. Supervisor role required.' }, 403);
+      }
+
+      const ccode = userRows[0].ccode;
+      // v2.12.18: Use fm_tanks with clientFetch=2 for store list
+      const [storeRows] = await pool.query(
+        'SELECT tcode, descript as name FROM fm_tanks WHERE ccode = ? AND clientFetch = 2 ORDER BY descript',
+        [ccode]
+      );
+      return sendJSON(res, { success: true, data: storeRows });
+    }
+
+    // GET /api/supervisor/transactions - Get Store transactions with filtering
+    if (path === '/api/supervisor/transactions' && method === 'GET') {
+      const { userid, device_fingerprint, store_tcode, search, date_from, date_to } = parsedUrl.query;
+
+      if (!userid) return sendJSON(res, { success: false, error: 'userid required' }, 400);
+
+      // v2.12.19: Resolve authoritative ccode from device fingerprint
+      let deviceCcode = '';
+      if (device_fingerprint) {
+        try {
+          const [devRows] = await pool.query(
+            'SELECT ccode FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
+            [String(device_fingerprint).trim()]
+          );
+          deviceCcode = (devRows[0]?.ccode || '').toString().trim();
+        } catch (e) {}
+      }
+
+      // Scope user lookup by ccode
+      let userQuery = 'SELECT supervisor, ccode FROM Users WHERE userid = ?';
+      let userParams = [userid];
+      if (deviceCcode) {
+        userQuery += ' AND ccode = ?';
+        userParams.push(norm(deviceCcode));
+      }
+      userQuery += ' LIMIT 1';
+
+      const [userRows] = await pool.query(userQuery, userParams);
+      if (userRows.length === 0 || userRows[0].supervisor !== 6) {
+        return sendJSON(res, { success: false, error: 'Unauthorized. Supervisor role required.' }, 403);
+      }
+
+      const supervisorCcode = userRows[0].ccode;
+
+      let query = `
+        SELECT t.*, m.descript as farmer_name, i.descript as item_name
+        FROM transactions t
+        LEFT JOIN cm_members m ON t.memberno = m.mcode AND t.ccode = m.ccode
+        LEFT JOIN fm_items i ON t.icode = i.icode AND t.ccode = i.ccode
+        WHERE t.Transtype = 2 AND t.ccode = ?
+      `;
+      let params = [supervisorCcode];
+
+      // v2.12.18: Filter by route (store_tcode) instead of ccode for specific store selection
+      if (store_tcode) {
+        query += ' AND t.route = ?';
+        params.push(store_tcode);
+      }
+
+      if (search) {
+        query += ' AND (t.memberno LIKE ? OR m.descript LIKE ? OR t.transrefno LIKE ?)';
+        const searchPat = `%${search}%`;
+        params.push(searchPat, searchPat, searchPat);
+      }
+
+      if (date_from) {
+        query += ' AND t.transdate >= ?';
+        params.push(date_from);
+      }
+      if (date_to) {
+        query += ' AND t.transdate <= ?';
+        params.push(date_to);
+      }
+
+      query += ' ORDER BY t.transdate DESC, t.transtime DESC';
+
+      const [rows] = await pool.query(query, params);
       return sendJSON(res, { success: true, data: rows });
     }
 
@@ -4163,7 +4133,8 @@ if (path === '/api/sales' && method === 'POST') {
           IFNULL(orgtype, 'D') as orgtype,
           IFNULL(printcumm, 0) as printcumm,
           IFNULL(zeroopt, 0) as zeroopt,
-          IFNULL(payments_active, 0) as payments_active
+          IFNULL(payments_active, 0) as payments_active,
+          IFNULL(sacco_module_active, 0) as sacco_module_active
         FROM psettings WHERE cno = ?`,
         [targetCcode]
       );
@@ -4215,7 +4186,8 @@ if (path === '/api/sales' && method === 'POST') {
           periodLabel: orgtype === 'C' ? 'Season' : 'Session',
           printcumm: rows[0].printcumm,
           zeroOpt: rows[0].zeroopt,
-          payments_active: rows[0].payments_active
+          payments_active: rows[0].payments_active,
+          sacco_module_active: rows[0].sacco_module_active
         }
       });
     }
@@ -4293,8 +4265,8 @@ if (path === '/api/sales' && method === 'POST') {
             try {
               const [sRows] = await pool.query(
                 `SELECT SCODE, datefrom, dateto FROM Seasons
-                 WHERE TRIM(ccode) = TRIM(?) AND TRIM(SCODE) = TRIM(?) LIMIT 1`,
-                [ccode, requestedSeason]
+                 WHERE ccode = ? AND SCODE = ? LIMIT 1`,
+                [norm(ccode), norm(requestedSeason)]
               );
               if (sRows.length > 0) season = sRows[0];
               else console.log(`⚠️ Requested season ${requestedSeason} not found for ccode=${ccode}`);
@@ -4332,7 +4304,7 @@ if (path === '/api/sales' && method === 'POST') {
       if (cachedBatch) {
         if (stale) scheduleCumulativeWarm(ccode, route, periodStart, periodEnd);
         console.log(`[CUM:BATCH] cache-hit ${cumCacheKey} farmers=${cachedBatch.total_farmers}`);
-        return sendJSON(res, { success: true, data: cachedBatch });
+        return sendJSON(res, { success: true, data: cachedBatch }, 200, origin, req.headers);
       }
 
       // v2.12.10: on a cold miss, kick the warm AND wait a bounded 12 s for it.
@@ -4395,6 +4367,11 @@ if (path === '/api/sales' && method === 'POST') {
       
       const ccode = deviceRows[0].ccode;
       
+      // Normalize inputs for SARGable index usage
+      const nFarmerId = norm(farmer_id);
+      const nCcode = norm(ccode);
+      const nRoute = route ? norm(route) : null;
+
       // Get period start and end dates (LOCAL date, not UTC)
       const toYmdLocal = (d) => {
         const y = d.getFullYear();
@@ -4410,7 +4387,7 @@ if (path === '/api/sales' && method === 'POST') {
       // For coffee orgs, use season date range instead of calendar month
       try {
         const [orgRows] = await pool.query(
-          `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(cno) = TRIM(?) LIMIT 1`, [ccode]
+          `SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE TRIM(cno) = TRIM(?) LIMIT 1`, [nCcode]
         );
         if (orgRows.length > 0 && orgRows[0].orgtype === 'C') {
           const today = toYmdLocal(now);
@@ -4422,54 +4399,54 @@ if (path === '/api/sales' && method === 'POST') {
               const [sRows] = await pool.query(
                 `SELECT SCODE, datefrom, dateto FROM Seasons
                  WHERE TRIM(ccode) = TRIM(?) AND TRIM(SCODE) = TRIM(?) LIMIT 1`,
-                [ccode, requestedSeason]
+                [nCcode, requestedSeason]
               );
               if (sRows.length > 0) season = sRows[0];
-              else console.log(`⚠️ Requested season ${requestedSeason} not found for ccode=${ccode}`);
+              else console.log(`⚠️ Requested season ${requestedSeason} not found for ccode=${nCcode}`);
             } catch (e) {
               console.log('⚠️ Season lookup failed:', e.message);
             }
           }
 
-          if (!season) season = await findActiveSeason(ccode, today);
+          if (!season) season = await findActiveSeason(nCcode, today);
           if (season) {
             const ymd = (v) => (typeof v === 'string' ? v.slice(0, 10) : toYmdLocal(new Date(v)));
             periodStart = ymd(season.datefrom);
             periodEnd = ymd(season.dateto);
-            console.log(`📊 Individual cumulative for ${farmer_id} using season range: ${periodStart} to ${periodEnd}`);
+            console.log(`📊 Individual cumulative for ${nFarmerId} using season range: ${periodStart} to ${periodEnd}`);
           } else {
-            console.log(`⚠️ No active season found for ccode=${ccode} on ${today}, falling back to monthly range`);
+            console.log(`⚠️ No active season found for ccode=${nCcode} on ${today}, falling back to monthly range`);
           }
         }
       } catch (e) {
         console.log('⚠️ Could not detect orgtype for individual cumulative, using monthly range:', e.message);
       }
       
-      // Total weight for this farmer (v2.10.72: UPPER+TRIM normalization)
-      const indRouteFilter = route ? ' AND UPPER(TRIM(route)) = UPPER(TRIM(?))' : '';
-      const indParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
+      // Total weight for this farmer (v2.12.19: SARGable query)
+      const indRouteFilter = nRoute ? ' AND route = ?' : '';
+      const indParams = nRoute ? [nFarmerId, nCcode, periodStart, periodEnd, nRoute] : [nFarmerId, nCcode, periodStart, periodEnd];
       
       const [sumRows] = await pool.query(
         `SELECT IFNULL(SUM(weight), 0) as cumulative_weight 
          FROM transactions 
-         WHERE UPPER(TRIM(memberno)) = UPPER(TRIM(?)) AND UPPER(TRIM(ccode)) = UPPER(TRIM(?)) AND CAST(Transtype AS UNSIGNED) = 1
-         AND CAST(transdate AS DATE) BETWEEN ? AND ?${indRouteFilter}`,
+         WHERE memberno = ? AND ccode = ? AND Transtype = 1
+         AND transdate BETWEEN ? AND ?${indRouteFilter}`,
         indParams
       );
       
       // Per-product breakdown for this farmer
-      const indTRouteFilter = route ? ' AND UPPER(TRIM(t.route)) = UPPER(TRIM(?))' : '';
-      const indTParams = route ? [farmer_id, ccode, periodStart, periodEnd, route] : [farmer_id, ccode, periodStart, periodEnd];
+      const indTRouteFilter = nRoute ? ' AND t.route = ?' : '';
+      const indTParams = nRoute ? [nFarmerId, nCcode, periodStart, periodEnd, nRoute] : [nFarmerId, nCcode, periodStart, periodEnd];
       
       const [productRows] = await pool.query(
-        `SELECT TRIM(t.icode) as icode, 
-                IFNULL(MAX(fi.descript), MIN(TRIM(t.icode))) as product_name,
+        `SELECT t.icode as icode,
+                IFNULL(MAX(fi.descript), MIN(t.icode)) as product_name,
                 IFNULL(SUM(t.weight), 0) as weight 
          FROM transactions t
-         LEFT JOIN fm_items fi ON UPPER(TRIM(fi.icode)) = UPPER(TRIM(t.icode)) AND UPPER(TRIM(fi.ccode)) = UPPER(TRIM(t.ccode))
-         WHERE UPPER(TRIM(t.memberno)) = UPPER(TRIM(?)) AND UPPER(TRIM(t.ccode)) = UPPER(TRIM(?)) AND CAST(t.Transtype AS UNSIGNED) = 1
-         AND CAST(t.transdate AS DATE) BETWEEN ? AND ?${indTRouteFilter}
-         GROUP BY TRIM(t.icode)`,
+         LEFT JOIN fm_items fi ON fi.icode = t.icode AND fi.ccode = t.ccode
+         WHERE t.memberno = ? AND t.ccode = ? AND t.Transtype = 1
+         AND t.transdate BETWEEN ? AND ?${indTRouteFilter}
+         GROUP BY t.icode`,
         indTParams
       );
       
@@ -4531,8 +4508,8 @@ if (path === '/api/sales' && method === 'POST') {
       let rows = [];
       if (deviceCcode) {
         const [scoped] = await pool.query(
-          'SELECT * FROM Users WHERE TRIM(userid) = ? AND TRIM(password) = ? AND UPPER(TRIM(ccode)) = UPPER(?) LIMIT 1',
-          [userid.trim(), password.trim(), deviceCcode]
+          'SELECT * FROM Users WHERE TRIM(userid) = ? AND TRIM(password) = ? AND ccode = ? LIMIT 1',
+          [userid.trim(), password.trim(), norm(deviceCcode)]
         );
         rows = scoped;
         if (rows.length > 0) {
@@ -4590,6 +4567,18 @@ if (path === '/api/sales' && method === 'POST') {
             error: 'Access denied. Your account is restricted to your assigned company.'
           }, 403);
         }
+
+        // v2.12.17: SECURE DEVICE BINDING.
+        // Associate this device with the user in devSettings.
+        // Enforces that only this user can perform transactions from this device.
+        try {
+          await pool.query(
+            'UPDATE devSettings SET userId = ? WHERE uniquedevcode = ?',
+            [user.userid, String(device_fingerprint).trim()]
+          );
+        } catch (bindErr) {
+          console.warn('[AUTH][BIND] Failed to tie userId to devSettings:', bindErr.message);
+        }
       }
 
 
@@ -4638,7 +4627,7 @@ if (path === '/api/sales' && method === 'POST') {
           // v2.11.1: expose Payments permission from real MySQL table `Users`
           can_access_payments: toBool(user.can_access_payments)
         }
-      });
+      }, 200, origin, req.headers);
     }
 
     // ===== NEXT MEMBER ID SUGGESTION (v2.10.43, additive; v2.10.45 fix: column is mcode) =====
@@ -5123,7 +5112,7 @@ if (path === '/api/sales' && method === 'POST') {
       const payload = { success: true, data, price_per_kg: pricePerKg, period: range };
       payablePayableCache.set(cacheKey, payload);
       console.log(`[PAY][PAYABLE] ccode=${ccodeKey} period=${range.period} ${range.start}→${range.end} price=${pricePerKg} farmers=${data.length}`);
-      return sendJSON(res, payload);
+      return sendJSON(res, payload, 200, origin, req.headers);
     }
 
 
@@ -5149,201 +5138,145 @@ if (path === '/api/sales' && method === 'POST') {
 
       for (let i = 0; i < farmerCodes.length; i++) {
         const farmerCode = farmerCodes[i];
-        const conn = await pool.getConnection();
-        try {
-          await conn.beginTransaction();
 
-          const calc = await computeFarmerPayment(conn, access.ccode, farmerCode, range, pricePerKg);
-          if (calc.net_amount <= 0) {
-            await conn.rollback();
+        let calc, paymentId, ref, beneficiary;
+        let routing = { transactionType: null, beneficiaryBankCode: null, creditAccountNumber: null, missingReason: null };
+
+        // Step 1: Record payment and mark transactions as pending (DB transaction)
+        try {
+          const step1 = await withTx(async (conn) => {
+            const c = await computeFarmerPayment(conn, access.ccode, farmerCode, range, pricePerKg);
+            if (c.net_amount <= 0) return { skip: true, calc: c };
+
+            const r = makePaymentReference(access.ccode, i);
+            const [insertResult] = await conn.query(
+              `INSERT INTO payments
+                (payment_reference, ccode, farmer_code, amount, status, payment_date, created_by)
+               VALUES (?, ?, ?, ?, 'pending', NOW(), ?)`,
+              [r, access.ccode, farmerCode, c.net_amount, access.userid]
+            );
+            const pId = insertResult.insertId;
+
+            await conn.query(
+              `UPDATE transactions
+                  SET payment_id = ?, payment_status = 'pending'
+                WHERE ccode = ?
+                  AND memberno = ?
+                  AND transtype = 1
+                  AND IFNULL(payment_status, 'unpaid') = 'unpaid'
+                  AND transdate BETWEEN ? AND ?`,
+              [pId, access.ccode, norm(farmerCode), range.start, range.end]
+            );
+
+            const [benRows] = await conn.query(
+              `SELECT IFNULL(descript,'') AS descript, IFNULL(tel,'') AS tel,
+                      IFNULL(bankcode,'') AS bankcode, IFNULL(bnumber,'') AS bnumber,
+                      IFNULL(payment_method,'') AS payment_method
+                 FROM cm_members
+                WHERE ccode = ? AND mcode = ?
+                LIMIT 1`,
+              [access.ccode, norm(farmerCode)]
+            );
+
+            return { skip: false, calc: c, paymentId: pId, ref: r, beneficiary: benRows[0] || {} };
+          });
+
+          if (step1.skip) {
             results.push({
               farmer_code: farmerCode,
               payment_reference: '',
               amount: 0,
-              gross_amount: calc.gross_amount,
-              deductions: calc.deductions,
-              net_amount: calc.net_amount,
-              total_qty: calc.total_qty,
+              gross_amount: step1.calc.gross_amount,
+              deductions: step1.calc.deductions,
+              net_amount: step1.calc.net_amount,
+              total_qty: step1.calc.total_qty,
               status: 'failed',
-              error: calc.gross_amount <= 0
-                ? 'No unpaid quantity for selected period'
-                : 'Net payable is zero after credit deductions',
+              error: step1.calc.gross_amount <= 0 ? 'No unpaid quantity' : 'Net payable is zero',
             });
             continue;
           }
 
-          const ref = makePaymentReference(access.ccode, i);
-          // Insert payment (pending) with NET amount — this is the amount
-          // sent to the SACCO/payment provider.
-          const [insertResult] = await conn.query(
-            `INSERT INTO payments
-              (payment_reference, ccode, farmer_code, amount, status, payment_date, created_by)
-             VALUES (?, ?, ?, ?, 'pending', NOW(), ?)`,
-            [ref, access.ccode, farmerCode, calc.net_amount, access.userid]
-          );
-          const paymentId = insertResult.insertId;
+          calc = step1.calc;
+          paymentId = step1.paymentId;
+          ref = step1.ref;
+          beneficiary = step1.beneficiary;
 
-          // Lock the source transactions into 'pending' so they can't be
-          // re-selected while the SACCO call is in flight.
-          await conn.query(
-            `UPDATE transactions
-                SET payment_id = ?, payment_status = 'pending'
-              WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
-                AND UPPER(TRIM(memberno)) = UPPER(TRIM(?))
-                AND transtype = 1
-                AND IFNULL(payment_status, 'unpaid') = 'unpaid'
-                AND CAST(transdate AS DATE) BETWEEN ? AND ?`,
-            [paymentId, access.ccode, farmerCode, range.start, range.end]
-          );
-          await conn.commit();
-
-          // v2.11.6 — resolve KCB payout routing from cm_members.
-          const [benRows] = await pool.query(
-            `SELECT IFNULL(descript,'') AS descript,
-                    IFNULL(tel,'')      AS tel,
-                    IFNULL(bankcode,'') AS bankcode,
-                    IFNULL(bnumber,'')  AS bnumber,
-                    IFNULL(payment_method,'') AS payment_method
-               FROM cm_members
-              WHERE UPPER(TRIM(ccode)) = UPPER(TRIM(?))
-                AND UPPER(TRIM(mcode)) = UPPER(TRIM(?))
-              LIMIT 1`,
-            [access.ccode, farmerCode]
-          );
-          const beneficiary = benRows[0] || {};
+          // Resolve payout routing
           const payMethod = String(beneficiary.payment_method || '').trim().toUpperCase();
           const bankCodeRaw = String(beneficiary.bankcode || '').trim();
           const bnumber = String(beneficiary.bnumber || '').trim();
           const tel = String(beneficiary.tel || '').trim();
 
-          let transactionType = null;
-          let beneficiaryBankCode = null;
-          let creditAccountNumber = null;
-          let missingReason = null;
           if (payMethod === 'MPESA') {
-            transactionType = 'MO';
-            beneficiaryBankCode = 'MPESA';
-            creditAccountNumber = tel;
-            if (!tel) missingReason = 'Missing MPESA phone number';
+            routing.transactionType = 'MO';
+            routing.beneficiaryBankCode = 'MPESA';
+            routing.creditAccountNumber = tel;
+            if (!tel) routing.missingReason = 'Missing MPESA phone number';
           } else if (payMethod === 'BANK') {
-            if (!bankCodeRaw) missingReason = 'Missing bank code';
-            else if (!bnumber) missingReason = 'Missing bank account number';
+            if (!bankCodeRaw) routing.missingReason = 'Missing bank code';
+            else if (!bnumber) routing.missingReason = 'Missing bank account number';
             else {
-              transactionType = bankCodeRaw === '01' ? 'IF' : 'EF';
-              beneficiaryBankCode = bankCodeRaw;
-              creditAccountNumber = bnumber;
+              routing.transactionType = bankCodeRaw === '01' ? 'IF' : 'EF';
+              routing.beneficiaryBankCode = bankCodeRaw;
+              routing.creditAccountNumber = bnumber;
             }
           } else {
-            missingReason = payMethod
-              ? `Unsupported payment_method: ${payMethod}`
-              : 'Missing payment_method on cm_members';
+            routing.missingReason = payMethod ? `Unsupported payment_method: ${payMethod}` : 'Missing payment_method';
           }
+        } catch (e) {
+          console.error('[PAY][PROCESS] DB pre-process failed:', e.message);
+          results.push({ farmer_code: farmerCode, status: 'failed', error: 'Database error during preparation' });
+          continue;
+        }
 
-          if (missingReason) {
-            await conn.beginTransaction();
+        if (routing.missingReason) {
+          await withTx(async (conn) => {
             await conn.query(`UPDATE payments SET status = 'failed' WHERE payment_id = ?`, [paymentId]);
-            await conn.query(
-              `UPDATE transactions
-                  SET payment_status = 'failed'
-                WHERE payment_id = ? AND payment_status = 'pending'`,
-              [paymentId]
-            );
-            await conn.commit();
-            console.warn(`[PAY][TRANSFER] skipped ref=${ref} farmer=${farmerCode} reason=${missingReason}`);
-            results.push({
-              farmer_code: farmerCode,
-              payment_reference: ref,
-              amount: calc.net_amount,
-              gross_amount: calc.gross_amount,
-              deductions: calc.deductions,
-              net_amount: calc.net_amount,
-              total_qty: calc.total_qty,
-              status: 'failed',
-              error: missingReason,
-            });
-            continue;
-          }
+            await conn.query(`UPDATE transactions SET payment_status = 'failed' WHERE payment_id = ? AND payment_status = 'pending'`, [paymentId]);
+          });
+          results.push({
+            farmer_code: farmerCode, payment_reference: ref, amount: calc.net_amount,
+            status: 'failed', error: routing.missingReason
+          });
+          continue;
+        }
 
-          console.log(`[PAY][TRANSFER] farmer=${farmerCode} ref=${ref} type=${transactionType} amount=${calc.net_amount}`);
-          const sacco = await chargeFarmerViaKCB({
-            ref,
-            amount: calc.net_amount,
-            farmerName: beneficiary.descript || calc.farmer_name || farmerCode,
-            accountNumber: creditAccountNumber,
-            bankCode: beneficiaryBankCode,
-            transactionType,
-            ccode: access.ccode,
-            requestId: ref,
+        // Step 2: Call KCB (NO DB CONNECTION HELD)
+        console.log(`[PAY][TRANSFER] farmer=${farmerCode} ref=${ref} amount=${calc.net_amount}`);
+        const sacco = await chargeFarmerViaKCB({
+          ref, amount: calc.net_amount,
+          farmerName: beneficiary.descript || calc.farmer_name || farmerCode,
+          accountNumber: routing.creditAccountNumber,
+          bankCode: routing.beneficiaryBankCode,
+          transactionType: routing.transactionType,
+          ccode: access.ccode,
+          requestId: ref,
+        });
+
+        // Step 3: Finalize status (DB transaction)
+        try {
+          await withTx(async (conn) => {
+            if (!sacco?.success) {
+              await conn.query(`UPDATE payments SET status = 'failed' WHERE payment_id = ?`, [paymentId]);
+              await conn.query(`UPDATE transactions SET payment_status = 'failed' WHERE payment_id = ? AND payment_status = 'pending'`, [paymentId]);
+            } else {
+              await conn.query(
+                `UPDATE payments
+                    SET external_transaction_id = ?, kcb_retrieval_ref = ?, kcb_ft_reference = ?, kcb_merchant_id = ?
+                  WHERE payment_id = ?`,
+                [sacco.external_transaction_id, sacco.retrievalRefNumber, sacco.ftReference, sacco.merchantID, paymentId]
+              );
+            }
           });
 
-          if (!sacco?.success) {
-            await conn.beginTransaction();
-            await conn.query(`UPDATE payments SET status = 'failed' WHERE payment_id = ?`, [paymentId]);
-            await conn.query(
-              `UPDATE transactions
-                  SET payment_status = 'failed'
-                WHERE payment_id = ? AND payment_status = 'pending'`,
-              [paymentId]
-            );
-            await conn.commit();
-            results.push({
-              farmer_code: farmerCode,
-              payment_reference: ref,
-              amount: calc.net_amount,
-              gross_amount: calc.gross_amount,
-              deductions: calc.deductions,
-              net_amount: calc.net_amount,
-              total_qty: calc.total_qty,
-              status: 'failed',
-              error: sacco?.error || sacco?.statusDescription || 'Payment declined',
-            });
-            continue;
-          }
-
-          // Accepted for processing by KCB. Do NOT mark as paid — the
-          // /api/payments/kcb/callback endpoint finalises the status.
-          // Persist the initial external reference for reconciliation.
-          await conn.beginTransaction();
-          await conn.query(
-            `UPDATE payments
-                SET external_transaction_id = ?,
-                    kcb_retrieval_ref = ?,
-                    kcb_ft_reference = ?,
-                    kcb_merchant_id = ?
-              WHERE payment_id = ?`,
-            [
-              sacco.external_transaction_id,
-              sacco.retrievalRefNumber,
-              sacco.ftReference,
-              sacco.merchantID,
-              paymentId,
-            ]
-          );
-          await conn.commit();
-
           results.push({
-            farmer_code: farmerCode,
-            payment_reference: ref,
-            amount: calc.net_amount,
-            gross_amount: calc.gross_amount,
-            deductions: calc.deductions,
-            net_amount: calc.net_amount,
-            total_qty: calc.total_qty,
-            status: 'pending',
-            external_transaction_id: sacco.external_transaction_id,
+            farmer_code: farmerCode, payment_reference: ref, amount: calc.net_amount,
+            status: sacco?.success ? 'pending' : 'failed',
+            external_transaction_id: sacco?.external_transaction_id,
+            error: sacco?.success ? null : (sacco?.error || 'Payment declined')
           });
         } catch (e) {
-          await conn.rollback().catch(() => {});
-          console.error('[PAY][PROCESS] farmer failed:', farmerCode, e?.message || e);
-          results.push({
-            farmer_code: farmerCode,
-            payment_reference: '',
-            amount: 0,
-            status: 'failed',
-            error: 'Payment processing failed',
-          });
-        } finally {
-          conn.release();
+          console.error('[PAY][PROCESS] DB post-process failed:', e.message);
         }
       }
 
@@ -5351,28 +5284,28 @@ if (path === '/api/sales' && method === 'POST') {
       // list stale. Invalidate so the next GET reflects the new statuses.
       invalidatePayableCache(access.ccode);
       console.log(`[PAY][PROCESS] ccode=${access.ccode} userid=${access.userid} period=${range.period} price=${pricePerKg} requested=${farmerCodes.length}`);
-      return sendJSON(res, { success: true, data: results });
+      return sendJSON(res, { success: true, data: results }, 200, origin, req.headers);
     }
 
     if (path === '/api/payments/history' && method === 'GET') {
       const deviceFingerprint = parsedUrl.query.uniquedevcode || parsedUrl.query.device_fingerprint;
       const userid = parsedUrl.query.userid || parsedUrl.query.user_id;
       const access = await resolvePaymentsAccess({ deviceFingerprint, userid });
-      if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403);
+      if (!access.ok) return sendJSON(res, { success: false, error: access.error }, access.status || 403, origin, req.headers);
 
-      const clauses = ['UPPER(TRIM(ccode)) = UPPER(TRIM(?))'];
+      const clauses = ['ccode = ?'];
       const params = [access.ccode];
       if (parsedUrl.query.farmer_code) {
-        clauses.push('UPPER(TRIM(farmer_code)) = UPPER(TRIM(?))');
-        params.push(String(parsedUrl.query.farmer_code).trim());
+        clauses.push('farmer_code = ?');
+        params.push(norm(parsedUrl.query.farmer_code));
       }
       if (parsedUrl.query.from) {
-        clauses.push('DATE(payment_date) >= ?');
-        params.push(String(parsedUrl.query.from).trim());
+        clauses.push('payment_date >= ?');
+        params.push(`${parsedUrl.query.from} 00:00:00`);
       }
       if (parsedUrl.query.to) {
-        clauses.push('DATE(payment_date) <= ?');
-        params.push(String(parsedUrl.query.to).trim());
+        clauses.push('payment_date <= ?');
+        params.push(`${parsedUrl.query.to} 23:59:59`);
       }
 
       const [rows] = await pool.query(
@@ -5389,6 +5322,7 @@ if (path === '/api/sales' && method === 'POST') {
       console.log(`[PAY][HISTORY] ccode=${access.ccode} userid=${access.userid} rows=${rows.length}`);
       return sendJSON(res, { success: true, data: rows });
     }
+
 
     // v2.11.6 — KCB Funds Transfer async callback.
     // KCB posts the final status of a transfer here. Authenticated with a
@@ -5470,20 +5404,18 @@ const txStatus = isSuccess ? 'paid' : 'failed';
         if (!isNaN(d.getTime())) txnDate = d.toISOString().slice(0, 19).replace('T', ' ');
       }
 
-      const conn = await pool.getConnection();
-      try {
-        await conn.beginTransaction();
-                     
-              console.error("===== CALLBACK VALUES =====");
-console.error("statusCodeIn:", statusCodeIn);
-console.error("paymentStatus:", paymentStatus);
-console.error("txnMessage:", txnMessage);
-console.error("body:", JSON.stringify(body));
-console.error("===========================");
+      // v2.12.18: use withTx for safe transaction management
+      return withTx(async (conn) => {
+        console.error("===== CALLBACK VALUES =====");
+        console.error("statusCodeIn:", statusCodeIn);
+        console.error("paymentStatus:", paymentStatus);
+        console.error("txnMessage:", txnMessage);
+        console.error("body:", JSON.stringify(body));
+        console.error("===========================");
+
         await conn.query(
           `UPDATE payments
               SET status = ?,
- 
                   external_transaction_id = COALESCE(?, external_transaction_id),
                   kcb_merchant_id = COALESCE(?, kcb_merchant_id),
                   kcb_retrieval_ref = COALESCE(?, kcb_retrieval_ref),
@@ -5508,17 +5440,11 @@ console.error("===========================");
             WHERE payment_id = ? AND payment_status = 'pending'`,
           [txStatus, row.payment_id]
         );
-        await conn.commit();
-      } catch (e) {
-        await conn.rollback().catch(() => {});
-        throw e;
-      } finally {
-        conn.release();
-      }
 
-      invalidatePayableCache(row.ccode);
-      console.log(`[PAY][CALLBACK] ref=${ref} status=${paymentStatus} merchant=${merchantID || 'n/a'}`);
-      return sendJSON(res, { success: true, status: paymentStatus });
+        invalidatePayableCache(row.ccode);
+        console.log(`[PAY][CALLBACK] ref=${ref} status=${paymentStatus} merchant=${merchantID || 'n/a'}`);
+        return sendJSON(res, { success: true, status: paymentStatus });
+      });
     }
 
     // ===== YETU SACCO MEMBER PAYMENTS (v2.12.0) =====

@@ -109,6 +109,11 @@ class OfflineStoragePlugin : Plugin() {
                 }
 
                 Log.d(TAG, "[GET] Found ${records.size} unsynced records")
+                if (records.isNotEmpty()) {
+                    records.forEach { 
+                        Log.d(TAG, "[GET] PENDING DETECTED: ref=${it.referenceNo}, type=${it.recordType}, id=${it.id}")
+                    }
+                }
                 DatabaseLogger.info(TAG, "Retrieved unsynced records", "count=${records.size}")
 
                 // Convert to JSON string for web layer
@@ -156,18 +161,23 @@ class OfflineStoragePlugin : Plugin() {
             try {
                 val db = DelicoopDatabase.getInstance(context)
                 
+                Log.d(TAG, "[SYNC] Attempting to mark synced: id=$id, ref=$referenceNo, backendId=$backendId")
+
                 val recordId = if (id != null) {
                     id
                 } else {
                     // Find by reference number
                     val record = db.syncRecordDao().getByReferenceNo(referenceNo!!)
+                    if (record == null) {
+                        Log.w(TAG, "[SYNC] getByReferenceNo returned null for: $referenceNo")
+                    }
                     record?.id
                 }
                 
                 if (recordId != null) {
                     db.syncRecordDao().markSynced(recordId, backendId = backendId)
-                    Log.d(TAG, "[SYNC] Marked synced: id=$recordId, ref=$referenceNo")
-                    DatabaseLogger.info(TAG, "Record confirmed synced", "id=$recordId, ref=$referenceNo, backendId=$backendId")
+                    Log.d(TAG, "[SYNC] MARK SYNCED SUCCESS: id=$recordId, ref=$referenceNo, backendId=$backendId")
+                    DatabaseLogger.info(TAG, "Record confirmed synced in native DB", "id=$recordId, ref=$referenceNo, backendId=$backendId")
 
                     withContext(Dispatchers.Main) {
                         val result = JSObject()
@@ -175,11 +185,11 @@ class OfflineStoragePlugin : Plugin() {
                         call.resolve(result)
                     }
                 } else {
-                    Log.w(TAG, "[SYNC] Record not found: id=$id, ref=$referenceNo")
+                    Log.w(TAG, "[SYNC] MARK SYNCED FAILED: Record not found in native storage: id=$id, ref=$referenceNo")
                     withContext(Dispatchers.Main) {
                         val result = JSObject()
                         result.put("success", false)
-                        result.put("error", "Record not found")
+                        result.put("error", "Record not found in native storage")
                         call.resolve(result)
                     }
                 }

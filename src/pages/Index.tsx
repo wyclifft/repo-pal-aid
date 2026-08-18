@@ -1,26 +1,29 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { MoreVertical } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Login } from '@/components/Login';
 import { Dashboard } from '@/components/Dashboard';
 import { BuyProduceScreen } from '@/components/BuyProduceScreen';
 import { SellProduceScreen } from '@/components/SellProduceScreen';
+import { SupervisorTransactions } from '@/components/SupervisorTransactions';
 import { ReceiptModal } from '@/components/ReceiptModal';
 import { ReprintModal } from '@/components/ReprintModal';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useReprint } from '@/contexts/ReprintContext';
+import { useSync } from '@/contexts/SyncContext';
 import { type AppUser, type Farmer, type MilkCollection, getCaptureMode } from '@/lib/supabase';
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
-import { useDataSync } from '@/hooks/useDataSync';
 import { useSessionBlacklist } from '@/hooks/useSessionBlacklist';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { cumulativeMonitor, logPrintFinal } from '@/utils/cumulativeMonitor';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
-import { saveToLocalDB } from '@/services/offlineStorage';
+import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
 import { plog } from '@/utils/persistentLogger';
 import { addRegressionPin, clearRegressionPin, takeRegressionPinsForReplay } from '@/utils/cumulativeRegressionPins';
 import { toast } from 'sonner';
@@ -56,11 +59,28 @@ const Index = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showCollection, setShowCollection] = useState(false); // Controls dashboard vs collection view
   const [collectionMode, setCollectionMode] = useState<'buy' | 'sell'>('buy'); // Buy or Sell mode
+  const [showSupervisor, setShowSupervisor] = useState(false); // v2.12.17: Supervisor portal
 
-  // Company name from device
-  const [companyName, setCompanyName] = useState<string>(() => {
-    return localStorage.getItem('device_company_name') || 'DAIRY COLLECTION';
-  });
+  // v2.12.19: Handle hardware back button to navigate to Dashboard
+  useEffect(() => {
+    const handleBackButton = (e: any) => {
+      // If supervisor portal is open, back button returns to dashboard
+      if (showSupervisor) {
+        e.preventDefault();
+        setShowSupervisor(false);
+        return;
+      }
+      // If collection portal (Buy/Sell) is open, back button returns to dashboard
+      if (showCollection) {
+        e.preventDefault();
+        setShowCollection(false);
+        return;
+      }
+    };
+
+    window.addEventListener('ionBackButton', handleBackButton);
+    return () => window.removeEventListener('ionBackButton', handleBackButton);
+  }, [showSupervisor, showCollection]);
 
   // Reprint receipts state - now from shared context
   const [reprintModalOpen, setReprintModalOpen] = useState(false);
@@ -99,6 +119,11 @@ const Index = () => {
 
   // Receipt modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
+  // v2.12.33: Receipt modal state ref for use in background refresh closures.
+  // Prevents cumulative values jumping on screen while the modal is open.
+  const receiptModalOpenRef = useRef(receiptModalOpen);
+  useEffect(() => { receiptModalOpenRef.current = receiptModalOpen; }, [receiptModalOpen]);
+
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -128,7 +153,7 @@ const Index = () => {
   } = useIndexedDB();
   
   // Data sync hook for background syncing
-  const { isSyncing, pendingCount, pendingMilkCount, pendingSalesCount, conflictedReceiptsCount, syncAllData } = useDataSync();
+  const { isSyncing, pendingCount, pendingMilkCount, pendingSalesCount, conflictedReceiptsCount, syncAllData } = useSync();
   
   // App-wide settings from psettings
   const { 
@@ -148,7 +173,8 @@ const Index = () => {
     isCoffee,
     sackTareWeight,
     allowSackEdit,
-    settings
+    settings,
+    companyName // Use the reactive companyName from useAppSettings
   } = useAppSettings();
 
   // Sync tare weight from psettings when loaded
@@ -390,6 +416,12 @@ const Index = () => {
           const newCumulative = filterCumulativeByProduct({ total: baseCount + unsynced.total, byProduct: Object.values(merged) }, currentProduct?.icode);
 
           setCumulativeFrequency(prev => {
+            // v2.12.33: If the receipt modal is open, we "lock" the cumulative
+            // value to prevent jumps on screen (e.g. from Route total to Global total).
+            // The background refresh is still useful for the next capture, but
+            // shouldn't change the current receipt.
+            if (receiptModalOpenRef.current) return prev;
+
             if (prev && newCumulative && reason === 'post-sync') {
               if (newCumulative.total < prev.total) {
                 console.warn(`🛡️ Floor guard: preventing cumulative drop from ${prev.total} to ${newCumulative.total} (post-sync lag)`);
@@ -463,7 +495,7 @@ const Index = () => {
       clearInterval(intervalId);
       if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
     };
-  }, [selectedRouteCode, deviceFingerprint, showCumulative, updateFarmerCumulative, saveFarmers, settings.cumulative_frequency_status, settings.printcumm]);
+  }, [selectedRouteCode, activeSeasonCode, deviceFingerprint, showCumulative, updateFarmerCumulative, saveFarmers, settings.cumulative_frequency_status, settings.printcumm]);
 
   // ========== FAST CUMULATIVE PRE-FETCH (BATCH API) ==========
   // Uses single batch endpoint instead of 3558 individual API calls
@@ -471,7 +503,14 @@ const Index = () => {
   useEffect(() => {
     if (!showCumulative || !deviceFingerprint || !navigator.onLine || !isReady) return;
 
-    // Module-level guard: prevent duplicate sync across re-renders
+    // v2.12.18: Skip internal pre-fetch if a global blocking sync was recently completed
+    // or is currently running. This avoids redundant heavy API calls.
+    const lastSync = localStorage.getItem('lastSyncTime');
+    if (lastSync && Date.now() - parseInt(lastSync, 10) < 5 * 60 * 1000) {
+      console.log('📦 Pre-fetch: skipped (global sync completed < 5 mins ago)');
+      return;
+    }
+
     if ((window as any).__cumulativeSyncRunning) {
       console.log('📦 Pre-fetch: already in progress (skipping duplicate)');
       return;
@@ -891,7 +930,7 @@ const Index = () => {
       // NOTE: We do NOT set cancelled or reset the guard here.
       // The sync continues running even if the component re-renders.
     };
-  }, [isReady, showCumulative, deviceFingerprint, selectedRouteCode, updateFarmerCumulative, saveFarmers, getFarmerCumulative]);
+  }, [isReady, showCumulative, deviceFingerprint, selectedRouteCode, activeSeasonCode, updateFarmerCumulative, saveFarmers, getFarmerCumulative]);
 
   // NOTE: Printed receipts are now loaded from ReprintContext, no need to load here
   // The ReprintProvider handles loading from IndexedDB
@@ -937,6 +976,9 @@ const Index = () => {
       console.log('🔄 zeroOpt: New member selected, captureLocked=false');
     }
 
+    // v2.12.23: Derive target month from session metadata (e.g. for past seasons)
+    const sessionMonth = activeSession?.datefrom ? activeSession.datefrom.substring(0, 7) : undefined;
+
     // Pre-fetch cumulative for this farmer (online: seed cache, offline: use local data)
     if (showCumulative && deviceFingerprint) {
       (async () => {
@@ -949,9 +991,15 @@ const Index = () => {
             if (freqResult.success && freqResult.data) {
               const cloudCumulative = freqResult.data.cumulative_weight ?? 0;
               const cloudByProduct = freqResult.data.by_product || [];
-              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, activeSeasonCode, { verifySource: 'W4:on-select-fetch', caller: 'Index/onFarmerSelect' });
+              const cloudMonth = freqResult.data.month_start ? freqResult.data.month_start.substring(0, 7) : sessionMonth;
+
+              await updateFarmerCumulative(cleanFarmerId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, activeSeasonCode, {
+                verifySource: 'W4:on-select-fetch',
+                caller: 'Index/onFarmerSelect',
+                monthOverride: cloudMonth
+              });
               // Fresh unsynced weight from actual IndexedDB receipts (no cached localCount)
-              const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId, selectedRouteCode || undefined, activeSeasonCode);
+              const unsynced = await getUnsyncedWeightForFarmer(cleanFarmerId, selectedRouteCode || undefined, activeSeasonCode, { monthOverride: cloudMonth });
               // Merge by-product
               const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
               for (const p of cloudByProduct) {
@@ -964,15 +1012,15 @@ const Index = () => {
                 else merged[key] = { ...p, icode: key };
               }
               setCumulativeFrequency(filterCumulativeByProduct({ total: cloudCumulative + unsynced.total, byProduct: Object.values(merged) }, selectedProduct?.icode));
-              console.log(`📊 Pre-fetched cumulative for ${cleanFarmerId}: cloud=${cloudCumulative}, unsynced=${unsynced.total}`);
+              console.log(`📊 Pre-fetched cumulative for ${cleanFarmerId}: cloud=${cloudCumulative}, unsynced=${unsynced.total}, month=${cloudMonth}`);
               return;
             }
           }
           // Offline or fetch failed: baseCount + fresh unsynced receipts (no double-counting)
-          const total = await getFarmerTotalCumulative(cleanFarmerId, selectedRouteCode || undefined, activeSeasonCode);
+          const total = await getFarmerTotalCumulative(cleanFarmerId, selectedRouteCode || undefined, activeSeasonCode, sessionMonth);
           const filtered = filterCumulativeByProduct(total, selectedProduct?.icode);
           setCumulativeFrequency(filtered);
-          console.log(`📊 Offline cumulative for ${cleanFarmerId}: total=${total.total}`);
+          console.log(`📊 Offline cumulative for ${cleanFarmerId}: total=${total.total}, month=${sessionMonth || 'current'}`);
         } catch (err) {
           console.warn('Failed to pre-fetch cumulative:', err);
         }
@@ -1423,6 +1471,9 @@ const Index = () => {
             console.log('✅ Submitted to database:', referenceNo);
             lastCumulativeResult = result;
 
+            // v2.12.30: Clear from native storage if it was there
+            markNativeRecordSynced(referenceNo).catch(() => {});
+
             // v2.12.16: Authoritative cache update from backend response.
             // This eliminates "post-sync lag" and redundant API calls.
             if (result.cumulative_weight !== undefined) {
@@ -1618,6 +1669,9 @@ const Index = () => {
           const firstCapture = capturedCollections[0];
           const cleanId = firstCapture.farmer_id.replace(/^#/, '').trim();
 
+          // v2.12.23: Derive session month for past season awareness
+          const sessionMonth = activeSession?.datefrom ? activeSession.datefrom.substring(0, 7) : undefined;
+
           // Calculate just-submitted weight to guard against race conditions
           const previousCumTotal = cumulativeFrequency?.total ?? 0;
           const justSubmittedWeight = capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0);
@@ -1634,7 +1688,7 @@ const Index = () => {
 
           try {
             // v2.12.13: cached farmer_cumulative row anchors the trusted floor.
-            const cachedRow = await getFarmerCumulative(cleanId, selectedRouteCode || undefined);
+            const cachedRow = await getFarmerCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode, sessionMonth);
 
             if (navigator.onLine) {
               // v2.10.106: trusted-floor guard. The old guard trusted only the
@@ -1647,7 +1701,7 @@ const Index = () => {
               // the cloud read once on a suspected lag.
               const cachedBase = Number(cachedRow?.baseCount || 0);
               const productBase = filterCumulativeByProduct({ total: cachedBase, byProduct: cachedRow?.byProduct || [] }, selectedProduct?.icode)?.total || 0;
-              const trustedFloor = Math.max(productBase, previousCumTotal) + justSubmittedWeight;
+              const trustedFloor = Math.max(productBase, previousCumTotal + justSubmittedWeight);
               baseForLog = cachedBase;
               floorForLog = trustedFloor;
               fallbackScopeForLog = cachedRow?.fallbackScope;
@@ -1664,6 +1718,7 @@ const Index = () => {
               // available. This eliminates the "post-sync lag" completely.
               let cloudCumulative = lastCumulativeResult?.cumulative_weight;
               let cloudByProduct = lastCumulativeResult?.by_product;
+              let cloudMonth = sessionMonth;
 
               if (cloudCumulative === undefined) {
                 freqResult = await fetchCloud();
@@ -1671,6 +1726,9 @@ const Index = () => {
                 if (freqResult.success && freqResult.data) {
                   cloudCumulative = freqResult.data.cumulative_weight ?? 0;
                   cloudByProduct = freqResult.data.by_product || [];
+                  if (freqResult.data.month_start) {
+                    cloudMonth = freqResult.data.month_start.substring(0, 7);
+                  }
                 }
               }
 
@@ -1698,13 +1756,17 @@ const Index = () => {
                 // what we already trust — never let an unconfirmed stale read
                 // lower the persisted baseCount (mirrors v2.10.94/104 spirit).
                 if (cloudCumulative >= cachedBase) {
-                  await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, activeSeasonCode, { verifySource: 'W6:onscreen-print', caller: 'Index/onScreenPrint' });
+                  await updateFarmerCumulative(cleanId, cloudCumulative, true, cloudByProduct, selectedRouteCode || undefined, activeSeasonCode, {
+                    verifySource: 'W6:onscreen-print',
+                    caller: 'Index/onScreenPrint',
+                    monthOverride: cloudMonth
+                  });
                 }
                 // v2.10.107: exclude just-submitted refs — cloudCumulative
                 // already includes them, the local pending row would double-count.
                 const submittedRefs = capturedCollections.map((c) => c.reference_no).filter(Boolean) as string[];
-                const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined, activeSeasonCode, { excludeRefs: submittedRefs });
-                const fullUnsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined, activeSeasonCode);
+                const unsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined, activeSeasonCode, { excludeRefs: submittedRefs, monthOverride: cloudMonth });
+                const fullUnsynced = await getUnsyncedWeightForFarmer(cleanId, selectedRouteCode || undefined, activeSeasonCode, { monthOverride: cloudMonth });
                 const removed = +(fullUnsynced.total - unsynced.total).toFixed(3);
                 if (removed > 0) {
                   plog.info('CUM:DOUBLE-GUARD',
@@ -1737,7 +1799,7 @@ const Index = () => {
                 }
               } else {
                 // Cloud unavailable: local cache + unsynced, but never below the floor.
-                const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode);
+                const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode, sessionMonth);
                 const filtered = filterCumulativeByProduct(total, selectedProduct?.icode);
                 computedCumulative = (filtered?.total ?? 0) >= trustedFloor || trustedFloor <= 0
                   ? filtered
@@ -1753,13 +1815,13 @@ const Index = () => {
                   { farmerId: cleanId, route: selectedRouteCode, local: filtered?.total ?? 0, trustedFloor, cachedBase, fallbackScope: fallbackScopeForLog, used: computedCumulative?.total, path: 'on-screen' });
               }
             } else {
-              const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode);
+              const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode, sessionMonth);
               computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
               localForLog = total.total;
               usedForLog = 'local';
             }
           } catch {
-            const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode);
+            const total = await getFarmerTotalCumulative(cleanId, selectedRouteCode || undefined, activeSeasonCode, sessionMonth);
             computedCumulative = filterCumulativeByProduct(total, selectedProduct?.icode);
             localForLog = total.total;
             usedForLog = 'local';
@@ -1821,19 +1883,22 @@ const Index = () => {
         let usedForLog = 'local';
         let fallbackScopeForLog: string | undefined;
 
+        // v2.12.23: Derive session month for past season awareness in background print
+        const sessionMonth = activeSession?.datefrom ? activeSession.datefrom.substring(0, 7) : undefined;
+
         // Calculate cumulative in background with very short timeout
         if (printData.shouldShowCumulativeForFarmer && deviceFingerprint) {
           try {
             // v2.12.13: values already carried on printData — single source of truth.
             const prevCum = printData.previousCumulativeTotal;
             const justSubmitted = printData.justSubmittedWeight;
-            const cachedRow = await getFarmerCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined);
+            const cachedRow = await getFarmerCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode, sessionMonth);
 
             if (navigator.onLine) {
               // v2.10.106: trusted-floor guard (same as on-screen path above).
               const cachedBase = Number(cachedRow?.baseCount || 0);
               const productBase = filterCumulativeByProduct({ total: cachedBase, byProduct: cachedRow?.byProduct || [] }, printData.productIcode)?.total || 0;
-              const trustedFloor = Math.max(productBase, prevCum) + justSubmitted;
+              const trustedFloor = Math.max(productBase, prevCum + justSubmitted);
               baseForLog = cachedBase;
               floorForLog = trustedFloor;
               fallbackScopeForLog = cachedRow?.fallbackScope;
@@ -1851,6 +1916,7 @@ const Index = () => {
               // v2.12.16: Use cumulative returned from POST response if available.
               let cloudCumulative = lastCumulativeResult?.cumulative_weight;
               let cloudByProduct = lastCumulativeResult?.by_product;
+              let cloudMonth = sessionMonth;
 
               if (cloudCumulative === undefined) {
                 freqResult = await fetchCloud();
@@ -1858,6 +1924,9 @@ const Index = () => {
                 if (freqResult.success && freqResult.data) {
                   cloudCumulative = freqResult.data.cumulative_weight ?? 0;
                   cloudByProduct = freqResult.data.by_product || [];
+                  if (freqResult.data.month_start) {
+                    cloudMonth = freqResult.data.month_start.substring(0, 7);
+                  }
                 }
               }
 
@@ -1882,8 +1951,8 @@ const Index = () => {
 
                 // v2.10.107: exclude just-submitted refs from unsynced bucket.
                 const submittedRefs = printData.submittedRefs || [];
-                const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode, { excludeRefs: submittedRefs });
-                const fullUnsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
+                const unsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode, { excludeRefs: submittedRefs, monthOverride: cloudMonth });
+                const fullUnsynced = await getUnsyncedWeightForFarmer(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode, { monthOverride: cloudMonth });
                 const removed = +(fullUnsynced.total - unsynced.total).toFixed(3);
                 if (removed > 0) {
                   plog.info('CUM:DOUBLE-GUARD',
@@ -1914,12 +1983,16 @@ const Index = () => {
                 }
                 // Update cache only when cloud >= cachedBase (don't lower the cache from a stale read).
                 if (cloudCumulative >= cachedBase) {
-                  updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined, activeSeasonCode, { verifySource: 'W7:background-print', caller: 'Index/backgroundPrint' }).catch(() => {});
+                  updateFarmerCumulative(printData.farmerIdForCumulative, cloudCumulative, true, cloudByProduct, printData.routeCode || undefined, activeSeasonCode, {
+                    verifySource: 'W7:background-print',
+                    caller: 'Index/backgroundPrint',
+                    monthOverride: cloudMonth
+                  }).catch(() => {});
                 }
               } else {
                 // v2.12.7: cloud unavailable online — fall back to the trusted
                 // floor rather than an empty cache.
-                const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
+                const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode, sessionMonth);
                 const filtered = filterCumulativeByProduct(total, printData.productIcode);
                 cumulativeForPrint = (filtered?.total ?? 0) >= trustedFloor || trustedFloor <= 0
                   ? filtered
@@ -1938,14 +2011,14 @@ const Index = () => {
 
             // Offline or cloud fetch failed: use baseCount + fresh unsynced receipts
             if (cumulativeForPrint === undefined) {
-              const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
+              const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode, sessionMonth);
               cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
               localForLog = total.total;
               usedForLog = 'local';
             }
           } catch {
             // Fallback: baseCount + unsynced receipts (already includes just-saved offline receipts)
-            const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode);
+            const total = await getFarmerTotalCumulative(printData.farmerIdForCumulative, printData.routeCode || undefined, activeSeasonCode, sessionMonth);
             cumulativeForPrint = filterCumulativeByProduct(total, printData.productIcode);
             localForLog = total.total;
             usedForLog = 'local';
@@ -2222,7 +2295,7 @@ const Index = () => {
   }
 
   // Show Dashboard first
-  if (!showCollection) {
+  if (!showCollection && !showSupervisor) {
     console.log('[INDEX] Rendering Dashboard');
     const captureMode = getCaptureMode(currentUser?.supervisor);
   
@@ -2240,6 +2313,7 @@ const Index = () => {
           onStartSelling={handleStartSelling}
           onLogout={handleLogout}
           onOpenRecentReceipts={() => setReprintModalOpen(true)}
+          onOpenSupervisor={() => setShowSupervisor(true)}
           allowZReport={captureMode.allowZReport}
         />
         
@@ -2258,6 +2332,34 @@ const Index = () => {
           }}
         />
       </>
+    );
+  }
+
+  if (showSupervisor) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col">
+        <header
+          className="sticky top-0 z-30 flex items-center gap-4 border-b bg-[#26A69A] px-4 text-white shrink-0 shadow-md"
+          style={{
+            paddingTop: 'env(safe-area-inset-top)',
+            height: 'calc(3.5rem + env(safe-area-inset-top))',
+            minHeight: '64px'
+          }}
+        >
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowSupervisor(false)}
+            className="text-white hover:bg-white/10 shrink-0"
+          >
+            <MoreVertical className="h-5 w-5 rotate-90" />
+          </Button>
+          <h1 className="text-lg font-bold truncate">Supervisor Portal</h1>
+        </header>
+        <main className="flex-1 overflow-y-auto pb-10">
+          <SupervisorTransactions />
+        </main>
+      </div>
     );
   }
 

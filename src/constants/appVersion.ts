@@ -1,4 +1,19 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.32: SYNC ROBUSTNESS + IDEMPOTENT CUMULATIVE STATS.
+//   Backend: Extract getFarmerCumulativeStats helper; idempotent POST retry now
+//   returns backend_id, cumulative_weight and by_product. Ensures devices
+//   receive authoritative totals even during re-syncs.
+//   Sync: processReceiptSync uses authoritative reference from the receipt
+//   object to mark native storage, and applies optimistic carry-over if
+//   backend response lacks cumulative data.
+//
+// v2.12.31: SYNC PENDING FIX + CUMULATIVE FALLBACK IMPROVEMENT.
+//   Sync: Fixed ReferenceError in useDataSync where activeScode was undefined,
+//   causing background syncs to crash. Enhanced logging for native storage.
+//   Cumulative: Improved getFarmerCumulative fallback to global bucket when
+//   route-specific bucket is missing or contains 0 weight.
+//   Integrity: Defensive checks in updateFarmerCumulative and sync delete paths.
+//
 // v2.12.13: MYSQL CONNECTION RETENTION + CUMULATIVE QUERY PERFORMANCE.
 //   Backend pool: connectionLimit 12, idleTimeout 30 s, maxIdle 5,
 //   enableKeepAlive off — Contabo was holding 139 idle sockets for hours
@@ -1176,8 +1191,8 @@
 //   Dashboard), only the Dashboard minimises/exits the app.
 //   (3) Bluetooth auto-reconnect installer is actually invoked on native, so the
 //   saved scale/printer reconnect when the app is reopened.
-export const APP_VERSION = '2.12.13';
-export const APP_VERSION_CODE = 189;
+export const APP_VERSION = '2.12.32';
+export const APP_VERSION_CODE = 208;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).

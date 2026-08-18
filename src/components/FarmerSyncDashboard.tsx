@@ -92,10 +92,35 @@ export const FarmerSyncDashboard = () => {
   });
   const [lastSync, setLastSync] = useState<LastSyncState>({ kind: 'idle' });
   const [nowTick, setNowTick] = useState(Date.now());
+
+  // v2.12.22: Reactive session selection state.
+  const [sessionSelection, setSessionSelection] = useState({
+    route: getActiveRoute(),
+    icode: getActiveProduct(),
+    scode: getActiveSeason()
+  });
+
   const cancelledRef = useRef(false);
-  const activeRoute = getActiveRoute();
-  const activeIcode = getActiveProduct();
-  const activeScode = getActiveSeason();
+
+  // Listen for selection changes in other tabs/components
+  useEffect(() => {
+    const handleStorage = () => {
+      setSessionSelection({
+        route: getActiveRoute(),
+        icode: getActiveProduct(),
+        scode: getActiveSeason()
+      });
+    };
+    window.addEventListener('storage', handleStorage);
+    // Also listen for a custom event if selection changes in-app
+    window.addEventListener('sessionDataUpdated', handleStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('sessionDataUpdated', handleStorage);
+    };
+  }, []);
+
+  const { route: activeRoute, icode: activeIcode, scode: activeScode } = sessionSelection;
 
   /**
    * Build a name lookup map from cm_members (IndexedDB or API).
@@ -105,24 +130,23 @@ export const FarmerSyncDashboard = () => {
     const lookup = new Map<string, Farmer>();
     const deviceFingerprint = await resolveFingerprint();
 
-    // Try API first for the most complete list
+    // Try IndexedDB first for fast local load
+    const farmers = await getFarmers();
+    farmers.forEach(f => lookup.set(f.farmer_id.trim(), f));
+
+    // Try API to augment/refresh names if online
     if (navigator.onLine && deviceFingerprint) {
       try {
         const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
         if (response.success && response.data && response.data.length > 0) {
           (response.data as Farmer[]).forEach(f => lookup.set(f.farmer_id.trim(), f));
-          console.log(`[SyncDash] Name lookup: ${lookup.size} farmers from API`);
-          return lookup;
+          console.log(`[SyncDash] Name lookup: ${lookup.size} farmers augmented from API`);
         }
       } catch (err) {
-        console.warn('[SyncDash] API name lookup failed, using IndexedDB:', err);
+        console.warn('[SyncDash] API name lookup augmentation failed:', err);
       }
     }
 
-    // Fallback: IndexedDB cached farmers
-    const farmers = await getFarmers();
-    farmers.forEach(f => lookup.set(f.farmer_id.trim(), f));
-    console.log(`[SyncDash] Name lookup: ${lookup.size} farmers from IndexedDB`);
     return lookup;
   }, [getFarmers]);
 
@@ -265,11 +289,19 @@ export const FarmerSyncDashboard = () => {
     const cleanIcode = (activeIcode || '').trim().toUpperCase();
     const cleanScode = (activeScode || '').trim().toUpperCase();
 
-    // 1. Read every farmer_cumulative row, filtered by the row's STORED route.
-    //    v2.10.96: when an active product is selected, baseCount is derived
-    //    from the row's `byProduct[]` slice (icode match) instead of the
-    //    combined total.
-    const cumulativeEntries: Array<{ farmer_id: string; baseCount: number; localCount: number }> = [];
+    // v2.12.23: Derive the target month from the active session metadata if available.
+    let targetMonthStr: string | undefined;
+    try {
+      const data = localStorage.getItem('active_session_data');
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (parsed?.session?.datefrom) {
+          targetMonthStr = parsed.session.datefrom.substring(0, 7); // "YYYY-MM"
+        }
+      }
+    } catch {}
+
+    const cumulativeMap = new Map<string, { baseCount: number; localCount: number; isScoped: boolean; actualRoute: string }>();
     if (db) {
       try {
         await new Promise<void>((resolve) => {
@@ -281,10 +313,18 @@ export const FarmerSyncDashboard = () => {
             for (const r of all) {
               const fid = String(r.farmer_id || '').replace(/^#/, '').trim();
               if (!fid) continue;
+
               const rowRoute = String(r.route || '').trim().toUpperCase() || 'ALL';
-              if (cleanActiveRoute && rowRoute !== cleanActiveRoute) continue;
               const rowScode = String(r.scode || '').trim().toUpperCase() || 'ALL';
-              if (cleanScode && rowScode !== cleanScode) continue;
+              const rowMonth = String(r.month || '');
+
+              const isScopedMatch = (cleanActiveRoute ? rowRoute === cleanActiveRoute : true) &&
+                                   (cleanScode ? rowScode === cleanScode : true);
+              const isMonthMatch = targetMonthStr ? rowMonth === targetMonthStr : true;
+
+              // v2.12.22: Strict filtering. If a specific center or season is selected,
+              // do NOT fall back to global totals. This ensures the view is accurate.
+              if (!isScopedMatch || !isMonthMatch) continue;
 
               let baseCount = Number(r.baseCount || 0);
               let localCount = Number(r.localCount || 0);
@@ -297,12 +337,21 @@ export const FarmerSyncDashboard = () => {
                 const slice = byProduct.find(
                   (p) => String(p.icode || '').trim().toUpperCase() === cleanIcode
                 );
-                if (!slice) continue; // farmer has no activity for this product
+                if (!slice) {
+                  // If we're filtering by product and this row has no data for it,
+                  // we skip it.
+                  continue;
+                }
                 baseCount = Number(slice.weight || 0);
-                localCount = 0; // per-icode local delta is unknown from this store
+                localCount = 0;
               }
 
-              cumulativeEntries.push({ farmer_id: fid, baseCount, localCount });
+              cumulativeMap.set(fid, {
+                baseCount,
+                localCount,
+                isScoped: true,
+                actualRoute: rowRoute
+              });
             }
             resolve();
           };
@@ -314,13 +363,23 @@ export const FarmerSyncDashboard = () => {
     }
 
     // 2. Union with farmer IDs from unsynced receipts (offline captures),
-    //    filtered by the receipt's own route + active product + active season.
+    //    filtered by the receipt's own route + active product + active season + month.
     const unsyncedReceipts = await getUnsyncedReceipts();
     const unsyncedByFarmer = new Map<string, number>();
+
+    // v2.12.23: Use target month for unsynced calculation if available
+    const now = new Date();
+    const targetMonthIndex = targetMonthStr ? parseInt(targetMonthStr.split('-')[1], 10) - 1 : now.getMonth();
+    const targetYear = targetMonthStr ? parseInt(targetMonthStr.split('-')[0], 10) : now.getFullYear();
+
     for (const r of unsyncedReceipts) {
       if ((r as any).type === 'sale') continue;
       const tt = Number((r as any).transtype);
       if (tt !== 1) continue;
+
+      const rDate = new Date(r.collection_date);
+      if (rDate.getMonth() !== targetMonthIndex || rDate.getFullYear() !== targetYear) continue;
+
       const fid = String((r as any).farmer_id || '').replace(/^#/, '').trim();
       if (!fid) continue;
       if (cleanActiveRoute) {
@@ -346,11 +405,8 @@ export const FarmerSyncDashboard = () => {
     }
 
     const farmerIds = new Set<string>();
-    cumulativeEntries.forEach(e => farmerIds.add(e.farmer_id));
+    cumulativeMap.forEach((_, fid) => farmerIds.add(fid));
     unsyncedByFarmer.forEach((_, fid) => farmerIds.add(fid));
-
-    const cumulativeMap = new Map<string, { baseCount: number; localCount: number }>();
-    for (const e of cumulativeEntries) cumulativeMap.set(e.farmer_id, e);
 
     const built: FarmerSyncEntry[] = [];
     for (const fid of farmerIds) {
@@ -368,7 +424,7 @@ export const FarmerSyncDashboard = () => {
       built.push({
         farmer_id: fid,
         name: meta?.name || fid,
-        route: cleanActiveRoute || (meta?.route || '').trim() || 'N/A',
+        route: cum?.actualRoute || (meta?.route || '').trim() || 'N/A',
         cumulativeTotal: total,
         baseCount,
         localCount: liveDelta,
@@ -511,9 +567,15 @@ export const FarmerSyncDashboard = () => {
       setIsOnline(false);
     };
 
+    const handleSyncComplete = () => {
+      console.log('[SyncDash] Data sync complete event received — reloading...');
+      loadData(false);
+    };
+
     window.addEventListener('cumulative-sync-progress', handleProgress);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('syncComplete', handleSyncComplete);
 
     // Lightweight ticker so the "X ago" label stays fresh.
     const tick = window.setInterval(() => setNowTick(Date.now()), 15000);
@@ -523,6 +585,7 @@ export const FarmerSyncDashboard = () => {
       window.removeEventListener('cumulative-sync-progress', handleProgress);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('syncComplete', handleSyncComplete);
       window.clearInterval(tick);
     };
   }, [loadData]);

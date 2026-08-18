@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2, UserPlus, CreditCard } from 'lucide-react';
+import { Store, Info, MoreVertical, Cpu, BarChart3, AlertTriangle, Loader2, UserPlus, CreditCard, Shield, Landmark } from 'lucide-react';
 import { usePaymentsAccess } from '@/modules/payments/usePaymentsAccess';
+import { useSaccoAccess } from '@/modules/sacco/useSaccoAccess';
 import { RouteSelector } from '@/components/RouteSelector';
 import { SessionSelector } from '@/components/SessionSelector';
 import { ProductSelector } from '@/components/ProductSelector';
@@ -12,7 +13,7 @@ import { AddMemberModal } from '@/components/AddMemberModal';
 
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { APP_VERSION } from '@/constants/appVersion';
-import { useDataSync } from '@/hooks/useDataSync';
+import { useSync } from '@/contexts/SyncContext';
 import { useSessionClose } from '@/hooks/useSessionClose';
 import { useSessionExpiration } from '@/hooks/useSessionExpiration';
 import { useAppSettings } from '@/hooks/useAppSettings';
@@ -67,6 +68,7 @@ interface DashboardProps {
   onStartSelling: (route: Route, session: Session, product: Item | null) => void;
   onLogout: () => void;
   onOpenRecentReceipts?: () => void;
+  onOpenSupervisor?: () => void; // v2.12.17: Supervisor portal
   allowZReport?: boolean; // From supervisor mode - controls Z report visibility
 }
 
@@ -82,12 +84,14 @@ export const Dashboard = ({
   onStartSelling,
   onLogout,
   onOpenRecentReceipts,
+  onOpenSupervisor,
   allowZReport = true,
 }: DashboardProps) => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const { visible: paymentsVisible } = usePaymentsAccess();
+  const saccoAccess = useSaccoAccess();
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const initialDataRef = useRef(getInitialSessionData());
   
@@ -113,7 +117,7 @@ export const Dashboard = ({
   const [printerConnected, setPrinterConnected] = useState(() => isPrinterConnected());
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [availableProductCount, setAvailableProductCount] = useState(0);
-  const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useDataSync();
+  const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useSync();
   const { sessionPrintOnly, periodLabel, produceLabel } = useAppSettings();
   
   // Session expiration monitoring - only active when session is started
@@ -382,6 +386,17 @@ export const Dashboard = ({
                       <hr className="my-0.5 border-gray-200" />
                     </>
                   )}
+                  {saccoAccess.visible && (
+                    <>
+                      <button
+                        onClick={() => { navigate('/sacco'); setMenuOpen(false); }}
+                        className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <Landmark className="h-4 w-4" /> Sacco Portal
+                      </button>
+                      <hr className="my-0.5 border-gray-200" />
+                    </>
+                  )}
                   {currentUser?.add_members === true && (
                     <>
                       <button
@@ -397,6 +412,21 @@ export const Dashboard = ({
                       >
                         <UserPlus className="h-4 w-4" />
                         Add Member
+                      </button>
+                      <hr className="my-0.5 border-gray-200" />
+                    </>
+                  )}
+                  {currentUser?.supervisor === 6 && (
+                    <>
+                      <button
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onOpenSupervisor?.();
+                        }}
+                        className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <Shield className="h-4 w-4" />
+                        Supervisor Portal
                       </button>
                       <hr className="my-0.5 border-gray-200" />
                     </>
@@ -491,6 +521,18 @@ export const Dashboard = ({
             </div>
             <span className="mt-0.5 font-medium text-gray-700 dark:text-gray-200" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>About</span>
           </button>
+
+          {currentUser?.supervisor === 6 && (
+            <button
+              onClick={() => onOpenSupervisor?.()}
+              className="flex flex-col items-center active:scale-95 transition-transform"
+            >
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-teal-100/80 dark:bg-teal-900/30 border-2 border-teal-200 dark:border-teal-800 flex items-center justify-center shadow-sm flex-shrink-0">
+                <Shield className="h-5 w-5 sm:h-6 sm:w-6 flex-shrink-0" style={{ color: '#D81B60' }} strokeWidth={1.5} />
+              </div>
+              <span className="mt-0.5 font-medium text-gray-700 dark:text-gray-200" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>Admin</span>
+            </button>
+          )}
         </div>
       </div>
 

@@ -153,6 +153,9 @@ const finalizeWebhookLog = async (pool, logId, { outcome, httpStatus, reference,
  */
 
 const resolveMember = async (pool, accountNumber) => {
+  // v2.12.19 — Normalise input for SARGable prefix fallback check
+  const uAccount = String(accountNumber || '').trim().toUpperCase();
+
   // v2.12.8 — sacco_members.account_number may hold SEVERAL accounts separated
   // by '&&' (e.g. 77136#T001&&77137#T002&&77138#T003). Match the incoming
   // account against any segment. Single-value rows behave exactly as before.
@@ -160,11 +163,11 @@ const resolveMember = async (pool, accountNumber) => {
     `SELECT member_id, ccode FROM sacco_members
       WHERE status = 'active'
         AND FIND_IN_SET(
-              UPPER(TRIM(?)),
-              UPPER(REPLACE(REPLACE(account_number, ' ', ''), '&&', ','))
+              ?,
+              REPLACE(REPLACE(account_number, ' ', ''), '&&', ',')
             ) > 0
       LIMIT 1`,
-    [accountNumber]
+    [uAccount]
   );
   if (rows.length > 0) {
     return { memberId: rows[0].member_id, ccode: String(rows[0].ccode || '').trim(), allocated: true };
@@ -172,21 +175,21 @@ const resolveMember = async (pool, accountNumber) => {
 
   // v2.12.10 — Prefix fallback. If '7136#BAD' fails, check if '7136' is linked.
   // This captures mistyped sub-accounts under the recovery account.
-  if (accountNumber.includes('#')) {
-    const prefix = accountNumber.split('#')[0].trim();
+  if (uAccount.includes('#')) {
+    const prefix = uAccount.split('#')[0].trim();
     if (prefix) {
       const [prefixRows] = await pool.query(
         `SELECT member_id, ccode FROM sacco_members
           WHERE status = 'active'
             AND FIND_IN_SET(
-                  UPPER(TRIM(?)),
-                  UPPER(REPLACE(REPLACE(account_number, ' ', ''), '&&', ','))
+                  ?,
+                  REPLACE(REPLACE(account_number, ' ', ''), '&&', ',')
                 ) > 0
           LIMIT 1`,
         [prefix]
       );
       if (prefixRows.length > 0) {
-        console.log('[YETU] account %s not found, falling back to prefix %s', accountNumber, prefix);
+        console.log('[YETU] account %s not found, falling back to prefix %s', uAccount, prefix);
         return { memberId: prefixRows[0].member_id, ccode: String(prefixRows[0].ccode || '').trim(), allocated: true };
       }
     }
@@ -195,7 +198,7 @@ const resolveMember = async (pool, accountNumber) => {
   // v2.12.8 — NO fallback company. An unknown account is stored with
   // member_id = NULL and ccode = NULL so it can never be attributed to
   // another Sacco's books. It is reconciled later by an operator.
-  console.log('[YETU] account %s not linked to any member — storing unallocated', accountNumber);
+  console.log('[YETU] account %s not linked to any member — storing unallocated', uAccount);
   return { memberId: null, ccode: null, allocated: false };
 };
 
@@ -262,7 +265,7 @@ const storeDeposit = async (pool, payload, rawBody) => {
  * excluding specific accounts already linked to the user.
  */
 const buildAccountFilter = (ccode, accountNumber, allAccounts) => {
-  const where = [`UPPER(TRIM(ccode)) = UPPER(TRIM(?))`];
+  const where = [`ccode = ?`];
   const params = [ccode];
 
   if (accountNumber && !accountNumber.includes('#')) {
@@ -277,7 +280,7 @@ const buildAccountFilter = (ccode, accountNumber, allAccounts) => {
       params.push(specific);
     }
   } else {
-    where.push(`UPPER(TRIM(account_number_raw)) = UPPER(TRIM(?))`);
+    where.push(`account_number_raw = ?`);
     params.push(accountNumber);
   }
   return { where, params };

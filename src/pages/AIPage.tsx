@@ -17,7 +17,7 @@ import { TransactionReceipt, createAIReceiptData, type ReceiptData } from '@/com
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
-import { saveToLocalDB } from '@/services/offlineStorage';
+import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
 import { getTimeoutSignal } from '@/utils/abortUtils';
 import { resolveSessionMetadata, resolveDashboardActiveSession } from '@/utils/sessionMetadata';
 
@@ -509,6 +509,8 @@ const AIPage = () => {
         if (navigator.onLine) {
           // Submit to sales endpoint with transtype=3 for AI
           await mysqlApi.sales.create(aiTransaction);
+          // v2.12.30: Clear from native storage if it was there
+          markNativeRecordSynced(currentTransRefNo).catch(() => {});
         } else {
           // Save offline for later sync
           await saveOfflineSale(aiTransaction);

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { type MilkCollection } from '@/lib/supabase';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
-import { useDataSync } from '@/hooks/useDataSync';
+import { useSync } from '@/contexts/SyncContext';
 import { generateTextReport, generateCSVReport } from '@/utils/fileExport';
 import { toast } from 'sonner';
 import { ClipboardList } from 'lucide-react';
@@ -14,14 +14,14 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
   let dataSync;
   try {
     indexedDB = useIndexedDB();
-    dataSync = useDataSync();
+    dataSync = useSync();
   } catch (err) {
     console.error('Hook initialization error:', err);
     return <div className="text-center py-4">Loading...</div>;
   }
 
   const { getUnsyncedReceipts, isReady } = indexedDB;
-  const { syncAllData, isSyncing, pendingCount } = dataSync;
+  const { syncAllData, isSyncing, isBlockingSync, pendingCount } = dataSync;
 
   const loadPendingReceipts = useCallback(async () => {
     if (!isReady) return;
@@ -45,7 +45,8 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       toast.error('You are offline');
       return;
     }
-    await syncAllData(false);
+    // v2.12.38: Force blocking sync on manual button click
+    await syncAllData(false, true);
     await loadPendingReceipts();
   };
 
@@ -103,10 +104,10 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
       <div className="space-y-2">
         <button
           onClick={handleSync}
-          disabled={isSyncing || unsyncedReceipts.length === 0}
+          disabled={isBlockingSync || unsyncedReceipts.length === 0}
           className="w-full py-3 bg-gray-200 text-gray-800 rounded-lg font-semibold hover:bg-gray-300 transition-colors disabled:opacity-50"
         >
-          {isSyncing ? 'Syncing...' : 'Sync Now'}
+          {isBlockingSync ? 'Syncing...' : 'Sync Now'}
         </button>
         <button
           onClick={handleExportText}

@@ -1,14 +1,45 @@
-/**
- * Milk Collection Sync Service
- * Ultra-lightweight Node.js service for cPanel hosting
- * Syncs data between MySQL and external systems
- * 
- * Memory target: <50MB RAM
- * Single-file architecture for easy deployment
- */
-
 const http = require('http');
 const mysql = require('mysql2/promise');
+const fs = require('fs');
+const path = require('path');
+
+// Load environment variables
+// v2.12.19: Look for .env in current dir OR sibling backend-api dir
+const envPath = fs.existsSync(path.join(__dirname, '.env'))
+  ? path.join(__dirname, '.env')
+  : path.join(__dirname, '..', 'backend-api', '.env');
+
+require('dotenv').config({ path: envPath });
+
+// v2.12.13 — Autoritative Nairobi 12HR log timestamps for all backend logs.
+const ts = () => {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Africa/Nairobi',
+      year: '2-digit', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+    }).formatToParts(new Date());
+    const p = (type) => parts.find(x => x.type === type).value;
+    return `[${p('year')}:${p('month')}:${p('day')} ${p('hour')}:${p('minute')}:${p('second')} ${p('dayPeriod').toUpperCase()}]`;
+  } catch (e) {
+    return `[${new Date().toISOString()}]`;
+  }
+};
+
+const _log = console.log, _warn = console.warn, _error = console.error;
+console.log = (...a) => _log(ts(), ...a);
+console.warn = (...a) => _warn(ts(), ...a);
+console.error = (...a) => _error(ts(), ...a);
+const fs = require('fs');
+const path = require('path');
+
+// Load environment variables
+// v2.12.19: Look for .env in current dir OR sibling backend-api dir
+const envPath = fs.existsSync(path.join(__dirname, '.env'))
+  ? path.join(__dirname, '.env')
+  : path.join(__dirname, '..', 'backend-api', '.env');
+
+require('dotenv').config({ path: envPath });
 
 // ============================================================================
 // CONFIGURATION
@@ -19,9 +50,9 @@ const VERSION = '1.0.0';
 const SERVICE_NAME = 'milk-collection-sync-service';
 
 // v2.10.108: pool tunables aligned with cPanel max_user_connections=40 shared
-// with backend-api. Default pool 5 (worst case 2 workers × 5 = 10 conns).
-const SYNC_POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 5);
-const SYNC_QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 30);
+// with backend-api. Default pool 10 to allow higher throughput.
+const SYNC_POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 10);
+const SYNC_QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 50);
 
 // Database configuration from environment
 // NOTE: supports both DB_* (legacy) and MYSQL_* (matches .htaccess) names.

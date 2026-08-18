@@ -1,6 +1,7 @@
 import { mysqlApi, type Sale, type BatchSaleRequest } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { resolveSessionMetadata } from '@/utils/sessionMetadata';
+import { markNativeRecordSynced } from '@/services/offlineStorage';
 
 interface SaleRecord extends Sale {
   orderId?: number;
@@ -121,6 +122,10 @@ export const syncSalesFromDB = async (
 
         if (result.success) {
           for (const sale of batchSales) {
+            const refNo = sale.transrefno || sale.uploadrefno;
+            if (refNo) {
+              markNativeRecordSynced(refNo).catch(() => {});
+            }
             if (sale.orderId) {
               try { await deleteSale(sale.orderId); } catch (e) {
                 console.warn(`[WARN] Failed to delete synced sale ${sale.orderId}:`, e);
@@ -133,6 +138,10 @@ export const syncSalesFromDB = async (
           const errorMsg = (result.error || '').toLowerCase();
           if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
             for (const sale of batchSales) {
+              const refNo = sale.transrefno || sale.uploadrefno;
+              if (refNo) {
+                markNativeRecordSynced(refNo).catch(() => {});
+              }
               if (sale.orderId) {
                 try { await deleteSale(sale.orderId); } catch (e) {
                   console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
@@ -150,6 +159,10 @@ export const syncSalesFromDB = async (
         const errorMsg = (error?.message || '').toLowerCase();
         if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
           for (const sale of batchSales) {
+            const refNo = sale.transrefno || sale.uploadrefno;
+            if (refNo) {
+              markNativeRecordSynced(refNo).catch(() => {});
+            }
             if (sale.orderId) {
               try { await deleteSale(sale.orderId); } catch (e) {
                 console.warn(`[WARN] Failed to delete duplicate sale ${sale.orderId}:`, e);
@@ -222,6 +235,10 @@ export const syncSalesFromDB = async (
 
         const success = await mysqlApi.sales.create(cleanSale);
         if (success && saleRecord.orderId) {
+          const refNo = saleRecord.transrefno || saleRecord.uploadrefno;
+          if (refNo) {
+            markNativeRecordSynced(refNo).catch(() => {});
+          }
           try { await deleteSale(saleRecord.orderId); } catch (e) {
             console.warn(`[WARN] Failed to delete synced AI sale ${saleRecord.orderId}:`, e);
           }
@@ -234,6 +251,10 @@ export const syncSalesFromDB = async (
       } catch (error: any) {
         const errorMsg = (error?.message || '').toLowerCase();
         if (errorMsg.includes('duplicate') || errorMsg.includes('already exists')) {
+          const refNo = saleRecord.transrefno || saleRecord.uploadrefno;
+          if (refNo) {
+            markNativeRecordSynced(refNo).catch(() => {});
+          }
           if (saleRecord.orderId) {
             try { await deleteSale(saleRecord.orderId); } catch (e) {
               console.warn(`[WARN] Failed to delete duplicate AI sale ${saleRecord.orderId}:`, e);

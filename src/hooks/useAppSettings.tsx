@@ -45,6 +45,8 @@ export interface AppSettings {
   allowSackEdit: number;
   // v2.11.0: Payments module activation flag (DB: psettings.payments_active). 0 = hidden, 1 = active.
   payments_active: number;
+  // v2.12.18: Sacco module activation flag (DB: psettings.sacco_module_active). 0 = hidden, 1 = active.
+  sacco_module_active: number;
 }
 
 // Default settings - rdesc is empty to force use of dynamic DB value
@@ -67,7 +69,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   periodLabel: 'Session', // Default to Session (dairy)
   sackTare: 1, // Default 1 kg sack tare weight for coffee
   allowSackEdit: 0, // Default: sack weight is fixed/backend-controlled
-  payments_active: 0 // v2.11.0: Payments module hidden by default
+  payments_active: 0, // v2.11.0: Payments module hidden by default
+  sacco_module_active: 0 // v2.12.18: Sacco module hidden by default
 };
 
 const SETTINGS_STORAGE_KEY = 'app_settings';
@@ -132,21 +135,30 @@ interface AppSettingsContextType {
   allowSackEdit: boolean; // Whether frontend users can edit sack weight
   // v2.11.0: Payments module active for this company (psettings.payments_active === 1)
   paymentsActive: boolean;
+  // v2.12.18: Sacco module active for this company (psettings.sacco_module_active === 1)
+  saccoModuleActive: boolean;
 }
 
 // React context
 const AppSettingsContext = createContext<AppSettingsContextType | null>(null);
 
+// Export context provider component
+export const AppSettingsProvider = ({ children }: { children: React.ReactNode }) => {
+  const value = useAppSettingsStandalone();
+  return (
+    <AppSettingsContext.Provider value={value}>
+      {children}
+    </AppSettingsContext.Provider>
+  );
+};
+
 // Hook to use settings throughout the app
 export const useAppSettings = (): AppSettingsContextType => {
   const context = useContext(AppSettingsContext);
-  if (context) {
-    return context;
+  if (!context) {
+    throw new Error('useAppSettings must be used within an AppSettingsProvider');
   }
-  
-  // Fallback for components not wrapped in provider (uses standalone hook)
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  return useAppSettingsStandalone();
+  return context;
 };
 
 // Check if error is due to old backend with stale column references
@@ -369,7 +381,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             periodLabel: deviceData.app_settings?.periodLabel ?? DEFAULT_SETTINGS.periodLabel,
             sackTare: parseFloat(String(deviceData.app_settings?.sackTare ?? DEFAULT_SETTINGS.sackTare)),
             allowSackEdit: parseInt(String(deviceData.app_settings?.sackEdit ?? deviceData.app_settings?.allowSackEdit ?? DEFAULT_SETTINGS.allowSackEdit), 10),
-            payments_active: parseInt(String(deviceData.app_settings?.payments_active ?? DEFAULT_SETTINGS.payments_active), 10)
+            payments_active: parseInt(String(deviceData.app_settings?.payments_active ?? DEFAULT_SETTINGS.payments_active), 10),
+            sacco_module_active: parseInt(String(deviceData.app_settings?.sacco_module_active ?? DEFAULT_SETTINGS.sacco_module_active), 10)
           };
           
           // Log settings changes for debugging
@@ -580,6 +593,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const sackTareWeight = settings.sackTare ?? 1; // Default 1 kg
   const allowSackEdit = settings.allowSackEdit === 1; // 0 = fixed, 1 = editable
   const paymentsActive = settings.payments_active === 1; // v2.11.0
+  const saccoModuleActive = settings.sacco_module_active === 1; // v2.12.18
 
 
   return {
@@ -609,7 +623,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     useRouteFilter,
     sackTareWeight,
     allowSackEdit,
-    paymentsActive
+    paymentsActive,
+    saccoModuleActive
   };
 };
 

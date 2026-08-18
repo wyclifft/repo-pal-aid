@@ -17,7 +17,32 @@ export const OfflineIndicator = () => {
     try {
       const unsyncedReceipts = await getUnsyncedReceipts();
       const unsyncedSales = await getUnsyncedSales();
-      setPendingCount((unsyncedReceipts?.length || 0) + (unsyncedSales?.length || 0));
+
+      let totalCount = (unsyncedReceipts?.length || 0) + (unsyncedSales?.length || 0);
+
+      // v2.12.30: Check native storage for discrepancies
+      try {
+        const { isNativeStorageAvailable, getUnsyncedFromLocalDB } = await import('@/services/offlineStorage');
+        if (isNativeStorageAvailable()) {
+          const nativeMilk = await getUnsyncedFromLocalDB('milk_collection');
+          const nativeSales = await getUnsyncedFromLocalDB('store_sale');
+          const nativeAI = await getUnsyncedFromLocalDB('ai_sale');
+
+          // Deduplicate refs that exist in both places to avoid double counting
+          const idbRefs = new Set(unsyncedReceipts.map(r => r.reference_no));
+          const idbSaleRefs = new Set(unsyncedSales.map(r => r.transrefno || r.reference_no));
+
+          const nativeMilkUnique = nativeMilk.filter(r => !idbRefs.has(r.referenceNo)).length;
+          const nativeSalesUnique = nativeSales.filter(r => !idbSaleRefs.has(r.referenceNo)).length +
+                                     nativeAI.filter(r => !idbSaleRefs.has(r.referenceNo)).length;
+
+          totalCount += nativeMilkUnique + nativeSalesUnique;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch native pending count:', err);
+      }
+
+      setPendingCount(totalCount);
     } catch (error) {
       console.warn('Failed to get pending count:', error);
     }

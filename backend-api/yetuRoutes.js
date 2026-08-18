@@ -50,8 +50,8 @@ const clientIp = (req) =>
   null;
 
 /**
- * Portal access gate: authorized device + Sacco org type + payments active +
- * per-user permission. Also resolves the member account the user may read.
+ * Portal access gate: authorized device + Sacco module active + per-user permission.
+ * Also resolves the member account the user may read.
  */
 const resolveSaccoAccess = async (pool, { deviceFingerprint, userid, requestedAccount }) => {
   const fingerprint = String(deviceFingerprint || '').trim();
@@ -69,24 +69,22 @@ const resolveSaccoAccess = async (pool, { deviceFingerprint, userid, requestedAc
   const ccode = String(deviceRows[0].ccode || '').trim();
   if (!ccode) return { ok: false, status: 403, error: 'Device company not configured' };
 
-  // v2.12.7 — psettings is keyed by `cno` (there is no `ccode` column).
+  // v2.12.7 — psettings is keyed by `cno`.
+  // v2.12.18: Sacco Portal enabled via psettings.sacco_module_active = 1.
   const [settingsRows] = await pool.query(
-    `SELECT IFNULL(payments_active, 0) AS payments_active, IFNULL(orgtype, 'D') AS orgtype
-       FROM psettings WHERE UPPER(TRIM(cno)) = UPPER(TRIM(?)) LIMIT 1`,
+    `SELECT IFNULL(sacco_module_active, 0) AS sacco_module_active
+       FROM psettings WHERE cno = ? LIMIT 1`,
     [ccode]
   );
   if (settingsRows.length === 0) return { ok: false, status: 403, error: 'Company not configured' };
-  if (String(settingsRows[0].orgtype || '').trim().toUpperCase() !== 'S') {
-    return { ok: false, status: 403, error: 'Sacco module not supported for this organization' };
-  }
-  if (!toDbBool(settingsRows[0].payments_active)) {
-    return { ok: false, status: 403, error: 'Payments not active for this company' };
+  if (!toDbBool(settingsRows[0].sacco_module_active)) {
+    return { ok: false, status: 403, error: 'Sacco module is not active for this organization' };
   }
 
   const [userRows] = await pool.query(
     `SELECT IFNULL(can_access_payments, 0) AS can_access_payments, link_account
        FROM Users
-      WHERE TRIM(userid) = ? AND UPPER(TRIM(ccode)) = UPPER(TRIM(?))
+      WHERE userid = ? AND ccode = ?
       LIMIT 1`,
     [userId, ccode]
   );

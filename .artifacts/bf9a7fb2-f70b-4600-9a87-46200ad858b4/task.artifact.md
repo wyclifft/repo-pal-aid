@@ -1,0 +1,9 @@
+- [x] Enhance logging in `OfflineStoragePlugin.kt` and `offlineStorage.ts`
+- [x] Implement auto-sync trigger in `useDataSync.ts`'s `updatePendingCount`
+- [x] Add detailed sync flow logging in `useDataSync.ts`
+- [x] Verify auto-sync trigger on record detection
+- [x] Verify duplicate sync prevention
+- [x] Verify native record marking and count update
+- [ ] Verify auto-sync trigger on record detection
+- [ ] Verify duplicate sync prevention
+- [ ] Verify native record marking and count update
