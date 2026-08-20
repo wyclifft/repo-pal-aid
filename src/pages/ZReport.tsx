@@ -12,6 +12,7 @@ import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
+import { resolveDashboardActiveRoute } from '@/utils/sessionMetadata';
 import { ZReportReceipt } from '@/components/ZReportReceipt';
 import { DeviceZReportReceipt } from '@/components/DeviceZReportReceipt';
 import { ZReportPeriodSelector, type ZReportPeriod } from '@/components/ZReportPeriodSelector';
@@ -46,6 +47,9 @@ const ZReport = () => {
   const [selectedPeriod, setSelectedPeriod] = useState<ZReportPeriod>('all');
   const [selectedPeriodLabel, setSelectedPeriodLabel] = useState<string>('All Z');
   
+  // v2.12.20: Active route from dashboard for Store Z context
+  const activeRoute = useMemo(() => resolveDashboardActiveRoute(), []);
+
   // Device Z Report state (for receipt/print only)
   const [deviceReportData, setDeviceReportData] = useState<DeviceZReportData | null>(null);
 
@@ -713,6 +717,7 @@ const ZReport = () => {
         onClose={handleDeviceReceiptPreviewClose}
         onPrint={handleReceiptPrint}
         routeName={routeLabel}
+        activeRouteCode={activeRoute?.tcode}
         selectedPeriod={selectedPeriod}
         periodLabel={selectedPeriodLabel}
         reportType={selectedReportType}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { CornerDownLeft, Search, X } from 'lucide-react';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
 import { type Route, type Session } from '@/services/mysqlApi';
@@ -34,6 +34,7 @@ interface SellProduceScreenProps {
   // Supervisor mode capture restrictions
   allowDigital?: boolean;
   allowManual?: boolean;
+  isManualOverride?: boolean;
   // Coffee mode: gross/tare/net weight handling
   grossWeight?: number;
   onGrossWeightChange?: (grossWeight: number) => void;
@@ -72,6 +73,7 @@ export const SellProduceScreen = ({
   sessionSubmittedFarmerIds,
   allowDigital = true,
   allowManual = true,
+  isManualOverride = false,
   grossWeight = 0,
   onGrossWeightChange,
   onNetWeightChange,
@@ -87,6 +89,7 @@ export const SellProduceScreen = ({
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
   const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
+  const [showDropdown, setShowDropdown] = useState(false);
   const farmerInputRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers, isReady } = useIndexedDB();
@@ -97,10 +100,18 @@ export const SellProduceScreen = ({
   
   // Get psettings for produce labeling - updates automatically when psettings change
   const appSettings = useAppSettings();
-  const { produceLabel, autoWeightOnly: psettingsAutoWeightOnly, useRouteFilter, isCoffee } = appSettings;
+  const { produceLabel, autoWeightOnly: psettingsAutoWeightOnly, useRouteFilter, isCoffee, isDairy } = appSettings;
+
+  // v2.12.50: For orgtype='D' (Dairy), Sell Portal strictly uses Debtors.
+  useEffect(() => {
+    if (isDairy) {
+      setIsMemberMode(false);
+    }
+  }, [isDairy]);
   
   // Supervisor mode overrides psettings for capture mode
-  const manualDisabled = !allowManual || psettingsAutoWeightOnly;
+  // v2.12.18: isManualOverride allows bypassing psettingsAutoWeightOnly for Dairy (OrgType=D)
+  const manualDisabled = !allowManual || (psettingsAutoWeightOnly && (!isManualOverride || isCoffee));
   const digitalDisabled = !allowDigital;
 
   const today = new Date().toISOString().split('T')[0];
@@ -282,6 +293,16 @@ export const SellProduceScreen = ({
   // Calculate total captured weight for current farmer
   const totalCapturedWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
 
+  // Filter suggestions for dropdown based on numeric input
+  const filteredSuggestions = useMemo(() => {
+    if (!memberNo.trim()) return cachedFarmers.slice(0, 10);
+    const query = memberNo.toLowerCase();
+    return cachedFarmers.filter(f =>
+      f.farmer_id.toLowerCase().includes(query) ||
+      f.name.toLowerCase().includes(query)
+    ).slice(0, 10);
+  }, [memberNo, cachedFarmers]);
+
   return (
     <div className="min-h-screen min-h-[100dvh] bg-gradient-to-b from-teal-100 to-teal-200 flex flex-col overflow-x-hidden">
       {/* Purple Header */}
@@ -312,38 +333,40 @@ export const SellProduceScreen = ({
       )}
 
       {/* Member/Debtor Toggle - identical to Store page */}
-      <div className="flex justify-center py-2 bg-white border-b">
-        <div className="flex bg-gray-200 rounded-lg p-1">
-          <button
-            onClick={() => {
-              setIsMemberMode(true);
-              setMemberNo('');
-              onClearFarmer();
-            }}
-            className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors min-h-[40px] ${
-              isMemberMode
-                ? 'bg-teal-500 text-white shadow'
-                : 'text-gray-600 hover:bg-gray-300'
-            }`}
-          >
-            Members (M)
-          </button>
-          <button
-            onClick={() => {
-              setIsMemberMode(false);
-              setMemberNo('');
-              onClearFarmer();
-            }}
-            className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors min-h-[40px] ${
-              !isMemberMode
-                ? 'bg-teal-500 text-white shadow'
-                : 'text-gray-600 hover:bg-gray-300'
-            }`}
-          >
-            Debtors (D)
-          </button>
+      {!isDairy && (
+        <div className="flex justify-center py-2 bg-white border-b">
+          <div className="flex bg-gray-200 rounded-lg p-1">
+            <button
+              onClick={() => {
+                setIsMemberMode(true);
+                setMemberNo('');
+                onClearFarmer();
+              }}
+              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors min-h-[40px] ${
+                isMemberMode
+                  ? 'bg-teal-500 text-white shadow'
+                  : 'text-gray-600 hover:bg-gray-300'
+              }`}
+            >
+              Members (M)
+            </button>
+            <button
+              onClick={() => {
+                setIsMemberMode(false);
+                setMemberNo('');
+                onClearFarmer();
+              }}
+              className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors min-h-[40px] ${
+                !isMemberMode
+                  ? 'bg-teal-500 text-white shadow'
+                  : 'text-gray-600 hover:bg-gray-300'
+              }`}
+            >
+              Debtors (D)
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4 overflow-y-auto" style={{ paddingBottom: 'max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))' }}>
@@ -423,37 +446,65 @@ export const SellProduceScreen = ({
         )}
 
         {/* Member Search */}
-        <div className="flex gap-1.5 sm:gap-2">
-          <input
-            ref={farmerInputRef}
-            type="tel"
-            autoComplete="off"
-            placeholder="Enter Member No."
-            value={memberNo}
-            onChange={(e) => {
-              setMemberNo(e.target.value.replace(/\D/g, ""));
-            }}
-            onKeyDown={(e) => e.key === "Enter" && handleEnter()}
-            className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-800 bg-white rounded-lg text-base sm:text-lg min-h-[44px] font-semibold"
-          />
-          <button
-            onClick={handleEnter}
-            className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
-          >
-            <CornerDownLeft className="h-5 w-5 sm:h-6 sm:w-6" />
-          </button>
-          <button
-            onClick={handleSearch}
-            className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
-          >
-            <Search className="h-5 w-5 sm:h-6 sm:w-6" />
-          </button>
-          <button
-            onClick={handleClear}
-            className="w-11 sm:w-14 bg-red-500 text-white rounded-lg flex items-center justify-center active:bg-red-600 min-h-[44px]"
-          >
-            <X className="h-5 w-5 sm:h-6 sm:w-6" />
-          </button>
+        <div className="relative">
+          <div className="flex gap-1.5 sm:gap-2">
+            <input
+              ref={farmerInputRef}
+              type="tel"
+              autoComplete="off"
+              placeholder={isDairy ? "Select Debtor" : "Enter Member No."}
+              value={memberNo}
+              onChange={(e) => {
+                setMemberNo(e.target.value.replace(/\D/g, ""));
+              }}
+              onFocus={() => setShowDropdown(true)}
+              onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+              onKeyDown={(e) => e.key === "Enter" && handleEnter()}
+              className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 border-2 border-gray-800 bg-white rounded-lg text-base sm:text-lg min-h-[44px] font-semibold"
+            />
+            <button
+              onClick={handleEnter}
+              className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
+            >
+              <CornerDownLeft className="h-5 w-5 sm:h-6 sm:w-6" />
+            </button>
+            <button
+              onClick={handleSearch}
+              className="w-11 sm:w-14 bg-teal-500 text-white rounded-lg flex items-center justify-center active:bg-teal-600 min-h-[44px]"
+            >
+              <Search className="h-5 w-5 sm:h-6 sm:w-6" />
+            </button>
+            <button
+              onClick={handleClear}
+              className="w-11 sm:w-14 bg-red-500 text-white rounded-lg flex items-center justify-center active:bg-red-600 min-h-[44px]"
+            >
+              <X className="h-5 w-5 sm:h-6 sm:w-6" />
+            </button>
+          </div>
+
+          {/* v2.12.50: Real-time dropdown for debtors (or members) selection */}
+          {showDropdown && filteredSuggestions.length > 0 && (
+            <div className="absolute z-[100] left-0 right-0 top-full mt-1 bg-white border-2 border-gray-800 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+              {filteredSuggestions.map((farmer) => (
+                <button
+                  key={farmer.farmer_id}
+                  onClick={() => {
+                    handleSelectFarmer(farmer);
+                    setShowDropdown(false);
+                  }}
+                  className="w-full px-4 py-3 text-left hover:bg-teal-50 border-b border-gray-100 last:border-0 flex justify-between items-center"
+                >
+                  <div>
+                    <div className="font-bold text-gray-900">{farmer.name}</div>
+                    <div className="text-sm text-gray-500">{farmer.farmer_id}</div>
+                  </div>
+                  <div className="text-xs font-mono text-teal-600 bg-teal-50 px-2 py-1 rounded">
+                    {farmer.route || 'No Route'}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Farmer Search Modal */}

@@ -36,6 +36,7 @@ interface BuyProduceScreenProps {
   // Supervisor mode capture restrictions
   allowDigital?: boolean;
   allowManual?: boolean;
+  isManualOverride?: boolean;
   // Coffee mode: gross/tare/net weight handling
   grossWeight?: number;
   onGrossWeightChange?: (grossWeight: number) => void;
@@ -75,6 +76,7 @@ export const BuyProduceScreen = ({
   submitDisabled,
   allowDigital = true,
   allowManual = true,
+  isManualOverride = false,
   grossWeight = 0,
   onGrossWeightChange,
   onNetWeightChange,
@@ -113,7 +115,8 @@ export const BuyProduceScreen = ({
   // - If supervisor restricts to digital only (!allowManual), manual is disabled
   // - If supervisor restricts to manual only (!allowDigital), digital is disabled
   // - psettings autoWeightOnly (autow=1) further restricts manual if allowed
-  const manualDisabled = !allowManual || psettingsAutoWeightOnly;
+  // - v2.12.18: isManualOverride allows bypassing psettingsAutoWeightOnly for Dairy (OrgType=D)
+  const manualDisabled = !allowManual || (psettingsAutoWeightOnly && (!isManualOverride || isCoffee));
   const digitalDisabled = !allowDigital;
 
   const today = new Date().toISOString().split('T')[0];
@@ -165,12 +168,13 @@ export const BuyProduceScreen = ({
 
   // Filter out blacklisted farmers for display
   // IMPORTANT: blacklist applies only to multOpt=0 farmers; do not hide multOpt=1 farmers.
-  const availableFarmers = blacklistedFarmerIds && blacklistedFarmerIds.size > 0
-    ? cachedFarmers.filter(f => {
-        const cleanId = f.farmer_id.replace(/^#/, '').trim();
-        return !(f.multOpt === 0 && blacklistedFarmerIds.has(cleanId));
-      })
-    : cachedFarmers;
+  // v2.12.40: Also check sessionSubmittedFarmerIds for immediate feedback after submission.
+  const availableFarmers = cachedFarmers.filter(f => {
+    const cleanId = f.farmer_id.replace(/^#/, '').trim();
+    const inBlacklist = blacklistedFarmerIds?.has(cleanId);
+    const inSessionQueue = sessionSubmittedFarmerIds?.has(cleanId);
+    return !(f.multOpt === 0 && (inBlacklist || inSessionQueue));
+  });
 
   // Derive session type (AM/PM) from session time_from.
   // v2.12.6: coffee seasons have NO time_from/time_to — never touch those

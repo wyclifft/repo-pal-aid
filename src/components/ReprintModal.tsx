@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import type { MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check, Coffee } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check, Coffee, Beef } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -509,7 +509,7 @@ export const ReprintModal = ({
   const getReceiptTypeIcon = (type?: string, receipt?: PrintedReceipt) => {
     switch (type) {
       case 'store': return <ShoppingCart className="h-3 w-3" />;
-      case 'ai': return <Bot className="h-3 w-3" />;
+      case 'ai': return <Beef className="h-3 w-3" />;
       default: return receipt && isCoffeeReceipt(receipt) ? <Coffee className="h-3 w-3" /> : <Milk className="h-3 w-3" />;
     }
   };

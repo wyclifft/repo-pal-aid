@@ -327,18 +327,19 @@ const getNextTrnId = async (): Promise<number> => {
  * CRITICAL: Uses mutex lock to prevent race conditions when multiple
  * references are generated simultaneously (e.g., rapid button taps)
  */
-export const generateOfflineReference = async (): Promise<string | null> => {
+export const generateOfflineReference = async (clientFetch?: number): Promise<string | null> => {
   return withLock(async () => {
     const devcode = localStorage.getItem('devcode');
-    
+    const effectiveClientFetch = clientFetch !== undefined && clientFetch !== null ? clientFetch : 1;
+
     if (devcode) {
       const config = await getDeviceConfig();
       const lastUsed = config?.lastTrnId || 0;
       const nextTrnId = lastUsed + 1;
       await updateConfig({ lastTrnId: nextTrnId });
-      // transrefno is always devcode + 8-digit trnid (no clientFetch)
-      const reference = `${devcode}${String(nextTrnId).padStart(8, '0')}`;
-      console.log(`⚡ Reference: ${reference} (devcode: ${devcode}, trnid: ${nextTrnId})`);
+      // v2.12.33: transrefno follows standard: devcode + clientFetch + 8-digit trnid
+      const reference = `${devcode}${effectiveClientFetch}${String(nextTrnId).padStart(8, '0')}`;
+      console.log(`⚡ Reference: ${reference} (devcode: ${devcode}, clientFetch: ${effectiveClientFetch}, trnid: ${nextTrnId})`);
       return reference;
     }
     
@@ -346,7 +347,7 @@ export const generateOfflineReference = async (): Promise<string | null> => {
     if (config?.devcode) {
       const nextTrnId = (config.lastTrnId || 0) + 1;
       await updateConfig({ lastTrnId: nextTrnId });
-      const reference = `${config.devcode}${String(nextTrnId).padStart(8, '0')}`;
+      const reference = `${config.devcode}${effectiveClientFetch}${String(nextTrnId).padStart(8, '0')}`;
       console.log(`⚡ Reference (from config): ${reference}`);
       return reference;
     }
@@ -508,14 +509,8 @@ export const generateFormattedUploadRef = async (transactionType: TransactionTyp
   const nextId = await getNextTypeId(transactionType);
   const code = devcode || (await getDeviceConfig())?.devcode || '';
   
-  // For store/ai transactions, insert clientFetch digit after devcode
-  // e.g. BA05 + clientFetch=2 + padded id → BA0120000002
-  let formatted: string;
-  if ((transactionType === 'store' || transactionType === 'ai') && clientFetch !== undefined && clientFetch !== null) {
-    formatted = `${code}${clientFetch}${String(nextId).padStart(8, '0')}`;
-  } else {
-    formatted = `${code}${String(nextId).padStart(8, '0')}`;
-  }
+  const effectiveClientFetch = clientFetch !== undefined && clientFetch !== null ? clientFetch : 1;
+  const formatted = `${code}${effectiveClientFetch}${String(nextId).padStart(8, '0')}`;
   
   console.log(`⚡ Formatted uploadrefno: ${formatted} (${transactionType}Id: ${nextId}, clientFetch: ${clientFetch || 'none'})`);
   return formatted;
@@ -548,11 +543,10 @@ export const generateReferenceWithUploadRef = async (transactionType: Transactio
   transrefno: string;
   uploadrefno: string;
 } | null> => {
-  // transrefno never includes clientFetch — backend parses trnid by stripping devcode
-  const transrefno = await generateOfflineReference();
+  // v2.12.33: transrefno and uploadrefno both include clientFetch
+  const transrefno = await generateOfflineReference(clientFetch);
   if (!transrefno) return null;
   
-  // uploadrefno includes clientFetch for store/AI routing
   const uploadrefno = await generateFormattedUploadRef(transactionType, clientFetch);
   if (!uploadrefno) return null;
   
@@ -565,8 +559,8 @@ export const generateReferenceWithUploadRef = async (transactionType: Transactio
  * Generate ONLY a new transrefno (for additional captures that share an existing uploadrefno)
  * Used when farmer captures multiple buckets in same session - each gets unique transrefno but shares uploadrefno
  */
-export const generateTransRefOnly = async (): Promise<string | null> => {
-  return generateOfflineReference();
+export const generateTransRefOnly = async (clientFetch?: number): Promise<string | null> => {
+  return generateOfflineReference(clientFetch);
 };
 
 /**

@@ -168,16 +168,33 @@ export const ZReportPeriodSelector = ({
  * - Otherwise compares case/whitespace-insensitively against season_code
  *   (the saved CAN value). Falls back to session column for legacy rows
  *   that pre-date season_code.
+ * - v2.12.37: For Dairy (orgtype D), filter strictly by session column.
  */
 export const filterTransactionsByPeriod = <T extends { session?: string; season_code?: string }>(
   transactions: T[],
   period: ZReportPeriod,
+  orgtype?: string
 ): T[] => {
   if (!period || period === 'all') return transactions;
 
   const target = String(period).trim().toUpperCase();
   if (!target) return transactions;
 
+  // v2.12.37: Dairy (orgtype D) filters strictly by transactions.session (AM/PM)
+  // Replacing CAN-based filtering with session-based filtering for Dairy.
+  if (orgtype === 'D') {
+    let sessionTarget = target;
+    // Map common SCODEs to AM/PM if they come from dynamic session rows
+    if (['MO', 'MORNING', 'AM'].includes(target)) sessionTarget = 'AM';
+    else if (['AF', 'AFTERNOON', 'PM', 'EV', 'EVE', 'EVENING'].includes(target)) sessionTarget = 'PM';
+
+    return transactions.filter(tx => {
+      const sess = String(tx.session || '').trim().toUpperCase();
+      return sess === sessionTarget;
+    });
+  }
+
+  // Coffee/Legacy logic: prioritize season_code (CAN)
   return transactions.filter(tx => {
     const can = String(tx.season_code || '').trim().toUpperCase();
     if (can) return can === target;

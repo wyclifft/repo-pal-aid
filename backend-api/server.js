@@ -274,6 +274,13 @@ const toDbBool = (value) => {
   return Boolean(value);
 };
 
+const toDbInt = (value, fallback = 0) => {
+  if (value === null || value === undefined) return fallback;
+  if (Buffer.isBuffer(value)) return value[0];
+  const n = parseInt(value, 10);
+  return isNaN(n) ? fallback : n;
+};
+
 const toYmdLocal = (d) => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -312,15 +319,49 @@ async function getFarmerCumulativeStats(conn, ccode, farmer_id, route, transdate
 
     const nFarmerId = norm(farmer_id);
     const nCcode = norm(ccode);
-    const nRoute = route ? norm(route) : null;
+
+    // v2.12.36: orgtype D cumulative route filter support.
+    // Default (0) = all routes; 1 = selected route only.
+    let effectiveRoute = route;
+    if (orgtype === 'D') {
+      const [pRows] = await conn.query(
+        'SELECT IFNULL(cumulative_route_filter, 0) as cumulative_route_filter FROM psettings WHERE cno = ? LIMIT 1',
+        [nCcode]
+      );
+      if (pRows.length > 0 && pRows[0].cumulative_route_filter === 0) {
+        effectiveRoute = null; // Ignore route filter
+      }
+    }
+
+    const nRoute = effectiveRoute ? norm(effectiveRoute) : null;
     const indRouteFilter = nRoute ? ' AND route = ?' : '';
-    const indParams = nRoute ? [nFarmerId, nCcode, periodStart, periodEnd, nRoute] : [nFarmerId, nCcode, periodStart, periodEnd];
+
+    // v2.12.37: Dairy (orgtype D) cumulative uses Nairobi-adjusted monthly timestamps (UTC+3)
+    // while Coffee (orgtype C) uses season ranges, and others use calendar months.
+    let dateRangeFilter = ' AND transdate BETWEEN ? AND ?';
+    let dateParams = [periodStart, periodEnd];
+
+    if (orgtype === 'D') {
+      const collDate = new Date(transdate);
+      const year = collDate.getFullYear();
+      const month = collDate.getMonth();
+
+      // monthStart: YYYY-MM-01 00:00:00 Nairobi (UTC+3)
+      const startNairobi = new Date(Date.UTC(year, month, 1, -3, 0, 0));
+      // monthEnd: last day of month 23:59:59 Nairobi (UTC+3)
+      const endNairobi = new Date(Date.UTC(year, month + 1, 0, 20, 59, 59, 999));
+
+      dateRangeFilter = ' AND time BETWEEN ? AND ?';
+      dateParams = [Math.floor(startNairobi.getTime() / 1000), Math.floor(endNairobi.getTime() / 1000)];
+    }
+
+    const indParams = nRoute ? [nFarmerId, nCcode, ...dateParams, nRoute] : [nFarmerId, nCcode, ...dateParams];
 
     const [sumRows] = await conn.query(
       `SELECT IFNULL(SUM(weight), 0) as cumulative_weight
        FROM transactions
        WHERE memberno = ? AND ccode = ? AND Transtype = 1
-       AND transdate BETWEEN ? AND ?${indRouteFilter}`,
+       ${dateRangeFilter}${indRouteFilter}`,
       indParams
     );
 
@@ -331,7 +372,7 @@ async function getFarmerCumulativeStats(conn, ccode, farmer_id, route, transdate
        FROM transactions t
        LEFT JOIN fm_items fi ON fi.icode = t.icode AND fi.ccode = t.ccode
        WHERE t.memberno = ? AND t.ccode = ? AND t.Transtype = 1
-       AND t.transdate BETWEEN ? AND ?${indRouteFilter.replace('route', 't.route')}
+       ${dateRangeFilter.replace('time', 't.time')}${indRouteFilter.replace('route', 't.route')}
        GROUP BY t.icode`,
       indParams
     );
@@ -615,11 +656,29 @@ async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
   // is read once. Predicates on ccode/transdate are sargable so the new
   // idx_tx_cum_scan(ccode, transdate, route) can be used.
   const ccodeParam = norm(ccode);
-  const routeParam = route ? norm(route) : null;
+
+  // v2.12.36: orgtype D cumulative route filter support for batch warmer.
+  let effectiveRoute = route;
+  const [pRows] = await pool.query(
+    'SELECT IFNULL(orgtype, "D") as orgtype, IFNULL(cumulative_route_filter, 0) as cumulative_route_filter FROM psettings WHERE cno = ? LIMIT 1',
+    [ccodeParam]
+  );
+  if (pRows.length > 0 && pRows[0].orgtype === 'D' && pRows[0].cumulative_route_filter === 0) {
+    effectiveRoute = null; // Ignore route filter for orgtype D if filter is 0
+  }
+
+  const routeParam = effectiveRoute ? norm(effectiveRoute) : null;
   const routeFilter = routeParam ? ' AND route = ?' : '';
+
+  // v2.12.37: Dairy (orgtype D) cumulative uses Nairobi-adjusted monthly timestamps (UTC+3).
+  // Consistent with getFarmerCumulativeStats helper.
+  // v2.12.44: Reverted to transdate-primary to leverage idx_tx_cum_scan(ccode, transdate).
+  let dateFilter = ' AND transdate BETWEEN ? AND ?';
+  let dateParams = [periodStart, periodEnd];
+
   const params = routeParam
-    ? [ccodeParam, periodStart, periodEnd, routeParam]
-    : [ccodeParam, periodStart, periodEnd];
+    ? [ccodeParam, ...dateParams, routeParam]
+    : [ccodeParam, ...dateParams];
 
   const conn = await pool.getConnection();
   let groupRows = [];
@@ -636,7 +695,7 @@ async function computeCumulativeBatch(ccode, route, periodStart, periodEnd) {
          FROM transactions
         WHERE ccode = ?
           AND Transtype = 1
-          AND transdate BETWEEN ? AND ?${routeFilter}
+          ${dateFilter}${routeFilter}
         GROUP BY memberno, icode`,
       params
     );
@@ -793,7 +852,7 @@ setInterval(() => {
 // successful insert. It is purely additive and is thrown away as soon as the
 // next full snapshot lands, so the cumulative formula itself never changes.
 // ---------------------------------------------------------------------------
-function applyCumulativeDelta({ ccode, route, farmerId, icode, weight, transdate, transtype }) {
+async function applyCumulativeDelta({ ccode, route, farmerId, icode, weight, transdate, transtype }) {
   try {
     if (Number(transtype) !== 1) return;          // only milk/produce collections count
     const w = Number(weight);
@@ -806,13 +865,31 @@ function applyCumulativeDelta({ ccode, route, farmerId, icode, weight, transdate
     const cc = String(ccode || '').trim().toUpperCase();
 
     let patched = 0;
+    // v2.12.36: Fetch settings for the ccode once per delta batch
+    let orgtype = 'D';
+    let cumulativeRouteFilter = 0;
+    try {
+      const [pRows] = await pool.query(
+        'SELECT IFNULL(orgtype, "D") as orgtype, IFNULL(cumulative_route_filter, 0) as cumulative_route_filter FROM psettings WHERE cno = ? LIMIT 1',
+        [cc]
+      );
+      if (pRows.length > 0) {
+        orgtype = pRows[0].orgtype;
+        cumulativeRouteFilter = pRows[0].cumulative_route_filter;
+      }
+    } catch (e) {}
+
     for (const [key, meta] of cumulativeWarmKeys) {
       if (String(meta.ccode || '').trim().toUpperCase() !== cc) continue;
       // Period must cover the transaction date (string compare on YYYY-MM-DD).
       if (day && (day < meta.periodStart || day > meta.periodEnd)) continue;
-      // Route-scoped snapshots only take rows from that route; 'ALL' takes all.
+
+      // v2.12.36: orgtype D cumulative route filter support for delta overlay.
+      // If orgtype D and filter is 0 (all routes), we patch ALL snapshots regardless of route.
       const metaRoute = meta.route ? String(meta.route).trim().toUpperCase() : null;
-      if (metaRoute && metaRoute !== rt) continue;
+      const ignoreRouteMatch = (orgtype === 'D' && cumulativeRouteFilter === 0);
+
+      if (!ignoreRouteMatch && metaRoute && metaRoute !== rt) continue;
 
       const snapshot = cumulativeBatchCache.get(key);
       if (!snapshot || !Array.isArray(snapshot.farmers)) continue;
@@ -1854,7 +1931,7 @@ const server = http.createServer(async (req, res) => {
             if (devRows.length > 0 && devRows[0].devcode) {
               const devcode = devRows[0].devcode;
               const insertedTrnId = parseInt(attemptTransrefno.slice(-8), 10);
-              const insertedMilkId = parseInt(String(attemptUploadrefno).replace(/^\D+/, ''), 10);
+              const insertedMilkId = parseInt(String(attemptUploadrefno).slice(-8), 10);
               if (!isNaN(insertedTrnId)) {
                 await conn.query(
                   `UPDATE devSettings SET
@@ -2790,8 +2867,8 @@ if (path === '/api/sales' && method === 'POST') {
             (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
              transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
              amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
-             cowname, cowbreed, noofcalfs, aibreed)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             cowname, cowbreed, noofcalfs, bullcode, bullname, nextheat)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             transrefno,
             uploadrefno,
@@ -2816,7 +2893,9 @@ if (path === '/api/sales' && method === 'POST') {
             body.cow_name || '',
             body.cow_breed || '',
             toIntOrNull(body.number_of_calves),
-            body.other_details || ''
+            body.bullcode || '',
+            body.bullname || '',
+            body.nextheat || null
           ]
         );
         
@@ -2998,8 +3077,8 @@ if (path === '/api/sales' && method === 'POST') {
                 (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
                  amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
-                 cowname, cowbreed, noofcalfs, aibreed)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 cowname, cowbreed, noofcalfs, bullcode, bullname, nextheat)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 transrefno, uploadrefno,
                 body.user_id || body.sold_by || '',
@@ -3020,7 +3099,9 @@ if (path === '/api/sales' && method === 'POST') {
                 photoFilename, photoDirectory,
                 item.cow_name || '', item.cow_breed || '',
                 toIntOrNull(item.number_of_calves),
-                item.other_details || ''
+                item.bullcode || '',
+                item.bullname || '',
+                item.nextheat || null
               ]
             );
             await conn.query(
@@ -3490,7 +3571,9 @@ if (path === '/api/sales' && method === 'POST') {
             IFNULL(sackTare, 1) as sackTare,
             IFNULL(sackEdit, 0) as sackEdit,
             IFNULL(payments_active, 0) as payments_active,
-            IFNULL(sacco_module_active, 0) as sacco_module_active
+            IFNULL(sacco_module_active, 0) as sacco_module_active,
+            IFNULL(cumulative_route_filter, 0) as cumulative_route_filter,
+            IFNULL(capture_photo, 1) as capture_photo
           FROM psettings WHERE cno = ?`,
           [deviceData.ccode]);
         
@@ -3499,20 +3582,22 @@ if (path === '/api/sales' && method === 'POST') {
           cumulativeFrequencyStatus = companyRows[0].cumulative_frequency_status || 0;
           const orgtype = companyRows[0].orgtype || 'D';
           appSettings = {
-            printoptions: companyRows[0].printOptions,
-            chkroute: companyRows[0].chkRoute,
+            printoptions: toDbInt(companyRows[0].printOptions, 1),
+            chkroute: toDbInt(companyRows[0].chkRoute, 1),
             rdesc: companyRows[0].rdesc,
-            stableopt: companyRows[0].stableOpt,
-            sessprint: companyRows[0].sessPrint,
-            autow: companyRows[0].AutoW,
-            online: companyRows[0].onlinemode,
+            stableopt: toDbInt(companyRows[0].stableOpt),
+            sessprint: toDbInt(companyRows[0].sessPrint),
+            autow: toDbInt(companyRows[0].AutoW),
+            online: toDbInt(companyRows[0].onlinemode),
             orgtype: orgtype,
-            printcumm: companyRows[0].printcumm,
-            zeroOpt: companyRows[0].zeroopt,
+            printcumm: toDbInt(companyRows[0].printcumm),
+            zeroOpt: toDbInt(companyRows[0].zeroopt),
             sackTare: companyRows[0].sackTare,
-            sackEdit: companyRows[0].sackEdit,
-            payments_active: companyRows[0].payments_active,
-            sacco_module_active: companyRows[0].sacco_module_active,
+            sackEdit: toDbInt(companyRows[0].sackEdit),
+            payments_active: toDbInt(companyRows[0].payments_active),
+            sacco_module_active: toDbInt(companyRows[0].sacco_module_active),
+            cumulative_route_filter: toDbInt(companyRows[0].cumulative_route_filter),
+            capture_photo: toDbInt(companyRows[0].capture_photo, 1),
             // Derived labels from orgtype
             periodLabel: orgtype === 'C' ? 'Season' : 'Session',
             // Additional company info
@@ -4134,7 +4219,9 @@ if (path === '/api/sales' && method === 'POST') {
           IFNULL(printcumm, 0) as printcumm,
           IFNULL(zeroopt, 0) as zeroopt,
           IFNULL(payments_active, 0) as payments_active,
-          IFNULL(sacco_module_active, 0) as sacco_module_active
+          IFNULL(sacco_module_active, 0) as sacco_module_active,
+          IFNULL(cumulative_route_filter, 0) as cumulative_route_filter,
+          IFNULL(capture_photo, 1) as capture_photo
         FROM psettings WHERE cno = ?`,
         [targetCcode]
       );
@@ -4175,19 +4262,21 @@ if (path === '/api/sales' && method === 'POST') {
           tel: rows[0].tel,
           email: rows[0].email,
           cumulative_frequency_status: rows[0].cumulative_frequency_status || 0,
-          printoptions: rows[0].printOptions,
-          chkroute: rows[0].chkRoute,
+          printoptions: toDbInt(rows[0].printOptions, 1),
+          chkroute: toDbInt(rows[0].chkRoute, 1),
           rdesc: rows[0].rdesc,
-          stableopt: rows[0].stableOpt,
-          sessprint: rows[0].sessPrint,
-          autow: rows[0].AutoW,
-          online: rows[0].onlinemode,
+          stableopt: toDbInt(rows[0].stableOpt),
+          sessprint: toDbInt(rows[0].sessPrint),
+          autow: toDbInt(rows[0].AutoW),
+          online: toDbInt(rows[0].onlinemode),
           orgtype: orgtype,
           periodLabel: orgtype === 'C' ? 'Season' : 'Session',
-          printcumm: rows[0].printcumm,
-          zeroOpt: rows[0].zeroopt,
-          payments_active: rows[0].payments_active,
-          sacco_module_active: rows[0].sacco_module_active
+          printcumm: toDbInt(rows[0].printcumm),
+          zeroOpt: toDbInt(rows[0].zeroopt),
+          payments_active: toDbInt(rows[0].payments_active),
+          sacco_module_active: toDbInt(rows[0].sacco_module_active),
+          cumulative_route_filter: toDbInt(rows[0].cumulative_route_filter),
+          capture_photo: toDbInt(rows[0].capture_photo, 1)
         }
       });
     }
@@ -4238,6 +4327,24 @@ if (path === '/api/sales' && method === 'POST') {
       
       const ccode = deviceRows[0].ccode;
       
+      // v2.12.36: orgtype D cumulative route filter support for batch endpoint.
+      let cumulativeRouteFilter = 0; // Default: all routes
+      let orgtype = 'D';
+      try {
+        const [orgRows] = await pool.query(
+          `SELECT IFNULL(orgtype, 'D') as orgtype, IFNULL(cumulative_route_filter, 0) as cumulative_route_filter FROM psettings WHERE TRIM(cno) = TRIM(?) LIMIT 1`, [ccode]
+        );
+        if (orgRows.length > 0) {
+          orgtype = orgRows[0].orgtype;
+          cumulativeRouteFilter = orgRows[0].cumulative_route_filter;
+        }
+      } catch (e) {}
+
+      let effectiveRoute = route;
+      if (orgtype === 'D' && cumulativeRouteFilter === 0) {
+        effectiveRoute = null; // Ignore route filter for orgtype D if filter is 0
+      }
+
       const toYmdLocal = (d) => {
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -4294,7 +4401,7 @@ if (path === '/api/sales' && method === 'POST') {
       // never inside a client request. A miss returns immediately with
       // pending:true so login/prewarm completes in milliseconds; the client
       // keeps its IndexedDB cumulative cache untouched and retries.
-      const cumCacheKey = cumulativeCacheKey(ccode, route, periodStart, periodEnd);
+      const cumCacheKey = cumulativeCacheKey(ccode, effectiveRoute, periodStart, periodEnd);
       const cachedBatch = cumulativeBatchCache.get(cumCacheKey);
 
       // Always register the key so the warmer keeps this snapshot fresh.
@@ -4302,7 +4409,7 @@ if (path === '/api/sales' && method === 'POST') {
       const stale = !warmMeta || (Date.now() - (warmMeta.lastRun || 0)) >= CUM_BATCH_REWARM_MS;
 
       if (cachedBatch) {
-        if (stale) scheduleCumulativeWarm(ccode, route, periodStart, periodEnd);
+        if (stale) scheduleCumulativeWarm(ccode, effectiveRoute, periodStart, periodEnd);
         console.log(`[CUM:BATCH] cache-hit ${cumCacheKey} farmers=${cachedBatch.total_farmers}`);
         return sendJSON(res, { success: true, data: cachedBatch }, 200, origin, req.headers);
       }
@@ -4310,7 +4417,7 @@ if (path === '/api/sales' && method === 'POST') {
       // v2.12.10: on a cold miss, kick the warm AND wait a bounded 12 s for it.
       // Most snapshots finish inside that window, so the client gets real data
       // on the first call instead of looping on `pending` indefinitely.
-      const warmJob = scheduleCumulativeWarm(ccode, route, periodStart, periodEnd);
+      const warmJob = scheduleCumulativeWarm(ccode, effectiveRoute, periodStart, periodEnd);
       if (warmJob) {
         const waited = await Promise.race([
           warmJob.catch(() => null),
@@ -4366,11 +4473,28 @@ if (path === '/api/sales' && method === 'POST') {
       }
       
       const ccode = deviceRows[0].ccode;
-      
+      const nCcode = norm(ccode);
+
+      // v2.12.36: orgtype D cumulative route filter support for individual cumulative.
+      let cumulativeRouteFilter = 0; // Default: all routes
+      let orgtype = 'D';
+      try {
+        const [orgRows] = await pool.query(
+          `SELECT IFNULL(orgtype, 'D') as orgtype, IFNULL(cumulative_route_filter, 0) as cumulative_route_filter FROM psettings WHERE TRIM(cno) = TRIM(?) LIMIT 1`, [nCcode]
+        );
+        if (orgRows.length > 0) {
+          orgtype = orgRows[0].orgtype;
+          cumulativeRouteFilter = orgRows[0].cumulative_route_filter;
+        }
+      } catch (e) {}
+
       // Normalize inputs for SARGable index usage
       const nFarmerId = norm(farmer_id);
-      const nCcode = norm(ccode);
-      const nRoute = route ? norm(route) : null;
+      let effectiveRoute = route;
+      if (orgtype === 'D' && cumulativeRouteFilter === 0) {
+        effectiveRoute = null; // Ignore route filter for orgtype D if filter is 0
+      }
+      const nRoute = effectiveRoute ? norm(effectiveRoute) : null;
 
       // Get period start and end dates (LOCAL date, not UTC)
       const toYmdLocal = (d) => {

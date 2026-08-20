@@ -26,6 +26,17 @@ export interface SessionMetadata {
 
 const EMPTY: SessionMetadata = { season: '', session_label: '', backend_session: '' };
 
+const readPersistedRoute = (key: string): any | null => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.route || null;
+  } catch {
+    return null;
+  }
+};
+
 const readPersistedSession = (key: string): any | null => {
   try {
     const raw = localStorage.getItem(key);
@@ -61,6 +72,17 @@ export const resolveDashboardActiveSession = (): any | null => {
   return (
     readPersistedSession('active_session_data') ||
     readPersistedSession('delicoop_session_data') ||
+    null
+  );
+};
+
+/**
+ * v2.12.20: Resolve the active route (store/center) selected on the Dashboard.
+ * Returns the raw route object (tcode, descript, etc.) or null if not persisted.
+ */
+export const resolveDashboardActiveRoute = (): any | null => {
+  return (
+    readPersistedRoute('active_session_data') ||
     null
   );
 };

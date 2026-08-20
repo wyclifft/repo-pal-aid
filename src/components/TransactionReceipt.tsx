@@ -558,8 +558,14 @@ export const TransactionReceipt = ({
                           {item.cowDetails.numberOfCalves && (
                             <div>Calves: {item.cowDetails.numberOfCalves}</div>
                           )}
-                          {item.cowDetails.otherDetails && (
-                            <div>Notes: {item.cowDetails.otherDetails}</div>
+                          {item.cowDetails.bullCode && (
+                            <div>Bull Code: {item.cowDetails.bullCode}</div>
+                          )}
+                          {item.cowDetails.bullName && (
+                            <div>Bull Name: {item.cowDetails.bullName}</div>
+                          )}
+                          {item.cowDetails.nextHeat && (
+                            <div>Next Heat: {item.cowDetails.nextHeat}</div>
                           )}
                         </div>
                       )}

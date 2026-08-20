@@ -503,7 +503,9 @@ const AIPage = () => {
           cow_name: cartItem.cowDetails?.cowName || '',
           cow_breed: cartItem.cowDetails?.cowBreed || '',
           number_of_calves: cartItem.cowDetails?.numberOfCalves || '',
-          other_details: cartItem.cowDetails?.otherDetails || '',
+          bullcode: cartItem.cowDetails?.bullCode || '',
+          bullname: cartItem.cowDetails?.bullName || '',
+          nextheat: cartItem.cowDetails?.nextHeat || '',
         };
 
         if (navigator.onLine) {
@@ -598,7 +600,7 @@ const AIPage = () => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 p-4 space-y-4 overflow-auto" style={{ paddingBottom: 'max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))' }}>
+      <div className="flex-1 bg-[#26A69A] px-4 py-3">
         {/* Member/Debtor Toggle */}
         <div className="flex items-center justify-between mb-3">
           <span className="text-white font-medium text-lg">{isMemberMode ? 'Members' : 'Debtors'}</span>
@@ -615,7 +617,7 @@ const AIPage = () => {
         </div>
 
         {/* Member Input Row */}
-        <div className="flex gap-2">
+        <div className="flex gap-1.5 mb-3">
           <input
             ref={farmerInputRef}
             type="tel"
@@ -626,17 +628,17 @@ const AIPage = () => {
               setMemberNo(e.target.value.replace(/\D/g, ""));
             }}
             onKeyDown={(e) => e.key === "Enter" && handleEnter()}
-            className="flex-1 px-4 py-3 border-2 border-gray-800 rounded-lg bg-white font-semibold"
+            className="flex-1 px-4 py-3 bg-white border-2 border-gray-300 rounded-lg text-lg font-medium"
           />
           <button
             onClick={handleEnter}
-            className="w-12 bg-[#4DD0E1] text-white rounded-lg flex items-center justify-center"
+            className="w-12 bg-[#00695C] text-white rounded-lg flex items-center justify-center"
           >
             <CornerDownLeft className="h-5 w-5" />
           </button>
           <button
             onClick={() => setShowFarmerSearch(true)}
-            className="w-12 bg-[#4DD0E1] text-white rounded-lg flex items-center justify-center"
+            className="w-12 bg-[#00695C] text-white rounded-lg flex items-center justify-center"
           >
             <Search className="h-5 w-5" />
           </button>
@@ -649,47 +651,42 @@ const AIPage = () => {
         </div>
 
         {/* Member Info Card */}
-        <div className="bg-white rounded-lg p-4 shadow">
-          <div className="flex justify-between items-start border-b pb-2 mb-2">
+        <div className="bg-white rounded-lg p-3 mb-3 border-l-4 border-gray-400">
+          <div className="flex justify-between items-start">
             <div>
-              <span className="text-gray-500 text-sm font-semibold">MEMBER</span>
-              <p className="font-bold">{selectedFarmer?.name || '-'}</p>
-              {selectedFarmer && (
-                <p className="text-sm text-gray-600">
-                  [{selectedFarmer.route || 'No Route'}] - MULTI OPT = [{selectedFarmer.multOpt ?? 1}]
-                </p>
-              )}
-              {selectedFarmer && (
-                <button 
-                  onClick={() => setShowViewMore(true)}
-                  className="text-cyan-500 text-sm hover:underline"
-                >
-                  VIEW MORE
-                </button>
-              )}
+              <div className="text-sm font-bold text-gray-700">{isMemberMode ? 'MEMBER' : 'DEBTOR'}</div>
+              <div className="text-sm text-gray-600">
+                {selectedFarmer ? (
+                  <>
+                    {selectedFarmer.name} [{selectedFarmer.route || 'T000'}] - MULTI OPT =
+                    <br />
+                    <button
+                      onClick={() => setShowViewMore(true)}
+                      className="text-[#1565C0] underline font-medium"
+                    >
+                      [1] -&gt;&gt;VIEW MORE&lt;&lt;
+                    </button>
+                  </>
+                ) : '-'}
+              </div>
             </div>
-            <span className="font-bold text-lg">{selectedFarmer?.farmer_id || '-'}</span>
-          </div>
-          
-          <div className="border-b pb-2 mb-2">
-            <span className="font-bold">CLERK</span>
-            <p className="text-gray-600">{clerkName}</p>
-          </div>
-
-          {/* Credit Balance if in Debtor mode */}
-          {!isMemberMode && totalCreditBalance > 0 && (
-            <div className="border-b pb-2 mb-2">
-              <span className="font-bold text-red-600">CREDIT BALANCE</span>
-              <p className="text-red-600 font-bold">KES {totalCreditBalance.toLocaleString()}</p>
+            <div className="text-right">
+              <div className="font-medium">{selectedFarmer?.farmer_id || '-'}</div>
+              <div className="text-sm text-gray-600">-KGS</div>
             </div>
-          )}
+          </div>
+          <div className="mt-2 border-t pt-2">
+            <div className="text-sm font-bold text-gray-700">CLERK</div>
+            <div className="text-sm text-gray-600">{clerkName.toUpperCase()}</div>
+          </div>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 mb-3">
           <button
             onClick={() => {/* Reprint logic */}}
-            className="flex-1 py-3 bg-[#5E35B1] text-white rounded-full font-semibold"
+            className="flex-1 py-3 bg-[#9E9E9E] text-white font-bold rounded-full opacity-60"
+            disabled
           >
             REPRINT
           </button>
@@ -701,46 +698,46 @@ const AIPage = () => {
               }
               setShowItemSearch(true);
             }}
-            className="flex-1 py-3 bg-[#5E35B1] text-white rounded-full font-semibold"
+            className="flex-1 py-3 bg-[#7E57C2] text-white font-bold rounded-full"
           >
             ADD ITEM
           </button>
           <button
             onClick={handleSubmit}
             disabled={submitting || cart.length === 0}
-            className={`flex-1 py-3 bg-[#5E35B1] text-white rounded-full font-semibold ${
-              (submitting || cart.length === 0) ? 'opacity-50' : ''
-            }`}
+            className="flex-1 py-3 bg-[#7E57C2] text-white font-bold rounded-full disabled:opacity-50"
           >
             {submitting ? 'SUBMITTING...' : 'SUBMIT'}
           </button>
         </div>
 
         {/* Transactions/Cart List */}
-        <div className="bg-white rounded-lg overflow-hidden shadow">
+        <div className="bg-white rounded-lg overflow-hidden mb-3 shadow">
           {cart.length === 0 ? (
-            <div className="p-4 text-center text-gray-500">NO TRANSACTIONS ...</div>
+            <div className="text-center py-4 text-gray-500 font-medium">
+              NO TRANSACTIONS ...
+            </div>
           ) : (
             <div className="divide-y">
               {cart.map((cartItem, idx) => (
                 <div key={idx} className="p-3 flex justify-between items-center">
                   <div>
-                    <p className="font-semibold">{cartItem.item.descript}</p>
-                    <p className="text-sm text-gray-500">
+                    <p className="font-semibold text-sm">{cartItem.item.descript}</p>
+                    <p className="text-xs text-gray-500">
                       Qty: {cartItem.quantity} × KES{cartItem.item.sprice}
                     </p>
                     {cartItem.cowDetails?.cowName && (
-                      <p className="text-xs text-purple-600 flex items-center gap-1">
+                      <p className="text-[10px] text-purple-600 flex items-center gap-1 mt-1">
                         <Beef className="h-3 w-3" />
                         {cartItem.cowDetails.cowName} ({cartItem.cowDetails.cowBreed || 'Unknown breed'})
                       </p>
                     )}
                   </div>
                   <div className="text-right">
-                    <p className="font-bold">KES{cartItem.lineTotal.toFixed(0)}</p>
+                    <p className="font-bold text-sm">KES{cartItem.lineTotal.toFixed(0)}</p>
                     <button
                       onClick={() => handleQuantityChange(idx, 0)}
-                      className="text-red-500 text-sm"
+                      className="text-red-500 text-xs mt-1"
                     >
                       Remove
                     </button>
@@ -753,12 +750,16 @@ const AIPage = () => {
 
 
         {/* Total */}
-        <div className="bg-white rounded-lg p-4 shadow">
-          <div className="flex justify-between items-center">
-            <span className="font-bold text-lg">TOTAL</span>
-            <span className="font-bold text-lg">KES {cartTotal.toFixed(2)}</span>
-          </div>
+        <div className="bg-white rounded-lg px-4 py-3 flex justify-between items-center shadow">
+          <span className="font-bold text-lg">TOTAL</span>
+          <span className="font-bold text-lg">KES {cartTotal.toFixed(2)}</span>
         </div>
+      </div>
+
+      {/* Bottom Decoration */}
+      <div className="relative h-32 bg-[#26A69A] overflow-hidden">
+        <div className="absolute -bottom-16 -right-16 w-48 h-48 rounded-full bg-[#4DD0C5] opacity-60" />
+        <div className="absolute -bottom-8 right-16 w-32 h-32 rounded-full bg-[#80DEEA] opacity-40" />
       </div>
 
       {/* Farmer Search Dialog */}

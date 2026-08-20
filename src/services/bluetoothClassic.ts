@@ -1296,7 +1296,7 @@ export const printToClassicPrinter = async (content: string): Promise<{ success:
   // Build print data with ESC/POS commands. Receipt text/content is unchanged.
   const printData =
     ESC + '@' +           // Initialize printer
-    ESC + 'a\x01' +       // Center alignment
+    ESC + 'a\x00' +       // Left alignment
     content +
     '\n\n' +              // v2.11.33: trimmed tail feed (was 5 lines)
     GS + 'V\x00';         // Cut paper

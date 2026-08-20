@@ -47,6 +47,10 @@ export interface AppSettings {
   payments_active: number;
   // v2.12.18: Sacco module activation flag (DB: psettings.sacco_module_active). 0 = hidden, 1 = active.
   sacco_module_active: number;
+  // v2.12.36: orgtype D cumulative route filter: 0 = all routes, 1 = selected route only
+  cumulative_route_filter: number;
+  // v2.12.42: Photo capture requirement in Store module. 1 = required, 0 = optional.
+  capture_photo: number;
 }
 
 // Default settings - rdesc is empty to force use of dynamic DB value
@@ -70,7 +74,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sackTare: 1, // Default 1 kg sack tare weight for coffee
   allowSackEdit: 0, // Default: sack weight is fixed/backend-controlled
   payments_active: 0, // v2.11.0: Payments module hidden by default
-  sacco_module_active: 0 // v2.12.18: Sacco module hidden by default
+  sacco_module_active: 0, // v2.12.18: Sacco module hidden by default
+  cumulative_route_filter: 0, // v2.12.36: Default to all routes
+  capture_photo: 1 // v2.12.42: Default to required
 };
 
 const SETTINGS_STORAGE_KEY = 'app_settings';
@@ -137,6 +143,10 @@ interface AppSettingsContextType {
   paymentsActive: boolean;
   // v2.12.18: Sacco module active for this company (psettings.sacco_module_active === 1)
   saccoModuleActive: boolean;
+  // v2.12.36: orgtype D cumulative route filter: 0 = all routes, 1 = selected route only
+  useCumulativeRouteFilter: boolean;
+  // v2.12.42: Photo capture requirement in Store module
+  capturePhoto: boolean;
 }
 
 // React context
@@ -382,7 +392,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             sackTare: parseFloat(String(deviceData.app_settings?.sackTare ?? DEFAULT_SETTINGS.sackTare)),
             allowSackEdit: parseInt(String(deviceData.app_settings?.sackEdit ?? deviceData.app_settings?.allowSackEdit ?? DEFAULT_SETTINGS.allowSackEdit), 10),
             payments_active: parseInt(String(deviceData.app_settings?.payments_active ?? DEFAULT_SETTINGS.payments_active), 10),
-            sacco_module_active: parseInt(String(deviceData.app_settings?.sacco_module_active ?? DEFAULT_SETTINGS.sacco_module_active), 10)
+            sacco_module_active: parseInt(String(deviceData.app_settings?.sacco_module_active ?? DEFAULT_SETTINGS.sacco_module_active), 10),
+            cumulative_route_filter: parseInt(String(deviceData.app_settings?.cumulative_route_filter ?? DEFAULT_SETTINGS.cumulative_route_filter), 10),
+            capture_photo: parseInt(String(deviceData.app_settings?.capture_photo ?? DEFAULT_SETTINGS.capture_photo), 10)
           };
           
           // Log settings changes for debugging
@@ -594,7 +606,11 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const allowSackEdit = settings.allowSackEdit === 1; // 0 = fixed, 1 = editable
   const paymentsActive = settings.payments_active === 1; // v2.11.0
   const saccoModuleActive = settings.sacco_module_active === 1; // v2.12.18
-
+  // v2.12.36: orgtype D cumulative route filter: 0 = all routes, 1 = selected route only
+  // For other orgtypes (like Coffee), we retain existing behavior (typically selected route or season-wide)
+  const useCumulativeRouteFilter = isDairy ? settings.cumulative_route_filter === 1 : true;
+  // v2.12.42: Photo capture requirement in Store module
+  const capturePhoto = settings.capture_photo === 1;
 
   return {
     settings,
@@ -624,7 +640,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     sackTareWeight,
     allowSackEdit,
     paymentsActive,
-    saccoModuleActive
+    saccoModuleActive,
+    useCumulativeRouteFilter,
+    capturePhoto
   };
 };
 

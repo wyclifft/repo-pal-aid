@@ -7,14 +7,7 @@ import { toast } from 'sonner';
 import type { Sale } from '@/services/mysqlApi';
 
 interface AITransaction extends Sale {
-  transrefno?: string;
-  uploadrefno?: string;
-  transtype?: number;
-  route_tcode?: string;
-  cow_name?: string;
-  cow_breed?: string;
-  number_of_calves?: string;
-  other_details?: string;
+  // Inherits all fields from Sale including cow_name, cow_breed, bullcode, etc.
 }
 
 /**

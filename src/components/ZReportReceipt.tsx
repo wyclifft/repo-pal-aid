@@ -64,7 +64,8 @@ export const ZReportReceipt = ({
         const centerText = (text: string, width: number): string => {
           const padding = Math.max(0, width - text.length);
           const left = Math.floor(padding / 2);
-          return ' '.repeat(left) + text;
+          const right = padding - left;
+          return ' '.repeat(left) + text + ' '.repeat(right);
         };
         const formatLine = (label: string, value: string, width: number): string => {
           const spaces = Math.max(1, width - label.length - value.length);

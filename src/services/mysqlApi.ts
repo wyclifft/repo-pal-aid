@@ -387,12 +387,14 @@ export const milkCollectionApi = {
 
   /**
    * Get all milk collections with optional filters
+   * v2.12.40: added uniquedevcode for bulk session validation
    */
   getAll: async (filters?: {
     farmerId?: string;
     session?: string;
     dateFrom?: string;
     dateTo?: string;
+    uniquedevcode?: string;
   }): Promise<MilkCollection[]> => {
     let url = '/milk-collection';
     const params = new URLSearchParams();
@@ -401,6 +403,7 @@ export const milkCollectionApi = {
     if (filters?.session) params.append('session', filters.session);
     if (filters?.dateFrom) params.append('date_from', filters.dateFrom);
     if (filters?.dateTo) params.append('date_to', filters.dateTo);
+    if (filters?.uniquedevcode) params.append('uniquedevcode', filters.uniquedevcode);
 
     if (params.toString()) url += `?${params.toString()}`;
 
@@ -835,6 +838,7 @@ export interface DeviceZReportData {
   };
   transactions: DeviceZReportTransaction[];
   isCoffee: boolean;      // For weight unit display
+  orgtype?: string;       // v2.12.37: Org type for filtering logic (D/C/S)
 }
 
 export const zReportApi = {
@@ -965,7 +969,9 @@ export interface Sale {
   cow_name?: string;          // → DB: cowname
   cow_breed?: string;         // → DB: cowbreed
   number_of_calves?: string;  // → DB: noofcalfs
-  other_details?: string;     // → DB: aibreed
+  bullcode?: string;          // → DB: bullcode
+  bullname?: string;          // → DB: bullname
+  nextheat?: string;          // → DB: nextheat
 }
 
 export interface BatchSaleRequest {

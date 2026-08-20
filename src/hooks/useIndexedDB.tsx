@@ -49,7 +49,9 @@ interface IndexedDBContextType {
   getUser: (userId: string) => Promise<AppUser | undefined>;
   saveReceipt: (receipt: MilkCollection) => Promise<{ success: boolean; orderId: number }>;
   getUnsyncedReceipts: () => Promise<MilkCollection[]>;
+  getRecentReceipts: () => Promise<MilkCollection[]>;
   deleteReceipt: (orderId: number) => Promise<void>;
+  markReceiptSynced: (orderId: number) => Promise<void>;
   saveDeviceApproval: (deviceFingerprint: string, backendId: number | null, userId: string, approved: boolean) => Promise<void>;
   getDeviceApproval: (deviceFingerprint: string) => Promise<{ device_fingerprint: string; backend_id: number | null; user_id: string; approved: boolean; last_synced: string } | undefined>;
   saveSale: (sale: any) => Promise<void>;
@@ -74,6 +76,15 @@ interface IndexedDBContextType {
   getFarmerTotalCumulative: (farmerId: string, routeFilter?: string, seasonFilter?: string, monthOverride?: string) => Promise<any>;
   getUnsyncedWeightForFarmer: (farmerId: string, routeFilter?: string, seasonFilter?: string, opts?: any) => Promise<any>;
   getAllUnsyncedRecords: () => Promise<any[]>;
+  batchUpdateFarmerCumulative: (updates: Array<{
+    farmerId: string;
+    count: number;
+    fromBackend?: boolean;
+    byProduct?: any[];
+    route?: string;
+    scode?: string;
+    options?: any;
+  }>) => Promise<void>;
 }
 
 const IndexedDBContext = createContext<IndexedDBContextType | null>(null);
@@ -276,6 +287,33 @@ export const useIndexedDBStandalone = () => {
           setIsReady(true);
           setSchemaError(false);
           console.log('[DB] IndexedDB ready. Version:', database.version);
+
+          // v2.12.41: Cleanup synced receipts older than 48 hours
+          const cleanupOldReceipts = () => {
+            try {
+              const tx = database.transaction('receipts', 'readwrite');
+              const store = tx.objectStore('receipts');
+              const request = store.getAll();
+              request.onsuccess = () => {
+                const now = Date.now();
+                const twoDays = 48 * 60 * 60 * 1000;
+                let count = 0;
+                (request.result || []).forEach((r: any) => {
+                  if (r.synced && r.collection_date) {
+                    const collectionDate = new Date(r.collection_date).getTime();
+                    if (now - collectionDate > twoDays) {
+                      store.delete(r.orderId);
+                      count++;
+                    }
+                  }
+                });
+                if (count > 0) console.log(`[DB] Cleaned up ${count} old synced receipts`);
+              };
+            } catch (e) {
+              console.warn('[DB] Sync cleanup failed:', e);
+            }
+          };
+          cleanupOldReceipts();
         } catch (error) {
           console.error('[DB] Error during database initialization:', error);
           setSchemaError(true);
@@ -433,6 +471,38 @@ export const useIndexedDBStandalone = () => {
     });
   }, [db]);
 
+  /**
+   * Get all receipts (synced and unsynced) from the last 24 hours.
+   * v2.12.41: Used for robust session blacklist across app restarts.
+   */
+  const getRecentReceipts = useCallback((): Promise<MilkCollection[]> => {
+    return new Promise((resolve) => {
+      if (!db) return resolve([]);
+      try {
+        const tx = db.transaction('receipts', 'readonly');
+        const store = tx.objectStore('receipts');
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const now = Date.now();
+          const oneDay = 24 * 60 * 60 * 1000;
+          const receipts = (request.result || []).filter((r: any) => {
+            if (r.orderId === 'PRINTED_RECEIPTS') return false;
+            if (r.type === 'sale') return false;
+            if (!r.collection_date) return false;
+
+            // Filter to last 24 hours to keep blacklist accurate but DB small
+            const collectionDate = new Date(r.collection_date).getTime();
+            return (now - collectionDate) < oneDay;
+          });
+          resolve(receipts);
+        };
+        request.onerror = () => resolve([]);
+      } catch {
+        resolve([]);
+      }
+    });
+  }, [db]);
+
   const deleteReceipt = useCallback((orderId: number): Promise<void> => {
     return new Promise((resolve, reject) => {
       if (!db) return reject('DB not ready');
@@ -449,7 +519,39 @@ export const useIndexedDBStandalone = () => {
           console.error(`❌ Failed to delete receipt ${orderId}:`, request.error);
           reject(request.error);
         };
-        
+
+        tx.onerror = () => reject(tx.error);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }, [db]);
+
+  /**
+   * Mark a receipt as synced without deleting it.
+   * v2.12.41: Keeps records locally for session blacklist persistence.
+   */
+  const markReceiptSynced = useCallback((orderId: number): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (!db) return reject('DB not ready');
+      try {
+        const tx = db.transaction('receipts', 'readwrite');
+        const store = tx.objectStore('receipts');
+        const getRequest = store.get(orderId);
+
+        getRequest.onsuccess = () => {
+          if (getRequest.result) {
+            const updated = {
+              ...getRequest.result,
+              synced: true,
+              syncedAt: new Date().toISOString()
+            };
+            store.put(updated);
+          }
+          resolve();
+        };
+        getRequest.onerror = () => reject(getRequest.error);
+        tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       } catch (error) {
         reject(error);
@@ -1022,7 +1124,7 @@ export const useIndexedDBStandalone = () => {
     byProduct?: Array<{ icode: string; product_name: string; weight: number }>,
     route?: string,
     scode?: string,
-    options?: { transrefno?: string; verifySource?: string; caller?: string; allowDecrease?: boolean; monthOverride?: string }
+    options?: { transrefno?: string; verifySource?: string; caller?: string; allowDecrease?: boolean; monthOverride?: string; skipVerify?: boolean }
   ): Promise<number | void> => {
     if (!db) return;
     try {
@@ -1292,8 +1394,10 @@ export const useIndexedDBStandalone = () => {
         return writeResult.baseCount;
       }
 
-      // From here writeResult has baseCount/localCount.
-      const committedRecord = writeResult;
+      // v2.12.39: Optional skip verification for bulk operations
+      if (options?.skipVerify) {
+        return fromBackend ? committedRecord.baseCount : committedRecord.baseCount + committedRecord.localCount;
+      }
 
       // For backend writes: read back and verify against the value we asked
       // to persist. For local writes: confirm the put landed (defensive).
@@ -1421,9 +1525,85 @@ export const useIndexedDBStandalone = () => {
     }
   }, [db]);
 
+  /**
+   * v2.12.39: Batch update farmer cumulative records.
+   * Processes multiple updates in a single readwrite transaction to improve performance.
+   */
+  const batchUpdateFarmerCumulative = useCallback(async (
+    updates: Array<{
+      farmerId: string;
+      count: number;
+      fromBackend?: boolean;
+      byProduct?: any[];
+      route?: string;
+      scode?: string;
+      options?: { transrefno?: string; verifySource?: string; caller?: string; allowDecrease?: boolean; monthOverride?: string };
+    }>
+  ): Promise<void> => {
+    if (!db || updates.length === 0) return;
 
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('farmer_cumulative', 'readwrite');
+      const store = tx.objectStore('farmer_cumulative');
 
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(new Error('Batch transaction aborted'));
 
+      updates.forEach((update) => {
+        const { farmerId, count, fromBackend = false, byProduct, route, scode, options } = update;
+        const cleanId = farmerId.replace(/^#/, '').trim();
+        const now = new Date();
+        const month = options?.monthOverride || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const routeKey = (route || '').trim().toUpperCase() || 'ALL';
+        const seasonKey = (scode || '').trim().toUpperCase() || 'ALL';
+        const cacheKey = buildCumulativeKey(cleanId, route, month, scode);
+
+        const getReq = store.get(cacheKey);
+        getReq.onsuccess = () => {
+          const existing = getReq.result;
+          let newRecord: any;
+
+          if (fromBackend) {
+            const incomingNum = Number(count) || 0;
+            const prevSeq = Number(existing?.writeSeq || 0);
+            newRecord = {
+              cacheKey,
+              farmer_id: cleanId,
+              route: routeKey,
+              scode: seasonKey,
+              month,
+              baseCount: incomingNum,
+              localCount: Number(existing?.localCount || 0),
+              byProduct: byProduct || [],
+              lastUpdated: new Date().toISOString(),
+              writeSeq: prevSeq + 1,
+              lastWriteSource: 'batch-backend',
+            };
+          } else {
+            const prevBase = Number(existing?.baseCount || 0);
+            const prevLocal = Number(existing?.localCount || 0);
+            const nextLocal = prevLocal + Number(count);
+            const prevSeq = Number(existing?.writeSeq || 0);
+            newRecord = {
+              cacheKey,
+              farmer_id: cleanId,
+              route: routeKey,
+              scode: seasonKey,
+              month,
+              baseCount: prevBase,
+              localCount: nextLocal,
+              byProduct: byProduct || existing?.byProduct || [],
+              lastUpdated: new Date().toISOString(),
+              writeSeq: prevSeq + 1,
+              lastWriteSource: 'batch-local',
+            };
+          }
+          store.put(newRecord);
+        };
+      });
+    });
+  }, [db]);
 
   /**
    * Calculate cumulative weight from unsynced receipts in IndexedDB for a farmer in the current month.
@@ -1622,7 +1802,9 @@ export const useIndexedDBStandalone = () => {
     getUser,
     saveReceipt,
     getUnsyncedReceipts,
+    getRecentReceipts,
     deleteReceipt,
+    markReceiptSynced,
     saveDeviceApproval,
     getDeviceApproval,
     saveSale,
@@ -1644,6 +1826,7 @@ export const useIndexedDBStandalone = () => {
     getFarmerCumulative,
     updateFarmerCumulative,
     bumpFarmerCumulativeBase,
+    batchUpdateFarmerCumulative,
 
     getFarmerTotalCumulative,
     getUnsyncedWeightForFarmer,

@@ -77,9 +77,24 @@ const getActiveSeason = (): string => {
   return '';
 };
 
+// v2.12.42: Helper to derive the target month string (YYYY-MM) from session metadata.
+const getTargetMonthStr = (): string => {
+  try {
+    const data = localStorage.getItem('active_session_data');
+    if (data) {
+      const parsed = JSON.parse(data);
+      if (parsed?.session?.datefrom) {
+        return parsed.session.datefrom.substring(0, 7); // "YYYY-MM"
+      }
+    }
+  } catch {}
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
 export const FarmerSyncDashboard = () => {
   const { db, getFarmers, getFarmerCumulative, getUnsyncedReceipts, updateFarmerCumulative, isReady } = useIndexedDB();
-  const { settings } = useAppSettings();
+  const { settings, useCumulativeRouteFilter } = useAppSettings();
   const [entries, setEntries] = useState<FarmerSyncEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -97,7 +112,8 @@ export const FarmerSyncDashboard = () => {
   const [sessionSelection, setSessionSelection] = useState({
     route: getActiveRoute(),
     icode: getActiveProduct(),
-    scode: getActiveSeason()
+    scode: getActiveSeason(),
+    month: getTargetMonthStr()
   });
 
   const cancelledRef = useRef(false);
@@ -108,7 +124,8 @@ export const FarmerSyncDashboard = () => {
       setSessionSelection({
         route: getActiveRoute(),
         icode: getActiveProduct(),
-        scode: getActiveSeason()
+        scode: getActiveSeason(),
+        month: getTargetMonthStr()
       });
     };
     window.addEventListener('storage', handleStorage);
@@ -120,7 +137,10 @@ export const FarmerSyncDashboard = () => {
     };
   }, []);
 
-  const { route: activeRoute, icode: activeIcode, scode: activeScode } = sessionSelection;
+  const { route: activeRoute, icode: activeIcode, scode: activeScode, month: effectiveMonth } = sessionSelection;
+
+  // v2.12.36: Effective route code for cumulative calculations based on settings.
+  const cumulativeRouteCode = useCumulativeRouteFilter ? (activeRoute || undefined) : undefined;
 
   /**
    * Build a name lookup map from cm_members (IndexedDB or API).
@@ -177,7 +197,7 @@ export const FarmerSyncDashboard = () => {
         // cumulative totals instead of always the current one.
         batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(
           deviceFingerprint,
-          route || undefined,
+          cumulativeRouteCode,
           activeScode || undefined
         );
         if ((batchResult as any)?.pending || batchResult?.data?.pending) {
@@ -209,7 +229,8 @@ export const FarmerSyncDashboard = () => {
           batch.map(async (bf) => {
             const fId = bf.farmer_id.trim();
             const farmerMeta = nameLookup.get(fId);
-            const cumData = await getFarmerCumulative(fId, route || activeRoute || undefined, activeScode || undefined);
+            // v2.12.42: Ensure we read the cumulative for the same month the offline path uses.
+            const cumData = await getFarmerCumulative(fId, cumulativeRouteCode, activeScode || undefined, effectiveMonth);
 
             // v2.10.96: when an active product is selected, restrict baseCount
             // to the matching by_product slice instead of the combined total.
@@ -285,21 +306,12 @@ export const FarmerSyncDashboard = () => {
   const loadFromOfflineCache = useCallback(async (
     nameLookup: Map<string, Farmer>
   ): Promise<FarmerSyncEntry[]> => {
-    const cleanActiveRoute = (activeRoute || '').trim().toUpperCase();
+    // v2.12.42: Respect useCumulativeRouteFilter setting. If disabled, we ignore the active route
+    // and pull the "ALL" (global) bucket rows from IndexedDB.
+    const cleanActiveRoute = useCumulativeRouteFilter ? (activeRoute || '').trim().toUpperCase() : '';
     const cleanIcode = (activeIcode || '').trim().toUpperCase();
     const cleanScode = (activeScode || '').trim().toUpperCase();
-
-    // v2.12.23: Derive the target month from the active session metadata if available.
-    let targetMonthStr: string | undefined;
-    try {
-      const data = localStorage.getItem('active_session_data');
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (parsed?.session?.datefrom) {
-          targetMonthStr = parsed.session.datefrom.substring(0, 7); // "YYYY-MM"
-        }
-      }
-    } catch {}
+    const targetMonthStr = effectiveMonth;
 
     const cumulativeMap = new Map<string, { baseCount: number; localCount: number; isScoped: boolean; actualRoute: string }>();
     if (db) {
@@ -320,11 +332,23 @@ export const FarmerSyncDashboard = () => {
 
               const isScopedMatch = (cleanActiveRoute ? rowRoute === cleanActiveRoute : true) &&
                                    (cleanScode ? rowScode === cleanScode : true);
+              // v2.12.42: If center-specific row is missing OR filter is disabled, we allow
+              // falling back to the "ALL" bucket IF the month matches.
+              const isGlobalMatch = rowRoute === 'ALL' && (cleanScode ? rowScode === cleanScode : true);
               const isMonthMatch = targetMonthStr ? rowMonth === targetMonthStr : true;
 
-              // v2.12.22: Strict filtering. If a specific center or season is selected,
-              // do NOT fall back to global totals. This ensures the view is accurate.
-              if (!isScopedMatch || !isMonthMatch) continue;
+              if (!isMonthMatch) continue;
+
+              // If route filtering is enabled, we require a scoped match or a global fallback.
+              // If route filtering is DISABLED, we specifically want the global "ALL" bucket.
+              if (useCumulativeRouteFilter) {
+                if (!isScopedMatch && !isGlobalMatch) continue;
+              } else {
+                if (!isGlobalMatch) continue;
+              }
+
+              // If we already have a scoped match, don't overwrite it with a global match.
+              if (cumulativeMap.has(fid) && isGlobalMatch && !isScopedMatch && useCumulativeRouteFilter) continue;
 
               let baseCount = Number(r.baseCount || 0);
               let localCount = Number(r.localCount || 0);
@@ -368,9 +392,9 @@ export const FarmerSyncDashboard = () => {
     const unsyncedByFarmer = new Map<string, number>();
 
     // v2.12.23: Use target month for unsynced calculation if available
-    const now = new Date();
-    const targetMonthIndex = targetMonthStr ? parseInt(targetMonthStr.split('-')[1], 10) - 1 : now.getMonth();
-    const targetYear = targetMonthStr ? parseInt(targetMonthStr.split('-')[0], 10) : now.getFullYear();
+    const [tYear, tMonth] = effectiveMonth.split('-').map(Number);
+    const targetMonthIndex = tMonth - 1;
+    const targetYear = tYear;
 
     for (const r of unsyncedReceipts) {
       if ((r as any).type === 'sale') continue;
@@ -382,7 +406,8 @@ export const FarmerSyncDashboard = () => {
 
       const fid = String((r as any).farmer_id || '').replace(/^#/, '').trim();
       if (!fid) continue;
-      if (cleanActiveRoute) {
+      // v2.12.42: only filter by route if the setting is enabled.
+      if (useCumulativeRouteFilter && cleanActiveRoute) {
         const rRoute = String((r as any).route || '').trim().toUpperCase();
         if (rRoute !== cleanActiveRoute) continue;
       }
@@ -434,7 +459,7 @@ export const FarmerSyncDashboard = () => {
 
     setProgressInfo({ current: built.length, total: built.length, status: `Loaded ${built.length} farmers from offline cache` });
     return built;
-  }, [db, getUnsyncedReceipts, activeRoute, activeIcode, activeScode]);
+  }, [db, getUnsyncedReceipts, activeRoute, activeIcode, activeScode, effectiveMonth, useCumulativeRouteFilter]);
 
   const loadData = useCallback(async (triggerSync = false) => {
     if (!isReady) return;
@@ -467,19 +492,22 @@ export const FarmerSyncDashboard = () => {
         const deviceFingerprint = await resolveFingerprint();
         if (deviceFingerprint) {
           try {
-            const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, activeRoute || undefined, activeScode || undefined);
+            const batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(deviceFingerprint, cumulativeRouteCode, activeScode || undefined);
             if ((batchResult as any)?.pending || batchResult.data?.pending) {
               console.log('[SyncDash] Cumulative refresh skipped — backend snapshot warming');
             } else if (batchResult.success && batchResult.data?.farmers?.length) {
               const batchFarmers = batchResult.data.farmers;
-              const batchLabel = `cumulative-refresh route=${activeRoute || 'ALL'}`;
+              // v2.12.42: Use the month explicitly returned by the backend (month_start)
+              // to ensure we write to the same bucket the API read from.
+              const apiMonth = batchResult.data.month_start?.substring(0, 7) || effectiveMonth;
+              const batchLabel = `cumulative-refresh route=${cumulativeRouteCode || 'ALL'}`;
               cumulativeMonitor.startBatch(batchLabel, batchFarmers.length, { source: 'SyncDash' });
               const WRITE_BATCH = 50;
               for (let i = 0; i < batchFarmers.length; i += WRITE_BATCH) {
                 const wb = batchFarmers.slice(i, i + WRITE_BATCH);
                 await Promise.all(wb.map(async (f) => {
                   try {
-                    await updateFarmerCumulative(f.farmer_id.trim(), f.cumulative_weight, true, f.by_product || [], activeRoute || undefined, activeScode || undefined);
+                    await updateFarmerCumulative(f.farmer_id.trim(), f.cumulative_weight, true, f.by_product || [], cumulativeRouteCode, activeScode || undefined, { monthOverride: apiMonth });
                     cumulativeMonitor.batchOk(batchLabel);
                   } catch {
                     cumulativeMonitor.batchFail(batchLabel);
@@ -507,14 +535,18 @@ export const FarmerSyncDashboard = () => {
       setProgressInfo({ current: 0, total: 0, status: 'Fetching farmer names...' });
       const nameLookup = await buildNameLookup();
 
-      if (navigator.onLine) {
+      const isActuallyOnline = (() => {
+        try { return navigator.onLine; } catch { return true; }
+      })();
+
+      if (isActuallyOnline) {
         // Use batch API as the sole source of the farmer list
         setProgressInfo({ current: 0, total: 0, status: 'Fetching transaction data...' });
         results = await loadFromBatchAPI(nameLookup, activeRoute || undefined);
         if (results) usedSource = 'online';
       }
 
-      const batchApiFailedWhileOnline = navigator.onLine && results === null;
+      const batchApiFailedWhileOnline = isActuallyOnline && results === null;
 
       // Offline fallback or batch API failure — transaction-driven (v2.10.62)
       if (!results) {

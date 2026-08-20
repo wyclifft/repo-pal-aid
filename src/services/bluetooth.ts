@@ -1868,7 +1868,7 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
 
     const printData: number[] = [
       ...COMMANDS.INIT,
-      ...COMMANDS.ALIGN_CENTER,
+      ...COMMANDS.ALIGN_LEFT,
       ...stringToBytes(content),
       ...COMMANDS.LINE_FEED,
       ...COMMANDS.LINE_FEED,
@@ -2003,8 +2003,10 @@ export const printToBluetoothPrinter = async (content: string): Promise<{ succes
 // Helper to center text within a given width
 const centerText = (text: string, width: number): string => {
   if (text.length >= width) return text.substring(0, width);
-  const padding = Math.floor((width - text.length) / 2);
-  return ' '.repeat(padding) + text;
+  const padding = width - text.length;
+  const left = Math.floor(padding / 2);
+  const right = padding - left;
+  return ' '.repeat(left) + text + ' '.repeat(right);
 };
 
 // Helper to format label:value with proper alignment
@@ -2146,7 +2148,9 @@ interface StoreAIReceiptItem {
     cowName?: string;
     cowBreed?: string;
     numberOfCalves?: number | string;
-    otherDetails?: string;
+    bullCode?: string;
+    bullName?: string;
+    nextHeat?: string;
   };
 }
 
@@ -2208,8 +2212,14 @@ export const printStoreAIReceipt = async (data: {
       if (cd.numberOfCalves) {
         itemsText += `  Calves: ${cd.numberOfCalves}\n`;
       }
-      if (cd.otherDetails) {
-        itemsText += `  Notes: ${cd.otherDetails.substring(0, W - 9)}\n`;
+      if (cd.bullCode) {
+        itemsText += `  Bull Code: ${cd.bullCode}\n`;
+      }
+      if (cd.bullName) {
+        itemsText += `  Bull Name: ${cd.bullName.substring(0, W - 13)}\n`;
+      }
+      if (cd.nextHeat) {
+        itemsText += `  Next Heat: ${cd.nextHeat}\n`;
       }
     }
   });
@@ -2297,6 +2307,7 @@ export const printZReport = async (data: {
   clerkName: string;
   deviceCode: string;
   isCoffee?: boolean;
+  activeRouteCode?: string; // v2.12.21: prioritize this store in the print order
   periodFilter?: string; // Display label for selected period (e.g., "Morning Z", "All Z")
   // v2.10.98: 'store' renders a stock-only Z report — no SUMMARY/SEASON/PRODUCE
   // metadata, item names left-aligned full-width, items+KSh totals only.
@@ -2329,26 +2340,52 @@ export const printZReport = async (data: {
   const weightUnit = 'KGS';
   const routeLabel = data.routeLabel || (data.isCoffee ? 'CENTER' : 'ROUTE');
 
-  // Group transactions by transaction type
-  const typeGroups = new Map<number, {
+  // Hierarchical grouping: Store (Route) -> Transaction Type
+  interface TypeGroup {
+    transtype: number;
     typeLabel: string;
     transactions: typeof data.transactions;
     totalWeight: number;
     totalAmount: number;
-  }>();
+  }
+
+  interface StoreGroup {
+    route: string;
+    routeName: string;
+    typeGroups: Map<number, TypeGroup>;
+  }
+
+  const storeGroupsMap = new Map<string, StoreGroup>();
 
   for (const tx of data.transactions) {
+    const route = tx.route || 'OTHER';
+    const routeName = tx.route_name || route;
     const transtype = tx.transtype || 1;
     const typeLabel = tx.transTypeLabel || (transtype === 2 ? 'SELL' : transtype === 3 ? 'AI' : 'BUY');
 
-    if (!typeGroups.has(transtype)) {
-      typeGroups.set(transtype, { typeLabel, transactions: [], totalWeight: 0, totalAmount: 0 });
+    if (!storeGroupsMap.has(route)) {
+      storeGroupsMap.set(route, { route, routeName, typeGroups: new Map() });
     }
-    const group = typeGroups.get(transtype)!;
-    group.transactions.push(tx);
-    group.totalWeight += tx.weight;
-    group.totalAmount += Number(tx.amount || 0);
+    const sg = storeGroupsMap.get(route)!;
+
+    if (!sg.typeGroups.has(transtype)) {
+      sg.typeGroups.set(transtype, { transtype, typeLabel, transactions: [], totalWeight: 0, totalAmount: 0 });
+    }
+    const tg = sg.typeGroups.get(transtype)!;
+    tg.transactions.push(tx);
+    tg.totalWeight += tx.weight;
+    tg.totalAmount += Number(tx.amount || 0);
   }
+
+  // Convert to array and sort stores
+  const storeGroups = Array.from(storeGroupsMap.values()).sort((a, b) => {
+    // v2.12.21: Prioritize active route to match on-screen Z report order
+    if (data.activeRouteCode) {
+      if (a.route === data.activeRouteCode) return -1;
+      if (b.route === data.activeRouteCode) return 1;
+    }
+    return a.routeName.localeCompare(b.routeName);
+  });
 
   // Helper: build a left/right justified line within W chars
   const lr = (left: string, right: string): string => {
@@ -2374,122 +2411,107 @@ export const printZReport = async (data: {
     receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
   }
   receipt += `* DATE: ${formattedDate}\n`;
-  if (data.factoryName) {
-    receipt += `* ${routeLabel}: ${data.factoryName.trim()}\n`;
+
+  // v2.12.21: If exactly one store group exists, show its name in the header.
+  // This ensures the "Center: MOUNTKENYA" line appears even if the caller
+  // didn't explicitly resolve a single factoryName.
+  const displayFactoryName = storeGroups.length === 1
+    ? storeGroups[0].routeName
+    : (data.factoryName || '');
+
+  if (storeGroups.length === 1 && displayFactoryName) {
+    receipt += `* ${routeLabel}: ${displayFactoryName.trim()}\n`;
   }
+
   if (!isStore && data.produceName) {
     receipt += `* PRODUCE: ${data.produceName}\n`;
   }
   receipt += sep + '\n';
 
-  // Column width helpers — header and every data row use these so columns
-  // align perfectly under their labels. (v2.10.74 alignment fix.)
+  // Column width helpers
   const padL = (s: string, w: number) => (s ?? '').padEnd(w).substring(0, w);
   const padR = (s: string, w: number) => (s ?? '').padStart(w).substring(0, w);
 
-  // BUY column spec (transtype=1): MNO(9) REF(6) AMOUNT(8 R) TIME(6 R)
-  //   widths 9+1+6+1+8+1+6 = 32 ✓
-  // SELL/AI column spec (transtype=2,3): MNO(8) REF(5) QTY(5 R) KSh(7 R) TIME(5 R)
-  //   widths 8+1+5+1+5+1+7+0+5 = 33 → drop separator before TIME:
-  //   8+1+5+1+5+1+7 +5 = 33 → tighten KSh to 6: 8+1+5+1+5+1+6+1+5 = 33 still
-  //   final widths used below total exactly 32.
-
-  // Transaction sections per type
-  let typeIdx = 0;
-  for (const [transtype, typeGroup] of typeGroups) {
-    if (typeIdx > 0) {
-      receipt += '\n';
+  // Store sections
+  storeGroups.forEach((sg, sIdx) => {
+    if (sIdx > 0) {
+      receipt += '\n' + '-'.repeat(W) + '\n'; // Separate stores with a divider
     }
-    const showMoney = transtype !== 1;
 
-    // Section banner — anchored to the left over MNO+REF block (not centered
-    // over the whole row, which left it floating off-axis from the data).
-    receipt += `== ${typeGroup.typeLabel} ==\n`;
+    // Store Name Header (Inverted-style or just bold/centered)
+    receipt += centerText(`== ${sg.routeName.toUpperCase()} ==`, W) + '\n';
+    receipt += '\n';
 
-    // Column headers — generated from the SAME widths as the data rows below.
-    if (showMoney) {
-      // SELL/AI: MNO(7) REF(5) QTY(4 R) KSh(7 R) TIME(5 R)
-      // v2.10.76: REF widened 4→5 so the last digit of shortRef (slice(-5)) is
-      // no longer truncated — distinct SELL refs were rendering identical
-      // (e.g. 02981/02982/02983 all printed as "0298"). MNO trimmed 8→7 to
-      // keep the row at 32 chars (real MNO max is 6, e.g. M00012).
-      // total: 7+1+5+1+4+1+7+1+5 = 32 ✓
-      receipt += `${padL('MNO',7)} ${padL('REF',5)} ${padR('QTY',4)} ${padR('KSh',7)} ${padR('TIME',5)}\n`;
-    } else {
-      // BUY: MNO(9) REF(6) AMOUNT(8 R) TIME(6 R) = 32
-      receipt += `${padL('MNO',9)} ${padL('REF',6)} ${padR('AMOUNT',8)} ${padR('TIME',6)}\n`;
-    }
-    receipt += '-'.repeat(W) + '\n';
+    // Sort types within store (BUY first, then SELL, AI)
+    const sortedTypeGroups = Array.from(sg.typeGroups.values()).sort((a, b) => a.transtype - b.transtype);
 
-    // Sort by product_code for grouping
-    const sortedTxs = [...typeGroup.transactions].sort((a, b) =>
-      (a.product_code || '').localeCompare(b.product_code || '')
-    );
+    sortedTypeGroups.forEach((typeGroup, tIdx) => {
+      if (tIdx > 0) receipt += '\n';
 
-    // Suppress single-product divider (only show when section has >1 product).
-    const distinctProducts = new Set(sortedTxs.map(t => t.product_code || '')).size;
-    const showProductDividers = distinctProducts > 1;
+      const transtype = typeGroup.transtype;
+      const showMoney = transtype !== 1;
 
-    let prevProductCode: string | undefined;
-    let sellAiItemCount = 0;
-    for (const tx of sortedTxs) {
-      // v2.10.75: print product label before EVERY group, including the first.
-      // Previously the divider was only printed on transitions, so the first
-      // product (e.g. RAHA) appeared headerless under the section banner while
-      // subsequent products (JOGOO) were correctly labelled.
-      const currentProduct = tx.product_code || '';
-      if (showProductDividers && prevProductCode !== currentProduct) {
-        const produceName = (tx.product_name || tx.product_code || 'OTHER').trim();
-        if (isStore) {
-          // v2.10.98: store mode — item name left-aligned full-width, no padding/dashes.
-          receipt += produceName + '\n';
-        } else {
-          const label = `-- ${produceName} --`;
-          receipt += centerText(label, W) + '\n';
-        }
-      }
-      prevProductCode = currentProduct;
-
-      const shortRef = (tx.refno || '').slice(-5);
-      const time = tx.time.substring(0, 5);
+      receipt += `== ${typeGroup.typeLabel} ==\n`;
 
       if (showMoney) {
-        // SELL/AI: QTY rendered as INTEGER ITEMS (never KGS).
-        const qtyInt = Math.max(0, Math.round(tx.weight || 0));
-        sellAiItemCount += qtyInt;
-        // v2.10.76: widths must match the SELL/AI header above (MNO=7, REF=5).
-        const mno = padL(tx.farmer_id || '', 7);
-        const ref = padL(shortRef, 5);
-        const qty = padR(String(qtyInt), 4);
-        const ksh = padR(Number(tx.amount || 0).toFixed(0), 7);
-        const tim = padR(time, 5);
-        receipt += `${mno} ${ref} ${qty} ${ksh} ${tim}\n`;
+        receipt += `${padL('MNO',7)} ${padL('REF',5)} ${padR('QTY',4)} ${padR('KSh',7)} ${padR('TIME',5)}\n`;
       } else {
-        // BUY: AMOUNT in KGS (1 decimal).
-        const mno = padL(tx.farmer_id || '', 9);
-        const ref = padL(shortRef, 6);
-        const qty = padR(tx.weight.toFixed(1), 8);
-        const tim = padR(time, 6);
-        receipt += `${mno} ${ref} ${qty} ${tim}\n`;
+        receipt += `${padL('MNO',9)} ${padL('REF',6)} ${padR('AMOUNT',8)} ${padR('TIME',6)}\n`;
       }
-    }
+      receipt += '-'.repeat(W) + '\n';
 
-    if (typeGroup.transactions.length === 0) {
-      receipt += centerText('No transactions', W) + '\n';
-    }
+      const sortedTxs = [...typeGroup.transactions].sort((a, b) =>
+        (a.product_code || '').localeCompare(b.product_code || '')
+      );
 
-    // Subtotal — single consolidated line per section.
-    if (showMoney) {
-      // SELL/AI: "<TYPE> TOTAL  <n> items  KSh <amount>"
-      const itemsLabel = sellAiItemCount === 1 ? 'item' : 'items';
-      const right = `${sellAiItemCount} ${itemsLabel}  KSh ${typeGroup.totalAmount.toFixed(0)}`;
-      receipt += lr(`${typeGroup.typeLabel} TOTAL`, right) + '\n';
-    } else {
-      receipt += lr(`${typeGroup.typeLabel} TOTAL`, `${typeGroup.totalWeight.toFixed(1)} ${weightUnit}`) + '\n';
-    }
+      const distinctProducts = new Set(sortedTxs.map(t => t.product_code || '')).size;
+      const showProductDividers = distinctProducts > 1;
 
-    typeIdx++;
-  }
+      let prevProductCode: string | undefined;
+      let sellAiItemCount = 0;
+
+      for (const tx of sortedTxs) {
+        const currentProduct = tx.product_code || '';
+        if (showProductDividers && prevProductCode !== currentProduct) {
+          const produceName = (tx.product_name || tx.product_code || 'OTHER').trim();
+          if (isStore) {
+            receipt += produceName + '\n';
+          } else {
+            receipt += centerText(`-- ${produceName} --`, W) + '\n';
+          }
+        }
+        prevProductCode = currentProduct;
+
+        const shortRef = (tx.refno || '').slice(-5);
+        const time = tx.time.substring(0, 5);
+
+        if (showMoney) {
+          const qtyInt = Math.max(0, Math.round(tx.weight || 0));
+          sellAiItemCount += qtyInt;
+          const mno = padL(tx.farmer_id || '', 7);
+          const ref = padL(shortRef, 5);
+          const qty = padR(String(qtyInt), 4);
+          const ksh = padR(Number(tx.amount || 0).toFixed(0), 7);
+          const tim = padR(time, 5);
+          receipt += `${mno} ${ref} ${qty} ${ksh} ${tim}\n`;
+        } else {
+          const mno = padL(tx.farmer_id || '', 9);
+          const ref = padL(shortRef, 6);
+          const qty = padR(tx.weight.toFixed(1), 8);
+          const tim = padR(time, 6);
+          receipt += `${mno} ${ref} ${qty} ${tim}\n`;
+        }
+      }
+
+      if (showMoney) {
+        const itemsLabel = sellAiItemCount === 1 ? 'item' : 'items';
+        const right = `${sellAiItemCount} ${itemsLabel}  KSh ${typeGroup.totalAmount.toFixed(0)}`;
+        receipt += lr(`${typeGroup.typeLabel} TOTAL`, right) + '\n';
+      } else {
+        receipt += lr(`${typeGroup.typeLabel} TOTAL`, `${typeGroup.totalWeight.toFixed(1)} ${weightUnit}`) + '\n';
+      }
+    });
+  });
 
   receipt += '\n';
   receipt += sep + '\n';
@@ -2498,15 +2520,18 @@ export const printZReport = async (data: {
   //   TOTAL <kg> KGS    → BUY only (weight is meaningful)
   //   TOTAL ITEMS <n>   → SELL+AI only (units sold)
   //   TOTAL VALUE KSh n → SELL+AI only (monetary)
-  const buyGroup = typeGroups.get(1);
-  const buyWeight = buyGroup ? buyGroup.totalWeight : 0;
-
+  let buyWeight = 0;
   let sellAiItems = 0;
   let sellAiAmount = 0;
-  for (const [tt, g] of typeGroups) {
-    if (tt === 1) continue;
-    sellAiAmount += g.totalAmount;
-    for (const tx of g.transactions) {
+  const foundTypes = new Set<number>();
+
+  for (const tx of data.transactions) {
+    const tt = tx.transtype || 1;
+    foundTypes.add(tt);
+    if (tt === 1) {
+      buyWeight += tx.weight;
+    } else {
+      sellAiAmount += Number(tx.amount || 0);
       sellAiItems += Math.max(0, Math.round(tx.weight || 0));
     }
   }
@@ -2536,7 +2561,7 @@ export const printZReport = async (data: {
     totalAmount: sellAiAmount,
     totalItems: sellAiItems,
     device: data.deviceCode,
-    typeGroups: Array.from(typeGroups.keys())
+    typeGroups: Array.from(foundTypes)
   });
 
   // Try Classic Bluetooth printer first

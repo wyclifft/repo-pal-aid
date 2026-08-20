@@ -6,7 +6,9 @@ export interface CowDetails {
   cowName: string;
   cowBreed: string;
   numberOfCalves: string;
-  otherDetails: string;
+  bullCode: string;
+  bullName: string;
+  nextHeat: string;
 }
 
 interface CowDetailsModalProps {
@@ -25,20 +27,26 @@ export const CowDetailsModal = ({
   const [cowName, setCowName] = useState('');
   const [cowBreed, setCowBreed] = useState('');
   const [numberOfCalves, setNumberOfCalves] = useState('');
-  const [otherDetails, setOtherDetails] = useState('');
+  const [bullCode, setBullCode] = useState('');
+  const [bullName, setBullName] = useState('');
+  const [nextHeat, setNextHeat] = useState('');
 
   const handleSave = () => {
     onSave({
       cowName: cowName.trim(),
       cowBreed: cowBreed.trim(),
       numberOfCalves: numberOfCalves.trim(),
-      otherDetails: otherDetails.trim(),
+      bullCode: bullCode.trim(),
+      bullName: bullName.trim(),
+      nextHeat: nextHeat.trim(),
     });
     // Reset form
     setCowName('');
     setCowBreed('');
     setNumberOfCalves('');
-    setOtherDetails('');
+    setBullCode('');
+    setBullName('');
+    setNextHeat('');
   };
 
   const handleClose = () => {
@@ -46,7 +54,9 @@ export const CowDetailsModal = ({
     setCowName('');
     setCowBreed('');
     setNumberOfCalves('');
-    setOtherDetails('');
+    setBullCode('');
+    setBullName('');
+    setNextHeat('');
     onClose();
   };
 
@@ -104,14 +114,34 @@ export const CowDetailsModal = ({
             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#5E35B1] text-base"
           />
 
-          {/* Other Details */}
+          {/* Bull Code */}
           <input
             type="text"
-            placeholder="Other Details"
-            value={otherDetails}
-            onChange={(e) => setOtherDetails(e.target.value)}
+            placeholder="Bull Code"
+            value={bullCode}
+            onChange={(e) => setBullCode(e.target.value)}
             className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#5E35B1] text-base"
           />
+
+          {/* Bull Name */}
+          <input
+            type="text"
+            placeholder="Bull Name"
+            value={bullName}
+            onChange={(e) => setBullName(e.target.value)}
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#5E35B1] text-base"
+          />
+
+          {/* Next Heat Date Picker */}
+          <div className="space-y-1">
+            <label className="text-sm text-gray-500 ml-1">Next Heat Date</label>
+            <input
+              type="date"
+              value={nextHeat}
+              onChange={(e) => setNextHeat(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#5E35B1] text-base"
+            />
+          </div>
 
           {/* Save Button */}
           <button

@@ -40,6 +40,7 @@ interface DeviceZReportReceiptProps {
   onClose: () => void;
   onPrint?: () => void;
   routeName?: string; // Factory name from route selection
+  activeRouteCode?: string; // v2.12.20: dashboard-selected store code
   selectedPeriod?: ZReportPeriod; // Period filter
   periodLabel?: string; // Display label for selected period (e.g., "Morning Z")
   // v2.10.97: 'store' renders an independent stock-only Z report that excludes
@@ -48,7 +49,7 @@ interface DeviceZReportReceiptProps {
   reportType?: 'produce' | 'store';
 }
 
-// Helper to group transactions by transaction type
+// Helper to group transactions by store and then by transaction type
 interface TypeGroup {
   transtype: number;
   typeLabel: string;
@@ -57,12 +58,19 @@ interface TypeGroup {
   totalAmount: number;
 }
 
+interface StoreGroup {
+  route: string;
+  routeName: string;
+  typeGroups: TypeGroup[];
+}
+
 export const DeviceZReportReceipt = ({ 
   data, 
   open, 
   onClose, 
   onPrint,
   routeName,
+  activeRouteCode,
   selectedPeriod = 'all',
   periodLabel: periodLabelProp,
   reportType = 'produce'
@@ -91,41 +99,66 @@ export const DeviceZReportReceipt = ({
       const tt = Number((t as any).transtype) || 1;
       return tt === 1;
     });
-    return filterTransactionsByPeriod(produceOnly, selectedPeriod);
-  }, [data?.transactions, selectedPeriod, isStoreReport]);
+    return filterTransactionsByPeriod(produceOnly, selectedPeriod, data.orgtype);
+  }, [data?.transactions, selectedPeriod, isStoreReport, data?.orgtype]);
   
-  // Group filtered transactions by transaction type (1=Buy, 2=Sell, 3=AI)
-  const typeGroups = useMemo<TypeGroup[]>(() => {
+  // Group filtered transactions by Store (Route) and then by Type (1=Buy, 2=Sell, 3=AI)
+  const storeGroups = useMemo<StoreGroup[]>(() => {
     if (!filteredTransactions.length) return [];
     
-    const typeMap = new Map<number, TypeGroup>();
+    const storeMap = new Map<string, StoreGroup>();
     
     for (const tx of filteredTransactions) {
+      const route = tx.route || 'OTHER';
+      const routeNameLabel = tx.route_name || route;
+
+      if (!storeMap.has(route)) {
+        storeMap.set(route, {
+          route,
+          routeName: routeNameLabel,
+          typeGroups: []
+        });
+      }
+
+      const storeGroup = storeMap.get(route)!;
       const transtype = tx.transtype || 1;
       const typeLabel = tx.transTypeLabel || (transtype === 2 ? 'SELL' : transtype === 3 ? 'AI' : 'BUY');
       
-      if (!typeMap.has(transtype)) {
-        typeMap.set(transtype, {
+      let typeGroup = storeGroup.typeGroups.find(g => g.transtype === transtype);
+      if (!typeGroup) {
+        typeGroup = {
           transtype,
           typeLabel,
           transactions: [],
           totalWeight: 0,
           totalAmount: 0,
-        });
+        };
+        storeGroup.typeGroups.push(typeGroup);
       }
       
-      const group = typeMap.get(transtype)!;
-      group.transactions.push(tx);
-      group.totalWeight += tx.weight;
-      group.totalAmount += Number(tx.amount || 0);
+      typeGroup.transactions.push(tx);
+      typeGroup.totalWeight += tx.weight;
+      typeGroup.totalAmount += Number(tx.amount || 0);
     }
     
-    const sorted = Array.from(typeMap.values()).sort((a, b) => a.transtype - b.transtype);
-    sorted.forEach(group => {
-      group.transactions.sort((a, b) => (a.product_code || '').localeCompare(b.product_code || ''));
+    const sortedStores = Array.from(storeMap.values()).sort((a, b) => {
+      // Prioritize active route if provided
+      if (activeRouteCode) {
+        if (a.route === activeRouteCode) return -1;
+        if (b.route === activeRouteCode) return 1;
+      }
+      return a.routeName.localeCompare(b.routeName);
     });
-    return sorted;
-  }, [filteredTransactions]);
+
+    sortedStores.forEach(sg => {
+      sg.typeGroups.sort((a, b) => a.transtype - b.transtype);
+      sg.typeGroups.forEach(tg => {
+        tg.transactions.sort((a, b) => (a.product_code || '').localeCompare(b.product_code || ''));
+      });
+    });
+
+    return sortedStores;
+  }, [filteredTransactions, activeRouteCode]);
   
   // Calculate filtered totals
   const filteredTotals = useMemo(() => {
@@ -140,13 +173,10 @@ export const DeviceZReportReceipt = ({
     };
   }, [filteredTransactions]);
   
-  // Get center name from first transaction if available
+  // Get center name from data or props
   const centerName = useMemo(() => {
-    if (typeGroups.length > 0 && typeGroups[0].transactions.length > 0) {
-      return typeGroups[0].transactions[0].route_name || routeName || '';
-    }
     return routeName || '';
-  }, [typeGroups, routeName]);
+  }, [routeName]);
   
   if (!data) return null;
 
@@ -209,6 +239,7 @@ export const DeviceZReportReceipt = ({
           clerkName: data.clerkName,
           deviceCode: data.deviceCode,
           isCoffee: data.isCoffee,
+          activeRouteCode, // v2.12.21: pass active store context to printer
           periodFilter: periodDisplayLabel, // Pass period label for display on receipt
           reportType, // v2.10.98: store mode strips produce metadata in print
         });
@@ -260,9 +291,6 @@ export const DeviceZReportReceipt = ({
   const getShortRef = (refno: string) => (refno || '').slice(-5);
 
   // Render transactions for a type group.
-  // BUY (transtype=1): MNO | REF | AMOUNT | TIME — AMOUNT is weight in KGS.
-  // SELL/AI (transtype 2/3): MNO | REF | QTY | KSh | TIME — QTY is integer ITEMS, never KGS.
-  // Column templates use explicit char widths so the headers sit directly above the data.
   const renderTypeSection = (group: TypeGroup, isFirst: boolean) => {
     const showMoney = group.transtype !== 1;
     // Same template used for header AND every data row → guaranteed alignment.
@@ -344,11 +372,6 @@ export const DeviceZReportReceipt = ({
               </div>
             );
           })}
-          {group.transactions.length === 0 && (
-            <div className="text-center text-muted-foreground italic text-[11px] py-1">
-              No transactions
-            </div>
-          )}
         </div>
 
         {/* Type subtotal — single consolidated line per section */}
@@ -401,7 +424,7 @@ export const DeviceZReportReceipt = ({
             <span className="font-semibold">DATE</span>
             <span>{formattedDate}</span>
 
-            {centerName && (
+            {!isStoreReport && centerName && (
               <>
                 <span className="font-semibold">{routeLabel.toUpperCase()}</span>
                 <span className="truncate">{centerName}</span>
@@ -417,10 +440,21 @@ export const DeviceZReportReceipt = ({
           </div>
 
 
-          {/* Transaction Groups by Type */}
+          {/* Store Groups */}
           <div className="max-h-80 overflow-y-auto pr-1">
-            {typeGroups.length > 0 ? (
-              typeGroups.map((group, idx) => renderTypeSection(group, idx === 0))
+            {storeGroups.length > 0 ? (
+              storeGroups.map((storeGroup, sIdx) => (
+                <div key={storeGroup.route} className={sIdx > 0 ? 'mt-6 pt-4 border-t-2 border-dashed' : ''}>
+                  {/* Store Name Header */}
+                  <div className="text-center mb-2">
+                    <span className="bg-foreground text-background px-3 py-1 rounded text-xs font-bold uppercase tracking-widest">
+                      {storeGroup.routeName}
+                    </span>
+                  </div>
+
+                  {storeGroup.typeGroups.map((group, tIdx) => renderTypeSection(group, tIdx === 0))}
+                </div>
+              ))
             ) : (
               <div className="text-center text-muted-foreground italic py-3">
                 No transactions
@@ -428,38 +462,34 @@ export const DeviceZReportReceipt = ({
             )}
           </div>
 
-          {/* Grand Totals — split by what each transtype represents:
-              KGS for BUY only, ITEMS+VALUE for SELL/AI only. Suppress zero lines. */}
+          {/* Grand Totals */}
           {(() => {
-            const buyGroup = typeGroups.find(g => g.transtype === 1);
-            const buyWeight = buyGroup ? buyGroup.totalWeight : 0;
+            const buyWeight = filteredTransactions.filter(tx => (tx.transtype || 1) === 1).reduce((s, tx) => s + tx.weight, 0);
             let sellAiItems = 0;
             let sellAiAmount = 0;
-            for (const g of typeGroups) {
-              if (g.transtype === 1) continue;
-              sellAiAmount += g.totalAmount;
-              for (const t of g.transactions) {
-                sellAiItems += Math.max(0, Math.round(t.weight || 0));
-              }
-            }
+            filteredTransactions.forEach(tx => {
+              if ((tx.transtype || 1) === 1) return;
+              sellAiAmount += Number(tx.amount || 0);
+              sellAiItems += Math.max(0, Math.round(tx.weight || 0));
+            });
             const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
             return (
               <div className="border-t-2 border-double pt-2 mt-2 space-y-1">
                 {buyWeight > 0 && (
                   <div className="flex justify-between font-bold text-sm">
-                    <span>TOTAL</span>
+                    <span>GRAND TOTAL BUY</span>
                     <span className="tabular-nums">{buyWeight.toFixed(1)} {weightUnit}</span>
                   </div>
                 )}
                 {sellAiItems > 0 && (
                   <div className="flex justify-between font-bold text-sm">
-                    <span>TOTAL ITEMS</span>
+                    <span>GRAND TOTAL ITEMS</span>
                     <span className="tabular-nums">{sellAiItems} {itemsLabel}</span>
                   </div>
                 )}
                 {sellAiAmount > 0 && (
                   <div className="flex justify-between font-bold text-sm">
-                    <span>TOTAL VALUE</span>
+                    <span>GRAND TOTAL VALUE</span>
                     <span className="tabular-nums">KSh {sellAiAmount.toFixed(0)}</span>
                   </div>
                 )}

@@ -39,7 +39,7 @@ interface ParsedCredit {
 const Store = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
-  const { settings: psettings } = useAppSettings();
+  const { settings: psettings, capturePhoto } = useAppSettings();
   const [items, setItems] = useState<Item[]>([]);
   const [hasRoutes, setHasRoutes] = useState<boolean | null>(null);
   const [storeEnabled, setStoreEnabled] = useState<boolean | null>(null);
@@ -528,8 +528,14 @@ const Store = () => {
       toast.error('Please set quantity for all items');
       return;
     }
-    // Open photo capture dialog
-    setShowPhotoCapture(true);
+
+    if (capturePhoto) {
+      // Open photo capture dialog
+      setShowPhotoCapture(true);
+    } else {
+      // Bypass photo capture and submit immediately
+      handleSubmit();
+    }
   };
 
   // Submit sale after photo is captured
@@ -545,7 +551,7 @@ const Store = () => {
     }
     // Use pendingPhotoRef to avoid React state timing issue (setState not yet flushed)
     const photoToUse = pendingPhotoRef.current || capturedPhoto;
-    if (!photoToUse) {
+    if (capturePhoto && !photoToUse) {
       toast.error('Please capture buyer photo first');
       setShowPhotoCapture(true);
       return;
@@ -653,11 +659,13 @@ const Store = () => {
         }
 
         // Queue photo for background upload - doesn't block transaction
-        queuePhotoUpload(refs.uploadrefno, photoToUse.blob);
-        console.log(`📷 Photo queued for background upload: ${refs.uploadrefno}`);
+        if (photoToUse) {
+          queuePhotoUpload(refs.uploadrefno, photoToUse.blob);
+          console.log(`📷 Photo queued for background upload: ${refs.uploadrefno}`);
+        }
       } else {
         // Offline: convert photo to base64 for storage (will sync later)
-        const photoBase64 = await blobToBase64(photoToUse.blob);
+        const photoBase64 = photoToUse ? await blobToBase64(photoToUse.blob) : null;
         
         // Save each item individually for later sync
         for (const item of batchItems) {
@@ -676,7 +684,7 @@ const Store = () => {
             user_id: userId, // Login user_id for DB userId column
             sold_by: clerkName, // Display name for DB clerk column
             device_fingerprint: deviceFingerprint,
-            photo: photoBase64, // Include photo for offline sync
+            photo: photoBase64, // Include photo for offline sync (if exists)
             season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
             session_label: sessionMeta.backend_session, // → DB: session. Coffee=SCODE, Dairy=descript (v2.10.51)
             // delivered_by not used in Store transactions
@@ -729,7 +737,7 @@ const Store = () => {
       toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.uploadrefno}]`);
       setCart([]);
       // Clean up photo
-      if (photoToUse.preview) {
+      if (photoToUse?.preview) {
         URL.revokeObjectURL(photoToUse.preview);
       }
       setCapturedPhoto(null);
@@ -847,7 +855,7 @@ const Store = () => {
                   <>
                     {selectedFarmer.name} [{selectedFarmer.route || 'T000'}] - MULTI OPT =
                     <br />
-                    <button 
+                    <button
                       onClick={() => setShowViewMore(true)}
                       className="text-[#1565C0] underline font-medium"
                     >

@@ -58,7 +58,8 @@ export const useDataSync = () => {
   const mountedRef = useRef(true);
   const periodicSyncRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncInProgressRef = useRef(false); // Extra guard against concurrent syncs
-  
+  const lastPendingUpdateRef = useRef<number>(0); // v2.12.39: Debounce for updatePendingCount
+
   const { 
     saveFarmers, 
     saveItems, 
@@ -69,10 +70,12 @@ export const useDataSync = () => {
     getUnsyncedReceipts,
     getUnsyncedSales,
     deleteReceipt,
+    markReceiptSynced,
     deleteSale,
     getAllUnsyncedRecords,
     updateFarmerCumulative,
     bumpFarmerCumulativeBase,
+    batchUpdateFarmerCumulative,
     getFarmerCumulative,
 
 
@@ -80,7 +83,14 @@ export const useDataSync = () => {
   } = useIndexedDB();
 
   const { acquireLock, releaseLock, registerOnlineHandler } = useSyncManager();
-  const { refreshSettings } = useAppSettings();
+  const { refreshSettings, useCumulativeRouteFilter } = useAppSettings();
+
+  /**
+   * v2.12.36: Effective route code for cumulative calculations based on settings.
+   */
+  const getCumulativeRoute = useCallback((route?: string) => {
+    return useCumulativeRouteFilter ? route : undefined;
+  }, [useCumulativeRouteFilter]);
 
   /**
    * v2.12.21: Internal helper to fetch a cumulative batch and save it to strict buckets.
@@ -95,10 +105,13 @@ export const useDataSync = () => {
     let retryCount = 0;
     const MAX_RETRIES = isBlocking ? 3 : 1;
 
-    console.log(`[SYNC] Fetching batch for route=${route || 'ALL'} season=${season || 'ACTIVE'}`);
+    // v2.12.36: Respect cumulative route filter setting
+    const effectiveRoute = getCumulativeRoute(route);
+
+    console.log(`[SYNC] Fetching batch for route=${effectiveRoute || 'ALL'} season=${season || 'ACTIVE'}`);
 
     while (retryCount < MAX_RETRIES) {
-      batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(fingerprint, route, season);
+      batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(fingerprint, effectiveRoute, season);
       if ((batchResult?.pending || batchResult?.data?.pending) && isBlocking) {
         console.log(`[SYNC] Batch pending, retrying in 3s... (${retryCount + 1}/${MAX_RETRIES})`);
         await new Promise(r => setTimeout(r, 3000));
@@ -115,28 +128,41 @@ export const useDataSync = () => {
         ? batchResult.data.month_start.substring(0, 7) // "YYYY-MM"
         : undefined;
 
-      const WRITE_BATCH = 50;
+      const WRITE_BATCH = 100; // v2.12.39: Increased from 50 due to batch transaction optimization
       for (let i = 0; i < batchFarmers.length; i += WRITE_BATCH) {
         const wb = batchFarmers.slice(i, i + WRITE_BATCH);
-        await Promise.all(wb.map(async (f: any) => {
-          try {
-            await updateFarmerCumulative(
-              f.farmer_id.trim(),
-              f.cumulative_weight,
-              true,
-              f.by_product || [],
-              route, // Strict route
-              season, // Strict season
-              { monthOverride, verifySource: 'W3:exhaustive-sync' }
-            );
-          } catch {}
-        }));
+        try {
+          await batchUpdateFarmerCumulative(wb.map((f: any) => ({
+            farmerId: f.farmer_id.trim(),
+            count: f.cumulative_weight,
+            fromBackend: true,
+            byProduct: f.by_product || [],
+            route: effectiveRoute,
+            scode: season,
+            options: { monthOverride, verifySource: 'W3:exhaustive-sync' }
+          })));
+        } catch (err) {
+          console.warn('[SYNC] Batch update failed, falling back to individual updates:', err);
+          await Promise.all(wb.map(async (f: any) => {
+            try {
+              await updateFarmerCumulative(
+                f.farmer_id.trim(),
+                f.cumulative_weight,
+                true,
+                f.by_product || [],
+                effectiveRoute,
+                season,
+                { monthOverride, verifySource: 'W3:exhaustive-sync', skipVerify: true }
+              );
+            } catch {}
+          }));
+        }
       }
-      console.log(`[SUCCESS] Synced totals for ${batchFarmers.length} farmers (route=${route || 'ALL'} season=${season || 'ACTIVE'})`);
+      console.log(`[SUCCESS] Synced totals for ${batchFarmers.length} farmers (route=${effectiveRoute || 'ALL'} season=${season || 'ACTIVE'})`);
       return batchFarmers.length;
     }
     return 0;
-  }, [updateFarmerCumulative]);
+  }, [updateFarmerCumulative, getCumulativeRoute]);
 
   // Update offlineFirstMode when settings change
   useEffect(() => {
@@ -297,7 +323,9 @@ export const useDataSync = () => {
                     product_name: String(p.product_name || p.icode || ''),
                     weight: Number(p.weight) || 0,
                   }));
-                  await updateFarmerCumulative(cleanFarmerId, Number(cloudCumulative), true, freshByProduct, routeForRefresh || undefined, seasonForRefresh || undefined, { transrefno: newRef, verifySource: 'W2:collision-retry' });
+                  // v2.12.36: Respect cumulative route filter setting
+                  const effectiveRoute = getCumulativeRoute(routeForRefresh);
+                  await updateFarmerCumulative(cleanFarmerId, Number(cloudCumulative), true, freshByProduct, effectiveRoute, seasonForRefresh || undefined, { transrefno: newRef, verifySource: 'W2:collision-retry' });
                 }
               } catch {}
               if (useNativeStorage) {
@@ -306,7 +334,7 @@ export const useDataSync = () => {
                 await markNativeRecordSynced(normRef);
               }
               if (receipt.orderId && typeof receipt.orderId === 'number') {
-                try { await deleteReceipt(receipt.orderId); } catch {}
+                try { await markReceiptSynced(receipt.orderId); } catch {}
               }
               return { success: true };
             }
@@ -347,25 +375,29 @@ export const useDataSync = () => {
           let cloudCumulative = (result as any)?.cumulative_weight;
           let cloudByProduct = (result as any)?.by_product;
 
-          if (cloudCumulative !== undefined) {
-            const freshByProduct = (cloudByProduct || []).map((p: any) => ({
-              icode: String(p.icode || '').trim().toUpperCase(),
-              product_name: String(p.product_name || p.icode || ''),
-              weight: Number(p.weight) || 0,
-            }));
-            await updateFarmerCumulative(cleanFarmerId, Number(cloudCumulative), true, freshByProduct, routeForRefresh || undefined, seasonForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W1:postsync-update' });
-          } else {
-            // v2.12.31: If backend didn't return cumulative (e.g. idempotent retry on old backend),
-            // use optimistic carry-over to prevent the total from dropping when we delete the local row.
-            await bumpFarmerCumulativeBase(
-              cleanFarmerId,
-              Number(receipt.weight),
-              receipt.product_code,
-              routeForRefresh || undefined,
-              seasonForRefresh || undefined,
-              { transrefno: receipt.reference_no, reason: 'idempotent-success-carryover' }
-            );
-          }
+            if (cloudCumulative !== undefined) {
+              const freshByProduct = (cloudByProduct || []).map((p: any) => ({
+                icode: String(p.icode || '').trim().toUpperCase(),
+                product_name: String(p.product_name || p.icode || ''),
+                weight: Number(p.weight) || 0,
+              }));
+              // v2.12.36: Respect cumulative route filter setting
+              const effectiveRoute = getCumulativeRoute(routeForRefresh);
+              await updateFarmerCumulative(cleanFarmerId, Number(cloudCumulative), true, freshByProduct, effectiveRoute, seasonForRefresh || undefined, { transrefno: receipt.reference_no, verifySource: 'W1:postsync-update' });
+            } else {
+              // v2.12.31: If backend didn't return cumulative (e.g. idempotent retry on old backend),
+              // use optimistic carry-over to prevent the total from dropping when we delete the local row.
+              // v2.12.36: Respect cumulative route filter setting
+              const effectiveRoute = getCumulativeRoute(routeForRefresh);
+              await bumpFarmerCumulativeBase(
+                cleanFarmerId,
+                Number(receipt.weight),
+                receipt.product_code,
+                effectiveRoute,
+                seasonForRefresh || undefined,
+                { transrefno: receipt.reference_no, reason: 'idempotent-success-carryover' }
+              );
+            }
         } catch (cumErr) {
           // Non-critical
         }
@@ -379,7 +411,7 @@ export const useDataSync = () => {
 
           for (const d of duplicates) {
             if (d.orderId && typeof d.orderId === 'number') {
-              await deleteReceipt(d.orderId);
+              await markReceiptSynced(d.orderId);
             }
           }
           console.log(`[SYNC] SUCCESS: Deleted ${duplicates.length} local records for ${receipt.reference_no}`);
@@ -443,12 +475,14 @@ export const useDataSync = () => {
                 const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
                 const routeForRefresh = String(receipt.route || '').trim();
                 const seasonForRefresh = String(receipt.season_code || '').trim();
-                await bumpFarmerCumulativeBase(cleanFarmerId, Number(receipt.weight), receipt.product_code, routeForRefresh, seasonForRefresh, { transrefno: receipt.reference_no, reason: 'post-timeout-verify-carryover' });
+                // v2.12.36: Respect cumulative route filter setting
+                const effectiveRoute = getCumulativeRoute(routeForRefresh);
+                await bumpFarmerCumulativeBase(cleanFarmerId, Number(receipt.weight), receipt.product_code, effectiveRoute, seasonForRefresh, { transrefno: receipt.reference_no, reason: 'post-timeout-verify-carryover' });
               } catch {}
 
               // 3. Delete from IndexedDB
               if (receipt.orderId && typeof receipt.orderId === 'number') {
-                try { await deleteReceipt(receipt.orderId); } catch {}
+                try { await markReceiptSynced(receipt.orderId); } catch {}
               }
               return { success: true };
             } else {
@@ -466,11 +500,13 @@ export const useDataSync = () => {
           // Idempotent recovery for duplicates already on server
           console.log(`[SYNC] IDEMPOTENT success: ${receipt.reference_no} confirmed on server (combinedMsg="${combinedMsg}").`);
 
+          // v2.12.36: Respect cumulative route filter setting
+          const effectiveRoute = getCumulativeRoute(String(receipt.route));
           await bumpFarmerCumulativeBase(
             String(receipt.farmer_id).replace(/^#/, '').trim(),
             Number(receipt.weight),
             receipt.product_code,
-            String(receipt.route),
+            effectiveRoute,
             String(receipt.season_code),
             { transrefno: receipt.reference_no, reason: 'idempotent-recovery' }
           );
@@ -488,7 +524,7 @@ export const useDataSync = () => {
             const duplicates = rawLocal.filter(r => (r.reference_no || '').trim().toUpperCase() === normRef);
             for (const d of duplicates) {
               if (d.orderId && typeof d.orderId === 'number') {
-                await deleteReceipt(d.orderId);
+                await markReceiptSynced(d.orderId);
               }
             }
             console.log(`[SYNC] IDEMPOTENT: Cleaned up ${duplicates.length} local records for ${receipt.reference_no}`);
@@ -538,9 +574,9 @@ export const useDataSync = () => {
               try { await markNativeRecordSynced(receipt.reference_no); } catch {}
             }
 
-            // Delete from IndexedDB
+            // Mark as synced in IndexedDB
             if (receipt.orderId && typeof receipt.orderId === 'number') {
-              try { await deleteReceipt(receipt.orderId); } catch {}
+              try { await markReceiptSynced(receipt.orderId); } catch {}
             }
             return { success: true };
           }
@@ -553,7 +589,7 @@ export const useDataSync = () => {
     } finally {
       if (receipt.reference_no) inFlightSyncsRef.current.delete(receipt.reference_no);
     }
-  }, [updateFarmerCumulative, deleteReceipt, bumpFarmerCumulativeBase]);
+  }, [updateFarmerCumulative, markReceiptSynced, bumpFarmerCumulativeBase]);
 
   // Sync offline receipts TO backend with deduplication and batch processing
   // In offline-first mode (online=1), this is only triggered manually or on explicit sync
@@ -590,6 +626,11 @@ export const useDataSync = () => {
       if (!conflictKeysToasted.has(key)) {
         conflictKeysToasted.add(key);
         toast.error(`Farmer ${farmerId} already has a synced delivery for ${sessionVal} on ${dateVal}.`, { duration: 8000 });
+
+        // v2.12.41: Dispatch event to update session blacklist in real-time
+        window.dispatchEvent(new CustomEvent('duplicateDetected', {
+          detail: { farmerId, session: sessionVal, date: dateVal }
+        }));
       }
     };
 
@@ -692,7 +733,7 @@ export const useDataSync = () => {
       if (mountedRef.current) {
         // v2.12.26: Always refresh actual count from DB instead of using local 'failed' counter.
         // This ensures the dashboard stays accurate regardless of loop early-exits.
-        await updatePendingCount();
+        await updatePendingCount(true);
         setConflictedReceiptsCount(conflictKeysSeen.size);
       }
       
@@ -708,8 +749,17 @@ export const useDataSync = () => {
   }, [isReady, getUnsyncedReceipts, deleteReceipt, processReceiptSync]);
 
   // Update pending count - split into milk + store/AI sales
-  const updatePendingCount = useCallback(async () => {
+  const updatePendingCount = useCallback(async (force = false) => {
     if (!isReady) return;
+
+    // v2.12.39: Debounce bridge-heavy count updates (min 2s between calls)
+    // to keep UI responsive on legacy WebViews during rapid events.
+    const now = Date.now();
+    if (!force && (now - lastPendingUpdateRef.current < 2000)) {
+      return;
+    }
+    lastPendingUpdateRef.current = now;
+
     try {
       const unsynced = await getUnsyncedReceipts();
       // Filter out non-receipt entries and sales (sales counted separately)
@@ -780,6 +830,7 @@ export const useDataSync = () => {
     // Use global lock to prevent concurrent syncs
     if (!acquireLock()) {
       console.log('[SYNC] Could not acquire lock, sync already in progress');
+      if (!silent) toast.info('Sync already in progress');
       return false;
     }
 
@@ -787,7 +838,7 @@ export const useDataSync = () => {
       console.log('[SYNC] Offline detected in syncAllData');
       releaseLock();
       if (!silent) toast.info('Working offline');
-      await updatePendingCount();
+      await updatePendingCount(true);
       return false;
     }
 
@@ -1013,7 +1064,7 @@ export const useDataSync = () => {
 
       if (mountedRef.current) {
         setLastSyncTime(new Date());
-        await updatePendingCount();
+        await updatePendingCount(true);
         
         // v2.12.18: Always dispatch syncComplete so dashboards and other components refresh
         window.dispatchEvent(new CustomEvent('syncComplete', {
@@ -1128,7 +1179,7 @@ export const useDataSync = () => {
 
   // Update pending count on mount and when receipts are saved
   useEffect(() => {
-    if (isReady) updatePendingCount();
+    if (isReady) updatePendingCount(true);
 
     // Listen for receipt/sale save events to refresh counts immediately
     const handleReceiptSaved = () => {

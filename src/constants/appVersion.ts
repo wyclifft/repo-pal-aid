@@ -1,4 +1,12 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.33: REFERENCE GENERATOR HARDENING + 13-CHAR STANDARD.
+//   Backend: Updated /api/milk-collection to use .slice(-8) for ID extraction,
+//   fixing the "growing reference" bug caused by devcodes with numbers.
+//   Frontend: Updated referenceGenerator to follow Workspace Rule No. 13:
+//   transrefno = devcode + clientFetch + 8-digit trnid (13 characters).
+//   Index.tsx now correctly captures and passes clientFetch for milk captures.
+//   Ensures consistency across all transaction types (Milk/Store/AI).
+//
 // v2.12.32: SYNC ROBUSTNESS + IDEMPOTENT CUMULATIVE STATS.
 //   Backend: Extract getFarmerCumulativeStats helper; idempotent POST retry now
 //   returns backend_id, cumulative_weight and by_product. Ensures devices
@@ -1191,12 +1199,19 @@
 //   Dashboard), only the Dashboard minimises/exits the app.
 //   (3) Bluetooth auto-reconnect installer is actually invoked on native, so the
 //   saved scale/printer reconnect when the app is reopened.
-export const APP_VERSION = '2.12.32';
-export const APP_VERSION_CODE = 208;
+// v2.12.47: UI REALIGNMENT — AI PORTAL MATCHES STORE.
+//   Reverted both portals to the classic bright teal (#26A69A) theme.
+//   Redesigned the AI Portal to use the exact same visual style as the
+//   Store Portal: consistent headers, card borders (border-l-4), padding,
+//   and action button styling.
+//   Preserves all AI-specific logic including cow details and bull codes.
+//
+export const APP_VERSION = '2.12.47';
+export const APP_VERSION_CODE = 210;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'webview51-bridge-es5';
+export const APP_FIX_TAG = 'ui-realignment';
 
 
 

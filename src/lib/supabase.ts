@@ -44,21 +44,22 @@ export const getCaptureMode = (supervisor?: number): {
   allowDigital: boolean;
   allowManual: boolean;
   allowZReport: boolean;
+  isManualOverride: boolean; // v2.12.18: Allows manual entry even if psettings.AutoW=1 (Dairy only)
 } => {
   const mode = supervisor ?? 0;
   switch (mode) {
     case 0: // digital capture + print Z
-      return { allowDigital: true, allowManual: false, allowZReport: true };
-    case 1: // manual capture + print Z
-      return { allowDigital: false, allowManual: true, allowZReport: true };
+      return { allowDigital: true, allowManual: false, allowZReport: true, isManualOverride: false };
+    case 1: // manual capture + print Z (Override enabled)
+      return { allowDigital: false, allowManual: true, allowZReport: true, isManualOverride: true };
     case 2: // digital capture only (no Z)
-      return { allowDigital: true, allowManual: false, allowZReport: false };
-    case 3: // manual capture only (no Z)
-      return { allowDigital: false, allowManual: true, allowZReport: false };
-    case 4: // manual or digital capture + print Z
-      return { allowDigital: true, allowManual: true, allowZReport: true };
+      return { allowDigital: true, allowManual: false, allowZReport: false, isManualOverride: false };
+    case 3: // manual capture only (no Z) (Override enabled)
+      return { allowDigital: false, allowManual: true, allowZReport: false, isManualOverride: true };
+    case 4: // manual or digital capture + print Z (Override enabled)
+      return { allowDigital: true, allowManual: true, allowZReport: true, isManualOverride: true };
     default:
-      return { allowDigital: true, allowManual: true, allowZReport: true };
+      return { allowDigital: true, allowManual: true, allowZReport: true, isManualOverride: false };
   }
 };
 
