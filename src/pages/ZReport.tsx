@@ -184,7 +184,7 @@ const ZReport = () => {
             date: data.date || selectedDate,
             totals: data.totals || { liters: 0, farmers: 0, entries: 0 },
             byRoute: data.byRoute || {},
-            bySession: data.bySession || { AM: { entries: 0, liters: 0 }, PM: { entries: 0, liters: 0 } },
+            bySession: data.bySession || { AM: { entries: 0, farmers: 0, liters: 0 }, PM: { entries: 0, farmers: 0, liters: 0 } },
             byCollector: data.byCollector || {},
             collections: data.collections || []
           };
@@ -481,8 +481,8 @@ const ZReport = () => {
             {!isCoffee && (
               <div className="thermal-section">
                 <div className="thermal-line thermal-bold">BY SESSION:</div>
-                <div className="thermal-line">Morning: {reportData.bySession.AM.entries} ({reportData.bySession.AM.liters.toFixed(2)}{weightUnit})</div>
-                <div className="thermal-line">Evening: {reportData.bySession.PM.entries} ({reportData.bySession.PM.liters.toFixed(2)}{weightUnit})</div>
+                <div className="thermal-line">Morning: {reportData.bySession.AM.farmers} Farmers ({reportData.bySession.AM.liters.toFixed(2)}{weightUnit})</div>
+                <div className="thermal-line">Evening: {reportData.bySession.PM.farmers} Farmers ({reportData.bySession.PM.liters.toFixed(2)}{weightUnit})</div>
               </div>
             )}
             {!isCoffee && <div className="thermal-divider">--------------------------------</div>}
@@ -575,19 +575,19 @@ const ZReport = () => {
                     <TableHeader>
                       <TableRow>
                         <TableHead>{periodLabel}</TableHead>
-                        <TableHead className="text-right">Entries</TableHead>
+                        <TableHead className="text-right">Farmers</TableHead>
                         <TableHead className="text-right">{weightLabel}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       <TableRow>
                         <TableCell className="font-medium">Morning (AM)</TableCell>
-                        <TableCell className="text-right">{reportData.bySession.AM.entries}</TableCell>
+                        <TableCell className="text-right">{reportData.bySession.AM.farmers}</TableCell>
                         <TableCell className="text-right">{reportData.bySession.AM.liters.toFixed(2)} {weightUnit}</TableCell>
                       </TableRow>
                       <TableRow>
                         <TableCell className="font-medium">Evening (PM)</TableCell>
-                        <TableCell className="text-right">{reportData.bySession.PM.entries}</TableCell>
+                        <TableCell className="text-right">{reportData.bySession.PM.farmers}</TableCell>
                         <TableCell className="text-right">{reportData.bySession.PM.liters.toFixed(2)} {weightUnit}</TableCell>
                       </TableRow>
                     </TableBody>

@@ -88,8 +88,8 @@ export const ZReportReceipt = ({
         // By Session (for dairy only)
         if (!isCoffee) {
           receipt += `BY ${periodLabel.toUpperCase()}\n`;
-          receipt += formatLine('Morning (AM)', `${data.bySession.AM.entries} (${data.bySession.AM.liters.toFixed(2)}${weightUnit})`, W) + '\n';
-          receipt += formatLine('Evening (PM)', `${data.bySession.PM.entries} (${data.bySession.PM.liters.toFixed(2)}${weightUnit})`, W) + '\n';
+          receipt += formatLine('Morning (AM)', `${data.bySession.AM.farmers} Farmers (${data.bySession.AM.liters.toFixed(2)}${weightUnit})`, W) + '\n';
+          receipt += formatLine('Evening (PM)', `${data.bySession.PM.farmers} Farmers (${data.bySession.PM.liters.toFixed(2)}${weightUnit})`, W) + '\n';
           receipt += sep + '\n';
         }
         
@@ -202,19 +202,19 @@ export const ZReportReceipt = ({
           </div>
 
           {/* By Session - Only for dairy (non-coffee) */}
-          {!isCoffee && (
+            {!isCoffee && (
             <div className="border-b border-dashed pb-2 space-y-1">
               <div className="text-xs font-bold">BY {periodLabel.toUpperCase()}</div>
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Morning (AM)</span>
                 <span className="font-medium">
-                  {data.bySession.AM.entries} ({data.bySession.AM.liters.toFixed(2)}{weightUnit})
+                  {data.bySession.AM.farmers} Farmers ({data.bySession.AM.liters.toFixed(2)}{weightUnit})
                 </span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Evening (PM)</span>
                 <span className="font-medium">
-                  {data.bySession.PM.entries} ({data.bySession.PM.liters.toFixed(2)}{weightUnit})
+                  {data.bySession.PM.farmers} Farmers ({data.bySession.PM.liters.toFixed(2)}{weightUnit})
                 </span>
               </div>
             </div>

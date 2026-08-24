@@ -55,6 +55,7 @@ export interface ReceiptData {
   routeLabel?: string;
   periodLabel?: string;
   printCopies?: number;
+  reprintedAt?: Date;
   // Sync support - for re-syncing failed transactions
   userId?: string;
   productCode?: string;
@@ -142,6 +143,7 @@ export const TransactionReceipt = ({
     routeLabel = 'Route',
     periodLabel = 'Session',
     printCopies = 1,
+    reprintedAt,
     userId,
     productCode,
     seasonCode,
@@ -395,7 +397,7 @@ export const TransactionReceipt = ({
       transrefno: item.reference_no || transrefno
     }));
 
-    for (let copy = 0; copy < printCopies; copy++) {
+        for (let copy = 0; copy < printCopies; copy++) {
       let result: { success: boolean; error?: string };
 
       if (transtype === 2 || transtype === 3) {
@@ -419,6 +421,7 @@ export const TransactionReceipt = ({
           totalAmount: totalAmount || 0,
           transactionDate,
           receiptType: transtype === 2 ? 'store' : 'ai',
+          reprintedAt: reprintedAt || new Date()
         });
       } else {
         // Milk/Coffee receipts — use printReceipt
@@ -439,7 +442,8 @@ export const TransactionReceipt = ({
           cumulativeByProduct: showCumulativeFrequency ? cumulativeByProduct : undefined,
           locationCode,
           locationName,
-          collectionDate: transactionDate
+          collectionDate: transactionDate,
+          reprintedAt: reprintedAt || new Date()
         });
       }
 
@@ -651,14 +655,15 @@ export const TransactionReceipt = ({
             )}
             <div className="text-center text-muted-foreground pt-1 border-t border-dashed mt-2">
               {(() => {
-                const now = new Date();
+                const now = reprintedAt || new Date();
                 const y = now.getFullYear();
                 const mo = String(now.getMonth() + 1).padStart(2, '0');
                 const d = String(now.getDate()).padStart(2, '0');
                 const h = String(now.getHours()).padStart(2, '0');
                 const mi = String(now.getMinutes()).padStart(2, '0');
                 const s = String(now.getSeconds()).padStart(2, '0');
-                return `${y}-${mo}-${d} at ${h}:${mi}:${s}`;
+                const prefix = reprintedAt ? 'Reprinted on ' : '';
+                return `${prefix}${y}-${mo}-${d} at ${h}:${mi}:${s}`;
               })()}
             </div>
           </div>
@@ -726,6 +731,8 @@ export const createMilkReceiptData = (
     periodLabel?: string;
     locationCode?: string;
     locationName?: string;
+    deliveredBy?: string;
+    reprintedAt?: Date;
   }
 ): ReceiptData | null => {
   if (receipts.length === 0) return null;
@@ -742,7 +749,7 @@ export const createMilkReceiptData = (
     memberName: first.farmer_name,
     memberRoute: first.route,
     clerkName: first.clerk_name,
-    deliveredBy: first.delivered_by || undefined,
+    deliveredBy: options?.deliveredBy || first.delivered_by || undefined,
     transactionDate: new Date(first.collection_date),
     // Use session_descript for display if available, otherwise fall back to session code
     session: first.session_descript || first.session,

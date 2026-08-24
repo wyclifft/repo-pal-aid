@@ -2,11 +2,13 @@ import { useState, useMemo, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import type { MilkCollection } from '@/lib/supabase';
+import type { Farmer, MilkCollection } from '@/lib/supabase';
 import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check, Coffee, Beef } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
+import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { resolveMemberName } from '@/utils/farmerUtils';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import type { CowDetails } from '@/components/CowDetailsModal';
@@ -37,6 +39,10 @@ export interface PrintedReceipt {
   clerkName?: string;
   memberRoute?: string;
   transactionDate?: Date;
+  // Metadata for context preservation
+  routeLabel?: string;
+  periodLabel?: string;
+  locationName?: string;
   // Cumulative weight for milk/coffee receipts
   cumulativeWeight?: number;
   cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
@@ -86,6 +92,16 @@ export const ReprintModal = ({
   // On-screen receipt viewing (for printCopies=0)
   const [viewingReceipt, setViewingReceipt] = useState<PrintedReceipt | null>(null);
   
+  const { getFarmers, isReady } = useIndexedDB();
+  const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
+
+  // Load all farmers for name resolution
+  useEffect(() => {
+    if (isReady) {
+      getFarmers().then(setAllFarmers).catch(() => {});
+    }
+  }, [isReady, getFarmers]);
+
   // Filter receipts based on search query
   const filteredReceipts = useMemo(() => {
     if (!searchQuery.trim()) return receipts;
@@ -198,14 +214,16 @@ export const ReprintModal = ({
             farmerName: firstReceipt.farmer_name,
             farmerId: firstReceipt.farmer_id,
             route: firstReceipt.route,
-            routeLabel: routeLabel,
-            session: firstReceipt.session,
+            routeLabel: receipt.routeLabel || routeLabel,
+            session: firstReceipt.session_descript || firstReceipt.session,
+            periodLabel: receipt.periodLabel || periodLabel,
             uploadRefNo: receipt.uploadrefno || firstReceipt.uploadrefno || firstReceipt.reference_no,
             collectorName: firstReceipt.clerk_name,
+            deliveredBy: resolveMemberName(firstReceipt.delivered_by, allFarmers),
             collections,
             cumulativeFrequency: receipt.cumulativeWeight,
             cumulativeByProduct: receipt.cumulativeByProduct,
-            locationName: locationName || firstReceipt.route,
+            locationName: receipt.locationName || locationName || firstReceipt.route,
             collectionDate: collectionDateTime,
             reprintedAt: new Date()
           });
@@ -702,7 +720,7 @@ export const ReprintModal = ({
                   {(!receipt.type || receipt.type === 'milk') && receipt.collections?.length > 0 && (
                     <div className="flex items-center justify-between text-[10px] sm:text-xs text-muted-foreground">
                       {receipt.collections[0]?.delivered_by && (
-                        <span>Delivered By: <span className="font-medium text-foreground">{receipt.collections[0].delivered_by}</span></span>
+                        <span>Delivered By: <span className="font-medium text-foreground">{resolveMemberName(receipt.collections[0].delivered_by, allFarmers)}</span></span>
                       )}
                       {receipt.cumulativeWeight !== undefined && receipt.cumulativeWeight !== null && receipt.cumulativeWeight > 0 && (
                         <span>Cumulative: <span className="font-medium text-foreground">{receipt.cumulativeWeight} Kg</span></span>
@@ -827,11 +845,14 @@ export const ReprintModal = ({
             quantity: item.quantity,
             lineTotal: item.lineTotal,
           })),
-          { id: viewingReceipt.farmerId, name: viewingReceipt.farmerName, route: viewingReceipt.memberRoute },
           { transrefno: viewingReceipt.uploadrefno || '', clerkName: viewingReceipt.clerkName || 'Unknown' },
           companyName,
           storedDate
         );
+        receiptData.routeLabel = viewingReceipt.routeLabel || routeLabel;
+        receiptData.periodLabel = viewingReceipt.periodLabel || periodLabel;
+        receiptData.locationName = viewingReceipt.locationName || locationName;
+        receiptData.reprintedAt = new Date();
         return (
           <TransactionReceipt
             data={receiptData}
@@ -841,12 +862,14 @@ export const ReprintModal = ({
         );
       } else {
         // Milk/Coffee receipt
-        const receiptData = createMilkReceiptData(viewingReceipt.collections, companyName, {
-          cumulativeFrequency: viewingReceipt.cumulativeWeight,
+          { cumulativeFrequency: viewingReceipt.cumulativeWeight,
           cumulativeByProduct: viewingReceipt.cumulativeByProduct,
           showCumulativeFrequency: viewingReceipt.cumulativeWeight !== undefined && viewingReceipt.cumulativeWeight > 0,
-          routeLabel,
-          locationName,
+          routeLabel: viewingReceipt.routeLabel || routeLabel,
+          periodLabel: viewingReceipt.periodLabel || periodLabel,
+          locationName: viewingReceipt.locationName || locationName,
+          deliveredBy: resolveMemberName(viewingReceipt.collections[0]?.delivered_by, allFarmers),
+          reprintedAt: new Date(),
         });
         return (
           <TransactionReceipt

@@ -1,0 +1,5 @@
+- [x] Update `handleClearFarmer` in `Index.tsx` to clear captures one by one
+- [x] Add confirmation dialog before removal of captures or clearing farmer
+- [x] Update `handleClear` in `BuyProduceScreen.tsx` to preserve `memberNo` if captures remain
+- [x] Update `handleClear` in `SellProduceScreen.tsx` to preserve `memberNo` if captures remain
+- [x] Verify the behavior in both portals

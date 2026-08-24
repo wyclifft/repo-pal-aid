@@ -22,13 +22,14 @@ interface SellProduceScreenProps {
   onSelectFarmer: (farmer: Farmer) => void;
   onClearFarmer: () => void;
   isSubmitting?: boolean;
-  selectedFarmer: { id: string; name: string } | null;
+  selectedFarmer: Farmer | null;
   todayWeight: number;
   onManualWeightChange?: (weight: number) => void;
   onWeightChange?: (weight: number) => void;
   onEntryTypeChange?: (entryType: 'scale' | 'manual') => void;
   blacklistedFarmerIds?: Set<string>; // Farmers who already delivered (multOpt=0)
   sessionSubmittedFarmerIds?: Set<string>; // Local tracking of submitted farmers this session
+  allFarmers?: Farmer[]; // For Delivered By search
   captureDisabled?: boolean;
   submitDisabled?: boolean; // Disable submit for multOpt=0 farmers who already submitted
   // Supervisor mode capture restrictions
@@ -49,6 +50,7 @@ interface SellProduceScreenProps {
   // Delivery tracking
   deliveredBy?: string;
   onDeliveredByChange?: (value: string) => void;
+  onDeliveredByMemberSelect?: (farmer: Farmer) => void;
 }
 
 export const SellProduceScreen = ({
@@ -71,6 +73,7 @@ export const SellProduceScreen = ({
   submitDisabled,
   blacklistedFarmerIds,
   sessionSubmittedFarmerIds,
+  allFarmers = [],
   allowDigital = true,
   allowManual = true,
   isManualOverride = false,
@@ -83,6 +86,7 @@ export const SellProduceScreen = ({
   zeroOptBlocked = false,
   deliveredBy = 'owner',
   onDeliveredByChange,
+  onDeliveredByMemberSelect,
   isSubmitting = false,
 }: SellProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
@@ -91,6 +95,7 @@ export const SellProduceScreen = ({
   const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
   const [showDropdown, setShowDropdown] = useState(false);
   const farmerInputRef = useRef<HTMLInputElement>(null);
+  const deliveredByRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers, isReady } = useIndexedDB();
   
@@ -231,7 +236,6 @@ export const SellProduceScreen = ({
   // Handle clear button with haptic feedback
   const handleClear = () => {
     hapticLight();
-    setMemberNo('');
     onClearFarmer();
   };
   
@@ -279,6 +283,13 @@ export const SellProduceScreen = ({
 
     prevCapturedLenRef.current = next;
   }, [capturedCollections.length]);
+
+  // v2.12.54: Sync memberNo with selectedFarmer clearing
+  useEffect(() => {
+    if (!selectedFarmer) {
+      setMemberNo('');
+    }
+  }, [selectedFarmer]);
 
   // Listen for receipt modal close event to focus input
   useEffect(() => {
@@ -544,8 +555,11 @@ export const SellProduceScreen = ({
 
         {/* Delivered By Input */}
         <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4">
-          <label className="text-xs sm:text-sm font-medium text-gray-600 mb-1 block">Delivered By</label>
+          <label className="text-xs sm:text-sm font-medium text-gray-600 mb-1 block">
+            Delivered By
+          </label>
           <input
+            ref={deliveredByRef}
             type="text"
             placeholder="Enter name (default: owner)"
             value={deliveredBy}
@@ -562,13 +576,19 @@ export const SellProduceScreen = ({
           >
             Back
           </button>
-          <button
-            onClick={handleCaptureWithHaptic}
-            disabled={!!captureDisabled || weight <= 0 || zeroOptBlocked}
-            className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${(captureDisabled || weight <= 0 || zeroOptBlocked) ? 'opacity-50 pointer-events-none' : ''}`}
-          >
-            Capture
-          </button>
+          {(() => {
+            const captureBlocked = !!captureDisabled || weight <= 0 || zeroOptBlocked;
+
+            return (
+              <button
+                onClick={handleCaptureWithHaptic}
+                disabled={captureBlocked}
+                className={`flex-1 py-3 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[48px] text-sm sm:text-base ${captureBlocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}
+              >
+                Capture
+              </button>
+            );
+          })()}
           <button
             onClick={handleSubmitWithHaptic}
             disabled={!!submitDisabled || isSubmitting}

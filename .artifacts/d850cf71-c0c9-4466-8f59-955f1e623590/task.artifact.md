@@ -1,0 +1,6 @@
+- [x] Update backend `GET /api/z-report` to include route descriptions and session farmer counts
+- [x] Update frontend `ZReportData` interface in `mysqlApi.ts`
+- [x] Update `ZReportReceipt.tsx` to show Farmers instead of Entries for sessions
+- [x] Update `ZReport.tsx` screen and thermal preview
+- [x] Update `pdfExport.ts` for PDF consistency
+- [x] Verify changes

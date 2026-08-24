@@ -12,6 +12,9 @@ interface StoreAIReceiptInput {
   items: ReprintItem[];
   totalAmount: number;
   transactionDate?: Date;
+  routeLabel?: string;
+  periodLabel?: string;
+  locationName?: string;
   /**
    * v2.10.66: per-item transrefno values for the batch. Stored on the receipt
    * as a stable identity so we never suppress a real new Store/AI receipt
@@ -22,7 +25,7 @@ interface StoreAIReceiptInput {
 
 interface ReprintContextValue {
   printedReceipts: PrintedReceipt[];
-  addMilkReceipt: (collections: MilkCollection[], cumulativeWeight?: number, cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>) => Promise<boolean>;
+  addMilkReceipt: (collections: MilkCollection[], cumulativeWeight?: number, cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>, metadata?: { routeLabel?: string, periodLabel?: string, locationName?: string }) => Promise<boolean>;
   addStoreReceipt: (data: StoreAIReceiptInput) => Promise<boolean>;
   addAIReceipt: (data: StoreAIReceiptInput) => Promise<boolean>;
   deleteReceipts: (indices: number[]) => Promise<void>;
@@ -117,7 +120,7 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
   }, [dbReady, getPrintedReceipts]);
 
   // Save milk collection receipt
-  const addMilkReceipt = useCallback(async (collections: MilkCollection[], cumulativeWeight?: number, cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>): Promise<boolean> => {
+  const addMilkReceipt = useCallback(async (collections: MilkCollection[], cumulativeWeight?: number, cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>, metadata?: { routeLabel?: string, periodLabel?: string, locationName?: string }): Promise<boolean> => {
     if (collections.length === 0) return false;
 
     // Check for duplicate
@@ -143,6 +146,9 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
       cumulativeWeight,
       cumulativeByProduct,
       transactionDate: collections[0].collection_date ? new Date(collections[0].collection_date) : new Date(),
+      routeLabel: metadata?.routeLabel,
+      periodLabel: metadata?.periodLabel,
+      locationName: metadata?.locationName,
     };
 
     const updatedReceipts = [newReceipt, ...printedReceipts];
@@ -187,6 +193,9 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
       clerkName: data.clerkName,
       memberRoute: data.memberRoute,
       transactionDate: data.transactionDate || new Date(),
+      routeLabel: data.routeLabel,
+      periodLabel: data.periodLabel,
+      locationName: data.locationName,
       localReceiptId: identity,
       itemRefs: data.itemRefs && data.itemRefs.length > 0 ? [...data.itemRefs] : undefined,
     };
@@ -230,6 +239,9 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
       clerkName: data.clerkName,
       memberRoute: data.memberRoute,
       transactionDate: data.transactionDate || new Date(),
+      routeLabel: data.routeLabel,
+      periodLabel: data.periodLabel,
+      locationName: data.locationName,
       localReceiptId: identity,
       itemRefs: data.itemRefs && data.itemRefs.length > 0 ? [...data.itemRefs] : undefined,
     };

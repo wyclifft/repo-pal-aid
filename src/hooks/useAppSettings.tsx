@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, createContext, useContext, useRef } f
 import { Capacitor } from '@capacitor/core';
 import { generateDeviceFingerprint, getDeviceName, getDeviceInfo } from '@/utils/deviceFingerprint';
 import { API_CONFIG } from '@/config/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 // App settings interface based on psettings table
 // Maps exactly to database columns: printOptions, chkRoute, rdesc, stableOpt, 
@@ -286,6 +287,7 @@ const registerDevice = async (fingerprint: string, retryCount = 0): Promise<bool
 
 // Standalone hook (can be used without context provider)
 export const useAppSettingsStandalone = (): AppSettingsContextType => {
+  const { currentUser } = useAuth();
   const [settings, setSettings] = useState<AppSettings>(() => loadCachedSettings());
   const [isLoading, setIsLoading] = useState(true);
   const [isDeviceAuthorized, setIsDeviceAuthorized] = useState<boolean | null>(null);
@@ -592,9 +594,10 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const weightUnit = 'kg';
   const weightLabel = 'Kgs';
   // CRITICAL: Use strict equality with number 1 for boolean conversion
+  // v2.12.48: supervisor 7 in Dairy orgs can bypass AutoW enforcement
+  const autoWeightOnly = settings.autow === 1 && !(isDairy && currentUser?.supervisor === 7);
   const requireStableReading = settings.stableopt === 1;
   const requireZeroScale = settings.zeroOpt === 1;
-  const autoWeightOnly = settings.autow === 1;
   const showCumulative = settings.printcumm === 1 || settings.cumulative_frequency_status === 1;
   const printCopies = settings.printoptions ?? 1; // 0 = no print, 1+ = number of copies
   const offlineFirstMode = settings.online === 1;

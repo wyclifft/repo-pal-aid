@@ -12,7 +12,7 @@ import { SessionExpiredDialog } from '@/components/SessionExpiredDialog';
 import { AddMemberModal } from '@/components/AddMemberModal';
 
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
-import { APP_VERSION } from '@/constants/appVersion';
+import { APP_VERSION, APP_VERSION_CODE } from '@/constants/appVersion';
 import { useSync } from '@/contexts/SyncContext';
 import { useSessionClose } from '@/hooks/useSessionClose';
 import { useSessionExpiration } from '@/hooks/useSessionExpiration';
@@ -699,6 +699,13 @@ export const Dashboard = ({
         </div>
       </div>
       
+      {/* Version Label */}
+      <div className="py-2 text-center bg-gray-50 border-t border-gray-100">
+        <span className="text-[10px] text-gray-400 font-mono">
+          v{APP_VERSION} ({APP_VERSION_CODE})
+        </span>
+      </div>
+
       {/* Session Expired Dialog - blocks data entry but NOT syncing */}
       <SessionExpiredDialog
         open={isSessionExpired}

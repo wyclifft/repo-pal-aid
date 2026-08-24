@@ -308,6 +308,9 @@ if (shouldRegisterServiceWorker()) {
         
         if (type === 'SW_UPDATE_AVAILABLE') {
           dispatchEvent(new CustomEvent('swUpdate', { detail: registration }));
+          // v2.12.51: Force immediate reload on assets update, even on native.
+          // This ensures the WebView cache is busted when new SW version is detected.
+          setTimeout(() => window.location.reload(), 1000);
         }
       });
       

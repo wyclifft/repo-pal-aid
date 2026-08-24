@@ -227,6 +227,7 @@ export interface Farmer {
   farmer_id: string;
   name: string;
   route: string;
+  gender?: string;
   multOpt?: number; // 0 = single delivery per session, 1 = multiple allowed
   currqty?: number; // 0 = hide monthly cumulative on receipt, 1 = show monthly cumulative
   crbal?: string; // Credit balance string from cm_members e.g. "CR02#11200,CR22#340"
@@ -785,10 +786,12 @@ export interface ZReportData {
   bySession: {
     AM: {
       entries: number;
+      farmers: number;
       liters: number;
     };
     PM: {
       entries: number;
+      farmers: number;
       liters: number;
     };
   };
@@ -1072,6 +1075,7 @@ export interface FarmerDetailReportData {
   farmer_route_name?: string;
   transaction_route?: string;
   transaction_route_name?: string;
+  gender?: string; // v2.12.51: for group report logic
   produce_name: string;
   start_date: string;
   end_date: string;
@@ -1084,6 +1088,7 @@ export interface FarmerDetailReportData {
     // v2.10.77: optional product grouping (additive)
     icode?: string;
     product_name?: string;
+    deliveredby?: string; // v2.12.51: for group report logic
   }>;
 }
 

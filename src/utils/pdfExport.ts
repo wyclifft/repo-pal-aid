@@ -37,8 +37,8 @@ export const printThermalZReport = (reportData: ZReportData, produceLabel?: stri
   const sessionSection = isCoffee ? '' : `
       <div class="section">
         <div class="bold">BY SESSION:</div>
-        <div>Morning: ${reportData.bySession.AM.entries} (${reportData.bySession.AM.liters.toFixed(2)}${weightUnit})</div>
-        <div>Evening: ${reportData.bySession.PM.entries} (${reportData.bySession.PM.liters.toFixed(2)}${weightUnit})</div>
+        <div>Morning: ${reportData.bySession.AM.farmers} Farmers (${reportData.bySession.AM.liters.toFixed(2)}${weightUnit})</div>
+        <div>Evening: ${reportData.bySession.PM.farmers} Farmers (${reportData.bySession.PM.liters.toFixed(2)}${weightUnit})</div>
       </div>
       <div class="line"></div>`;
 
@@ -138,8 +138,8 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       if (!isCoffee) {
         lines.push('BY SESSION');
         lines.push('='.repeat(48));
-        lines.push(`Morning (AM): ${reportData.bySession.AM.entries} (${reportData.bySession.AM.liters.toFixed(2)} ${weightUnit})`);
-        lines.push(`Evening (PM): ${reportData.bySession.PM.entries} (${reportData.bySession.PM.liters.toFixed(2)} ${weightUnit})`);
+        lines.push(`Morning (AM): ${reportData.bySession.AM.farmers} Farmers (${reportData.bySession.AM.liters.toFixed(2)} ${weightUnit})`);
+        lines.push(`Evening (PM): ${reportData.bySession.PM.farmers} Farmers (${reportData.bySession.PM.liters.toFixed(2)} ${weightUnit})`);
         lines.push('');
       }
 

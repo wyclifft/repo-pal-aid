@@ -552,6 +552,9 @@ const AIPage = () => {
         items: reprintItems,
         totalAmount: cartTotal,
         transactionDate: new Date(),
+        routeLabel: psettings?.routeLabel || 'Route',
+        periodLabel: psettings?.periodLabel || 'Session',
+        locationName: routeName,
         // v2.10.66: per-item refs anchor the receipt's identity in Recent Receipts
         itemRefs: batchItemRefs,
       });

@@ -1,3 +1,5 @@
+import { type Farmer } from '@/lib/supabase';
+import { resolveMemberName } from '@/utils/farmerUtils';
 import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetooth-le';
 import { Capacitor } from '@capacitor/core';
 import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
@@ -2123,7 +2125,7 @@ export const printReceipt = async (data: {
   if (data.reprintedAt) {
     const rpDate = data.reprintedAt.toLocaleDateString('en-CA');
     const rpTime = data.reprintedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-    receipt += formatLine('Printed   ', rpDate + ' ' + rpTime, W) + '\n';
+    receipt += formatLine('Reprinted on', rpDate + ' ' + rpTime, W) + '\n';
     receipt += sep + '\n';
   }
 
@@ -2262,7 +2264,7 @@ export const printStoreAIReceipt = async (data: {
   if (data.reprintedAt) {
     const rpDate = data.reprintedAt.toLocaleDateString('en-CA');
     const rpTime = data.reprintedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-    receipt += formatLine('Printed   ', rpDate + ' ' + rpTime, W) + '\n';
+    receipt += formatLine('Reprinted on', rpDate + ' ' + rpTime, W) + '\n';
   }
 
   // Try Classic Bluetooth printer first (for built-in POS printers)
@@ -2584,6 +2586,7 @@ export const printMemberProduceStatement = async (data: {
   produceName: string;      // e.g., "CHERRY", "MILK"
   startDate: string;        // YYYY-MM-DD
   endDate: string;          // YYYY-MM-DD
+  gender?: string;          // v2.12.51: for group report logic
   transactions: Array<{
     date: string;           // YYYY-MM-DD
     rec_no: string;         // Reference number (last 5 chars)
@@ -2591,9 +2594,11 @@ export const printMemberProduceStatement = async (data: {
     // v2.10.77: optional product grouping
     icode?: string;
     productName?: string;
+    deliveredby?: string;   // v2.12.51: for group report logic
   }>;
   totalWeight: number;
   centerName?: string;      // v2.10.55: route/center descript shown under company header
+  allFarmers?: Farmer[];    // v2.12.51: for deliverer name resolution
 }): Promise<{ success: boolean; error?: string }> => {
   // 58mm thermal paper = 32 characters per line
   const W = 32;
@@ -2652,58 +2657,99 @@ export const printMemberProduceStatement = async (data: {
   receipt += `MEMBER NAME: ${data.farmerName.substring(0, W - 13)}\n`;
   receipt += dotLine + '\n';
 
-  // v2.10.77: Group transactions by icode so each product gets its own
-  // labeled section and subtotal. Falls back to a single section using
-  // the legacy produceName when no per-row icode is present.
-  // v2.10.82: REC NO now shows DEVCODE-LAST5 (e.g. BB01-00002) instead of just last 5.
-  // Widen REC NO column from 7 → 11; date stays 11 (DD/MM/YYYY + space); QUANTITY = 10.
-  const dateColW = 11;
-  const recColW = 11;
-  const qtyColW = W - dateColW - recColW;
-  const formatRecNo = (ref?: string) => {
-    if (!ref || ref.length < 9) return '----------';
-    return `${ref.slice(0, 4)}-${ref.slice(-5)}`;
-  };
-
-  type Group = { label: string; rows: typeof data.transactions; subtotal: number };
-  const groups = new Map<string, Group>();
-  for (const tx of data.transactions) {
-    const key = (tx.icode || data.produceName || 'PRODUCE').toString().trim().toUpperCase() || 'PRODUCE';
-    const label = (tx.productName || tx.icode || data.produceName || 'PRODUCE').toString().trim().toUpperCase();
-    if (!groups.has(key)) groups.set(key, { label, rows: [], subtotal: 0 });
-    const g = groups.get(key)!;
-    g.rows.push(tx);
-    g.subtotal += Number(tx.quantity) || 0;
-  }
-  const groupArr = Array.from(groups.entries());
-  const showCode = groupArr.length > 1;
-
-  if (groupArr.length === 0) {
-    // No transactions — keep the original layout for empty case
-    const produceLabel = `${data.produceName.toUpperCase().trim()} RECORD`;
-    receipt += centerText(produceLabel, W) + '\n';
+  // v2.12.51: Group Number Report Logic (Printer) - Case-insensitive check
+  if (data.gender?.toLowerCase() === 'group') {
+    receipt += centerText('DELIVERY BREAKDOWN BY DATE', W) + '\n';
     receipt += dashLine + '\n';
-  } else {
-    groupArr.forEach(([icode, g], idx) => {
-      if (idx > 0) receipt += dotLine + '\n';
-      const codeSuffix = showCode && icode !== g.label ? ` (${icode})` : '';
-      const sectionLabel = `${g.label}${codeSuffix} RECORD`;
-      receipt += centerText(sectionLabel, W) + '\n';
-      receipt += 'DATE'.padEnd(dateColW) + 'REC NO'.padEnd(recColW) + 'QUANTITY'.padStart(qtyColW) + '\n';
-      receipt += dotLine + '\n';
-      g.rows.forEach(tx => {
-        const dateStr = formatDate(tx.date);
-        const refNo = formatRecNo(tx.rec_no);
-        const qty = (Number(tx.quantity) || 0).toFixed(1);
-        receipt += dateStr.padEnd(dateColW) + refNo.padEnd(recColW) + qty.padStart(qtyColW) + '\n';
-      });
-      receipt += dotLine + '\n';
-      const subLabel = 'SUBTOTAL:';
-      const subVal = `${g.subtotal.toFixed(2)} Kgs`;
-      receipt += subLabel + subVal.padStart(W - subLabel.length) + '\n';
+
+    // Group by date, then by deliverer
+    const dateGroups = new Map<string, Map<string, number>>();
+    data.transactions.forEach(tx => {
+      const dateKey = formatDate(tx.date);
+      const delivererKey = tx.deliveredby || 'owner';
+      if (!dateGroups.has(dateKey)) dateGroups.set(dateKey, new Map());
+      const delivererMap = dateGroups.get(dateKey)!;
+      delivererMap.set(delivererKey, (delivererMap.get(delivererKey) || 0) + (Number(tx.quantity) || 0));
     });
+
+    for (const [date, deliverers] of dateGroups.entries()) {
+      receipt += `[${date}]\n`;
+      for (const [deliverer, weight] of deliverers.entries()) {
+        const resolved = resolveMemberName(deliverer, data.allFarmers || []);
+        receipt += formatLine(`  ${resolved.substring(0, 18)}`, weight.toFixed(1), W) + '\n';
+      }
+    }
+
+    receipt += dotLine + '\n';
+    receipt += centerText('DELIVERER SUMMARY (PERIOD)', W) + '\n';
     receipt += dashLine + '\n';
+
+    const totals = new Map<string, number>();
+    data.transactions.forEach(tx => {
+      const key = tx.deliveredby || 'owner';
+      totals.set(key, (totals.get(key) || 0) + (Number(tx.quantity) || 0));
+    });
+
+    const sortedTotals = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]);
+    for (const [deliverer, total] of sortedTotals) {
+      const resolved = resolveMemberName(deliverer, data.allFarmers || []);
+      receipt += formatLine(resolved.substring(0, 20), total.toFixed(2), W) + '\n';
+    }
+  } else {
+    // v2.10.77: Group transactions by icode so each product gets its own
+    // labeled section and subtotal. Falls back to a single section using
+    // the legacy produceName when no per-row icode is present.
+    // v2.10.82: REC NO now shows DEVCODE-LAST5 (e.g. BB01-00002) instead of just last 5.
+    // Widen REC NO column from 7 → 11; date stays 11 (DD/MM/YYYY + space); QUANTITY = 10.
+    const dateColW = 11;
+    const recColW = 11;
+    const qtyColW = W - dateColW - recColW;
+    const formatRecNo = (ref?: string) => {
+      if (!ref || ref.length < 9) return '----------';
+      return `${ref.slice(0, 4)}-${ref.slice(-5)}`;
+    };
+
+    type Group = { label: string; rows: typeof data.transactions; subtotal: number };
+    const groups = new Map<string, Group>();
+    for (const tx of data.transactions) {
+      const key = (tx.icode || data.produceName || 'PRODUCE').toString().trim().toUpperCase() || 'PRODUCE';
+      const label = (tx.productName || tx.icode || data.produceName || 'PRODUCE').toString().trim().toUpperCase();
+      if (!groups.has(key)) groups.set(key, { label, rows: [], subtotal: 0 });
+      const g = groups.get(key)!;
+      g.rows.push(tx);
+      g.subtotal += Number(tx.quantity) || 0;
+    }
+    const groupArr = Array.from(groups.entries());
+    const showCode = groupArr.length > 1;
+
+    if (groupArr.length === 0) {
+      // No transactions — keep the original layout for empty case
+      const produceLabel = `${data.produceName.toUpperCase().trim()} RECORD`;
+      receipt += centerText(produceLabel, W) + '\n';
+      receipt += dashLine + '\n';
+    } else {
+      groupArr.forEach(([icode, g], idx) => {
+        if (idx > 0) receipt += dotLine + '\n';
+        const codeSuffix = showCode && icode !== g.label ? ` (${icode})` : '';
+        const sectionLabel = `${g.label}${codeSuffix} RECORD`;
+        receipt += centerText(sectionLabel, W) + '\n';
+        receipt += 'DATE'.padEnd(dateColW) + 'REC NO'.padEnd(recColW) + 'QUANTITY'.padStart(qtyColW) + '\n';
+        receipt += dotLine + '\n';
+        g.rows.forEach(tx => {
+          const dateStr = formatDate(tx.date);
+          const refNo = formatRecNo(tx.rec_no);
+          const qty = (Number(tx.quantity) || 0).toFixed(1);
+          receipt += dateStr.padEnd(dateColW) + refNo.padEnd(recColW) + qty.padStart(qtyColW) + '\n';
+        });
+        receipt += dotLine + '\n';
+        const subLabel = 'SUBTOTAL:';
+        const subVal = `${g.subtotal.toFixed(2)} Kgs`;
+        receipt += subLabel + subVal.padStart(W - subLabel.length) + '\n';
+      });
+    }
   }
+
+  receipt += dashLine + '\n';
 
   // Total
   const totalLabel = 'TOTAL:';

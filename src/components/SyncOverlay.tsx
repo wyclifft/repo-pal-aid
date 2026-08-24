@@ -33,10 +33,10 @@ export const SyncOverlay = ({
         {/* Animated Icon & Title */}
         <div className="space-y-4">
           <div className="relative inline-flex items-center justify-center">
-            <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
-            <div className="relative bg-primary/20 p-4 rounded-full">
+            <div className="absolute inset-0 bg-white/20 rounded-full animate-ping" />
+            <div className="relative bg-white/10 p-4 rounded-full">
               {progress < 100 ? (
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <Loader2 className="h-8 w-8 animate-spin text-white" />
               ) : (
                 <CheckCircle2 className="h-8 w-8 text-green-500 animate-bounce" />
               )}
@@ -53,7 +53,7 @@ export const SyncOverlay = ({
             <span>{status}</span>
             <span>{Math.round(progress)}%</span>
           </div>
-          <Progress value={progress} className="h-2 bg-white/10" />
+          <Progress value={progress} className="h-2 bg-white/10" indicatorClassName="bg-white" />
         </div>
 
         {/* Sub-counts (e.g. Farmers: 1,250) */}

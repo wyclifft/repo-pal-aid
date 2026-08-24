@@ -1,0 +1,7 @@
+- [x] Create `servedMemberTracker.ts` utility
+- [x] Update `Store.tsx` with confirmation logic
+    - [x] Add state for confirmation dialog
+    - [x] Update member selection paths (manual & search)
+    - [x] Update submission path to mark served
+    - [x] Add confirmation dialog UI
+- [x] Verify implementation

@@ -1,4 +1,11 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.53: REPRINT CONTEXT PRESERVATION.
+//   Reprint Modal: Stored receipts now preserve their original routeLabel,
+//   periodLabel, and locationName. Reprints use session_descript if available
+//   to faithfully match the original session string (e.g. "Morning").
+//   Printing: Added "Reprinted on" timestamp to all reprinted receipts
+//   (Milk/Store/AI) and enhanced the on-screen viewer to match.
+//
 // v2.12.33: REFERENCE GENERATOR HARDENING + 13-CHAR STANDARD.
 //   Backend: Updated /api/milk-collection to use .slice(-8) for ID extraction,
 //   fixing the "growing reference" bug caused by devcodes with numbers.
@@ -1199,19 +1206,28 @@
 //   Dashboard), only the Dashboard minimises/exits the app.
 //   (3) Bluetooth auto-reconnect installer is actually invoked on native, so the
 //   saved scale/printer reconnect when the app is reopened.
-// v2.12.47: UI REALIGNMENT — AI PORTAL MATCHES STORE.
-//   Reverted both portals to the classic bright teal (#26A69A) theme.
-//   Redesigned the AI Portal to use the exact same visual style as the
-//   Store Portal: consistent headers, card borders (border-l-4), padding,
-//   and action button styling.
-//   Preserves all AI-specific logic including cow details and bull codes.
+// v2.12.52: Z REPORT FARMERS + ROUTE DESCRIPTIONS.
+//   Backend: Updated /api/z-report to include route descriptions (fm_tanks)
+//   and unique farmer counts per session (AM/PM).
+//   Frontend: Updated ZReport, ZReportReceipt and pdfExport to display
+//   "Farmers" instead of "Entries" for session summaries.
 //
-export const APP_VERSION = '2.12.47';
-export const APP_VERSION_CODE = 210;
+// v2.12.51: GROUP REPORTING + UI ENHANCEMENTS.
+//   Backend: Updated /api/periodic-report/farmer-detail to include gender and
+//   deliveredby fields.
+//   Reporting: PeriodicReportReceipt now groups by Date then Deliverer for
+//   Group Numbers (gender='group'), and shows a Period Summary of totals per
+//   deliverer. Bluetooth print output updated to match.
+//   UI: Buy/Sell portals now auto-focus and clear the "Delivered By" search
+//   field when a Group Number is selected.
+//   Cache: Bumped CACHE_VERSION to v65 to force asset refresh in built APKs.
+//
+export const APP_VERSION = '2.12.53';
+export const APP_VERSION_CODE = 213;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'ui-realignment';
+export const APP_FIX_TAG = 'reprint-context-fix';
 
 
 

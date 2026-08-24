@@ -18,6 +18,7 @@ interface ReceiptModalProps {
   periodLabel?: string;
   locationCode?: string;
   locationName?: string;
+  deliveredBy?: string;
 }
 
 export const ReceiptModal = ({ 
@@ -33,7 +34,8 @@ export const ReceiptModal = ({
   routeLabel = 'Route',
   periodLabel = 'Session',
   locationCode,
-  locationName
+  locationName,
+  deliveredBy
 }: ReceiptModalProps) => {
   // Convert MilkCollection[] to unified ReceiptData format
   const receiptData = createMilkReceiptData(receipts, companyName, {
@@ -44,7 +46,8 @@ export const ReceiptModal = ({
     routeLabel,
     periodLabel,
     locationCode,
-    locationName
+    locationName,
+    deliveredBy
   });
 
   return (

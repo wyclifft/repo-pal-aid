@@ -1,0 +1,3 @@
+- [x] Update `BuyProduceScreen.tsx` to filter group members dropdown by 'M' prefix
+- [x] Update `SellProduceScreen.tsx` to remove `gender='group'` specific logic
+- [x] Verify changes in both portals

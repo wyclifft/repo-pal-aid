@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { CornerDownLeft, Search, X } from 'lucide-react';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
 import { type Route, type Session } from '@/services/mysqlApi';
@@ -6,6 +6,7 @@ import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { useHaptics } from '@/hooks/useHaptics';
 import { FarmerSearchModal } from './FarmerSearchModal';
+import { DeliveredBySearch } from './DeliveredBySearch';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
 import { CoffeeWeightDisplay } from './CoffeeWeightDisplay';
 import { DuplicateDeliveryDialog, type DuplicateDeliveryReason } from './DuplicateDeliveryDialog';
@@ -23,7 +24,7 @@ interface BuyProduceScreenProps {
   onSelectFarmer: (farmer: Farmer) => void;
   isSubmitting?: boolean;
   onClearFarmer: () => void;
-  selectedFarmer: { id: string; name: string } | null;
+  selectedFarmer: Farmer | null;
   todayWeight: number;
   onManualWeightChange?: (weight: number) => void;
   onWeightChange?: (weight: number) => void;
@@ -31,6 +32,7 @@ interface BuyProduceScreenProps {
   blacklistedFarmerIds?: Set<string>; // Farmers who already delivered (multOpt=0)
   sessionSubmittedFarmerIds?: Set<string>; // Local tracking of submitted farmers this session
   onFarmersLoaded?: (farmers: Farmer[]) => void;
+  allFarmers?: Farmer[]; // For Delivered By search
   captureDisabled?: boolean;
   submitDisabled?: boolean; // Disable submit for multOpt=0 farmers who already submitted
   // Supervisor mode capture restrictions
@@ -51,6 +53,7 @@ interface BuyProduceScreenProps {
   // Delivery tracking
   deliveredBy?: string;
   onDeliveredByChange?: (value: string) => void;
+  onDeliveredByMemberSelect?: (farmer: Farmer) => void;
 }
 
 export const BuyProduceScreen = ({
@@ -72,6 +75,7 @@ export const BuyProduceScreen = ({
   blacklistedFarmerIds,
   sessionSubmittedFarmerIds,
   onFarmersLoaded,
+  allFarmers = [],
   captureDisabled,
   submitDisabled,
   allowDigital = true,
@@ -86,6 +90,7 @@ export const BuyProduceScreen = ({
   zeroOptBlocked = false,
   deliveredBy = 'owner',
   onDeliveredByChange,
+  onDeliveredByMemberSelect,
   isSubmitting = false,
 }: BuyProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
@@ -96,16 +101,35 @@ export const BuyProduceScreen = ({
     reason: DuplicateDeliveryReason;
   } | null>(null);
   const farmerInputRef = useRef<HTMLInputElement>(null);
+  const deliveredByRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
   const { getFarmers, isReady } = useIndexedDB();
   
+  // v2.12.51: Auto-focus Delivered By when a Group member is selected (case-insensitive)
+  useEffect(() => {
+    if (selectedFarmer?.gender?.toLowerCase() === 'group') {
+      setTimeout(() => {
+        deliveredByRef.current?.focus();
+        // Clear default 'owner' if it's currently set
+        if (deliveredBy === 'owner') {
+          onDeliveredByChange?.('');
+        }
+      }, 300);
+    }
+  }, [selectedFarmer?.farmer_id, selectedFarmer?.gender]);
+
   // For coffee, always default to 1 kg regardless of allowSackEdit
   const effectiveTareWeight = sackTareWeight > 0 ? sackTareWeight : 1;
   
   // Track current effective tare weight (starts from psettings, can be edited by user)
   const [currentTareWeight, setCurrentTareWeight] = useState(effectiveTareWeight);
   const { light: hapticLight, medium: hapticMedium, success: hapticSuccess } = useHaptics();
-  
+
+  // v2.12.52: Filter Delivered By members to only show those with 'M' prefix
+  const groupSearchFarmers = useMemo(() => {
+    return allFarmers.filter(f => f.farmer_id && f.farmer_id.toUpperCase().startsWith('M'));
+  }, [allFarmers]);
+
   // Get psettings for AutoW enforcement and produce labeling
   // These values update automatically when psettings change in the database
   const appSettings = useAppSettings();
@@ -305,7 +329,6 @@ export const BuyProduceScreen = ({
   // Handle clear button with haptic feedback
   const handleClear = () => {
     hapticLight();
-    setMemberNo('');
     onClearFarmer();
   };
   
@@ -374,6 +397,13 @@ export const BuyProduceScreen = ({
 
     prevCapturedLenRef.current = next;
   }, [capturedCollections.length]);
+
+  // v2.12.54: Sync memberNo with selectedFarmer clearing
+  useEffect(() => {
+    if (!selectedFarmer) {
+      setMemberNo('');
+    }
+  }, [selectedFarmer]);
 
   // Listen for receipt modal close event to focus input
   useEffect(() => {
@@ -574,14 +604,28 @@ export const BuyProduceScreen = ({
 
         {/* Delivered By Input */}
         <div className="bg-white border border-gray-200 rounded-lg p-2">
-          <label className="text-[10px] font-medium text-gray-600 mb-0.5 block">Delivered By</label>
-          <input
-            type="text"
-            placeholder="Enter name (default: owner)"
-            value={deliveredBy}
-            onChange={(e) => onDeliveredByChange?.(e.target.value)}
-            className="w-full px-2 py-1 border border-gray-300 rounded-md text-xs"
-          />
+          <label className="text-[10px] font-medium text-gray-600 mb-0.5 block">
+            Delivered By {selectedFarmer?.gender?.toLowerCase() === 'group' && <span className="text-red-500 font-bold">*</span>}
+          </label>
+          {selectedFarmer?.gender?.toLowerCase() === 'group' ? (
+            <DeliveredBySearch
+              ref={deliveredByRef}
+              farmers={groupSearchFarmers}
+              value={deliveredBy}
+              onChange={(val) => onDeliveredByChange?.(val)}
+              onSelectMember={(farmer) => onDeliveredByMemberSelect?.(farmer)}
+              placeholder="Search member or enter name"
+            />
+          ) : (
+            <input
+              ref={deliveredByRef}
+              type="text"
+              placeholder="Enter name (default: owner)"
+              value={deliveredBy}
+              onChange={(e) => onDeliveredByChange?.(e.target.value)}
+              className="w-full px-2 py-1 border border-gray-300 rounded-md text-xs"
+            />
+          )}
         </div>
 
         {/* Action Buttons */}
@@ -592,13 +636,21 @@ export const BuyProduceScreen = ({
           >
             Back
           </button>
-          <button
-            onClick={handleCaptureWithHaptic}
-            disabled={!!captureDisabled || weight <= 0 || zeroOptBlocked}
-            className={`flex-1 py-2 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[40px] text-xs ${(captureDisabled || weight <= 0 || zeroOptBlocked) ? 'opacity-50 pointer-events-none' : ''}`}
-          >
-            Capture
-          </button>
+          {(() => {
+            const isGroup = selectedFarmer?.gender?.toLowerCase() === 'group';
+            const isDeliveredByEmpty = !deliveredBy || deliveredBy.trim() === '' || deliveredBy === 'owner';
+            const captureBlocked = !!captureDisabled || weight <= 0 || zeroOptBlocked || (isGroup && isDeliveredByEmpty);
+
+            return (
+              <button
+                onClick={handleCaptureWithHaptic}
+                disabled={captureBlocked}
+                className={`flex-1 py-2 bg-white border-2 border-teal-500 rounded-lg font-semibold text-teal-600 hover:bg-teal-50 active:bg-teal-100 min-h-[40px] text-xs ${captureBlocked ? 'opacity-50 pointer-events-none grayscale' : ''}`}
+              >
+                Capture
+              </button>
+            );
+          })()}
           <button
             onClick={handleSubmitWithHaptic}
             disabled={!!submitDisabled || isSubmitting}

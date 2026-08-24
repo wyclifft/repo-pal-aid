@@ -24,6 +24,8 @@ import type { ReprintItem } from '@/components/ReprintModal';
 import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
 import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
 
+import { isMemberServedToday, markMemberAsServed } from '@/utils/servedMemberTracker';
+
 interface CartItem {
   item: Item;
   quantity: number;
@@ -75,6 +77,10 @@ const Store = () => {
 
   // Photo audit viewer state
   const [showPhotoAudit, setShowPhotoAudit] = useState(false);
+
+  // Served member confirmation state
+  const [showAlreadyServedConfirm, setShowAlreadyServedConfirm] = useState(false);
+  const [pendingFarmer, setPendingFarmer] = useState<Farmer | null>(null);
 
    // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
@@ -416,14 +422,36 @@ const Store = () => {
     return null;
   }, [farmers, isMemberMode]);
 
+  // Unified farmer selection handler with "already served" check
+  const handleSelectFarmer = useCallback((farmer: Farmer) => {
+    const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
+    if (isMemberServedToday(cleanId)) {
+      setPendingFarmer(farmer);
+      setShowAlreadyServedConfirm(true);
+      return;
+    }
+
+    setSelectedFarmer(farmer);
+    setMemberNo(farmer.farmer_id);
+    try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
+  }, []);
+
+  const confirmSelectServedFarmer = () => {
+    if (pendingFarmer) {
+      setSelectedFarmer(pendingFarmer);
+      setMemberNo(pendingFarmer.farmer_id);
+      setPendingFarmer(null);
+      setShowAlreadyServedConfirm(false);
+      try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
+    }
+  };
+
   // Handle Enter key on member input
   const handleEnter = () => {
     if (!memberNo.trim()) return;
     const farmer = resolveFarmerId(memberNo);
     if (farmer) {
-      setSelectedFarmer(farmer);
-      setMemberNo(farmer.farmer_id);
-      try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
+      handleSelectFarmer(farmer);
     } else {
       toast.error('Member not found');
     }
@@ -653,6 +681,9 @@ const Store = () => {
         }
         console.log(`✅ Batch sale complete: ${batchItems.length} items, uploadrefno=${refs.uploadrefno}`);
 
+        // Mark member as served today on this device
+        markMemberAsServed(selectedFarmer.farmer_id);
+
         // v2.12.30: Clear items from native storage if they were there
         for (const item of batchItems) {
           markNativeRecordSynced(item.transrefno).catch(() => {});
@@ -694,6 +725,10 @@ const Store = () => {
           saveToLocalDB(item.transrefno, 'store_sale', sale).catch(() => {});
         }
         console.log(`💾 Saved ${batchItems.length} items offline for sync`);
+
+        // Mark member as served today on this device
+        markMemberAsServed(selectedFarmer.farmer_id);
+
         window.dispatchEvent(new Event('receiptSaved'));
       }
 
@@ -729,6 +764,9 @@ const Store = () => {
         items: reprintItems,
         totalAmount: cartTotal,
         transactionDate: new Date(),
+        routeLabel: psettings?.routeLabel || 'Route',
+        periodLabel: psettings?.periodLabel || 'Session',
+        locationName: routeName,
         // v2.10.66: pass per-item transrefno list so the receipt has a stable
         // identity that survives an uploadrefno counter rollback.
         itemRefs: batchItems.map(b => b.transrefno),
@@ -986,8 +1024,7 @@ const Store = () => {
                 <button
                   key={farmer.farmer_id}
                   onClick={() => {
-                    setSelectedFarmer(farmer);
-                    setMemberNo(farmer.farmer_id);
+                    handleSelectFarmer(farmer);
                     setShowFarmerSearch(false);
                     setFarmerSearchQuery('');
                   }}
@@ -1168,6 +1205,37 @@ const Store = () => {
         open={showPhotoAudit}
         onClose={() => setShowPhotoAudit(false)}
       />
+
+      {/* Already Served Confirmation Dialog */}
+      <Dialog open={showAlreadyServedConfirm} onOpenChange={setShowAlreadyServedConfirm}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Already Served</DialogTitle>
+            <DialogDescription>
+              Member <strong>{pendingFarmer?.name} [{pendingFarmer?.farmer_id}]</strong> has already been served on this device today.
+              <br /><br />
+              Do you want to sell to them again?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 justify-end mt-4">
+            <button
+              onClick={() => {
+                setShowAlreadyServedConfirm(false);
+                setPendingFarmer(null);
+              }}
+              className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg font-medium"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmSelectServedFarmer}
+              className="px-4 py-2 bg-[#7E57C2] text-white rounded-lg font-medium"
+            >
+              Continue
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

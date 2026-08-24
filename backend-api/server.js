@@ -463,6 +463,59 @@ const findSeasonDescript = async (scode, ccode, conn = pool) => {
   }
 };
 
+/**
+ * v2.12.51: Resolves the active Dairy session for a given hour.
+ * Implements exclusive end-boundary and midnight wrap-around support.
+ * hour: Integer (0-23)
+ */
+const findActiveSessionDairy = async (ccode, hour, conn = pool) => {
+  try {
+    // We fetch all sessions for the company and filter in JS for reliable time logic
+    const [rows] = await conn.query(
+      `SELECT Icode AS SCODE, descript, time_from, time_to, ccode
+       FROM sessions
+       WHERE TRIM(ccode) = TRIM(?)
+       ORDER BY time_from`,
+      [ccode]
+    );
+
+    if (rows.length === 0) return null;
+
+    for (const session of rows) {
+      // Handles both integer-hour columns (Contabo) and legacy HH:MM:SS columns
+      let from = session.time_from;
+      let to = session.time_to;
+
+      // Normalize if string (legacy TIME column format "HH:MM:SS")
+      if (typeof from === 'string' && from.includes(':')) from = parseInt(from.split(':')[0], 10);
+      if (typeof to === 'string' && to.includes(':')) to = parseInt(to.split(':')[0], 10);
+
+      from = parseInt(from, 10);
+      to = parseInt(to, 10);
+
+      if (isNaN(from) || isNaN(to)) continue;
+
+      // v2.12.51: Handle legacy systems where 1-11 in a PM session means 13-23
+      const isPmSession = (session.SCODE || session.descript || '').toString().toUpperCase().includes('PM');
+      const effectiveFrom = (isPmSession && from >= 1 && from <= 11) ? from + 12 : from;
+      const effectiveTo = (isPmSession && to >= 1 && to <= 11) ? to + 12 : (to === 0 ? 24 : to);
+
+      if (effectiveTo < effectiveFrom) {
+        // Midnight wrap (e.g. 22 to 6)
+        if (hour >= effectiveFrom || hour < effectiveTo) return session;
+      } else {
+        // Normal range (e.g. 4 to 12)
+        // v2.12.51: EXCLUSIVE of 'to' boundary to match frontend and prevent transition overlaps
+        if (hour >= effectiveFrom && hour < effectiveTo) return session;
+      }
+    }
+    return null;
+  } catch (e) {
+    console.warn('[SESSION] Dairy active lookup failed:', e?.message || e);
+    return null;
+  }
+};
+
 
 
 const getPaymentPeriodRange = async (period, ccode) => {
@@ -1238,21 +1291,10 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Dairy: match the current time against the session window.
-      // Handles both INT-hour columns (Contabo) and legacy TIME columns.
-      const [rows] = await pool.query(
-        `SELECT Icode AS SCODE, descript, time_from, time_to, ccode 
-         FROM sessions 
-         WHERE TRIM(ccode) = TRIM(?)
-           AND (
-             (time_from <= ? AND time_to >= ?)
-             OR (time_from <= ? AND time_to >= ?)
-           )
-         ORDER BY time_from
-         LIMIT 1`,
-        [ccode, currentTime, currentTime, currentHour, currentHour]
-      );
+      // v2.12.51: Use helper for consistent boundary and midnight wrap handling.
+      const session = await findActiveSessionDairy(ccode, currentHour, pool);
       
-      if (rows.length === 0) {
+      if (!session) {
         return sendJSON(res, { 
           success: true, 
           data: null, 
@@ -1261,7 +1303,7 @@ const server = http.createServer(async (req, res) => {
         });
       }
       
-      return sendJSON(res, { success: true, data: rows[0], ccode });
+      return sendJSON(res, { success: true, data: session, ccode });
 
     }
 
@@ -1338,7 +1380,7 @@ const server = http.createServer(async (req, res) => {
       // Include multOpt to enable client-side duplicate session enforcement
       // Include currqty for controlling monthly cumulative display on receipts (1 = show, 0 = hide)
       // crbal is stored as a string like "CR01#200|CR02#150" - keep as string for parsing
-      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members WHERE ccode = ?';
+      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, gender, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members WHERE ccode = ?';
       let params = [ccode];
       
       // Filter by exact route if specified (chkroute=1)
@@ -1365,7 +1407,7 @@ const server = http.createServer(async (req, res) => {
     // Original farmers endpoint (kept for backward compatibility)
     if (path === '/api/farmers' && method === 'GET') {
       const search = parsedUrl.query.search;
-      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members';
+      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, gender, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members';
       let params = [];
       if (search) {
         query += ' WHERE mcode LIKE ? OR descript LIKE ?';
@@ -1378,7 +1420,7 @@ const server = http.createServer(async (req, res) => {
 
     if (path.startsWith('/api/farmers/') && method === 'GET') {
       const id = path.split('/')[3];
-      const [rows] = await pool.query('SELECT mcode as farmer_id, descript as name, route, ccode, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members WHERE mcode = ?', [id]);
+      const [rows] = await pool.query('SELECT mcode as farmer_id, descript as name, route, ccode, gender, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members WHERE mcode = ?', [id]);
       if (rows.length === 0) return sendJSON(res, { success: false, error: 'Farmer not found' }, 404);
       return sendJSON(res, { success: true, data: rows[0] });
     }
@@ -1736,15 +1778,27 @@ const server = http.createServer(async (req, res) => {
 
         // BACKEND VALIDATION: Enforce psettings rules
         const [psettingsRows] = await conn.query(
-          'SELECT IFNULL(AutoW, 0) as AutoW, IFNULL(zeroopt, 0) as zeroopt FROM psettings WHERE cno = ?',
+          'SELECT IFNULL(AutoW, 0) as AutoW, IFNULL(zeroopt, 0) as zeroopt, IFNULL(orgtype, "D") as orgtype FROM psettings WHERE cno = ?',
           [ccode]
         );
 
-        const psettings = psettingsRows.length > 0 ? psettingsRows[0] : { AutoW: 0, zeroopt: 0 };
+        const psettings = psettingsRows.length > 0 ? psettingsRows[0] : { AutoW: 0, zeroopt: 0, orgtype: 'D' };
+
+        // v2.12.48: Fetch supervisor role to allow exception for level 7 in Dairy orgs
+        // Use TRIM and ccode for robust user lookup
+        const [userRows] = await conn.query(
+          'SELECT supervisor FROM Users WHERE TRIM(userid) = ? AND ccode = ? LIMIT 1',
+          [userId.trim(), ccode]
+        );
+        const userSupervisor = userRows.length > 0 ? parseInt(userRows[0].supervisor || 0, 10) : 0;
 
         const entryType = (body.entry_type || 'manual').toLowerCase();
-        if (psettings.AutoW === 1 && entryType === 'manual') {
-          console.log('❌ AutoW enforcement: Manual entry rejected for company', ccode);
+
+        // Exception: Supervisor level 7 in Dairy orgs (orgtype=D) can use manual entry even if AutoW=1
+        const isSupervisorException = (psettings.orgtype || 'D').toString().toUpperCase() === 'D' && userSupervisor === 7;
+
+        if (psettings.AutoW === 1 && entryType === 'manual' && !isSupervisorException) {
+          console.log('❌ AutoW enforcement: Manual entry rejected for company', ccode, 'user', userId, 'supervisor_level', userSupervisor);
           return sendJSON(res, {
             success: false,
             error: 'MANUAL_ENTRY_DISABLED',
@@ -1794,6 +1848,8 @@ const server = http.createServer(async (req, res) => {
         }
 
         let normalizedSession = rawSession.toUpperCase();
+        let seasonCAN = body.season_code || '';
+
         if (orgtype === 'C') {
           const scode = (body.season_code || '').toString().trim();
           const descript = (body.session_descript || rawSession || '').toString().trim();
@@ -1804,12 +1860,49 @@ const server = http.createServer(async (req, res) => {
               if (season && season.SCODE) normalizedSession = String(season.SCODE).toUpperCase();
             } catch (e) { console.warn('Coffee SCODE rescue lookup failed:', e?.message); }
           }
+          seasonCAN = normalizedSession; // For coffee, CAN and session often match SCODE
           console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, session_descript: body.session_descript, normalizedSession });
         } else {
-          if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
-            normalizedSession = 'PM';
-          } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
-            normalizedSession = 'AM';
+          // v2.12.51: Dairy (orgtype=D) session resolution.
+          // The backend MUST authoritative resolve the session based on transtime to prevent
+          // issues like AM being saved at 18:35.
+          try {
+            const hour = collectionDate.getHours();
+            const resolved = await findActiveSessionDairy(ccode, hour, conn);
+
+            if (resolved) {
+              // Populate transactions.session with Icode (e.g. "PM")
+              normalizedSession = (resolved.SCODE || resolved.descript || normalizedSession).toUpperCase();
+
+              // Populate transactions.CAN with the actual period (AM/PM)
+              // v2.12.51: If the matched session is explicitly named PM, trust that.
+              // Otherwise derive from transaction hour.
+              if (normalizedSession.includes('PM')) {
+                seasonCAN = 'PM';
+              } else if (normalizedSession.includes('AM')) {
+                seasonCAN = 'AM';
+              } else {
+                seasonCAN = (hour >= 12) ? 'PM' : 'AM';
+              }
+
+              console.log('🥛 Dairy session resolved from time:', { hour, normalizedSession, seasonCAN });
+            } else {
+              // Fallback to basic AM/PM normalization if no session record matches the hour
+              if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
+                normalizedSession = 'PM';
+              } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
+                normalizedSession = 'AM';
+              }
+              seasonCAN = normalizedSession;
+            }
+          } catch (e) {
+            console.warn('[SESSION] Dairy resolution error, using fallback:', e?.message);
+            if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
+              normalizedSession = 'PM';
+            } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
+              normalizedSession = 'AM';
+            }
+            seasonCAN = normalizedSession;
           }
         }
 
@@ -1893,7 +1986,6 @@ const server = http.createServer(async (req, res) => {
         const attemptInsert = async (attemptTransrefno, attemptUploadrefno) => {
           try {
             const productCode = body.product_code || '';
-            const seasonCAN = body.season_code || '';
             const deliveredBy = body.delivered_by || 'owner';
 
             const [result] = await conn.query(
@@ -2219,12 +2311,13 @@ const server = http.createServer(async (req, res) => {
 
       // Get farmer info
       const [farmerRows] = await pool.query(
-        'SELECT mcode, descript, route FROM cm_members WHERE mcode = ? AND ccode = ?',
+        'SELECT mcode, descript, route, gender FROM cm_members WHERE mcode = ? AND ccode = ?',
         [farmerId, ccode]
       );
 
       const farmerName = farmerRows.length > 0 ? farmerRows[0].descript : 'Unknown';
       const farmerRoute = farmerRows.length > 0 ? farmerRows[0].route : '';
+      const gender = farmerRows.length > 0 ? farmerRows[0].gender : '';
 
       // v2.10.55: Resolve human-readable route descript for the farmer's registered route
       let farmerRouteName = '';
@@ -2268,7 +2361,8 @@ const server = http.createServer(async (req, res) => {
           t.weight as quantity,
           t.transtime as time,
           t.icode as icode,
-          i.descript as product_name
+          i.descript as product_name,
+          t.deliveredby
         FROM transactions t
         LEFT JOIN fm_items i ON i.icode = t.icode AND i.ccode = ?
         WHERE t.memberno = ?
@@ -2320,6 +2414,7 @@ const server = http.createServer(async (req, res) => {
           farmer_name: farmerName,
           farmer_route: farmerRoute,
           farmer_route_name: farmerRouteName,
+          gender: gender,
           transaction_route: transactionRoute,
           transaction_route_name: transactionRouteName,
           produce_name: produceName,
@@ -2358,11 +2453,13 @@ const server = http.createServer(async (req, res) => {
       // Fetch all collections for the specified date and company
       // DB columns → Frontend fields mapping
       const [collections] = await pool.query(
-        `SELECT transrefno, Uploadrefno as uploadrefno, memberno as farmer_id, route, weight, session,
-                transdate as collection_date, clerk as clerk_name, icode as product_code, entry_type
-         FROM transactions
-         WHERE transdate = ? AND Transtype = 1 AND ccode = ?
-         ORDER BY session, route, memberno`,
+        `SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, t.route, t.weight, t.session,
+                t.transdate as collection_date, t.clerk as clerk_name, t.icode as product_code, t.entry_type,
+                r.descript as route_name
+         FROM transactions t
+         LEFT JOIN fm_tanks r ON TRIM(t.route) = TRIM(r.tcode) AND t.ccode = r.ccode
+         WHERE t.transdate = ? AND t.Transtype = 1 AND t.ccode = ?
+         ORDER BY t.session, t.route, t.memberno`,
         [date, nCcode]
       );
 
@@ -2373,7 +2470,7 @@ const server = http.createServer(async (req, res) => {
 
       // Group by route (defensive: normalize unexpected session values)
       const byRoute = collections.reduce((acc, c) => {
-        const routeKey = c.route || 'Unknown';
+        const routeKey = (c.route_name || c.route || 'Unknown').trim();
         const sessionKey = c.session === 'PM' ? 'PM' : 'AM';
 
         if (!acc[routeKey]) {
@@ -2421,10 +2518,12 @@ const server = http.createServer(async (req, res) => {
           bySession: {
             AM: {
               entries: bySession.AM.length,
+              farmers: new Set(bySession.AM.map(c => c.farmer_id)).size,
               liters: parseFloat(bySession.AM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0).toFixed(2))
             },
             PM: {
               entries: bySession.PM.length,
+              farmers: new Set(bySession.PM.map(c => c.farmer_id)).size,
               liters: parseFloat(bySession.PM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0).toFixed(2))
             }
           },
@@ -2860,6 +2959,40 @@ if (path === '/api/sales' && method === 'POST') {
           if (!canonical) canonical = (sentScode || sentDescript || '').toUpperCase();
           salesSessionVal = canonical;
           salesSeasonVal  = canonical;
+        } else {
+          // v2.12.51: Dairy (orgtype=D) session resolution for Sales/AI
+          try {
+            const hour = now.getHours();
+            const resolved = await findActiveSessionDairy(ccode, hour, conn);
+
+            if (resolved) {
+              salesSessionVal = (resolved.SCODE || resolved.descript || salesSessionVal).toUpperCase();
+
+              if (salesSessionVal.includes('PM')) {
+                salesSeasonVal = 'PM';
+              } else if (salesSessionVal.includes('AM')) {
+                salesSeasonVal = 'AM';
+              } else {
+                salesSeasonVal = (hour >= 12) ? 'PM' : 'AM';
+              }
+              console.log('🥛 Dairy sales session resolved:', { hour, salesSessionVal, salesSeasonVal });
+            } else {
+              if (salesSessionVal.includes('PM') || salesSessionVal.includes('EVENING') || salesSessionVal.includes('AFTERNOON')) {
+                salesSessionVal = 'PM';
+              } else if (salesSessionVal.includes('AM') || salesSessionVal.includes('MORNING')) {
+                salesSessionVal = 'AM';
+              }
+              salesSeasonVal = salesSessionVal;
+            }
+          } catch (e) {
+            console.warn('[SESSION] Dairy sales resolution error:', e?.message);
+            if (salesSessionVal.includes('PM') || salesSessionVal.includes('EVENING') || salesSessionVal.includes('AFTERNOON')) {
+              salesSessionVal = 'PM';
+            } else if (salesSessionVal.includes('AM') || salesSessionVal.includes('MORNING')) {
+              salesSessionVal = 'AM';
+            }
+            salesSeasonVal = salesSessionVal;
+          }
         }
 
         await conn.query(
@@ -3066,6 +3199,39 @@ if (path === '/api/sales' && method === 'POST') {
           if (!canonical) canonical = (sentScode || sentDescript || '').toUpperCase();
           batchSessionVal = canonical;
           batchSeasonVal  = canonical;
+        } else {
+          // v2.12.51: Dairy (orgtype=D) session resolution for Batch Sales/AI
+          try {
+            const hour = now.getHours();
+            const resolved = await findActiveSessionDairy(ccode, hour, conn);
+
+            if (resolved) {
+              batchSessionVal = (resolved.SCODE || resolved.descript || batchSessionVal).toUpperCase();
+
+              if (batchSessionVal.includes('PM')) {
+                batchSeasonVal = 'PM';
+              } else if (batchSessionVal.includes('AM')) {
+                batchSeasonVal = 'AM';
+              } else {
+                batchSeasonVal = (hour >= 12) ? 'PM' : 'AM';
+              }
+            } else {
+              if (batchSessionVal.includes('PM') || batchSessionVal.includes('EVENING') || batchSessionVal.includes('AFTERNOON')) {
+                batchSessionVal = 'PM';
+              } else if (batchSessionVal.includes('AM') || batchSessionVal.includes('MORNING')) {
+                batchSessionVal = 'AM';
+              }
+              batchSeasonVal = batchSessionVal;
+            }
+          } catch (e) {
+            console.warn('[SESSION] Dairy batch resolution error:', e?.message);
+            if (batchSessionVal.includes('PM') || batchSessionVal.includes('EVENING') || batchSessionVal.includes('AFTERNOON')) {
+              batchSessionVal = 'PM';
+            } else if (batchSessionVal.includes('AM') || batchSessionVal.includes('MORNING')) {
+              batchSessionVal = 'AM';
+            }
+            batchSeasonVal = batchSessionVal;
+          }
         }
 
         for (const item of body.items) {

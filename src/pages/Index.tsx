@@ -134,8 +134,47 @@ const Index = () => {
   // Captured collections for batch printing
   const [capturedCollections, setCapturedCollections] = useState<MilkCollection[]>([]);
   
+  // All farmers for the company (for Delivered By search)
+  const [allCompanyFarmers, setAllCompanyFarmers] = useState<Farmer[]>([]);
+
   // Delivered by state for Buy/Sell portals
   const [deliveredBy, setDeliveredBy] = useState('owner');
+  const [selectedDeliverer, setSelectedDeliverer] = useState<Farmer | null>(null);
+
+  // Handle manual edits to Delivered By field
+  const handleDeliveredByChange = (newValue: string) => {
+    setDeliveredBy(newValue);
+
+    // If we had a selected member, check if the new text still matches their display string.
+    // If the user typed anything different, clear the selected member so the manual text is used.
+    if (selectedDeliverer) {
+      const displayString = `${selectedDeliverer.farmer_id} - ${selectedDeliverer.name}`;
+      if (newValue !== displayString) {
+        setSelectedDeliverer(null);
+      }
+    }
+  };
+
+  // Sync deliveredBy changes to all captured collections BEFORE submission
+  // This ensures if a user edits 'Delivered By' after capturing multiple items, all get updated.
+  useEffect(() => {
+    if (capturedCollections.length > 0) {
+      const currentDelivererValue = selectedDeliverer
+        ? `${selectedDeliverer.farmer_id} - ${selectedDeliverer.name}`
+        : (deliveredBy || 'owner');
+
+      setCapturedCollections(prev => {
+        // Only update if there's actually a change to avoid infinite loops
+        const needsUpdate = prev.some(c => c.delivered_by !== currentDelivererValue);
+        if (!needsUpdate) return prev;
+
+        return prev.map(c => ({
+          ...c,
+          delivered_by: currentDelivererValue
+        }));
+      });
+    }
+  }, [deliveredBy, selectedDeliverer]);
 
   const { 
     saveReceipt, 
@@ -183,6 +222,19 @@ const Index = () => {
   // If useCumulativeRouteFilter is false (all routes), we pass undefined to allow
   // the backend/IndexedDB to calculate across all routes.
   const cumulativeRouteCode = useCumulativeRouteFilter ? (selectedRouteCode || undefined) : undefined;
+
+  // Load all company farmers for Delivered By search
+  useEffect(() => {
+    if (!isReady) return;
+    (async () => {
+      try {
+        const farmers = await getFarmers();
+        setAllCompanyFarmers(farmers);
+      } catch (e) {
+        console.warn('Failed to load all company farmers:', e);
+      }
+    })();
+  }, [isReady, getFarmers]);
 
   // Sync tare weight from psettings when loaded
   // For coffee (orgtype='C'), always default to 1 kg if not set
@@ -989,7 +1041,11 @@ const Index = () => {
     setRoute(farmer.route);
     setSelectedFarmer(farmer); // Store full farmer object including multOpt
     setSearchValue(`${farmer.farmer_id} - ${farmer.name}`);
-    
+
+    // Reset deliverer info when farmer changes
+    setDeliveredBy('owner');
+    setSelectedDeliverer(null);
+
     // zeroOpt: Reset captureLocked when a NEW member is selected
     // This allows immediate capture for the new farmer
     if (lastCapturedFarmerId !== cleanFarmerId) {
@@ -1086,6 +1142,30 @@ const Index = () => {
   };
 
   const handleClearFarmer = () => {
+    // v2.12.54: Remove captured transactions one by one before clearing farmer
+    if (capturedCollections.length > 0) {
+      if (!window.confirm('Are you sure you want to remove the last captured transaction?')) {
+        return;
+      }
+
+      const newCollections = [...capturedCollections];
+      newCollections.pop();
+      setCapturedCollections(newCollections);
+
+      if (newCollections.length > 0) {
+        toast.info(`Last capture removed (${newCollections.length} remaining)`);
+        return; // Don't clear farmer yet
+      }
+
+      // If we just removed the last capture, proceed to clear farmer below
+      toast.info('Last capture removed');
+    } else if (selectedFarmer) {
+      // If no captures but a farmer is selected, confirm clearing the farmer
+      if (!window.confirm(`Are you sure you want to clear ${selectedFarmer.name}?`)) {
+        return;
+      }
+    }
+
     setFarmerId('');
     setFarmerName('');
     setSelectedFarmer(null);
@@ -1320,8 +1400,8 @@ const Index = () => {
       season_code: activeSession?.SCODE || '',
       // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
       transtype: collectionMode === 'sell' ? 2 : 1,
-      // Delivery tracking
-      delivered_by: deliveredBy || 'owner',
+      // Delivery tracking: save Member ID if a member was searched/selected, otherwise manual name
+      delivered_by: selectedDeliverer ? selectedDeliverer.farmer_id : (deliveredBy || 'owner'),
       // Coffee sack weighing - gross/tare/net (orgtype C only)
       ...(isCoffee && {
         gross_weight: parseFloat(Number(grossWeight).toFixed(2)),
@@ -1444,7 +1524,10 @@ const Index = () => {
       previousCumulativeTotal: cumulativeFrequency?.total ?? 0, // For race condition guard
       justSubmittedWeight: capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0), // Weight being submitted
       submittedRefs: capturedCollections.map((c) => c.reference_no).filter(Boolean) as string[], // v2.10.107: exclude from unsynced bucket
-      deliveredBy: deliveredBy || 'owner', // Pass deliveredBy for receipt printing
+      // Pass full ID - Name string to printing for Group members
+      deliveredBy: selectedDeliverer
+        ? `${selectedDeliverer.farmer_id} - ${selectedDeliverer.name}`
+        : (deliveredBy || 'owner'),
     };
 
     let lastCumulativeResult: { cumulative_weight?: number; by_product?: any[] } | null = null;
@@ -1627,7 +1710,11 @@ const Index = () => {
     // v2.10.66 Store/AI behaviour so coffee/milk receipts are never silently lost.
     if (hardStopped) {
       try {
-        addMilkReceipt(printData.collections).catch(() => {});
+        addMilkReceipt(printData.collections, undefined, undefined, {
+          routeLabel: printData.routeLabel,
+          periodLabel: printData.periodLabel,
+          locationName: printData.locationName
+        }).catch(() => {});
         console.log('[REPRINT] Milk receipt preserved despite server duplicate-session rejection');
       } catch {
         // Never let history-save failures interrupt the submit flow.
@@ -1646,7 +1733,11 @@ const Index = () => {
     // path also runs (e.g. a partial-success batch).
     if (successCount === 0 && offlineCount === 0 && capturedCollections.length > 0) {
       try {
-        addMilkReceipt(printData.collections).catch(() => {});
+        addMilkReceipt(printData.collections, undefined, undefined, {
+          routeLabel: printData.routeLabel,
+          periodLabel: printData.periodLabel,
+          locationName: printData.locationName
+        }).catch(() => {});
         console.log('[REPRINT] Milk receipt preserved despite all local saves failing');
       } catch {
         // Never let history-save failures interrupt the submit flow.
@@ -1881,7 +1972,11 @@ const Index = () => {
         setIsSubmitting(false);
         setReceiptModalOpen(true);
         // Save receipt for reprinting with the COMPUTED cumulative value
-        addMilkReceipt(printData.collections, computedCumulative?.total, computedCumulative?.byProduct).catch(() => {});
+        addMilkReceipt(printData.collections, computedCumulative?.total, computedCumulative?.byProduct, {
+          routeLabel: printData.routeLabel,
+          periodLabel: printData.periodLabel,
+          locationName: printData.locationName
+        }).catch(() => {});
         window.dispatchEvent(new CustomEvent('syncComplete'));
         return;
       }
@@ -2111,7 +2206,11 @@ const Index = () => {
         }).catch(err => console.warn('Background print failed:', err));
         
         // Save receipt for reprinting WITH the correct cumulative value
-        addMilkReceipt(printData.collections, cumulativeForPrint?.total, cumulativeForPrint?.byProduct).catch(() => {});
+        addMilkReceipt(printData.collections, cumulativeForPrint?.total, cumulativeForPrint?.byProduct, {
+          routeLabel: printData.routeLabel,
+          periodLabel: printData.periodLabel,
+          locationName: printData.locationName
+        }).catch(() => {});
       })();
     } else {
       // If not in collection view (shouldn't happen), fall back to modal
@@ -2437,7 +2536,7 @@ const Index = () => {
           onSubmit={handleSubmit}
           onSelectFarmer={handleSelectFarmer}
           onClearFarmer={handleClearFarmer}
-          selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
+          selectedFarmer={selectedFarmer}
           todayWeight={0}
           onManualWeightChange={(w) => {
             setWeight(w);
@@ -2448,6 +2547,7 @@ const Index = () => {
           blacklistedFarmerIds={blacklistedFarmerIds}
           sessionSubmittedFarmerIds={sessionSubmittedFarmers}
           onFarmersLoaded={handleFarmersLoaded}
+          allFarmers={allCompanyFarmers}
           captureDisabled={captureDisabledForSelectedFarmer}
           submitDisabled={submitDisabledForSelectedFarmer}
           allowDigital={captureMode.allowDigital}
@@ -2462,7 +2562,8 @@ const Index = () => {
           allowSackEdit={allowSackEdit}
           zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
           deliveredBy={deliveredBy}
-          onDeliveredByChange={setDeliveredBy}
+          onDeliveredByChange={handleDeliveredByChange}
+          onDeliveredByMemberSelect={setSelectedDeliverer}
           isSubmitting={isSubmitting}
         />
       ) : (
@@ -2477,7 +2578,7 @@ const Index = () => {
           onSubmit={handleSubmit}
           onSelectFarmer={handleSelectFarmer}
           onClearFarmer={handleClearFarmer}
-          selectedFarmer={farmerId ? { id: farmerId, name: farmerName } : null}
+          selectedFarmer={selectedFarmer}
           todayWeight={0}
           onManualWeightChange={(w) => {
             setWeight(w);
@@ -2487,6 +2588,7 @@ const Index = () => {
           onEntryTypeChange={setEntryType}
           blacklistedFarmerIds={blacklistedFarmerIds}
           sessionSubmittedFarmerIds={sessionSubmittedFarmers}
+          allFarmers={allCompanyFarmers}
           captureDisabled={captureDisabledForSelectedFarmer}
           submitDisabled={submitDisabledForSelectedFarmer}
           allowDigital={captureMode.allowDigital}
@@ -2501,7 +2603,8 @@ const Index = () => {
           allowSackEdit={allowSackEdit}
           zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
           deliveredBy={deliveredBy}
-          onDeliveredByChange={setDeliveredBy}
+          onDeliveredByChange={handleDeliveredByChange}
+          onDeliveredByMemberSelect={setSelectedDeliverer}
           isSubmitting={isSubmitting}
         />
       )}
@@ -2524,6 +2627,7 @@ const Index = () => {
           setGrossWeight(0); // Reset coffee gross weight
           setLastSavedWeight(0);
           setDeliveredBy('owner'); // Reset for next farmer
+          setSelectedDeliverer(null); // Reset for next farmer
           // Dispatch event to notify child components to focus input
           window.dispatchEvent(new CustomEvent('receiptModalClosed'));
         }}
@@ -2535,6 +2639,7 @@ const Index = () => {
         periodLabel={periodLabel}
         locationCode={selectedRouteCode}
         locationName={routeName}
+        deliveredBy={selectedDeliverer ? `${selectedDeliverer.farmer_id} - ${selectedDeliverer.name}` : deliveredBy}
       />
 
       {/* Reprint Modal */}

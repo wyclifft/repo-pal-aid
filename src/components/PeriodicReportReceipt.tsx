@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
 import { Printer, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { mysqlApi, type FarmerDetailReportData } from "@/services/mysqlApi";
+import { type Farmer } from "@/lib/supabase";
+import { useIndexedDB } from "@/hooks/useIndexedDB";
 import { printMemberProduceStatement } from "@/services/bluetooth";
+import { resolveMemberName } from "@/utils/farmerUtils";
 import { toast } from "sonner";
 
 interface PeriodicReportReceiptProps {
@@ -40,6 +43,15 @@ export function PeriodicReportReceipt({
   const [printing, setPrinting] = useState(false);
   const [data, setData] = useState<FarmerDetailReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { getFarmers, isReady: dbReady } = useIndexedDB();
+  const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
+
+  // Load all farmers for name resolution
+  useEffect(() => {
+    if (dbReady) {
+      getFarmers().then(setAllFarmers).catch(() => {});
+    }
+  }, [dbReady, getFarmers]);
 
   // Load data when dialog opens
   useEffect(() => {
@@ -129,6 +141,7 @@ export function PeriodicReportReceipt({
         produceName: data.produce_name,
         startDate: data.start_date,
         endDate: data.end_date,
+        gender: data.gender,
         transactions: data.transactions.map(tx => ({
           date: tx.date,
           rec_no: tx.rec_no,
@@ -136,9 +149,11 @@ export function PeriodicReportReceipt({
           // v2.10.77: pass per-row product so printer can group by icode
           icode: tx.icode,
           productName: tx.product_name,
+          deliveredby: tx.deliveredby,
         })),
         totalWeight: data.total_weight,
         centerName,
+        allFarmers,
       });
 
       console.log('🖨️ Print result:', result);
@@ -223,72 +238,132 @@ export function PeriodicReportReceipt({
                 <div className="border-b border-dotted border-muted-foreground/30" />
               </div>
               
-              {/* v2.10.77: group transactions by icode and render each as a
-                  clearly-labeled section. Falls back to a single section
-                  (using produce_name) for legacy cached data without icode. */}
-              {(() => {
-                const groups = new Map<string, { label: string; rows: typeof data.transactions; subtotal: number }>();
-                for (const tx of data.transactions) {
-                  const key = (tx.icode || data.produce_name || 'PRODUCE').toString().trim().toUpperCase() || 'PRODUCE';
-                  const label = (tx.product_name || tx.icode || data.produce_name || 'PRODUCE').toString().trim().toUpperCase();
-                  if (!groups.has(key)) groups.set(key, { label, rows: [], subtotal: 0 });
-                  const g = groups.get(key)!;
-                  g.rows.push(tx);
-                  g.subtotal += Number(tx.quantity) || 0;
-                }
-                const groupArr = Array.from(groups.entries());
-                if (groupArr.length === 0) {
-                  return (
-                    <>
-                      <div className="flex justify-center font-bold">
-                        <span>{data.produce_name.toUpperCase().trim()} RECORD</span>
+              {/* Group Number Report Logic (v2.12.51) - Case-insensitive check */}
+              {data.gender?.toLowerCase() === 'group' ? (
+                <div className="space-y-3">
+                  <div className="text-center font-bold border-b border-dashed border-muted-foreground/40 pb-1">
+                    DELIVERY BREAKDOWN BY DATE
+                  </div>
+                  {(() => {
+                    // Group by date, then by deliverer
+                    const dateGroups = new Map<string, Map<string, number>>();
+
+                    data.transactions.forEach(tx => {
+                      const dateKey = formatDisplayDate(tx.date);
+                      const delivererKey = tx.deliveredby || 'owner';
+
+                      if (!dateGroups.has(dateKey)) {
+                        dateGroups.set(dateKey, new Map());
+                      }
+                      const delivererMap = dateGroups.get(dateKey)!;
+                      const currentWeight = delivererMap.get(delivererKey) || 0;
+                      delivererMap.set(delivererKey, currentWeight + (Number(tx.quantity) || 0));
+                    });
+
+                    return Array.from(dateGroups.entries()).map(([date, deliverers]) => (
+                      <div key={date} className="space-y-1">
+                        <div className="font-bold text-[10px] bg-muted px-1">{date}</div>
+                        {Array.from(deliverers.entries()).map(([deliverer, weight]) => (
+                          <div key={deliverer} className="flex justify-between text-[10px] pl-2">
+                            <span className="truncate max-w-[70%]">
+                              {resolveMemberName(deliverer, allFarmers)}
+                            </span>
+                            <span className="font-semibold">{weight.toFixed(1)} {weightUnit}</span>
+                          </div>
+                        ))}
                       </div>
-                      <div className="border-t border-dashed border-muted-foreground/40" />
-                      <div className="text-center text-muted-foreground py-2">
-                        No transactions found
-                      </div>
-                    </>
-                  );
-                }
-                const showCode = groupArr.length > 1;
-                return (
-                  <div className="space-y-3 max-h-[260px] overflow-y-auto">
-                    {groupArr.map(([icode, g]) => (
-                      <div key={icode} className="space-y-1">
-                        <div className="flex justify-center font-bold pt-1">
-                          <span>{g.label}{showCode && icode !== g.label ? ` (${icode})` : ''} RECORD</span>
+                    ));
+                  })()}
+
+                  <div className="border-t border-dashed border-muted-foreground/40 pt-2" />
+                  <div className="text-center font-bold">DELIVERER SUMMARY (PERIOD)</div>
+                  <div className="border-b border-dotted border-muted-foreground/30 mb-1" />
+                  {(() => {
+                    // Total summary per deliverer for the entire period
+                    const totals = new Map<string, number>();
+                    data.transactions.forEach(tx => {
+                      const key = tx.deliveredby || 'owner';
+                      totals.set(key, (totals.get(key) || 0) + (Number(tx.quantity) || 0));
+                    });
+
+                    return Array.from(totals.entries())
+                      .sort((a, b) => b[1] - a[1]) // Sort by weight descending
+                      .map(([deliverer, total]) => (
+                        <div key={deliverer} className="flex justify-between text-[10px]">
+                          <span className="truncate max-w-[70%]">
+                            {resolveMemberName(deliverer, allFarmers)}
+                          </span>
+                          <span className="font-bold">{total.toFixed(2)} {weightUnit}</span>
+                        </div>
+                      ));
+                  })()}
+                </div>
+              ) : (
+                /* Normal Member Report Logic (Unchanged) */
+                (() => {
+                  const groups = new Map<string, { label: string; rows: typeof data.transactions; subtotal: number }>();
+                  for (const tx of data.transactions) {
+                    const key = (tx.icode || data.produce_name || 'PRODUCE').toString().trim().toUpperCase() || 'PRODUCE';
+                    const label = (tx.product_name || tx.icode || data.produce_name || 'PRODUCE').toString().trim().toUpperCase();
+                    if (!groups.has(key)) groups.set(key, { label, rows: [], subtotal: 0 });
+                    const g = groups.get(key)!;
+                    g.rows.push(tx);
+                    g.subtotal += Number(tx.quantity) || 0;
+                  }
+                  const groupArr = Array.from(groups.entries());
+                  if (groupArr.length === 0) {
+                    return (
+                      <>
+                        <div className="flex justify-center font-bold">
+                          <span>{data.produce_name.toUpperCase().trim()} RECORD</span>
                         </div>
                         <div className="border-t border-dashed border-muted-foreground/40" />
-                        <div className="grid font-bold text-[10px]" style={{ gridTemplateColumns: '11ch 11ch 1fr' }}>
-                          <span>DATE</span>
-                          <span>REC NO</span>
-                          <span className="text-right">QUANTITY</span>
+                        <div className="text-center text-muted-foreground py-2">
+                          No transactions found
                         </div>
-                        <div className="border-t border-dotted border-muted-foreground/30" />
-                        {g.rows.map((tx, idx) => {
-                          // v2.10.82: REC NO = devcode-LAST5 (e.g. BB01-00002)
-                          const ref = tx.rec_no;
-                          const recDisplay = (ref && ref.length >= 9)
-                            ? `${ref.slice(0, 4)}-${ref.slice(-5)}`
-                            : '----------';
-                          return (
-                            <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '11ch 11ch 1fr' }}>
-                              <span>{formatDisplayDate(tx.date)}</span>
-                              <span>{recDisplay}</span>
-                              <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
-                            </div>
-                          );
-                        })}
-                        <div className="border-t border-dotted border-muted-foreground/30" />
-                        <div className="flex justify-between text-[11px] font-semibold">
-                          <span>SUBTOTAL:</span>
-                          <span>{g.subtotal.toFixed(2)} {weightUnit}</span>
+                      </>
+                    );
+                  }
+                  const showCode = groupArr.length > 1;
+                  return (
+                    <div className="space-y-3 max-h-[260px] overflow-y-auto">
+                      {groupArr.map(([icode, g]) => (
+                        <div key={icode} className="space-y-1">
+                          <div className="flex justify-center font-bold pt-1">
+                            <span>{g.label}{showCode && icode !== g.label ? ` (${icode})` : ''} RECORD</span>
+                          </div>
+                          <div className="border-t border-dashed border-muted-foreground/40" />
+                          <div className="grid font-bold text-[10px]" style={{ gridTemplateColumns: '11ch 11ch 1fr' }}>
+                            <span>DATE</span>
+                            <span>REC NO</span>
+                            <span className="text-right">QUANTITY</span>
+                          </div>
+                          <div className="border-t border-dotted border-muted-foreground/30" />
+                          {g.rows.map((tx, idx) => {
+                            // v2.10.82: REC NO = devcode-LAST5 (e.g. BB01-00002)
+                            const ref = tx.rec_no;
+                            const recDisplay = (ref && ref.length >= 9)
+                              ? `${ref.slice(0, 4)}-${ref.slice(-5)}`
+                              : '----------';
+                            return (
+                              <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '11ch 11ch 1fr' }}>
+                                <span>{formatDisplayDate(tx.date)}</span>
+                                <span>{recDisplay}</span>
+                                <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
+                              </div>
+                            );
+                          })}
+                          <div className="border-t border-dotted border-muted-foreground/30" />
+                          <div className="flex justify-between text-[11px] font-semibold">
+                            <span>SUBTOTAL:</span>
+                            <span>{g.subtotal.toFixed(2)} {weightUnit}</span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
+                      ))}
+                    </div>
+                  );
+                })()
+              )}
               <div className="border-t border-dashed border-muted-foreground/40" />
               <div className="flex justify-between font-bold pt-1">
                 <span>TOTAL:</span>

@@ -1,0 +1,3 @@
+- [x] Update `src/components/ui/progress.tsx` to support custom indicator classes
+- [x] Update `src/components/SyncOverlay.tsx` for visibility on dark background
+- [x] Verify changes
