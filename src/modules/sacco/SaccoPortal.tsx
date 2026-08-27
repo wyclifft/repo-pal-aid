@@ -237,7 +237,6 @@ const SaccoPortal = () => {
             </div>
           </div>
 
-
           <div className="flex items-center">
             <Button
               variant="outline"
