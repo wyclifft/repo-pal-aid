@@ -15,11 +15,12 @@ import { CowDetailsModal, type CowDetails } from '@/components/CowDetailsModal';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { TransactionReceipt, createAIReceiptData, type ReceiptData } from '@/components/TransactionReceipt';
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
 import { getTimeoutSignal } from '@/utils/abortUtils';
-import { resolveSessionMetadata, resolveDashboardActiveSession } from '@/utils/sessionMetadata';
+import { resolveSessionMetadata, resolveDashboardActiveSession, resolveDashboardActiveRoute } from '@/utils/sessionMetadata';
 
 interface CartItem {
   item: Item;
@@ -37,6 +38,7 @@ interface ParsedCredit {
 const AIPage = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
+  const { settings: psettings } = useAppSettings();
   const [items, setItems] = useState<Item[]>([]);
   const [hasRoutes, setHasRoutes] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,7 +77,8 @@ const AIPage = () => {
   // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
 
-
+  // v2.12.20: Resolve the active route (store/center) selected on the Dashboard.
+  const routeName = useMemo(() => resolveDashboardActiveRoute()?.descript || '', []);
 
   // clientFetch from route data (3=AI)
   const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);

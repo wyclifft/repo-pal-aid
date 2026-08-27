@@ -19,7 +19,7 @@ import { useAppSettings } from '@/hooks/useAppSettings';
 import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 import { useReprint } from '@/contexts/ReprintContext';
 import { getTimeoutSignal } from '@/utils/abortUtils';
-import { resolveSessionMetadata, resolveDashboardActiveSession } from '@/utils/sessionMetadata';
+import { resolveSessionMetadata, resolveDashboardActiveSession, resolveDashboardActiveRoute } from '@/utils/sessionMetadata';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
 import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
@@ -84,6 +84,9 @@ const Store = () => {
 
    // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
+
+  // v2.12.20: Resolve the active route (store/center) selected on the Dashboard.
+  const routeName = useMemo(() => resolveDashboardActiveRoute()?.descript || '', []);
 
   // clientFetch from route data (2=Store, 3=AI)
   const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);

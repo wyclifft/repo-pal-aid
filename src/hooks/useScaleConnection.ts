@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetooth-le';
 import { toast } from 'sonner';
 import { 
   connectBluetoothScale, 
@@ -38,6 +39,23 @@ interface UseScaleConnectionOptions {
   onEntryTypeChange: (entryType: 'scale' | 'manual') => void;
 }
 
+// Request Bluetooth permissions
+export const requestPermissions = async (): Promise<boolean> => {
+  if (!Capacitor.isNativePlatform()) return true;
+
+  try {
+    const granted = await requestClassicBluetoothPermissions();
+    if (!granted) {
+      toast.error('Bluetooth permissions required to connect to scale');
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn('Permission request error:', error);
+    return true; // Continue anyway on web
+  }
+};
+
 export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseScaleConnectionOptions) => {
   // Initialize from actual bluetooth state - recheck on each render to catch late connections
   const [scaleConnected, setScaleConnected] = useState(() => {
@@ -49,7 +67,17 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   const [connectionType, setConnectionType] = useState<'ble' | 'classic-spp'>('ble');
   const [isConnecting, setIsConnecting] = useState(false);
   const [liveWeight, setLiveWeight] = useState(0);
-  
+
+  // v2.12.56: Logic-level stable reading state (prevents React render race conditions)
+  const isWaitingForStableRef = useRef(false);
+  const [isWaitingForStable, setIsWaitingForStable] = useState(false);
+
+  // Sync state and ref
+  const updateWaitingState = useCallback((waiting: boolean) => {
+    isWaitingForStableRef.current = waiting;
+    setIsWaitingForStable(waiting);
+  }, []);
+
   // Re-sync connection state on mount in case scale was connected elsewhere
   useEffect(() => {
     const currentlyConnected = isScaleConnected();
@@ -66,10 +94,10 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   const [isLoadingPaired, setIsLoadingPaired] = useState(false);
   
   // Stable reading state
-  const [isWaitingForStable, setIsWaitingForStable] = useState(false);
   const [stableReadingProgress, setStableReadingProgress] = useState(0);
   const [lastRawWeight, setLastRawWeight] = useState(0);
   const stableReadingsRef = useRef<number[]>([]);
+  const lastStableWeightRef = useRef<number | null>(null);
   const stableTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Get settings
@@ -113,27 +141,16 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   // Listen for global weight updates from any scale connection
   useEffect(() => {
     const handleWeightUpdate = (e: CustomEvent<{ weight: number; scaleType: ScaleType }>) => {
-      const { weight, scaleType: type } = e.detail;
-      console.log(`🎯 useScaleConnection received scaleWeightUpdate event: ${weight} kg from ${type}`);
+      const { weight: newWeight, scaleType: type } = e.detail;
+      console.log(`🎯 useScaleConnection received scaleWeightUpdate event: ${newWeight} kg from ${type}`);
 
-      // v2.10.68: Trust the connection-state event, not weight broadcasts, for "connected".
-      // A weight broadcast must NOT be treated as proof a scale is paired — otherwise
-      // shared-socket noise from a connected printer (Classic SPP) flips the scale
-      // indicator green even when no scale is paired. We still propagate weight
-      // values when a real scale connection exists.
       if (!isScaleConnected()) {
         console.log('🚫 Ignoring scaleWeightUpdate — no scale currently connected (likely printer cross-talk)');
         return;
       }
 
-      setLiveWeight(weight);
-      setScaleType(type);
-
-      // Always update parent via callback when scale is connected
-      // Use refs to avoid stale closures
-      console.log(`🎯 useScaleConnection calling onWeightChangeRef.current(${weight})`);
-      onWeightChangeRef.current(weight);
-      onEntryTypeChangeRef.current('scale');
+      // Use the stabilized reading logic
+      handleScaleReading(newWeight, type);
     };
     
     window.addEventListener('scaleWeightUpdate', handleWeightUpdate as EventListener);
@@ -143,7 +160,7 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
       console.log('📡 useScaleConnection: Removed scaleWeightUpdate listener');
       window.removeEventListener('scaleWeightUpdate', handleWeightUpdate as EventListener);
     };
-  }, []); // Empty deps - handlers use refs
+  }, [handleScaleReading]);
 
   // Check if readings are stable (within threshold)
   const areReadingsStable = useCallback((readings: number[]): boolean => {
@@ -157,7 +174,8 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   // Handle weight reading from scale (BLE or Classic)
   // Uses refs to avoid stale closures
   const handleScaleReading = useCallback((newWeight: number, type?: ScaleType) => {
-    console.log(`🎯 handleScaleReading: ${newWeight} kg, type: ${type}`);
+    const isWaiting = isWaitingForStableRef.current;
+    console.log(`🎯 handleScaleReading: ${newWeight} kg, type: ${type}, waitingForStable: ${isWaiting}`);
     setLastRawWeight(newWeight);
     setLiveWeight(newWeight);
     if (type) setScaleType(type);
@@ -166,9 +184,13 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     if (newWeight === 0) {
       onWeightChangeRef.current(0);
       onEntryTypeChangeRef.current('scale');
-      setIsWaitingForStable(false);
+      updateWaitingState(false);
       setStableReadingProgress(0);
       stableReadingsRef.current = [];
+      lastStableWeightRef.current = 0;
+
+      // Broadcast that we have reached stability (0 is stable)
+      window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: true, weight: 0 } }));
       return;
     }
     
@@ -190,54 +212,97 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         const stableWeight = stableReadingsRef.current.slice(-STABLE_READING_COUNT)
           .reduce((a, b) => a + b, 0) / STABLE_READING_COUNT;
         
-        onWeightChangeRef.current(parseFloat(stableWeight.toFixed(1)));
-        onEntryTypeChangeRef.current('scale');
-        setIsWaitingForStable(false);
-        setStableReadingProgress(100);
-        stableReadingsRef.current = [];
+        const finalWeight = parseFloat(stableWeight.toFixed(2));
         
-        // Clear timeout
-        if (stableTimeoutRef.current) {
-          clearTimeout(stableTimeoutRef.current);
-          stableTimeoutRef.current = null;
+        // Only update and broadcast if it's the first stable reading OR weight changed significantly
+        if (lastStableWeightRef.current === null || Math.abs(finalWeight - lastStableWeightRef.current) > 0.01) {
+          console.log(`⚖️ Stability reached: ${finalWeight} kg`);
+          onWeightChangeRef.current(finalWeight);
+          onEntryTypeChangeRef.current('scale');
+          updateWaitingState(false);
+          setStableReadingProgress(100);
+          lastStableWeightRef.current = finalWeight;
+
+          // Clear timeout
+          if (stableTimeoutRef.current) {
+            clearTimeout(stableTimeoutRef.current);
+            stableTimeoutRef.current = null;
+          }
+
+          // Broadcast that we have reached stability
+          window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: true, weight: finalWeight } }));
+        } else {
+          // Weight is already stable and hasn't changed enough to re-broadcast
+          updateWaitingState(false);
+          setStableReadingProgress(100);
         }
-        
-        // Silent - no toast notification
       } else {
-        setIsWaitingForStable(true);
+        // Readings are not stable - check if we were previously stable
+        const isSignificantlyDifferent = lastStableWeightRef.current === null ||
+          Math.abs(newWeight - lastStableWeightRef.current) > STABLE_READING_THRESHOLD;
+
+        if (isSignificantlyDifferent) {
+          if (!isWaiting) {
+            console.log(`⚖️ Weight fluctuating: ${newWeight} kg (last stable: ${lastStableWeightRef.current})`);
+            updateWaitingState(true);
+            // Reset buffer and last stable weight so we can re-evaluate
+            stableReadingsRef.current = [newWeight]; // Keep current as first new reading
+            lastStableWeightRef.current = null;
+            // Broadcast that we are now fluctuating
+            window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: false, weight: newWeight } }));
+          }
+        }
       }
     } else {
       // No stable reading required - use weight directly
       onWeightChangeRef.current(newWeight);
       onEntryTypeChangeRef.current('scale');
     }
-  }, [requireStableReading, areReadingsStable]);
+  }, [requireStableReading, areReadingsStable, updateWaitingState]);
 
   // Handle Classic BT weight update (without type parameter)
   const handleClassicWeightUpdate = useCallback((newWeight: number) => {
     handleScaleReading(newWeight, 'Classic-SPP');
   }, [handleScaleReading]);
 
-  // Request Bluetooth permissions
-  const requestPermissions = useCallback(async () => {
+  // Request Bluetooth permissions (local wrapper for hook consistency)
+  const handleRequestPermissions = useCallback(async () => {
+    return await requestPermissions();
+  }, []);
+
+  // Ensure Bluetooth is enabled
+  const ensureBluetoothEnabled = useCallback(async (): Promise<boolean> => {
     if (!Capacitor.isNativePlatform()) return true;
     
     try {
-      const granted = await requestClassicBluetoothPermissions();
-      if (!granted) {
-        toast.error('Bluetooth permissions required to connect to scale');
-        return false;
+      await BleClient.initialize();
+      // Check if Bluetooth is enabled
+      const isEnabled = await BleClient.isEnabled();
+      if (!isEnabled) {
+        console.log('📡 Bluetooth is disabled, prompting to enable...');
+        // On Android, this will show a system prompt
+        await BleClient.enable();
+        // Wait a bit for it to actually turn on
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return await BleClient.isEnabled();
       }
       return true;
     } catch (error) {
-      console.warn('Permission request error:', error);
-      return true; // Continue anyway on web
+      console.warn('⚠️ Failed to enable Bluetooth:', error);
+      return false;
     }
   }, []);
 
   // Connect via BLE (scan for devices)
   const connectBLE = useCallback(async () => {
-    const hasPermission = await requestPermissions();
+    // 1. Ensure BT is enabled
+    const btEnabled = await ensureBluetoothEnabled();
+    if (!btEnabled) {
+      toast.error('Please turn on Bluetooth to connect to the scale');
+      return;
+    }
+
+    const hasPermission = await handleRequestPermissions();
     if (!hasPermission) return;
     
     setIsConnecting(true);
@@ -286,11 +351,11 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
       }
     }
     setIsConnecting(false);
-  }, [handleScaleReading, requireStableReading, isWaitingForStable, requestPermissions]);
+  }, [handleScaleReading, requireStableReading, isWaitingForStable, handleRequestPermissions]);
 
   // Show paired devices dialog for Classic BT
   const showPairedDevicesDialog = useCallback(async () => {
-    const hasPermission = await requestPermissions();
+    const hasPermission = await handleRequestPermissions();
     if (!hasPermission) return;
     
     setIsLoadingPaired(true);
@@ -306,10 +371,17 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     }
     
     setIsLoadingPaired(false);
-  }, [requestPermissions]);
+  }, [handleRequestPermissions]);
 
   // Connect to a specific Classic BT device
   const connectClassicDevice = useCallback(async (device: ClassicBluetoothDevice) => {
+    // 1. Ensure BT is enabled
+    const btEnabled = await ensureBluetoothEnabled();
+    if (!btEnabled) {
+      toast.error('Please turn on Bluetooth to connect to the scale');
+      return;
+    }
+
     setShowPairedDevices(false);
     setIsConnecting(true);
     stableReadingsRef.current = [];
@@ -354,6 +426,17 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
       console.warn(`🚫 [v2.10.99] Skipping autoReconnect — "${storedDevice.deviceName}" is the BLE half of a dual-mode scale. Pair the SPP port via Settings → Classic BT.`);
       clearStoredDevice();
       return;
+    }
+
+    // Ensure Bluetooth is enabled before attempting auto-reconnect
+    // Note: We don't toast error here to avoid annoying the user on every mount,
+    // but we check the state so it doesn't fail silently with a cryptic GATT error.
+    if (Capacitor.isNativePlatform()) {
+      const isEnabled = await BleClient.isEnabled();
+      if (!isEnabled) {
+        console.log('📡 autoReconnect skipped: Bluetooth is disabled');
+        return;
+      }
     }
 
 
@@ -443,6 +526,6 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     connectClassicDevice,
     autoReconnect,
     forceResubscribe,
-    requestPermissions,
+    requestPermissions: handleRequestPermissions,
   };
 };

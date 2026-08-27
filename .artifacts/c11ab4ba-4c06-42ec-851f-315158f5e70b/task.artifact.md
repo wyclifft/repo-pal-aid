@@ -1,0 +1,7 @@
+- [x] Implement `psettings.zeroOpt` capture protection in `Index.tsx`
+    - [x] Remove `captureLocked` reset in `handleSelectFarmer`
+    - [x] Remove `captureLocked` reset in `handleClearFarmer`
+    - [x] Update `handleCapture` to conditionally reset weight
+    - [x] Update `ReceiptModal.onClose` to conditionally reset weight
+- [x] Verify `zeroOptBlocked` behavior in `BuyProduceScreen` and `SellProduceScreen`
+- [x] Verify manual weight entry behavior with `zeroOpt`

@@ -45,7 +45,7 @@ interface SellProduceScreenProps {
   sackTareWeight?: number;
   // Whether user can edit sack weight (psettings: allowSackEdit)
   allowSackEdit?: boolean;
-  // zeroOpt: capture blocked until scale drops to ≤0.5 kg
+  // zeroOpt: capture blocked until scale drops to ≤0.2 kg
   zeroOptBlocked?: boolean;
   // Delivery tracking
   deliveredBy?: string;
@@ -328,21 +328,6 @@ export const SellProduceScreen = ({
         {produceLabel} Selling Portal
       </div>
 
-      {/* zeroOpt: Show blocking indicator when capture is blocked until weight drops */}
-      {zeroOptBlocked && (
-        <div className="bg-amber-100 border-2 border-amber-500 text-amber-800 px-4 py-3 mx-3 mt-2 rounded-lg">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
-            <p className="font-semibold text-sm">
-              Clear weight to continue (scale or manual)
-            </p>
-          </div>
-          <p className="text-xs mt-1 text-amber-700">
-            Weight must drop to ≤0.5 Kg before next capture
-          </p>
-        </div>
-      )}
-
       {/* Member/Debtor Toggle - identical to Store page */}
       {!isDairy && (
         <div className="flex justify-center py-2 bg-white border-b">
@@ -536,7 +521,7 @@ export const SellProduceScreen = ({
               </p>
             </div>
             <span className="font-bold text-base sm:text-lg ml-2">
-              {totalCapturedWeight > 0 ? totalCapturedWeight.toFixed(1) : '0.0'}
+              {totalCapturedWeight > 0 ? totalCapturedWeight.toFixed(2) : '0.00'}
             </span>
           </div>
           
@@ -548,7 +533,7 @@ export const SellProduceScreen = ({
           <div className="flex justify-between items-center">
             <span className="font-bold text-sm sm:text-base">WEIGHT TODAY</span>
             <span className="text-gray-600 text-sm sm:text-base">
-              {todayWeight > 0 ? todayWeight.toFixed(1) : '-'}
+              {todayWeight > 0 ? todayWeight.toFixed(2) : '-'}
             </span>
           </div>
         </div>
@@ -634,11 +619,11 @@ export const SellProduceScreen = ({
                   {/* Coffee mode: show Gross/Sack/Net breakdown */}
                   {isCoffee && c.gross_weight !== undefined ? (
                     <div className="text-right text-xs">
-                      <div className="text-gray-500">G:{c.gross_weight?.toFixed(1)} S:{c.tare_weight?.toFixed(1)}</div>
-                      <div className="font-bold text-green-700">Net: {c.weight.toFixed(1)}</div>
+                      <div className="text-gray-500">G:{c.gross_weight?.toFixed(2)} S:{c.tare_weight?.toFixed(2)}</div>
+                      <div className="font-bold text-green-700">Net: {c.weight.toFixed(2)}</div>
                     </div>
                   ) : (
-                    <span className="font-bold text-gray-900">{c.weight.toFixed(1)}</span>
+                    <span className="font-bold text-gray-900">{c.weight.toFixed(2)}</span>
                   )}
                 </div>
               ))}

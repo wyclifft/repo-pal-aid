@@ -1,4 +1,36 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.58: SELL PRODUCE RECEIPT REFINEMENT.
+//   Sell Produce: Fixed initial submission receipt title ("PURCHASE RECEIPT")
+//   and total label ("Total Weight [Kgs]"). Strictly suppressed cumulative
+//   totals for direct prints in Sell portal. Fixed custom label truncation
+//   in thermal printer service.
+//
+// v2.12.57: RECEIPT FOOTER SUPPRESSION.
+//   Receipt Footer: Suppressed timestamp footer for all initial submissions
+//   (Buy/Sell/Store/AI). Preserved "Reprinted on" footer for all reprints in
+//   Recent Receipts to clearly distinguish original from reprint.
+//
+// v2.12.56: RECEIPT LAYOUT + SELL PRODUCE RECOVERY.
+//   Sell Produce: Receipts are now labeled "PURCHASE RECEIPT" with "Total Weight [Kgs]"
+//   label. Cumulative monthly totals are strictly suppressed for Sell Produce
+//   transactions (transtype=2) in both initial capture and reprinting.
+//   Reprinting: Removed "Reprinted on" footer specifically for Store and AI
+//   receipts in Recent Receipts. Milk (Buy) receipts preserve the footer.
+//
+// v2.12.55: ZERO-OPT + STABILITY HARDENING.
+//   zeroOpt: Return-to-zero threshold tightened to 0.2 kg. Capture lock now
+//   strictly persists across farmer changes until scale physically clears.
+//   stableOpt: Fixed stability detection logic in useScaleConnection. Scale
+//   now reliably reaches stable state after settling.
+//   UI: Replaced blue progress bar with compact Status Light (Green/Red/Gray).
+//   Bluetooth: Added system prompt to turn on Bluetooth if disabled on Android.
+//
+// v2.12.54: STABLE OPT CAPTURE PROTECTION.
+//   Scale Stability: Capture button is now disabled when the scale weight is
+//   fluctuating (if stableOpt=1). A progress bar shows stability status.
+//   Capture Logic: Added strict validation to prevent capturing unstable
+//   readings, matching the visual state.
+//
 // v2.12.53: REPRINT CONTEXT PRESERVATION.
 //   Reprint Modal: Stored receipts now preserve their original routeLabel,
 //   periodLabel, and locationName. Reprints use session_descript if available
@@ -1222,12 +1254,12 @@
 //   field when a Group Number is selected.
 //   Cache: Bumped CACHE_VERSION to v65 to force asset refresh in built APKs.
 //
-export const APP_VERSION = '2.12.53';
-export const APP_VERSION_CODE = 213;
+export const APP_VERSION = '2.12.58';
+export const APP_VERSION_CODE = 218;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'reprint-context-fix';
+export const APP_FIX_TAG = 'sell-receipt-fix';
 
 
 

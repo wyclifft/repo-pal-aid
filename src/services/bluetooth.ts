@@ -2041,6 +2041,8 @@ export const printReceipt = async (data: {
   collectionDate?: Date;
   deliveredBy?: string;
   reprintedAt?: Date;
+  receiptTitle?: string;
+  totalLabel?: string;
 }): Promise<{ success: boolean; error?: string }> => {
   const companyName = data.companyName || 'DAIRY COLLECTION';
   const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
@@ -2063,7 +2065,7 @@ export const printReceipt = async (data: {
   let collectionsText = '';
   data.collections.forEach((col) => {
     const prefix = `${col.index}: ${col.transrefno || '-'}`;
-    const weight = col.weight.toFixed(1);
+    const weight = col.weight.toFixed(2);
     const spaces = W - prefix.length - weight.length;
     collectionsText += prefix + ' '.repeat(Math.max(1, spaces)) + weight + '\n';
   });
@@ -2071,7 +2073,7 @@ export const printReceipt = async (data: {
   let receipt = '';
   
   receipt += centerText(companyName, W) + '\n';
-  receipt += centerText('CUSTOMER DELIVERY RECEIPT', W) + '\n';
+  receipt += centerText(data.receiptTitle || 'CUSTOMER DELIVERY RECEIPT', W) + '\n';
   receipt += sep + '\n';
   
   receipt += formatLine('MNO       ', '#' + data.farmerId, W) + '\n';
@@ -2089,7 +2091,8 @@ export const printReceipt = async (data: {
   receipt += sep + '\n';
   
   const totalStr = totalWeight.toFixed(2);
-  receipt += formatLine('Total Kgs ', totalStr, W) + '\n';
+  const totalLabel = data.totalLabel ? (data.totalLabel.length > 20 ? data.totalLabel.substring(0, 20) : data.totalLabel.padEnd(20)) : 'Total Kgs ';
+  receipt += formatLine(totalLabel, totalStr, W) + '\n';
   
   if (data.cumulativeFrequency !== undefined) {
     receipt += formatLine('Cumulative', data.cumulativeFrequency.toFixed(1), W) + '\n';

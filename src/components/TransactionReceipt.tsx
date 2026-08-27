@@ -61,6 +61,7 @@ export interface ReceiptData {
   productCode?: string;
   seasonCode?: string;
   entryType?: string;
+  isMilkFormat?: boolean; // true = indexed list (produce), false = itemized list (retail)
 }
 
 interface TransactionReceiptProps {
@@ -70,9 +71,13 @@ interface TransactionReceiptProps {
   onPrint?: () => void;
 }
 
-// Get receipt title based on transaction type
-const getReceiptTitle = (transtype: TransactionType): string => {
-  switch (transtype) {
+// Get receipt title based on data
+const getReceiptTitle = (data: ReceiptData): string => {
+  if (data.transtype === 2 && data.isMilkFormat) {
+    return 'PURCHASE RECEIPT';
+  }
+
+  switch (data.transtype) {
     case 1: return 'CUSTOMER DELIVERY RECEIPT';
     case 2: return 'STORE PURCHASE RECEIPT';
     case 3: return 'AI SERVICE RECEIPT';
@@ -80,9 +85,13 @@ const getReceiptTitle = (transtype: TransactionType): string => {
   }
 };
 
-// Get total label based on transaction type
-const getTotalLabel = (transtype: TransactionType): string => {
-  switch (transtype) {
+// Get total label based on data
+const getTotalLabel = (data: ReceiptData): string => {
+  if (data.transtype === 2 && data.isMilkFormat) {
+    return 'Total Weight [Kgs]';
+  }
+
+  switch (data.transtype) {
     case 1: return 'Total Weight [Kgs]';
     case 2: return 'Total Amount [KES]';
     case 3: return 'Total Amount [KES]';
@@ -400,7 +409,7 @@ export const TransactionReceipt = ({
         for (let copy = 0; copy < printCopies; copy++) {
       let result: { success: boolean; error?: string };
 
-      if (transtype === 2 || transtype === 3) {
+      if ((transtype === 2 && !data.isMilkFormat) || transtype === 3) {
         // Store/AI receipts — use printStoreAIReceipt with full item details
         result = await printStoreAIReceipt({
           companyName,
@@ -421,10 +430,10 @@ export const TransactionReceipt = ({
           totalAmount: totalAmount || 0,
           transactionDate,
           receiptType: transtype === 2 ? 'store' : 'ai',
-          reprintedAt: reprintedAt || new Date()
+          reprintedAt: reprintedAt
         });
       } else {
-        // Milk/Coffee receipts — use printReceipt
+        // Milk/Coffee receipts OR Sell Produce receipts — use printReceipt
         result = await printReceipt({
           companyName,
           farmerName: memberName,
@@ -438,12 +447,14 @@ export const TransactionReceipt = ({
           collectorName: clerkName,
           deliveredBy,
           collections,
-          cumulativeFrequency: showCumulativeFrequency ? cumulativeFrequency : undefined,
-          cumulativeByProduct: showCumulativeFrequency ? cumulativeByProduct : undefined,
+          cumulativeFrequency: (showCumulativeFrequency && !isSellProduce) ? cumulativeFrequency : undefined,
+          cumulativeByProduct: (showCumulativeFrequency && !isSellProduce) ? cumulativeByProduct : undefined,
           locationCode,
           locationName,
           collectionDate: transactionDate,
-          reprintedAt: reprintedAt || new Date()
+          reprintedAt: reprintedAt,
+          receiptTitle: getReceiptTitle(data),
+          totalLabel: getTotalLabel(data)
         });
       }
 
@@ -468,8 +479,10 @@ export const TransactionReceipt = ({
     onPrint?.();
   };
 
+  const isSellProduce = transtype === 2 && data.isMilkFormat;
+
   // Calculate display total
-  const displayTotal = transtype === 1 
+  const displayTotal = (transtype === 1 || isSellProduce)
     ? totalWeight?.toFixed(2) 
     : totalAmount?.toFixed(2);
 
@@ -484,7 +497,7 @@ export const TransactionReceipt = ({
           {/* Header */}
           <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base">{companyName}</h3>
-            <p className="text-xs text-muted-foreground">{getReceiptTitle(transtype)}</p>
+            <p className="text-xs text-muted-foreground">{getReceiptTitle(data)}</p>
           </div>
 
           {/* Member Info - Shared across all types */}
@@ -509,99 +522,102 @@ export const TransactionReceipt = ({
 
           {/* Items/Collections List */}
           <div className="border-t border-b border-dashed py-2 space-y-1">
-            {/* Product name for milk/coffee (transtype 1) */}
-            {transtype === 1 && productName && (
+            {/* Product name for milk/coffee (transtype 1 or Sell Produce) */}
+            {(transtype === 1 || isSellProduce) && productName && (
               <div className="flex justify-between text-xs mb-1 pb-1 border-b border-dashed">
                 <span className="text-muted-foreground">Product</span>
                 <span className="font-medium">{productName}</span>
               </div>
             )}
             
-            {/* Items display varies by type */}
-            {items.map((item, index) => {
-              const syncKey = getItemSyncKey(index);
-              const refNo = getItemActualReference(item, index) || `(no ref #${index + 1})`;
-              const isSyncing = syncingItems.has(syncKey);
-              const isSynced = syncedItems.has(syncKey);
-              const isFailed = failedItems.has(syncKey);
-              const hasMissingRef = !item.reference_no;
-              
-              return (
-                <div key={syncKey} className="space-y-0.5">
-                  {/* For Milk (transtype 1) - show weight */}
-                  {transtype === 1 && (
-                    <div className="flex items-center justify-between text-xs gap-2">
-                      <span className={`flex-1 ${hasMissingRef ? 'text-destructive' : ''}`}>{index + 1}: {refNo}</span>
-                      <span className="font-medium">{item.weight?.toFixed(1)}</span>
-                    </div>
-                  )}
-                  
-                  {/* For Store (transtype 2) - show item name, qty, amount */}
-                  {transtype === 2 && (
-                    <div className="flex justify-between text-xs">
-                      <span>{item.item_name} x{item.quantity}</span>
-                      <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
-                    </div>
-                  )}
-                  
-                  {/* For AI (transtype 3) - show item name, qty, amount + cow details */}
-                  {transtype === 3 && (
-                    <>
+            {/* Items display varies by format */}
+            {data.isMilkFormat ? (
+              // Produce format (Buy Portal & Sell Produce Portal)
+              items.map((item, index) => {
+                const syncKey = getItemSyncKey(index);
+                const refNo = getItemActualReference(item, index) || `(no ref #${index + 1})`;
+                const hasMissingRef = !item.reference_no;
+
+                return (
+                  <div key={syncKey} className="flex items-center justify-between text-xs gap-2">
+                    <span className={`flex-1 ${hasMissingRef ? 'text-destructive' : ''}`}>{index + 1}: {refNo}</span>
+                    <span className="font-medium">{item.weight?.toFixed(2)}</span>
+                  </div>
+                );
+              })
+            ) : (
+              // Retail format (Store & AI Portals)
+              items.map((item, index) => {
+                const syncKey = getItemSyncKey(index);
+                return (
+                  <div key={syncKey} className="space-y-0.5">
+                    {/* For Store (transtype 2) - show item name, qty, amount */}
+                    {transtype === 2 && (
                       <div className="flex justify-between text-xs">
                         <span>{item.item_name} x{item.quantity}</span>
                         <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
                       </div>
-                      {item.cowDetails && (
-                        <div className="text-xs text-muted-foreground pl-2 border-l-2 border-dashed ml-1 space-y-0.5">
-                          {item.cowDetails.cowName && (
-                            <div>Cow: {item.cowDetails.cowName}</div>
-                          )}
-                          {item.cowDetails.cowBreed && (
-                            <div>Breed: {item.cowDetails.cowBreed}</div>
-                          )}
-                          {item.cowDetails.numberOfCalves && (
-                            <div>Calves: {item.cowDetails.numberOfCalves}</div>
-                          )}
-                          {item.cowDetails.bullCode && (
-                            <div>Bull Code: {item.cowDetails.bullCode}</div>
-                          )}
-                          {item.cowDetails.bullName && (
-                            <div>Bull Name: {item.cowDetails.bullName}</div>
-                          )}
-                          {item.cowDetails.nextHeat && (
-                            <div>Next Heat: {item.cowDetails.nextHeat}</div>
-                          )}
+                    )}
+
+                    {/* For AI (transtype 3) - show item name, qty, amount + cow details */}
+                    {transtype === 3 && (
+                      <>
+                        <div className="flex justify-between text-xs">
+                          <span>{item.item_name} x{item.quantity}</span>
+                          <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
                         </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              );
-            })}
+                        {item.cowDetails && (
+                          <div className="text-xs text-muted-foreground pl-2 border-l-2 border-dashed ml-1 space-y-0.5">
+                            {item.cowDetails.cowName && (
+                              <div>Cow: {item.cowDetails.cowName}</div>
+                            )}
+                            {item.cowDetails.cowBreed && (
+                              <div>Breed: {item.cowDetails.cowBreed}</div>
+                            )}
+                            {item.cowDetails.numberOfCalves && (
+                              <div>Calves: {item.cowDetails.numberOfCalves}</div>
+                            )}
+                            {item.cowDetails.bullCode && (
+                              <div>Bull Code: {item.cowDetails.bullCode}</div>
+                            )}
+                            {item.cowDetails.bullName && (
+                              <div>Bull Name: {item.cowDetails.bullName}</div>
+                            )}
+                            {item.cowDetails.nextHeat && (
+                              <div>Next Heat: {item.cowDetails.nextHeat}</div>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
           
           {/* Total - adapts based on transaction type */}
           <div className="border-b border-dashed pb-2">
             <div className="flex justify-between text-sm font-bold">
-              <span>{getTotalLabel(transtype)}</span>
+              <span>{getTotalLabel(data)}</span>
               <span>{displayTotal}</span>
             </div>
           </div>
 
           {/* Footer Info - Shared with optional fields */}
           <div className="space-y-0.5 text-xs">
-            {showCumulativeFrequency && cumulativeFrequency !== undefined && (
+            {showCumulativeFrequency && !isSellProduce && cumulativeFrequency !== undefined && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Cumulative</span>
-                <span className="font-medium">{cumulativeFrequency.toFixed(1)}</span>
+                <span className="font-medium">{cumulativeFrequency.toFixed(2)}</span>
               </div>
             )}
-            {showCumulativeFrequency && cumulativeByProduct && cumulativeByProduct.length > 1 && (
+            {showCumulativeFrequency && !isSellProduce && cumulativeByProduct && cumulativeByProduct.length > 1 && (
               <div className="space-y-0.5 pl-2">
                 {cumulativeByProduct.map((prod) => (
                   <div key={prod.icode} className="flex justify-between text-[10px]">
                     <span className="text-muted-foreground">{prod.product_name || prod.icode}</span>
-                    <span>{prod.weight.toFixed(1)}</span>
+                    <span>{prod.weight.toFixed(2)}</span>
                   </div>
                 ))}
               </div>
@@ -634,8 +650,8 @@ export const TransactionReceipt = ({
                 <span className="font-medium">{deliveredBy}</span>
               </div>
             )}
-            {/* ID NO and SIGN fields for Store/AI receipts */}
-            {(transtype === 2 || transtype === 3) && (
+            {/* ID NO and SIGN fields for Store/AI receipts - EXCLUDING Sell Produce Portal */}
+            {(transtype === 3 || (transtype === 2 && !data.isMilkFormat)) && (
               <>
                 <div className="mt-3 flex items-end gap-2">
                   <span className="text-muted-foreground text-sm whitespace-nowrap">ID NO:</span>
@@ -653,19 +669,22 @@ export const TransactionReceipt = ({
                 <span className="font-medium">{session}</span>
               </div>
             )}
-            <div className="text-center text-muted-foreground pt-1 border-t border-dashed mt-2">
-              {(() => {
-                const now = reprintedAt || new Date();
-                const y = now.getFullYear();
-                const mo = String(now.getMonth() + 1).padStart(2, '0');
-                const d = String(now.getDate()).padStart(2, '0');
-                const h = String(now.getHours()).padStart(2, '0');
-                const mi = String(now.getMinutes()).padStart(2, '0');
-                const s = String(now.getSeconds()).padStart(2, '0');
-                const prefix = reprintedAt ? 'Reprinted on ' : '';
-                return `${prefix}${y}-${mo}-${d} at ${h}:${mi}:${s}`;
-              })()}
-            </div>
+            {/* Footer timestamp - Only show "Reprinted on" for actual reprints */}
+            {reprintedAt && (
+              <div className="text-center text-muted-foreground pt-1 border-t border-dashed mt-2">
+                {(() => {
+                  const now = reprintedAt;
+                  const y = now.getFullYear();
+                  const mo = String(now.getMonth() + 1).padStart(2, '0');
+                  const d = String(now.getDate()).padStart(2, '0');
+                  const h = String(now.getHours()).padStart(2, '0');
+                  const mi = String(now.getMinutes()).padStart(2, '0');
+                  const s = String(now.getSeconds()).padStart(2, '0');
+                  const prefix = 'Reprinted on ';
+                  return `${prefix}${y}-${mo}-${d} at ${h}:${mi}:${s}`;
+                })()}
+              </div>
+            )}
           </div>
         </div>
 
@@ -764,6 +783,7 @@ export const createMilkReceiptData = (
     productCode: first.product_code,
     seasonCode: first.season_code,
     entryType: first.entry_type,
+    isMilkFormat: true,
     ...options
   };
 };
@@ -799,7 +819,8 @@ export const createStoreReceiptData = (
       price: c.item.sprice,
       lineTotal: c.lineTotal
     })),
-    totalAmount: cartItems.reduce((sum, c) => sum + c.lineTotal, 0)
+    totalAmount: cartItems.reduce((sum, c) => sum + c.lineTotal, 0),
+    isMilkFormat: false
   };
 };
 
@@ -836,6 +857,7 @@ export const createAIReceiptData = (
       lineTotal: c.lineTotal,
       cowDetails: c.cowDetails
     })),
-    totalAmount: cartItems.reduce((sum, c) => sum + c.lineTotal, 0)
+    totalAmount: cartItems.reduce((sum, c) => sum + c.lineTotal, 0),
+    isMilkFormat: false
   };
 };

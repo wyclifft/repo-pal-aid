@@ -177,7 +177,7 @@ export const ReprintModal = ({
             totalAmount: receipt.totalAmount || 0,
             transactionDate,
             receiptType: receipt.type as 'store' | 'ai',
-            reprintedAt: new Date()
+            reprintedAt: new Date(),
           });
 
           if (!result.success) {
@@ -208,6 +208,8 @@ export const ReprintModal = ({
           transrefno: r.reference_no
         }));
 
+        const isSellProduce = firstReceipt.transtype === 2;
+
         for (let copy = 0; copy < printCopies; copy++) {
           const result = await printReceipt({
             companyName: companyName,
@@ -221,11 +223,13 @@ export const ReprintModal = ({
             collectorName: firstReceipt.clerk_name,
             deliveredBy: resolveMemberName(firstReceipt.delivered_by, allFarmers),
             collections,
-            cumulativeFrequency: receipt.cumulativeWeight,
-            cumulativeByProduct: receipt.cumulativeByProduct,
+            cumulativeFrequency: isSellProduce ? undefined : receipt.cumulativeWeight,
+            cumulativeByProduct: isSellProduce ? undefined : receipt.cumulativeByProduct,
             locationName: receipt.locationName || locationName || firstReceipt.route,
             collectionDate: collectionDateTime,
-            reprintedAt: new Date()
+            reprintedAt: new Date(),
+            receiptTitle: isSellProduce ? 'PURCHASE RECEIPT' : undefined,
+            totalLabel: isSellProduce ? 'Total Weight [Kgs]' : undefined,
           });
 
           if (!result.success) {
@@ -685,7 +689,7 @@ export const ReprintModal = ({
                         </>
                       ) : (
                         <>
-                          <div className="font-bold text-base sm:text-lg">{getTotalWeight(receipt.collections).toFixed(1)} Kg</div>
+                          <div className="font-bold text-base sm:text-lg">{getTotalWeight(receipt.collections).toFixed(2)} Kg</div>
                           <div className="text-[10px] sm:text-xs text-muted-foreground">{receipt.collections.length} collections</div>
                         </>
                       )}
@@ -839,20 +843,24 @@ export const ReprintModal = ({
         const storedDate = viewingReceipt.transactionDate 
           ? new Date(viewingReceipt.transactionDate) 
           : new Date(viewingReceipt.printedAt);
+
         const receiptData = createFn(
           viewingReceipt.items.map(item => ({
             item: { icode: item.item_code, descript: item.item_name, sprice: item.price },
             quantity: item.quantity,
             lineTotal: item.lineTotal,
           })),
-          { transrefno: viewingReceipt.uploadrefno || '', clerkName: viewingReceipt.clerkName || 'Unknown' },
+          { id: viewingReceipt.farmerId, name: viewingReceipt.farmerName, route: viewingReceipt.memberRoute },
+          { transrefno: viewingReceipt.uploadrefno || '', uploadrefno: viewingReceipt.uploadrefno, clerkName: viewingReceipt.clerkName || 'Unknown' },
           companyName,
           storedDate
         );
+
         receiptData.routeLabel = viewingReceipt.routeLabel || routeLabel;
         receiptData.periodLabel = viewingReceipt.periodLabel || periodLabel;
         receiptData.locationName = viewingReceipt.locationName || locationName;
         receiptData.reprintedAt = new Date();
+
         return (
           <TransactionReceipt
             data={receiptData}
@@ -862,22 +870,33 @@ export const ReprintModal = ({
         );
       } else {
         // Milk/Coffee receipt
-          { cumulativeFrequency: viewingReceipt.cumulativeWeight,
-          cumulativeByProduct: viewingReceipt.cumulativeByProduct,
-          showCumulativeFrequency: viewingReceipt.cumulativeWeight !== undefined && viewingReceipt.cumulativeWeight > 0,
-          routeLabel: viewingReceipt.routeLabel || routeLabel,
-          periodLabel: viewingReceipt.periodLabel || periodLabel,
-          locationName: viewingReceipt.locationName || locationName,
-          deliveredBy: resolveMemberName(viewingReceipt.collections[0]?.delivered_by, allFarmers),
-          reprintedAt: new Date(),
-        });
-        return (
-          <TransactionReceipt
-            data={receiptData}
-            open={true}
-            onClose={() => setViewingReceipt(null)}
-          />
+        const isSellProduce = viewingReceipt.collections[0]?.transtype === 2;
+        const receiptData = createMilkReceiptData(
+          viewingReceipt.collections,
+          companyName,
+          {
+            cumulativeFrequency: isSellProduce ? undefined : viewingReceipt.cumulativeWeight,
+            cumulativeByProduct: isSellProduce ? undefined : viewingReceipt.cumulativeByProduct,
+            showCumulativeFrequency: !isSellProduce && viewingReceipt.cumulativeWeight !== undefined && viewingReceipt.cumulativeWeight > 0,
+            routeLabel: viewingReceipt.routeLabel || routeLabel,
+            periodLabel: viewingReceipt.periodLabel || periodLabel,
+            locationName: viewingReceipt.locationName || locationName,
+            deliveredBy: resolveMemberName(viewingReceipt.collections[0]?.delivered_by, allFarmers),
+            // Set reprintedAt to NOW for the reprint footer
+            reprintedAt: new Date(),
+          }
         );
+
+        if (receiptData) {
+          return (
+            <TransactionReceipt
+              data={receiptData}
+              open={true}
+              onClose={() => setViewingReceipt(null)}
+            />
+          );
+        }
+        return null;
       }
     })()}
     </>

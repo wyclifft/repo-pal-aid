@@ -1,0 +1,4 @@
+- [x] Fix `routeName` in `src/pages/Store.tsx`
+- [x] Fix `routeName` in `src/pages/AIPage.tsx`
+- [x] Fix `psettings` in `src/pages/AIPage.tsx`
+- [x] Verify changes

@@ -1,0 +1,11 @@
+- `[x]` Fix `psettings.zeroOpt` and `stableopt` logic & update UI
+    - `[x]` Fix stability logic in `useScaleConnection.ts`
+    - `[x]` Implement Bluetooth state check and prompt in `useScaleConnection.ts`
+    - `[x]` Update `zeroOpt` logic and 0.2kg threshold in `Index.tsx`
+    - `[x]` Update `LiveWeightDisplay.tsx` UI (Status Light)
+    - `[x]` Update `CoffeeWeightDisplay.tsx` UI (Status Light)
+    - `[x]` Update `WeightInput.tsx` UI (Status Light)
+    - `[x]` Update `BuyProduceScreen.tsx` and `SellProduceScreen.tsx` for consistency
+    - `[ ]` Update `CoffeeWeightDisplay.tsx` UI (Status Light)
+    - `[ ]` Update `WeightInput.tsx` UI (Status Light)
+    - `[ ]` Update `BuyProduceScreen.tsx` and `SellProduceScreen.tsx` for consistency

@@ -50,7 +50,8 @@ export const printMilkReceiptDirect = async (
   // OPTIMIZED: Print all copies with minimal delay between them
   // Use Promise.allSettled for parallel error handling
   let printSucceeded = false;
-  
+  const isSellProduce = first.transtype === 2;
+
   for (let copy = 0; copy < printCopies; copy++) {
     try {
       const result = await printReceipt({
@@ -67,11 +68,13 @@ export const printMilkReceiptDirect = async (
         collectorName: options.clerkName,
         deliveredBy: options.deliveredBy,
         collections,
-        cumulativeFrequency: options.showCumulativeFrequency ? options.cumulativeFrequency : undefined,
-        cumulativeByProduct: options.showCumulativeFrequency ? options.cumulativeByProduct : undefined,
+        cumulativeFrequency: (options.showCumulativeFrequency && !isSellProduce) ? options.cumulativeFrequency : undefined,
+        cumulativeByProduct: (options.showCumulativeFrequency && !isSellProduce) ? options.cumulativeByProduct : undefined,
         locationCode: options.locationCode,
         locationName: options.locationName,
-        collectionDate: new Date(first.collection_date)
+        collectionDate: new Date(first.collection_date),
+        receiptTitle: isSellProduce ? 'PURCHASE RECEIPT' : 'CUSTOMER DELIVERY RECEIPT',
+        totalLabel: 'Total Weight [Kgs]'
       });
 
       if (!result.success) {

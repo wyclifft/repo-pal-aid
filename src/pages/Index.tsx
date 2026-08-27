@@ -104,13 +104,50 @@ const Index = () => {
   const [lastSavedWeight, setLastSavedWeight] = useState(0);
   
   // ========== zeroOpt CAPTURE LOCK (psettings.zeroopt) ==========
-  // If zeroopt=1: After a capture, captureLocked=true blocks next capture until weight ≤0.5 kg
+  // If zeroopt=1: After a capture, captureLocked=true blocks next capture until weight ≤0.2 kg
   // Lock applies to BOTH scale and manual entry
-  // Lock resets when: (1) weight drops to ≤0.5 kg, or (2) new member is selected
+  // Lock resets ONLY when: (1) weight drops to ≤0.2 kg
+  // NOTE: Lock strictly persists across member changes to prevent bypass
   // If zeroopt=0: Captures allowed normally without zero check
   const [captureLocked, setCaptureLocked] = useState(false);
   const [lastCapturedFarmerId, setLastCapturedFarmerId] = useState<string | null>(null);
-  // ========== END zeroOpt CAPTURE LOCK ==========
+
+  // ========== stableOpt CAPTURE PROTECTION (psettings.stableOpt) ==========
+  // If stableopt=1: Capture button disabled until scale reports stable reading
+  // If stableopt=0: Normal capture behavior
+  const [isScaleStable, setIsScaleStable] = useState(true);
+
+  // Listen for scale stability changes
+  useEffect(() => {
+    const handleStabilityChange = (e: any) => {
+      const { isStable } = e.detail;
+      console.log(`⚖️ Index: Scale stability changed: ${isStable}`);
+      setIsScaleStable(isStable);
+    };
+
+    window.addEventListener('scaleStabilityChange', handleStabilityChange as EventListener);
+
+    // Reset stability when scale disconnects
+    const handleConnectionChange = (e: any) => {
+      if (!e.detail.connected) {
+        setIsScaleStable(true);
+      }
+    };
+    window.addEventListener('scaleConnectionChange', handleConnectionChange as EventListener);
+
+    return () => {
+      window.removeEventListener('scaleStabilityChange', handleStabilityChange as EventListener);
+      window.removeEventListener('scaleConnectionChange', handleConnectionChange as EventListener);
+    };
+  }, []);
+
+  // Reset stability when changing farmer or clearing
+  useEffect(() => {
+    if (!selectedFarmer) {
+      setIsScaleStable(true);
+    }
+  }, [selectedFarmer]);
+  // ========== END stableOpt CAPTURE PROTECTION ==========
   
   // Coffee sack weighing - gross/tare/net (orgtype C only)
   // Tare weight comes from psettings.sackTare (default 1 kg)
@@ -1015,12 +1052,12 @@ const Index = () => {
     }
   }, [weight, lastSavedWeight]);
 
-  // zeroOpt: Continuously check weight - unlock when it drops to ≤0.5 kg
+  // zeroOpt: Continuously check weight - unlock when it drops to ≤0.2 kg
   // This applies to BOTH scale readings AND manual weight changes
   useEffect(() => {
-    if (requireZeroScale && captureLocked && weight <= 0.5) {
+    if (requireZeroScale && captureLocked && weight <= 0.2) {
       setCaptureLocked(false);
-      console.log('🔓 zeroOpt: Weight ≤0.5 kg detected, captureLocked=false, next capture allowed');
+      console.log('🔓 zeroOpt: Weight ≤0.2 kg detected, captureLocked=false, next capture allowed');
     }
   }, [weight, requireZeroScale, captureLocked]);
 
@@ -1045,13 +1082,6 @@ const Index = () => {
     // Reset deliverer info when farmer changes
     setDeliveredBy('owner');
     setSelectedDeliverer(null);
-
-    // zeroOpt: Reset captureLocked when a NEW member is selected
-    // This allows immediate capture for the new farmer
-    if (lastCapturedFarmerId !== cleanFarmerId) {
-      setCaptureLocked(false);
-      console.log('🔄 zeroOpt: New member selected, captureLocked=false');
-    }
 
     // v2.12.23: Derive target month from session metadata (e.g. for past seasons)
     const sessionMonth = activeSession?.datefrom ? activeSession.datefrom.substring(0, 7) : undefined;
@@ -1171,11 +1201,15 @@ const Index = () => {
     setSelectedFarmer(null);
     setRoute('');
     setSearchValue('');
-    setWeight(0);
+
+    // v2.12.55: Persistent zeroOpt lock — do not clear weight if scale must return to zero
+    // This ensures the Capture button remains disabled for the next farmer.
+    if (!requireZeroScale || !captureLocked) {
+      setWeight(0);
+      setLastSavedWeight(0);
+    }
+
     setCapturedCollections([]);
-    setLastSavedWeight(0);
-    // Reset zeroOpt capture lock when farmer is cleared
-    setCaptureLocked(false);
     // Clear cumulative to prevent stale data display
     setCumulativeFrequency(undefined);
     // Keep route selection when clearing farmer
@@ -1192,9 +1226,15 @@ const Index = () => {
     setSelectedFarmer(null);
     setRoute('');
     setSearchValue('');
-    setWeight(0);
+
+    // v2.12.55: Persistent zeroOpt lock — do not clear weight if scale must return to zero
+    // This ensures the Capture button remains disabled for the next farmer.
+    if (!requireZeroScale || !captureLocked) {
+      setWeight(0);
+      setLastSavedWeight(0);
+    }
+
     setCapturedCollections([]);
-    setLastSavedWeight(0);
     // Clear cumulative to prevent stale data display
     setCumulativeFrequency(undefined);
     toast.info('Route and farmer cleared');
@@ -1278,8 +1318,15 @@ const Index = () => {
     // zeroOpt enforcement (psettings.zeroopt=1):
     // While captureLocked=true, do NOT allow capture (scale or manual)
     // Only one capture per unlock - lock must reset before another record can be captured
-    if (requireZeroScale && captureLocked && weight > 0.5) {
-      toast.error('Weight must drop to 0.5 Kg or below before next capture. Clear weight or remove container.');
+    if (requireZeroScale && captureLocked && weight > 0.2) {
+      toast.error('Weight must drop to 0.2 Kg or below before next capture. Clear weight or remove container.');
+      return;
+    }
+
+    // stableOpt enforcement (psettings.stableopt=1):
+    // If enabled, block capture if scale is fluctuating
+    if (appSettings.stableopt === 1 && !isScaleStable && entryType === 'scale') {
+      toast.error('Scale reading is not stable. Please wait for the reading to settle.');
       return;
     }
     
@@ -1423,10 +1470,10 @@ const Index = () => {
     setCapturedCollections(prev => [...prev, captureData]);
     
     // zeroOpt: After capture, set captureLocked=true
-    // Next capture blocked until weight ≤0.5 kg (scale or manual)
+    // Next capture blocked until weight ≤0.2 kg (scale or manual)
     setCaptureLocked(true);
     setLastCapturedFarmerId(farmerId);
-    console.log('🔒 zeroOpt: Capture completed, captureLocked=true, next capture blocked until weight ≤0.5 kg');
+    console.log('🔒 zeroOpt: Capture completed, captureLocked=true, next capture blocked until weight ≤0.2 kg');
     
     // NOTE: For multOpt=0 farmers, we do NOT add to blacklist on capture.
     // Blacklisting happens ONLY after successful submission in handleSubmit.
@@ -1435,9 +1482,12 @@ const Index = () => {
     // Store the saved weight for next collection check
     setLastSavedWeight(weight);
 
-    // Reset weight for next capture
-    setWeight(0);
-    setGrossWeight(0);
+    // Reset weight for next capture (only if zeroOpt is NOT active)
+    // If zeroOpt=1, weight remains until cleared by user or scale
+    if (!requireZeroScale) {
+      setWeight(0);
+      setGrossWeight(0);
+    }
     
     toast.success(`Captured ${captureData.weight} Kg${isCoffee ? ' (net)' : ''}`);
   };
@@ -1517,7 +1567,7 @@ const Index = () => {
       locationName: routeName,
       clerkName: currentUser?.username || '',
       productName: selectedProduct?.descript,
-      shouldShowCumulativeForFarmer: showCumulative,
+      shouldShowCumulativeForFarmer: showCumulative && collectionMode === 'buy',
       farmerIdForCumulative: selectedFarmer?.farmer_id?.replace(/^#/, '').trim() || '',
       productIcode: selectedProduct?.icode, // Capture for background print filtering
       routeCode: cumulativeRouteCode, // Capture route for background cumulative filtering
@@ -2513,7 +2563,7 @@ const Index = () => {
     (isBlacklisted(farmerId) || sessionSubmittedFarmers.has(cleanFarmerIdForCheck));
   
   // v2.12.40: Disable capture for blacklisted farmers to prevent "stuck" transactions
-  const captureDisabledForSelectedFarmer = isSelectedFarmerBlacklisted;
+  const captureDisabledForSelectedFarmer = isSelectedFarmerBlacklisted || (appSettings.stableopt === 1 && !isScaleStable && entryType === 'scale');
   
   // For multOpt=0: disable Submit only after first successful submission in this session
   // Check both: hook blacklist (persistent) AND local session tracking (edge case coverage)
@@ -2560,7 +2610,7 @@ const Index = () => {
           onTareWeightChange={setTareWeight}
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
-          zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
+          zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.2}
           deliveredBy={deliveredBy}
           onDeliveredByChange={handleDeliveredByChange}
           onDeliveredByMemberSelect={setSelectedDeliverer}
@@ -2601,7 +2651,7 @@ const Index = () => {
           onTareWeightChange={setTareWeight}
           sackTareWeight={sackTareWeight}
           allowSackEdit={allowSackEdit}
-          zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.5}
+          zeroOptBlocked={requireZeroScale && captureLocked && weight > 0.2}
           deliveredBy={deliveredBy}
           onDeliveredByChange={handleDeliveredByChange}
           onDeliveredByMemberSelect={setSelectedDeliverer}
@@ -2623,8 +2673,11 @@ const Index = () => {
           setFarmerName('');
           setSelectedFarmer(null);
           setSearchValue('');
-          setWeight(0);
-          setGrossWeight(0); // Reset coffee gross weight
+          // If zeroOpt=1, weight remains until cleared by user or scale
+          if (!requireZeroScale) {
+            setWeight(0);
+            setGrossWeight(0); // Reset coffee gross weight
+          }
           setLastSavedWeight(0);
           setDeliveredBy('owner'); // Reset for next farmer
           setSelectedDeliverer(null); // Reset for next farmer
@@ -2633,7 +2686,7 @@ const Index = () => {
         }}
         cumulativeFrequency={cumulativeFrequency?.total}
         cumulativeByProduct={cumulativeFrequency?.byProduct}
-        showCumulativeFrequency={showCumulative}
+        showCumulativeFrequency={showCumulative && collectionMode === 'buy'}
         printCopies={printCopies}
         routeLabel={routeLabel}
         periodLabel={periodLabel}

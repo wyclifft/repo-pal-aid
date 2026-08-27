@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { Scale, Loader2, RefreshCw, Package, Lock, Unlock } from 'lucide-react';
+import { Scale, Loader2, RefreshCw, Package, Lock, Unlock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { Button } from '@/components/ui/button';
 
@@ -58,7 +58,11 @@ export const CoffeeWeightDisplay = ({
     forceResubscribe,
     isConnecting,
     connectionType,
-  } = useScaleConnection({ 
+    isWaitingForStable,
+    stableReadingProgress,
+    requireStableReading,
+    lastRawWeight,
+  } = useScaleConnection({
     onWeightChange: (w) => {
       console.log(`☕ CoffeeWeightDisplay onWeightChange callback: ${w} kg gross`);
       onGrossWeightChange(w);
@@ -81,7 +85,7 @@ export const CoffeeWeightDisplay = ({
   // Calculate net weight from gross (gross - sack tare)
   const netWeight = useMemo(() => {
     const net = Math.max(0, stableDisplayWeight - localTareWeight);
-    return parseFloat(net.toFixed(1));
+    return parseFloat(net.toFixed(2));
   }, [stableDisplayWeight, localTareWeight]);
 
   // Recalculate net weight when tare changes
@@ -139,13 +143,13 @@ export const CoffeeWeightDisplay = ({
     
     if (isStable) {
       const avg = recentReadings.reduce((a, b) => a + b, 0) / recentReadings.length;
-      const roundedAvg = parseFloat(avg.toFixed(1));
+      const roundedAvg = parseFloat(avg.toFixed(2));
       if (roundedAvg !== stableDisplayWeight) {
         setStableDisplayWeight(roundedAvg);
         lastDisplayUpdateRef.current = now;
       }
     } else if (timeSinceLastUpdate > DISPLAY_UPDATE_INTERVAL) {
-      setStableDisplayWeight(parseFloat(incomingWeight.toFixed(1)));
+      setStableDisplayWeight(parseFloat(incomingWeight.toFixed(2)));
       lastDisplayUpdateRef.current = now;
     }
     
@@ -202,13 +206,24 @@ export const CoffeeWeightDisplay = ({
       {/* Three-column weight display: Gross | Sack | Net */}
       <div className="flex gap-1">
         {/* Gross Weight Box */}
-        <div className={`flex-1 border-[3px] rounded-lg py-4 sm:py-5 flex flex-col items-center justify-center transition-colors ${
+        <div className={`flex-1 border-[3px] rounded-lg py-4 sm:py-5 flex flex-col items-center justify-center transition-colors relative ${
           scaleConnected 
             ? 'bg-white border-gray-900' 
             : isConnecting
             ? 'bg-yellow-50 border-yellow-500'
             : 'bg-white border-gray-900'
         }`}>
+          {/* Stability Light Indicator */}
+          <div
+            className={`absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full border border-black/10 z-10 transition-colors duration-300 ${
+              !scaleConnected
+                ? 'bg-gray-400'
+                : (requireStableReading && isWaitingForStable)
+                  ? 'bg-red-500 animate-pulse'
+                  : 'bg-green-500'
+            }`}
+          />
+
           <span className="text-xs sm:text-sm font-semibold text-gray-500 uppercase tracking-wide">Gross</span>
           <span className={`text-2xl sm:text-3xl font-black ${
             (scaleConnected || displayGrossWeight > 0) ? 'text-gray-900' : isConnecting ? 'text-yellow-600' : 'text-gray-400'
@@ -216,9 +231,9 @@ export const CoffeeWeightDisplay = ({
             {isConnecting 
               ? '...' 
               : displayGrossWeight > 0 
-                ? displayGrossWeight.toFixed(1) 
+                ? displayGrossWeight.toFixed(2)
                 : scaleConnected 
-                  ? '0.0'
+                  ? '0.00'
                   : '--'
             }
           </span>
@@ -258,7 +273,7 @@ export const CoffeeWeightDisplay = ({
             />
           ) : (
             <span className="text-2xl sm:text-3xl font-black text-amber-700">
-              {localTareWeight.toFixed(1)}
+              {localTareWeight.toFixed(2)}
             </span>
           )}
           
@@ -278,9 +293,9 @@ export const CoffeeWeightDisplay = ({
             netWeight > 0 ? 'text-green-700' : 'text-gray-400'
           }`}>
             {displayGrossWeight > 0 
-              ? netWeight.toFixed(1) 
+              ? netWeight.toFixed(2)
               : scaleConnected 
-                ? '0.0'
+                ? '0.00'
                 : '--'
             }
           </span>

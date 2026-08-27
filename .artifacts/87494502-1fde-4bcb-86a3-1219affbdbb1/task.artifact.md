@@ -1,0 +1,6 @@
+- [x] Update `ReceiptData` interface and helpers in `TransactionReceipt.tsx`
+- [x] Update `getReceiptTitle` and `getTotalLabel` logic
+- [x] Update UI rendering in `TransactionReceipt.tsx` to match Buy layout for Sell Produce
+- [x] Update `printReceipt` in `bluetooth.ts` to support custom labels
+- [x] Update `handlePrint` in `TransactionReceipt.tsx` to use `printReceipt` for Sell Produce
+- [ ] Verify Buy, Store, and AI receipts are unchanged

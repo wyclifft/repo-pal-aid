@@ -72,7 +72,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
 
   // Handle weight reading from scale (BLE or Classic)
   const handleScaleReading = useCallback((newWeight: number, type?: ScaleType) => {
-    console.log(`📡 WeightInput handleScaleReading: ${newWeight} kg from ${type}`);
+    console.log(`📡 WeightInput handleScaleReading: ${newWeight} kg from ${type}, waitingForStable: ${isWaitingForStable}`);
     setLastRawWeight(newWeight);
     if (type) setScaleType(type);
     
@@ -107,7 +107,10 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
           stableTimeoutRef.current = null;
         }
       } else {
-        setIsWaitingForStable(true);
+        // Only set waiting if not already waiting OR weight changed significantly
+        if (!isWaitingForStable) {
+          setIsWaitingForStable(true);
+        }
       }
     } else {
       // No stable reading required - use weight directly (including 0)
@@ -115,7 +118,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
       setManualWeight(newWeight > 0 ? newWeight.toFixed(1) : '');
       onEntryTypeChange('scale');
     }
-  }, [requireStableReading, areReadingsStable, onWeightChange, onEntryTypeChange]);
+  }, [requireStableReading, areReadingsStable, onWeightChange, onEntryTypeChange, isWaitingForStable]);
 
   // Handle connection from dialog
   const handleConnected = useCallback((type: 'ble' | 'classic-spp', sType: ScaleType) => {
@@ -194,32 +197,18 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
         </div>
       )}
 
-      {/* Stable Reading Progress (when stableopt=1) */}
-      {requireStableReading && isWaitingForStable && (
-        <div className="mb-4 p-3 rounded-lg border-2 bg-blue-50 border-blue-500 dark:bg-blue-950/30 dark:border-blue-600">
-          <div className="flex items-center gap-2 mb-2">
-            {stableReadingProgress < 100 ? (
-              <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-pulse" />
-            ) : (
-              <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
-            )}
-            <p className="font-semibold text-blue-700 dark:text-blue-400">
-              {stableReadingProgress < 100 ? 'Waiting for stable reading...' : 'Reading stable!'}
-            </p>
-          </div>
-          <div className="w-full bg-blue-200 dark:bg-blue-900 rounded-full h-2">
-            <div 
-              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${stableReadingProgress}%` }}
-            />
-          </div>
-          <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-            Raw: {lastRawWeight.toFixed(1)} Kg • Keep container still
-          </p>
-        </div>
-      )}
+      <div className="mb-6 relative">
+        {/* Stability Light Indicator */}
+        <div
+          className={`absolute top-0 right-0 w-3 h-3 rounded-full border border-black/10 transition-colors duration-300 ${
+            !scaleConnected
+              ? 'bg-gray-400'
+              : (requireStableReading && isWaitingForStable)
+                ? 'bg-red-500 animate-pulse'
+                : 'bg-green-500'
+          }`}
+        />
 
-      <div className="mb-6">
         <p className="text-3xl font-bold text-primary mb-4">
           Weight: {weight.toFixed(1)} Kg
         </p>

@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useState, useRef } from 'react';
-import { Scale, Loader2, RefreshCw } from 'lucide-react';
+import { Scale, Loader2, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -35,7 +35,11 @@ export const LiveWeightDisplay = ({
     forceResubscribe,
     isConnecting,
     connectionType,
-  } = useScaleConnection({ 
+    isWaitingForStable,
+    stableReadingProgress,
+    requireStableReading,
+    lastRawWeight,
+  } = useScaleConnection({
     onWeightChange: (w) => {
       console.log(`📺 LiveWeightDisplay onWeightChange callback fired: ${w} kg`);
       onWeightChange(w);
@@ -101,14 +105,14 @@ export const LiveWeightDisplay = ({
     if (isStable) {
       // Lock to average of stable readings
       const avg = recentReadings.reduce((a, b) => a + b, 0) / recentReadings.length;
-      const roundedAvg = parseFloat(avg.toFixed(1));
+      const roundedAvg = parseFloat(avg.toFixed(2));
       if (roundedAvg !== stableDisplayWeight) {
         setStableDisplayWeight(roundedAvg);
         lastDisplayUpdateRef.current = now;
       }
     } else if (timeSinceLastUpdate > DISPLAY_UPDATE_INTERVAL) {
       // Not stable but throttle rapid updates
-      setStableDisplayWeight(parseFloat(incomingWeight.toFixed(1)));
+      setStableDisplayWeight(parseFloat(incomingWeight.toFixed(2)));
       lastDisplayUpdateRef.current = now;
     }
     
@@ -154,7 +158,19 @@ export const LiveWeightDisplay = ({
 
   return (
     <div className="space-y-2">
-      <div className="flex">
+      <div className="flex relative">
+        {/* Stability Light Indicator */}
+        <div
+          className={`absolute top-2 right-2 w-3 h-3 rounded-full border border-black/10 z-10 transition-colors duration-300 ${
+            !scaleConnected
+              ? 'bg-gray-400'
+              : (requireStableReading && isWaitingForStable)
+                ? 'bg-red-500 animate-pulse'
+                : 'bg-green-500'
+          }`}
+          title={!scaleConnected ? 'Scale Disconnected' : (requireStableReading && isWaitingForStable) ? 'Waiting for stable reading...' : 'Reading Stable'}
+        />
+
         {/* Kgs Label Box - Left side */}
         <div className="flex-1 bg-white border-[3px] border-gray-900 rounded-l-lg py-6 sm:py-8 flex items-center justify-center">
           <span className="text-3xl sm:text-4xl font-bold text-gray-900">Kgs</span>
@@ -174,9 +190,9 @@ export const LiveWeightDisplay = ({
             {isConnecting 
               ? '...' 
               : displayWeight > 0 
-                ? displayWeight.toFixed(1) 
+                ? displayWeight.toFixed(2)
                 : scaleConnected 
-                  ? '0.0'
+                  ? '0.00'
                   : '--'
             }
           </span>
