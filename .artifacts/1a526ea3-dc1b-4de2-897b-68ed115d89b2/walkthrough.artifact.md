@@ -1,6 +1,6 @@
-# Walkthrough - Added Back Button to Sacco Portal
+# Walkthrough - Added Back Button to Sacco Portal and Fixed Build Break
 
-I have added a "Back" button to the Sacco Portal header to improve navigation for desktop users and fixed a syntax error that was causing build failures.
+I have added a "Back" button to the Sacco Portal header to improve navigation for desktop users and fixed a syntax error that was causing build failures on Netlify.
 
 ## Changes
 
