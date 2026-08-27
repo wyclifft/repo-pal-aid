@@ -9,11 +9,12 @@
  * no backdrop-filter, native date inputs.
  */
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import {
-  AlertTriangle, Download, LogOut, RefreshCw, ShieldAlert, WifiOff,
+  AlertTriangle, ArrowLeft, Download, LogOut, RefreshCw, ShieldAlert, WifiOff,
 } from 'lucide-react';
 import { Login } from '@/components/Login';
 import { useAuth } from '@/contexts/AuthContext';
@@ -39,6 +40,7 @@ const formatClock = (ts: number): string => {
 
 
 const SaccoPortal = () => {
+  const navigate = useNavigate();
   const { currentUser, isAuthenticated, login, logout } = useAuth();
   // v2.12.6: header text comes from psettings (company name), never hardcoded.
   const { companyName, saccoModuleActive } = useAppSettings();
@@ -176,9 +178,19 @@ const SaccoPortal = () => {
         style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}
       >
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold text-foreground">{portalTitle}</h1>
-            <p className="text-xs text-muted-foreground">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => navigate('/')}
+              className="-ml-2 h-8 w-8 shrink-0"
+              aria-label="Back to dashboard"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <h1 className="text-lg font-semibold text-foreground">{portalTitle}</h1>
+              <p className="text-xs text-muted-foreground">
               {companyName || 'Member portal'}
               {/* Single linked account: shown inline, no picker. */}
               {activeAccount && accounts.length <= 1 ? ` • A/C ${activeAccount}` : ''}
