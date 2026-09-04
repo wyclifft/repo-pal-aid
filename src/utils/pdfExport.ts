@@ -37,8 +37,8 @@ export const printThermalZReport = (reportData: ZReportData, produceLabel?: stri
   const sessionSection = isCoffee ? '' : `
       <div class="section">
         <div class="bold">BY SESSION:</div>
-        <div>Morning: ${reportData.bySession.AM.farmers} Farmers (${reportData.bySession.AM.liters.toFixed(2)}${weightUnit})</div>
-        <div>Evening: ${reportData.bySession.PM.farmers} Farmers (${reportData.bySession.PM.liters.toFixed(2)}${weightUnit})</div>
+        <div>Morning: ${reportData.bySession.AM.farmers} Farmers (${(Math.floor(reportData.bySession.AM.liters * 10) / 10).toFixed(1)}${weightUnit})</div>
+        <div>Evening: ${reportData.bySession.PM.farmers} Farmers (${(Math.floor(reportData.bySession.PM.liters * 10) / 10).toFixed(1)}${weightUnit})</div>
       </div>
       <div class="line"></div>`;
 
@@ -81,21 +81,21 @@ export const printThermalZReport = (reportData: ZReportData, produceLabel?: stri
       <div class="section center bold">
         <div>Total Entries: ${reportData.totals.entries}</div>
         <div>Total Farmers: ${reportData.totals.farmers}</div>
-        <div>Total Kgs: ${reportData.totals.liters.toFixed(2)}</div>
+        <div>Total Kgs: ${(Math.floor(reportData.totals.liters * 10) / 10).toFixed(1)}</div>
       </div>
       <div class="line"></div>
       ${sessionSection}
       <div class="section">
         <div class="bold">BY ${isCoffee ? 'CENTER' : 'ROUTE'}:</div>
         ${Object.entries(reportData.byRoute).map(([route, data]) => 
-          `<div>${route}: ${data.total.toFixed(2)}${weightUnit}</div>`
+          `<div>${route}: ${(Math.floor(data.total * 10) / 10).toFixed(1)}${weightUnit}</div>`
         ).join('')}
       </div>
       <div class="line"></div>
       <div class="section">
         <div class="bold">BY COLLECTOR:</div>
         ${Object.entries(reportData.byCollector).map(([collector, data]) => 
-          `<div>${collector}: ${data.liters.toFixed(2)}${weightUnit}</div>`
+          `<div>${collector}: ${(Math.floor(data.liters * 10) / 10).toFixed(1)}${weightUnit}</div>`
         ).join('')}
       </div>
       <div class="line"></div>
@@ -130,7 +130,7 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       lines.push('='.repeat(48));
       lines.push('SUMMARY');
       lines.push('='.repeat(48));
-      lines.push(`Total ${weightLabel}: ${reportData.totals.liters.toFixed(2)} ${weightUnit}`);
+      lines.push(`Total ${weightLabel}: ${(Math.floor(reportData.totals.liters * 10) / 10).toFixed(1)} ${weightUnit}`);
       lines.push(`Total Farmers: ${reportData.totals.farmers}`);
       lines.push(`Total Entries: ${reportData.totals.entries}`);
       lines.push('');
@@ -138,8 +138,8 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       if (!isCoffee) {
         lines.push('BY SESSION');
         lines.push('='.repeat(48));
-        lines.push(`Morning (AM): ${reportData.bySession.AM.farmers} Farmers (${reportData.bySession.AM.liters.toFixed(2)} ${weightUnit})`);
-        lines.push(`Evening (PM): ${reportData.bySession.PM.farmers} Farmers (${reportData.bySession.PM.liters.toFixed(2)} ${weightUnit})`);
+        lines.push(`Morning (AM): ${reportData.bySession.AM.farmers} Farmers (${(Math.floor(reportData.bySession.AM.liters * 10) / 10).toFixed(1)} ${weightUnit})`);
+        lines.push(`Evening (PM): ${reportData.bySession.PM.farmers} Farmers (${(Math.floor(reportData.bySession.PM.liters * 10) / 10).toFixed(1)} ${weightUnit})`);
         lines.push('');
       }
 
@@ -147,9 +147,9 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       lines.push('='.repeat(48));
       Object.entries(reportData.byRoute).forEach(([route, data]) => {
         if (isCoffee) {
-          lines.push(`${route}: ${data.AM.length + data.PM.length} entries, Total=${data.total.toFixed(2)} ${weightUnit}`);
+          lines.push(`${route}: ${data.AM.length + data.PM.length} entries, Total=${(Math.floor(data.total * 10) / 10).toFixed(1)} ${weightUnit}`);
         } else {
-          lines.push(`${route}: AM=${data.AM.length}, PM=${data.PM.length}, Total=${data.total.toFixed(2)} ${weightUnit}`);
+          lines.push(`${route}: AM=${data.AM.length}, PM=${data.PM.length}, Total=${(Math.floor(data.total * 10) / 10).toFixed(1)} ${weightUnit}`);
         }
       });
       lines.push('');
@@ -157,7 +157,7 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       lines.push('BY COLLECTOR');
       lines.push('='.repeat(48));
       Object.entries(reportData.byCollector).forEach(([collector, data]) => {
-        lines.push(`${collector}: ${data.farmers} farmers, ${data.entries} entries, ${data.liters.toFixed(2)} ${weightUnit}`);
+        lines.push(`${collector}: ${data.farmers} farmers, ${data.entries} entries, ${(Math.floor(data.liters * 10) / 10).toFixed(1)} ${weightUnit}`);
       });
 
       const fileName = `z-report-${reportData.date}.pdf`;
@@ -415,11 +415,11 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
             lines.push(
               `${padL((tx.farmer_id || '').substring(0, 10), 10)} ` +
               `${padL((tx.refno || '').slice(-8), 8)} ` +
-              `${padR(tx.weight.toFixed(1), 10)} ` +
+              `${padR((Math.floor(tx.weight * 10) / 10).toFixed(1), 10)} ` +
               `${padR((tx.time || '').substring(0, 8), 8)}`
             );
           }
-          lines.push(`${g.label} TOTAL    ${g.weight.toFixed(1)} ${weightUnit}`);
+          lines.push(`${g.label} TOTAL    ${(Math.floor(g.weight * 10) / 10).toFixed(1)} ${weightUnit}`);
           buyWeight += g.weight;
         }
         sectionIdx++;
@@ -433,7 +433,7 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       lines.push('');
       lines.push('='.repeat(48));
       if (buyWeight > 0) {
-        lines.push(`TOTAL                    ${buyWeight.toFixed(1)} ${weightUnit}`);
+        lines.push(`TOTAL                    ${(Math.floor(buyWeight * 10) / 10).toFixed(1)} ${weightUnit}`);
       }
       if (sellAiItems > 0) {
         const itemsLabel = sellAiItems === 1 ? 'item' : 'items';

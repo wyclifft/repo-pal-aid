@@ -542,11 +542,15 @@ export const parseSerialWeightData = (data: string): number | null => {
     }
   }
   
-  // Check for negative values - return 0
+  // v2.12.75: Allow parsing negative values for display (e.g. tared scale with container removed)
+  // We no longer return 0 for negative matches.
   const negativeMatch = cleanData.match(/-\s*(\d+\.?\d*)/);
   if (negativeMatch) {
-    console.log(`⚠️ Negative weight detected (-${negativeMatch[1]}), returning 0`);
-    return 0;
+    const weight = -parseFloat(negativeMatch[1]);
+    if (weight >= -50 && weight < 1000) {
+      console.log(`✅ Parsed negative weight: ${weight.toFixed(3)} kg`);
+      return weight;
+    }
   }
   
   // Check for zero first
@@ -557,39 +561,49 @@ export const parseSerialWeightData = (data: string): number | null => {
   }
   
   // Strategy 1: Standard weight format like "ST,GS,+  12.345kg" or "12.345 kg"
-  const standardMatch = cleanData.match(/[+-]?\s*(\d+\.?\d*)\s*(kg|g|lb|oz)?/i);
+  const standardMatch = cleanData.match(/([+-]?)\s*(\d+\.?\d*)\s*(kg|g|lb|oz)?/i);
   if (standardMatch) {
-    let weight = parseFloat(standardMatch[1]);
-    const unit = standardMatch[2]?.toLowerCase();
+    const isNegative = standardMatch[1] === '-';
+    let weight = parseFloat(standardMatch[2]);
+    const unit = standardMatch[3]?.toLowerCase();
     
     if (unit === 'g') weight = weight / 1000;
     else if (unit === 'lb') weight = weight * 0.453592;
     else if (unit === 'oz') weight = weight * 0.0283495;
     
-    if (weight >= 0 && weight < 1000) {
+    if (isNegative) weight = -weight;
+
+    if (weight >= -50 && weight < 1000) {
       console.log(`✅ Parsed weight (standard): ${weight.toFixed(3)} kg`);
       return weight;
     }
   }
   
   // Strategy 2: Just decimal number
-  const decimalMatch = cleanData.match(/(\d+\.\d{1,4})/);
+  const decimalMatch = cleanData.match(/([+-]?)\s*(\d+\.\d{1,4})/);
   if (decimalMatch) {
-    const weight = parseFloat(decimalMatch[1]);
-    if (weight >= 0 && weight < 500) {
+    const isNeg = decimalMatch[1] === '-';
+    let weight = parseFloat(decimalMatch[2]);
+    if (isNeg) weight = -weight;
+    if (weight >= -50 && weight < 500) {
       console.log(`✅ Parsed weight (decimal): ${weight.toFixed(3)} kg`);
       return weight;
     }
   }
   
   // Strategy 3: Integer representing grams
+  // v2.12.77: Support negative integer grams
+  const isNegativeInt = cleanData.includes('-');
   const intMatch = cleanData.replace(/[^0-9]/g, '');
   if (intMatch.length >= 3) {
     const intValue = parseInt(intMatch);
     if (intValue >= 0 && intValue < 500000) {
-      const weight = intValue / 1000;
-      console.log(`✅ Parsed weight (grams): ${weight.toFixed(3)} kg`);
-      return weight;
+      let weight = intValue / 1000;
+      if (isNegativeInt) weight = -weight;
+      if (weight >= -50) {
+        console.log(`✅ Parsed weight (grams): ${weight.toFixed(3)} kg`);
+        return weight;
+      }
     }
   }
   

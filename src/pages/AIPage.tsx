@@ -6,7 +6,8 @@ import { toast } from 'sonner';
 import { ArrowLeft, Search, X, CornerDownLeft, Wifi, WifiOff, Beef } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSalesSync } from '@/hooks/useSalesSync';
-import { useFarmerResolution } from '@/hooks/useFarmerResolution';
+import { useFarmerResolution, isFarmerInactive } from '@/hooks/useFarmerResolution';
+import { InactiveMemberDialog } from '@/components/InactiveMemberDialog';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { API_CONFIG } from '@/config/api';
@@ -46,6 +47,7 @@ const AIPage = () => {
   // Member/Farmer state
   const [memberNo, setMemberNo] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
+  const [inactiveDialogFarmer, setInactiveDialogFarmer] = useState<Farmer | null>(null);
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [showFarmerSearch, setShowFarmerSearch] = useState(false);
   const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
@@ -330,12 +332,29 @@ const AIPage = () => {
     enforcePrefix: true,
   });
 
+  const handleSelectFarmer = (farmer: Farmer) => {
+    if (isFarmerInactive(farmer)) {
+      setInactiveDialogFarmer(farmer);
+      setShowFarmerSearch(false);
+      return;
+    }
+    setSelectedFarmer(farmer);
+    setMemberNo(farmer.farmer_id);
+    setShowFarmerSearch(false);
+    setFarmerSearchQuery('');
+  };
+
+  const handleInactiveDialogClose = () => {
+    setInactiveDialogFarmer(null);
+    setSelectedFarmer(null);
+    setMemberNo('');
+  };
+
   // Handle Enter key on member input
   const handleEnter = () => {
     if (!memberNo.trim()) return;
     resolveAndSelect(memberNo, (farmer) => {
-      setSelectedFarmer(farmer);
-      setMemberNo(farmer.farmer_id);
+      handleSelectFarmer(farmer);
     });
   };
 
@@ -730,7 +749,7 @@ const AIPage = () => {
                   <div>
                     <p className="font-semibold text-sm">{cartItem.item.descript}</p>
                     <p className="text-xs text-gray-500">
-                      Qty: {cartItem.quantity} × KES{cartItem.item.sprice}
+                      Qty: {(Math.floor(Number(cartItem.quantity || 0) * 10) / 10).toFixed(1)} × KES{cartItem.item.sprice}
                     </p>
                     {cartItem.cowDetails?.cowName && (
                       <p className="text-[10px] text-purple-600 flex items-center gap-1 mt-1">
@@ -793,12 +812,7 @@ const AIPage = () => {
             {filteredFarmers.map((f) => (
               <button
                 key={f.farmer_id}
-                onClick={() => {
-                  setSelectedFarmer(f);
-                  setMemberNo(f.farmer_id);
-                  setShowFarmerSearch(false);
-                  setFarmerSearchQuery('');
-                }}
+                onClick={() => handleSelectFarmer(f)}
                 className="w-full text-left p-3 hover:bg-gray-50"
               >
                 <p className="font-semibold">{f.farmer_id}</p>
@@ -902,6 +916,13 @@ const AIPage = () => {
         open={showReceipt}
         onClose={() => setShowReceipt(false)}
         onPrint={() => setShowReceipt(false)}
+      />
+
+      {/* Inactive Member Dialog */}
+      <InactiveMemberDialog
+        open={!!inactiveDialogFarmer}
+        farmer={inactiveDialogFarmer ? { id: inactiveDialogFarmer.farmer_id.replace(/^#/, ''), name: inactiveDialogFarmer.name } : null}
+        onClose={handleInactiveDialogClose}
       />
     </div>
   );

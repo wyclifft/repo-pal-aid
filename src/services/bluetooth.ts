@@ -369,15 +369,21 @@ const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null 
   // PRIORITY 1: ASCII text formats - most reliable
   // Format: "ST,GS,+  12.345kg" or "  12.345 kg" or just "12.345"
   
-  // First check for negative values - return 0 for negative readings (empty scale / tare offset)
-  const negativeMatch = text.match(/-\s*(\d{1,3}\.?\d*)/);
+  // v2.12.75: Allow parsing negative values for display (e.g. tared scale with container removed)
+  // We no longer return 0 for negative matches.
+  // v2.12.76: Fixed regex to allow unlimited leading zeros (scale sends many).
+  const negativeMatch = text.match(/-\s*(\d+\.?\d*)/);
   if (negativeMatch) {
-    console.log(`⚠️ DR Series: Negative weight detected (-${negativeMatch[1]}), returning 0`);
-    return 0;
+    const weight = -parseFloat(negativeMatch[1]);
+    if (weight >= -50 && weight <= 200) {
+      console.log(`✅ DR Series parsed negative: ${weight} kg`);
+      return weight;
+    }
   }
   
   // First try to find a proper decimal weight with decimal point (positive only)
-  const decimalMatch = text.match(/\+?\s*(\d{1,3}\.\d{1,3})/);
+  // v2.12.76: Fixed regex to allow unlimited leading zeros.
+  const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
   if (decimalMatch) {
     const weight = parseFloat(decimalMatch[1]);
     // Sanity check: realistic weight range (0.1 to 200 kg for dairy)
@@ -392,16 +398,14 @@ const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null 
     }
   }
   
-  // Format with unit suffix - check for negative sign
+  // Format with unit suffix - check for sign
   const unitMatch = text.match(/([+-]?)\s*(\d+\.?\d*)\s*(kg|KG|Kg)/);
   if (unitMatch) {
     const isNegative = unitMatch[1] === '-';
-    if (isNegative) {
-      console.log(`⚠️ DR Series: Negative weight with unit detected, returning 0`);
-      return 0;
-    }
-    const weight = parseFloat(unitMatch[2]);
-    if (weight >= 0.1 && weight <= 200) {
+    let weight = parseFloat(unitMatch[2]);
+    if (isNegative) weight = -weight;
+
+    if (weight >= -50 && weight <= 200) {
       console.log(`✅ DR Series parsed with unit: ${weight} kg`);
       return weight;
     }
@@ -655,28 +659,32 @@ export const resubscribeScaleNotifications = async (
 
       if (parsed === null) {
         // Standard decimal format
-        const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
+        const decimalMatch = text.match(/([+-]?)\s*(\d+\.\d+)/);
         if (decimalMatch) {
-          parsed = parseFloat(decimalMatch[1]);
+          const isNeg = decimalMatch[1] === '-';
+          parsed = parseFloat(decimalMatch[2]);
+          if (isNeg) parsed = -parsed;
         }
       }
       
       if (parsed === null) {
         // Zero match
-        const zeroMatch = text.match(/^\s*\+?\s*0+\.?0*\s*$/);
+        const zeroMatch = text.match(/^\s*[+-]?\s*0+\.?0*\s*$/);
         if (zeroMatch) parsed = 0;
       }
       
       if (parsed === null) {
         // Integer
-        const intMatch = text.match(/(\d+)/);
+        const intMatch = text.match(/([+-]?)\s*(\d+)/);
         if (intMatch) {
-          const intValue = parseInt(intMatch[1]);
+          const isNeg = intMatch[1] === '-';
+          const intValue = parseInt(intMatch[2]);
           parsed = intValue > 1000 ? intValue / 1000 : intValue;
+          if (isNeg) parsed = -parsed;
         }
       }
       
-      if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
+      if (parsed !== null && !isNaN(parsed) && parsed >= -50 && parsed < 1000) {
         console.log(`✅ Resubscribe weight: ${parsed} kg`);
         broadcastScaleWeightUpdate(parsed, scaleType);
         try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
@@ -961,11 +969,15 @@ export const connectBluetoothScale = async (
           }
           
           if (parsed === null) {
-            const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
-            if (decimalMatch) parsed = parseFloat(decimalMatch[1]);
+            const decimalMatch = text.match(/([+-]?)\s*(\d+\.\d+)/);
+            if (decimalMatch) {
+              const isNeg = decimalMatch[1] === '-';
+              parsed = parseFloat(decimalMatch[2]);
+              if (isNeg) parsed = -parsed;
+            }
           }
 
-          if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
+          if (parsed !== null && !isNaN(parsed) && parsed >= -50 && parsed < 1000) {
             broadcastScaleWeightUpdate(parsed, scaleType);
             try { onWeightUpdate(parsed, scaleType); } catch {}
           }
@@ -1061,10 +1073,10 @@ export const connectBluetoothScale = async (
         characteristic.addEventListener('characteristicvaluechanged', (event: Event) => {
           const target = event.target as any;
           const text = new TextDecoder().decode(target.value);
-          const match = text.match(/(\d+\.\d+)/);
+          const match = text.match(/([+-]?\d+\.\d+)/);
           if (match) {
             const parsed = parseFloat(match[1]);
-            if (!isNaN(parsed)) {
+            if (!isNaN(parsed) && parsed >= -50) {
               onWeightUpdate(parsed, scaleType);
             }
           }
@@ -1269,11 +1281,15 @@ export const quickReconnect = async (
             }
 
             if (parsed === null) {
-              const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
-              if (decimalMatch) parsed = parseFloat(decimalMatch[1]);
+              const decimalMatch = text.match(/([+-]?)\s*(\d+\.\d+)/);
+              if (decimalMatch) {
+                const isNeg = decimalMatch[1] === '-';
+                parsed = parseFloat(decimalMatch[2]);
+                if (isNeg) parsed = -parsed;
+              }
             }
 
-            if (parsed !== null && !isNaN(parsed) && parsed >= 0 && parsed < 1000) {
+            if (parsed !== null && !isNaN(parsed) && parsed >= -50 && parsed < 1000) {
               broadcastScaleWeightUpdate(parsed, scaleType);
               try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
             }
@@ -2065,7 +2081,7 @@ export const printReceipt = async (data: {
   let collectionsText = '';
   data.collections.forEach((col) => {
     const prefix = `${col.index}: ${col.transrefno || '-'}`;
-    const weight = col.weight.toFixed(2);
+    const weight = (Math.floor(col.weight * 10) / 10).toFixed(1);
     const spaces = W - prefix.length - weight.length;
     collectionsText += prefix + ' '.repeat(Math.max(1, spaces)) + weight + '\n';
   });
@@ -2090,17 +2106,17 @@ export const printReceipt = async (data: {
   receipt += collectionsText;
   receipt += sep + '\n';
   
-  const totalStr = totalWeight.toFixed(2);
+  const totalStr = (Math.floor(totalWeight * 10) / 10).toFixed(1);
   const totalLabel = data.totalLabel ? (data.totalLabel.length > 20 ? data.totalLabel.substring(0, 20) : data.totalLabel.padEnd(20)) : 'Total Kgs ';
   receipt += formatLine(totalLabel, totalStr, W) + '\n';
   
   if (data.cumulativeFrequency !== undefined) {
-    receipt += formatLine('Cumulative', data.cumulativeFrequency.toFixed(1), W) + '\n';
+    receipt += formatLine('Cumulative', (Math.floor(data.cumulativeFrequency * 10) / 10).toFixed(1), W) + '\n';
     // Per-product breakdown
     if (data.cumulativeByProduct && data.cumulativeByProduct.length > 1) {
       for (const prod of data.cumulativeByProduct) {
         const label = (prod.product_name || prod.icode).substring(0, 18);
-        receipt += formatLine(`  ${label}`, prod.weight.toFixed(1), W) + '\n';
+        receipt += formatLine(`  ${label}`, (Math.floor(prod.weight * 10) / 10).toFixed(1), W) + '\n';
       }
     }
   }
@@ -2197,7 +2213,7 @@ export const printStoreAIReceipt = async (data: {
     const displayName = item.item_name.length > 16 
       ? item.item_name.substring(0, 14) + '..' 
       : item.item_name;
-    const qty = `x${item.quantity}`;
+    const qty = `x${(Math.floor(Number(item.quantity || 0) * 10) / 10).toFixed(1)}`;
     const amount = `${item.lineTotal.toFixed(0)}`;
     
     // Format: "ItemName x2    500"
@@ -2487,33 +2503,35 @@ export const printZReport = async (data: {
         }
         prevProductCode = currentProduct;
 
-        const shortRef = (tx.refno || '').slice(-5);
+        const shortRef = (tx.refno || '').slice(-6);
         const time = tx.time.substring(0, 5);
 
         if (showMoney) {
-          const qtyInt = Math.max(0, Math.round(tx.weight || 0));
-          sellAiItemCount += qtyInt;
+          const rawQty = Number(tx.weight || 0);
+          const qtyStr = (Math.floor(rawQty * 10) / 10).toFixed(1);
+          sellAiItemCount += rawQty; // Accumulate raw value for accurate total
           const mno = padL(tx.farmer_id || '', 7);
-          const ref = padL(shortRef, 5);
-          const qty = padR(String(qtyInt), 4);
+          const ref = padL(shortRef, 6);
+          const qty = padR(qtyStr, 4);
           const ksh = padR(Number(tx.amount || 0).toFixed(0), 7);
           const tim = padR(time, 5);
           receipt += `${mno} ${ref} ${qty} ${ksh} ${tim}\n`;
         } else {
           const mno = padL(tx.farmer_id || '', 9);
           const ref = padL(shortRef, 6);
-          const qty = padR(tx.weight.toFixed(1), 8);
+          const qty = padR((Math.floor(tx.weight * 10) / 10).toFixed(1), 8);
           const tim = padR(time, 6);
           receipt += `${mno} ${ref} ${qty} ${tim}\n`;
         }
       }
 
       if (showMoney) {
+        const qtyStr = (Math.floor(sellAiItemCount * 10) / 10).toFixed(1);
         const itemsLabel = sellAiItemCount === 1 ? 'item' : 'items';
-        const right = `${sellAiItemCount} ${itemsLabel}  KSh ${typeGroup.totalAmount.toFixed(0)}`;
+        const right = `${qtyStr} ${itemsLabel}  KSh ${typeGroup.totalAmount.toFixed(0)}`;
         receipt += lr(`${typeGroup.typeLabel} TOTAL`, right) + '\n';
       } else {
-        receipt += lr(`${typeGroup.typeLabel} TOTAL`, `${typeGroup.totalWeight.toFixed(1)} ${weightUnit}`) + '\n';
+        receipt += lr(`${typeGroup.typeLabel} TOTAL`, `${(Math.floor(typeGroup.totalWeight * 10) / 10).toFixed(1)} ${weightUnit}`) + '\n';
       }
     });
   });
@@ -2542,11 +2560,12 @@ export const printZReport = async (data: {
   }
 
   if (!isStore && buyWeight > 0) {
-    receipt += lr('TOTAL', `${buyWeight.toFixed(1)} ${weightUnit}`) + '\n';
+    receipt += lr('TOTAL', `${(Math.floor(buyWeight * 10) / 10).toFixed(1)} ${weightUnit}`) + '\n';
   }
   if (sellAiItems > 0) {
+    const qtyStr = (Math.floor(sellAiItems * 10) / 10).toFixed(1);
     const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
-    receipt += lr('TOTAL ITEMS', `${sellAiItems} ${itemsLabel}`) + '\n';
+    receipt += lr('TOTAL ITEMS', `${qtyStr} ${itemsLabel}`) + '\n';
   }
   if (sellAiAmount > 0) {
     receipt += lr('TOTAL VALUE', `KSh ${sellAiAmount.toFixed(0)}`) + '\n';
@@ -2665,21 +2684,37 @@ export const printMemberProduceStatement = async (data: {
     receipt += centerText('DELIVERY BREAKDOWN BY DATE', W) + '\n';
     receipt += dashLine + '\n';
 
-    // Group by date, then by deliverer
-    const dateGroups = new Map<string, Map<string, number>>();
+    // v2.12.58: Detailed breakdown showing REC NO, Deliverer name, and Quantity
+    const recColW = 12; // XXXX-XXXXXX
+    const qtyColW = 6;  // 123.4
+    const nameColW = W - recColW - qtyColW - 1; // 13 chars
+
+    const formatRecNo = (ref?: string) => {
+      if (!ref || ref.length < 9) return '------------';
+      return `${ref.slice(0, 4)}-${ref.slice(-6)}`;
+    };
+
+    // Group by date
+    const dateGroups = new Map<string, typeof data.transactions>();
     data.transactions.forEach(tx => {
       const dateKey = formatDate(tx.date);
-      const delivererKey = tx.deliveredby || 'owner';
-      if (!dateGroups.has(dateKey)) dateGroups.set(dateKey, new Map());
-      const delivererMap = dateGroups.get(dateKey)!;
-      delivererMap.set(delivererKey, (delivererMap.get(delivererKey) || 0) + (Number(tx.quantity) || 0));
+      if (!dateGroups.has(dateKey)) dateGroups.set(dateKey, []);
+      dateGroups.get(dateKey)!.push(tx);
     });
 
-    for (const [date, deliverers] of dateGroups.entries()) {
+    for (const [date, transactions] of dateGroups.entries()) {
       receipt += `[${date}]\n`;
-      for (const [deliverer, weight] of deliverers.entries()) {
-        const resolved = resolveMemberName(deliverer, data.allFarmers || []);
-        receipt += formatLine(`  ${resolved.substring(0, 18)}`, weight.toFixed(1), W) + '\n';
+      // Column Header per date group
+      receipt += 'REC NO'.padEnd(recColW) + ' ' + 'DELIVERER'.padEnd(nameColW) + 'QTY'.padStart(qtyColW) + '\n';
+
+      for (const tx of transactions) {
+        const rec = formatRecNo(tx.rec_no);
+        const resolved = resolveMemberName(tx.deliveredby || 'owner', data.allFarmers || []);
+        // Extract just the ID part if it's "ID - Name" to show Member No
+        const idOnly = resolved.includes(' - ') ? resolved.split(' - ')[0] : resolved;
+        const qty = (Math.floor((Number(tx.quantity) || 0) * 10) / 10).toFixed(1);
+
+        receipt += rec.padEnd(recColW) + ' ' + idOnly.substring(0, nameColW).padEnd(nameColW) + qty.padStart(qtyColW) + '\n';
       }
     }
 
@@ -2696,7 +2731,7 @@ export const printMemberProduceStatement = async (data: {
     const sortedTotals = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]);
     for (const [deliverer, total] of sortedTotals) {
       const resolved = resolveMemberName(deliverer, data.allFarmers || []);
-      receipt += formatLine(resolved.substring(0, 20), total.toFixed(2), W) + '\n';
+      receipt += formatLine(resolved.substring(0, 20), (Math.floor(total * 10) / 10).toFixed(1), W) + '\n';
     }
   } else {
     // v2.10.77: Group transactions by icode so each product gets its own
@@ -2705,11 +2740,11 @@ export const printMemberProduceStatement = async (data: {
     // v2.10.82: REC NO now shows DEVCODE-LAST5 (e.g. BB01-00002) instead of just last 5.
     // Widen REC NO column from 7 → 11; date stays 11 (DD/MM/YYYY + space); QUANTITY = 10.
     const dateColW = 11;
-    const recColW = 11;
+    const recColW = 12;
     const qtyColW = W - dateColW - recColW;
     const formatRecNo = (ref?: string) => {
-      if (!ref || ref.length < 9) return '----------';
-      return `${ref.slice(0, 4)}-${ref.slice(-5)}`;
+      if (!ref || ref.length < 9) return '------------';
+      return `${ref.slice(0, 4)}-${ref.slice(-6)}`;
     };
 
     type Group = { label: string; rows: typeof data.transactions; subtotal: number };
@@ -2741,12 +2776,12 @@ export const printMemberProduceStatement = async (data: {
         g.rows.forEach(tx => {
           const dateStr = formatDate(tx.date);
           const refNo = formatRecNo(tx.rec_no);
-          const qty = (Number(tx.quantity) || 0).toFixed(1);
+          const qty = (Math.floor((Number(tx.quantity) || 0) * 10) / 10).toFixed(1);
           receipt += dateStr.padEnd(dateColW) + refNo.padEnd(recColW) + qty.padStart(qtyColW) + '\n';
         });
         receipt += dotLine + '\n';
         const subLabel = 'SUBTOTAL:';
-        const subVal = `${g.subtotal.toFixed(2)} Kgs`;
+        const subVal = `${(Math.floor(g.subtotal * 10) / 10).toFixed(1)} Kgs`;
         receipt += subLabel + subVal.padStart(W - subLabel.length) + '\n';
       });
     }
@@ -2756,7 +2791,7 @@ export const printMemberProduceStatement = async (data: {
 
   // Total
   const totalLabel = 'TOTAL:';
-  const totalVal = `${data.totalWeight.toFixed(2)} Kgs`;
+  const totalVal = `${(Math.floor(data.totalWeight * 10) / 10).toFixed(1)} Kgs`;
   receipt += totalLabel + totalVal.padStart(W - totalLabel.length) + '\n';
   receipt += dashLine + '\n';
   

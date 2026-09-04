@@ -25,9 +25,21 @@ interface UseFarmerResolutionReturn {
   ) => boolean;
 }
 
+export const isFarmerInactive = (farmer: Farmer | null | undefined): boolean => {
+  if (!farmer) return false;
+  return Number(farmer.status) === 0;
+};
+
+export const showInactiveMemberToast = () => {
+  toast.error('Member Inactive', {
+    description: 'Contact manager for activation.',
+    duration: 5000,
+  });
+};
+
 /**
  * Shared hook for resolving farmer IDs across all modules
- * Handles exact match, numeric padding (M00001), and prefix filtering
+ * Handles exact match, numeric padding (M00001), prefix filtering, and inactive member checks
  */
 export const useFarmerResolution = ({
   farmers,
@@ -66,28 +78,31 @@ export const useFarmerResolution = ({
     }
 
     // 1. Exact match by farmer_id
-    const exactMatch = availableFarmers.find(
+    let match = availableFarmers.find(
       f => f.farmer_id.toLowerCase() === input.toLowerCase() &&
            (!enforcePrefix || matchesActivePrefix(f))
-    );
-    if (exactMatch) return exactMatch;
+    ) || null;
 
     // 2. If pure numeric, resolve to padded format (e.g., 1 -> M00001)
-    if (numericInput && numericInput === input.trim()) {
+    if (!match && numericInput && numericInput === input.trim()) {
       const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
-      const paddedMatch = availableFarmers.find(
+      match = availableFarmers.find(
         f => f.farmer_id.toUpperCase() === paddedId.toUpperCase() &&
              (!enforcePrefix || matchesActivePrefix(f))
-      );
-      if (paddedMatch) return paddedMatch;
+      ) || null;
 
       // 3. Try matching by numeric portion only
-      const numericMatch = availableFarmers.find(f => {
-        if (enforcePrefix && !matchesActivePrefix(f)) return false;
-        const farmerNumeric = f.farmer_id.replace(/\D/g, '');
-        return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
-      });
-      if (numericMatch) return numericMatch;
+      if (!match) {
+        match = availableFarmers.find(f => {
+          if (enforcePrefix && !matchesActivePrefix(f)) return false;
+          const farmerNumeric = f.farmer_id.replace(/\D/g, '');
+          return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
+        }) || null;
+      }
+    }
+
+    if (match) {
+      return match;
     }
 
     // 4. Check if farmer is in the blacklist

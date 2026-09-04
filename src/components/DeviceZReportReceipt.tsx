@@ -288,7 +288,7 @@ export const DeviceZReportReceipt = ({
   const routeLabel = data.routeLabel || 'Center';
 
   // Get last 5 digits of reference number
-  const getShortRef = (refno: string) => (refno || '').slice(-5);
+  const getShortRef = (refno: string) => (refno || '').slice(-6);
 
   // Render transactions for a type group.
   const renderTypeSection = (group: TypeGroup, isFirst: boolean) => {
@@ -339,9 +339,7 @@ export const DeviceZReportReceipt = ({
             // v2.10.75: render product header for every distinct product group,
             // including the first one (was only shown on transitions).
             const showItemSeparator = showProductDividers && (!prevTx || prevTx.product_code !== tx.product_code);
-            const qtyDisplay = showMoney
-              ? String(Math.max(0, Math.round(tx.weight || 0)))
-              : tx.weight.toFixed(1);
+            const qtyDisplay = (Math.floor((Number(tx.weight) || 0) * 10) / 10).toFixed(1);
 
             return (
               <div key={tx.transrefno || index}>
@@ -380,11 +378,11 @@ export const DeviceZReportReceipt = ({
           <span className="tabular-nums">
             {showMoney ? (
               <>
-                {itemCount} {itemsLabel}
+                {(Math.floor(group.totalWeight * 10) / 10).toFixed(1)} {itemsLabel}
                 <span className="ml-3">KSh {group.totalAmount.toFixed(0)}</span>
               </>
             ) : (
-              <>{group.totalWeight.toFixed(1)} {weightUnit}</>
+              <>{(Math.floor(group.totalWeight * 10) / 10).toFixed(1)} {weightUnit}</>
             )}
           </span>
         </div>
@@ -470,7 +468,7 @@ export const DeviceZReportReceipt = ({
             filteredTransactions.forEach(tx => {
               if ((tx.transtype || 1) === 1) return;
               sellAiAmount += Number(tx.amount || 0);
-              sellAiItems += Math.max(0, Math.round(tx.weight || 0));
+              sellAiItems += Number(tx.weight || 0);
             });
             const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
             return (
@@ -478,13 +476,13 @@ export const DeviceZReportReceipt = ({
                 {buyWeight > 0 && (
                   <div className="flex justify-between font-bold text-sm">
                     <span>GRAND TOTAL BUY</span>
-                    <span className="tabular-nums">{buyWeight.toFixed(1)} {weightUnit}</span>
+                    <span className="tabular-nums">{(Math.floor(buyWeight * 10) / 10).toFixed(1)} {weightUnit}</span>
                   </div>
                 )}
                 {sellAiItems > 0 && (
                   <div className="flex justify-between font-bold text-sm">
                     <span>GRAND TOTAL ITEMS</span>
-                    <span className="tabular-nums">{sellAiItems} {itemsLabel}</span>
+                    <span className="tabular-nums">{(Math.floor(sellAiItems * 10) / 10).toFixed(1)} {itemsLabel}</span>
                   </div>
                 )}
                 {sellAiAmount > 0 && (

@@ -55,8 +55,8 @@ const describeAuthHeaders = (headers = {}) =>
  */
 const verifyYetuRequest = (req, rawBody) => {
   const headers = req.headers || {};
-  const basicUser = process.env.YETU_BASIC_USER || '';
-  const basicPass = process.env.YETU_BASIC_PASS || '';
+  const basicUser = (process.env.YETU_BASIC_USER || '').trim();
+  const basicPass = (process.env.YETU_BASIC_PASS || '').trim();
   // Default to basic once credentials are configured; otherwise stay pass-through.
   const defaultMode = basicUser && basicPass ? 'basic' : 'none';
   const mode = String(process.env.YETU_AUTH_MODE || defaultMode).toLowerCase();
@@ -71,10 +71,31 @@ const verifyYetuRequest = (req, rawBody) => {
       console.warn('[YETU][AUTH] basic: missing or malformed Authorization header');
       return { ok: false, reason: 'unauthorized' };
     }
-    const userOk = safeEqual(creds.user, basicUser);
-    const passOk = safeEqual(creds.pass, basicPass);
+    const userClean = (creds.user || '').trim();
+    let passClean = (creds.pass || '').trim();
+    let basicPassClean = basicPass;
+
+    // Handle case where password in .env or request body was wrapped in quotes
+    if ((passClean.startsWith('"') && passClean.endsWith('"')) || (passClean.startsWith("'") && passClean.endsWith("'"))) {
+      passClean = passClean.slice(1, -1).trim();
+    }
+    if ((basicPassClean.startsWith('"') && basicPassClean.endsWith('"')) || (basicPassClean.startsWith("'") && basicPassClean.endsWith("'"))) {
+      basicPassClean = basicPassClean.slice(1, -1).trim();
+    }
+
+    const userOk = safeEqual(userClean, basicUser);
+    const passOk = safeEqual(passClean, basicPassClean);
     if (!userOk || !passOk) {
-      console.warn('[YETU][AUTH] basic: credential mismatch (user=%s)', userOk ? 'ok' : 'bad');
+      const origPass = creds.pass || '';
+      console.warn(
+        '[YETU][AUTH] basic: credential mismatch (user=%s, pass=%s, expectedPassLen=%d, receivedPassLen=%d, rawReceivedLen=%d, hasQuotes=%s)',
+        userOk ? 'ok' : 'bad',
+        passOk ? 'ok' : 'bad',
+        basicPassClean.length,
+        passClean.length,
+        origPass.length,
+        origPass.startsWith('"') || origPass.startsWith("'") ? 'yes' : 'no'
+      );
       return { ok: false, reason: 'unauthorized' };
     }
     return { ok: true };

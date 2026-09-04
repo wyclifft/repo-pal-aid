@@ -73,7 +73,8 @@ export const LiveWeightDisplay = ({
       return;
     }
     
-    const incomingWeight = liveWeight > 0 ? liveWeight : weight;
+    // v2.12.61: Support negative weight display (e.g. -0.4 when container removed)
+    const incomingWeight = liveWeight !== 0 ? liveWeight : weight;
     
     // Handle zero weight immediately
     if (incomingWeight === 0) {
@@ -105,19 +106,20 @@ export const LiveWeightDisplay = ({
     if (isStable) {
       // Lock to average of stable readings
       const avg = recentReadings.reduce((a, b) => a + b, 0) / recentReadings.length;
-      const roundedAvg = parseFloat(avg.toFixed(2));
+      // v2.12.61: Use consistent rounding that handles negative values
+      const roundedAvg = Math.round(avg * 10) / 10;
       if (roundedAvg !== stableDisplayWeight) {
         setStableDisplayWeight(roundedAvg);
         lastDisplayUpdateRef.current = now;
       }
     } else if (timeSinceLastUpdate > DISPLAY_UPDATE_INTERVAL) {
       // Not stable but throttle rapid updates
-      setStableDisplayWeight(parseFloat(incomingWeight.toFixed(2)));
+      setStableDisplayWeight(Math.round(incomingWeight * 10) / 10);
       lastDisplayUpdateRef.current = now;
     }
     
     // Track data received
-    if (incomingWeight > 0) {
+    if (incomingWeight !== 0) {
       setHasReceivedData(true);
       setLastWeightTime(now);
       setShowResubscribe(false);
@@ -154,7 +156,7 @@ export const LiveWeightDisplay = ({
   };
 
   // Use stabilized display weight to prevent flickering
-  const displayWeight = stableDisplayWeight > 0 ? stableDisplayWeight : (weight > 0 ? weight : 0);
+  const displayWeight = stableDisplayWeight !== 0 ? stableDisplayWeight : weight;
 
   return (
     <div className="space-y-2">
@@ -185,14 +187,14 @@ export const LiveWeightDisplay = ({
             : 'bg-white border-gray-900'
         }`}>
           <span className={`text-4xl sm:text-5xl font-black ${
-            (scaleConnected || displayWeight > 0) ? 'text-gray-900' : isConnecting ? 'text-yellow-600' : 'text-gray-400'
+            (scaleConnected || displayWeight !== 0) ? 'text-gray-900' : isConnecting ? 'text-yellow-600' : 'text-gray-400'
           }`}>
             {isConnecting 
               ? '...' 
-              : displayWeight > 0 
-                ? displayWeight.toFixed(2)
+              : displayWeight !== 0
+                ? (Math.round(displayWeight * 10) / 10).toFixed(1)
                 : scaleConnected 
-                  ? '0.00'
+                  ? '0.0'
                   : '--'
             }
           </span>
@@ -201,10 +203,10 @@ export const LiveWeightDisplay = ({
               <Loader2 className="h-3 w-3 animate-spin" />
               Connecting
             </span>
-          ) : (scaleConnected || displayWeight > 0) ? (
+          ) : (scaleConnected || displayWeight !== 0) ? (
             <span className="text-xs text-green-600 mt-1 flex items-center gap-1">
               <Scale className="h-3 w-3" />
-              {(hasReceivedData || displayWeight > 0) ? 'Live' : 'Waiting...'}
+              {(hasReceivedData || displayWeight !== 0) ? 'Live' : 'Waiting...'}
             </span>
           ) : (
             <span className="text-xs text-gray-400 mt-1">

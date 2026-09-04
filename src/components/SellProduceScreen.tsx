@@ -8,6 +8,8 @@ import { useHaptics } from '@/hooks/useHaptics';
 import { FarmerSearchModal } from './FarmerSearchModal';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
 import { CoffeeWeightDisplay } from './CoffeeWeightDisplay';
+import { InactiveMemberDialog } from './InactiveMemberDialog';
+import { isFarmerInactive } from '@/hooks/useFarmerResolution';
 import { toast } from 'sonner';
 
 interface SellProduceScreenProps {
@@ -91,6 +93,7 @@ export const SellProduceScreen = ({
 }: SellProduceScreenProps) => {
   const [memberNo, setMemberNo] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
+  const [inactiveDialogFarmer, setInactiveDialogFarmer] = useState<Farmer | null>(null);
   const [cachedFarmers, setCachedFarmers] = useState<Farmer[]>([]);
   const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
   const [showDropdown, setShowDropdown] = useState(false);
@@ -256,11 +259,22 @@ export const SellProduceScreen = ({
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
+    if (isFarmerInactive(farmer)) {
+      setInactiveDialogFarmer(farmer);
+      setShowSearchModal(false);
+      return;
+    }
     // Sell Portal allows unlimited deliveries - no blocking checks needed
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
     setMemberNo(cleanId);
     setShowSearchModal(false);
     onSelectFarmer(farmer);
+  };
+
+  const handleInactiveDialogClose = () => {
+    setInactiveDialogFarmer(null);
+    setMemberNo('');
+    onClearFarmer();
   };
   
   // Focus input when member is cleared (for post-submit flow)
@@ -416,8 +430,9 @@ export const SellProduceScreen = ({
                 // For coffee: manual entry is gross weight, calculate net using CURRENT tare (may be edited)
                 onGrossWeightChange?.(grossValue);
                 const netValue = Math.max(0, grossValue - currentTareWeight);
-                onNetWeightChange?.(parseFloat(netValue.toFixed(2)));
-                onWeightChange?.(parseFloat(netValue.toFixed(2))); // Main weight is net
+                const truncatedNetValue = Math.floor(netValue * 10) / 10;
+                onNetWeightChange?.(truncatedNetValue);
+                onWeightChange?.(truncatedNetValue); // Main weight is net
                 onEntryTypeChange?.('manual');
               } else {
                 onManualWeightChange?.(grossValue);
@@ -511,6 +526,13 @@ export const SellProduceScreen = ({
           farmers={cachedFarmers}
         />
 
+        {/* Inactive Member Dialog */}
+        <InactiveMemberDialog
+          open={!!inactiveDialogFarmer}
+          farmer={inactiveDialogFarmer ? { id: inactiveDialogFarmer.farmer_id.replace(/^#/, ''), name: inactiveDialogFarmer.name } : null}
+          onClose={handleInactiveDialogClose}
+        />
+
         {/* Member Info Card */}
         <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 space-y-2">
           <div className="flex justify-between items-center border-b border-gray-100 pb-2">
@@ -521,7 +543,7 @@ export const SellProduceScreen = ({
               </p>
             </div>
             <span className="font-bold text-base sm:text-lg ml-2">
-              {totalCapturedWeight > 0 ? totalCapturedWeight.toFixed(2) : '0.00'}
+              {totalCapturedWeight > 0 ? (Math.floor(totalCapturedWeight * 10) / 10).toFixed(1) : '0.0'}
             </span>
           </div>
           
@@ -533,7 +555,7 @@ export const SellProduceScreen = ({
           <div className="flex justify-between items-center">
             <span className="font-bold text-sm sm:text-base">WEIGHT TODAY</span>
             <span className="text-gray-600 text-sm sm:text-base">
-              {todayWeight > 0 ? todayWeight.toFixed(2) : '-'}
+              {todayWeight > 0 ? (Math.floor(todayWeight * 10) / 10).toFixed(1) : '-'}
             </span>
           </div>
         </div>
@@ -619,11 +641,11 @@ export const SellProduceScreen = ({
                   {/* Coffee mode: show Gross/Sack/Net breakdown */}
                   {isCoffee && c.gross_weight !== undefined ? (
                     <div className="text-right text-xs">
-                      <div className="text-gray-500">G:{c.gross_weight?.toFixed(2)} S:{c.tare_weight?.toFixed(2)}</div>
-                      <div className="font-bold text-green-700">Net: {c.weight.toFixed(2)}</div>
+                      <div className="text-gray-500">G:{(Math.floor((c.gross_weight || 0) * 10) / 10).toFixed(1)} S:{(Math.floor((c.tare_weight || 0) * 10) / 10).toFixed(1)}</div>
+                      <div className="font-bold text-green-700">Net: {(Math.floor(c.weight * 10) / 10).toFixed(1)}</div>
                     </div>
                   ) : (
-                    <span className="font-bold text-gray-900">{c.weight.toFixed(2)}</span>
+                    <span className="font-bold text-gray-900">{(Math.floor(c.weight * 10) / 10).toFixed(1)}</span>
                   )}
                 </div>
               ))}

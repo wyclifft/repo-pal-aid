@@ -52,6 +52,8 @@ export interface AppSettings {
   cumulative_route_filter: number;
   // v2.12.42: Photo capture requirement in Store module. 1 = required, 0 = optional.
   capture_photo: number;
+  // v2.12.72: Store specific print copies (DB: store_print_copies, default: 0 = fallback to printoptions)
+  store_print_copies: number;
 }
 
 // Default settings - rdesc is empty to force use of dynamic DB value
@@ -77,7 +79,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   payments_active: 0, // v2.11.0: Payments module hidden by default
   sacco_module_active: 0, // v2.12.18: Sacco module hidden by default
   cumulative_route_filter: 0, // v2.12.36: Default to all routes
-  capture_photo: 1 // v2.12.42: Default to required
+  capture_photo: 1, // v2.12.42: Default to required
+  store_print_copies: 0 // v2.12.72: Default to fallback
 };
 
 const SETTINGS_STORAGE_KEY = 'app_settings';
@@ -148,6 +151,8 @@ interface AppSettingsContextType {
   useCumulativeRouteFilter: boolean;
   // v2.12.42: Photo capture requirement in Store module
   capturePhoto: boolean;
+  // v2.12.72: Number of print copies for Store module (falls back to global printCopies if 0)
+  storePrintCopies: number;
 }
 
 // React context
@@ -396,7 +401,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             payments_active: parseInt(String(deviceData.app_settings?.payments_active ?? DEFAULT_SETTINGS.payments_active), 10),
             sacco_module_active: parseInt(String(deviceData.app_settings?.sacco_module_active ?? DEFAULT_SETTINGS.sacco_module_active), 10),
             cumulative_route_filter: parseInt(String(deviceData.app_settings?.cumulative_route_filter ?? DEFAULT_SETTINGS.cumulative_route_filter), 10),
-            capture_photo: parseInt(String(deviceData.app_settings?.capture_photo ?? DEFAULT_SETTINGS.capture_photo), 10)
+            capture_photo: parseInt(String(deviceData.app_settings?.capture_photo ?? DEFAULT_SETTINGS.capture_photo), 10),
+            store_print_copies: parseInt(String(deviceData.app_settings?.store_print_copies ?? DEFAULT_SETTINGS.store_print_copies), 10)
           };
           
           // Log settings changes for debugging
@@ -614,6 +620,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const useCumulativeRouteFilter = isDairy ? settings.cumulative_route_filter === 1 : true;
   // v2.12.42: Photo capture requirement in Store module
   const capturePhoto = settings.capture_photo === 1;
+  // v2.12.72: Store specific print copies (falls back to global printoptions if not set)
+  const storePrintCopies = settings.store_print_copies > 0 ? settings.store_print_copies : printCopies;
 
   return {
     settings,
@@ -645,7 +653,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     paymentsActive,
     saccoModuleActive,
     useCumulativeRouteFilter,
-    capturePhoto
+    capturePhoto,
+    storePrintCopies
   };
 };
 

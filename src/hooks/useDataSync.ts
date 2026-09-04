@@ -267,6 +267,7 @@ export const useDataSync = () => {
         user_id: receipt.user_id,
         clerk_name: receipt.clerk_name,
         collection_date: receipt.collection_date,
+        transdate: receipt.transdate, // v2.12.60: Forward explicit local date
         device_fingerprint: deviceFingerprint,
         entry_type: receipt.entry_type,
         product_code: receipt.product_code,
@@ -307,6 +308,7 @@ export const useDataSync = () => {
               session: normalizedSession,
               device_fingerprint: deviceFingerprint,
               farmer_id: String(receipt.farmer_id || '').replace(/^#/, '').trim(),
+              transdate: receipt.transdate, // v2.12.60: Forward explicit local date
             });
             if (retryResult.success) {
               // Refresh cumulative

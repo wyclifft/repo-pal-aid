@@ -10,6 +10,8 @@ import { DeliveredBySearch } from './DeliveredBySearch';
 import { LiveWeightDisplay } from './LiveWeightDisplay';
 import { CoffeeWeightDisplay } from './CoffeeWeightDisplay';
 import { DuplicateDeliveryDialog, type DuplicateDeliveryReason } from './DuplicateDeliveryDialog';
+import { InactiveMemberDialog } from './InactiveMemberDialog';
+import { isFarmerInactive } from '@/hooks/useFarmerResolution';
 import { toast } from 'sonner';
 
 interface BuyProduceScreenProps {
@@ -100,6 +102,7 @@ export const BuyProduceScreen = ({
     farmer: { id: string; name: string };
     reason: DuplicateDeliveryReason;
   } | null>(null);
+  const [inactiveDialogFarmer, setInactiveDialogFarmer] = useState<Farmer | null>(null);
   const farmerInputRef = useRef<HTMLInputElement>(null);
   const deliveredByRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
@@ -349,6 +352,11 @@ export const BuyProduceScreen = ({
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
+    if (isFarmerInactive(farmer)) {
+      setInactiveDialogFarmer(farmer);
+      setShowSearchModal(false);
+      return;
+    }
     // Check if farmer is blocked before allowing selection (includes queue check)
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
     const reason = farmer.multOpt === 0 ? getBlockReason(cleanId, true) : null;
@@ -360,6 +368,12 @@ export const BuyProduceScreen = ({
     setMemberNo(cleanId);
     setShowSearchModal(false);
     onSelectFarmer(farmer);
+  };
+
+  const handleInactiveDialogClose = () => {
+    setInactiveDialogFarmer(null);
+    setMemberNo('');
+    onClearFarmer();
   };
 
   // Friendly session label for the duplicate dialog (AM/PM for dairy, season name for coffee)
@@ -484,8 +498,9 @@ export const BuyProduceScreen = ({
                 // For coffee: manual entry is gross weight, calculate net using CURRENT tare (may be edited)
                 onGrossWeightChange?.(grossValue);
                 const netValue = Math.max(0, grossValue - currentTareWeight);
-                onNetWeightChange?.(parseFloat(netValue.toFixed(2)));
-                onWeightChange?.(parseFloat(netValue.toFixed(2))); // Main weight is net
+                const truncatedNetValue = Math.floor(netValue * 10) / 10;
+                onNetWeightChange?.(truncatedNetValue);
+                onWeightChange?.(truncatedNetValue); // Main weight is net
                 onEntryTypeChange?.('manual');
               } else {
                 onManualWeightChange?.(grossValue);
@@ -560,6 +575,13 @@ export const BuyProduceScreen = ({
           onClose={handleDuplicateDialogClose}
         />
 
+        {/* Inactive Member Dialog */}
+        <InactiveMemberDialog
+          open={!!inactiveDialogFarmer}
+          farmer={inactiveDialogFarmer ? { id: inactiveDialogFarmer.farmer_id.replace(/^#/, ''), name: inactiveDialogFarmer.name } : null}
+          onClose={handleInactiveDialogClose}
+        />
+
         {/* Member Info Card */}
         <div className="bg-white border border-gray-200 rounded-lg p-2 space-y-1">
           <div className="flex justify-between items-center border-b border-gray-100 pb-1">
@@ -570,7 +592,7 @@ export const BuyProduceScreen = ({
               </p>
             </div>
             <span className="font-bold text-base">
-              {totalCapturedWeight > 0 ? `${totalCapturedWeight.toFixed(2)}KGS` : '-KGS'}
+              {totalCapturedWeight > 0 ? `${(Math.floor(totalCapturedWeight * 10) / 10).toFixed(1)}KGS` : '-KGS'}
             </span>
           </div>
           
@@ -582,7 +604,7 @@ export const BuyProduceScreen = ({
           <div className="flex justify-between items-center text-[10px]">
             <span className="font-bold">WEIGHT TODAY</span>
             <span className="text-gray-600">
-              {todayWeight > 0 ? `${todayWeight.toFixed(2)} KGS` : '-'}
+              {todayWeight > 0 ? `${(Math.floor(todayWeight * 10) / 10).toFixed(1)} KGS` : '-'}
             </span>
           </div>
         </div>
@@ -681,11 +703,11 @@ export const BuyProduceScreen = ({
                   {/* Coffee mode: show Gross/Sack/Net breakdown */}
                   {isCoffee && c.gross_weight !== undefined ? (
                     <div className="text-right text-xs">
-                      <div className="text-gray-500">G:{c.gross_weight?.toFixed(2)} S:{c.tare_weight?.toFixed(2)}</div>
-                      <div className="font-bold text-green-700">Net: {c.weight.toFixed(2)}</div>
+                      <div className="text-gray-500">G:{(Math.floor((c.gross_weight || 0) * 10) / 10).toFixed(1)} S:{(Math.floor((c.tare_weight || 0) * 10) / 10).toFixed(1)}</div>
+                      <div className="font-bold text-green-700">Net: {(Math.floor(c.weight * 10) / 10).toFixed(1)}</div>
                     </div>
                   ) : (
-                    <span className="font-bold text-gray-900">{c.weight.toFixed(2)}</span>
+                    <span className="font-bold text-gray-900">{(Math.floor(c.weight * 10) / 10).toFixed(1)}</span>
                   )}
                 </div>
               ))}

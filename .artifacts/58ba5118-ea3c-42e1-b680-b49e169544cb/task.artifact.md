@@ -1,0 +1,4 @@
+- [x] Update `PeriodicReportReceipt.tsx` to use 6-digit references
+- [x] Update `DeviceZReportReceipt.tsx` to use 6-digit references
+- [x] Update `bluetooth.ts` to use 6-digit references in all receipt types
+- [x] Verify column alignment on print and preview

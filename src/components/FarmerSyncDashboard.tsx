@@ -864,9 +864,9 @@ export const FarmerSyncDashboard = () => {
                 <div className="text-right shrink-0 ml-2">
                   {entry.isCached ? (
                     <div>
-                      <p className="font-semibold">{entry.cumulativeTotal.toFixed(1)} kg</p>
+                      <p className="font-semibold">{(Math.floor(entry.cumulativeTotal * 10) / 10).toFixed(1)} kg</p>
                       {entry.localCount > 0 && (
-                        <p className="text-xs text-primary">+{entry.localCount.toFixed(1)} local</p>
+                        <p className="text-xs text-primary">+{(Math.floor(entry.localCount * 10) / 10).toFixed(1)} local</p>
                       )}
                     </div>
                   ) : (

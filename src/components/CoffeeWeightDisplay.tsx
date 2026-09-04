@@ -68,7 +68,7 @@ export const CoffeeWeightDisplay = ({
       onGrossWeightChange(w);
       // Calculate and propagate net weight using current tare
       const netWeight = Math.max(0, w - localTareWeight);
-      onNetWeightChange(parseFloat(netWeight.toFixed(2)));
+      onNetWeightChange(Math.floor(netWeight * 10) / 10);
     }, 
     onEntryTypeChange 
   });
@@ -85,14 +85,14 @@ export const CoffeeWeightDisplay = ({
   // Calculate net weight from gross (gross - sack tare)
   const netWeight = useMemo(() => {
     const net = Math.max(0, stableDisplayWeight - localTareWeight);
-    return parseFloat(net.toFixed(2));
+    return Math.floor(net * 10) / 10;
   }, [stableDisplayWeight, localTareWeight]);
 
   // Recalculate net weight when tare changes
   useEffect(() => {
     if (stableDisplayWeight > 0) {
       const newNet = Math.max(0, stableDisplayWeight - localTareWeight);
-      onNetWeightChange(parseFloat(newNet.toFixed(2)));
+      onNetWeightChange(Math.floor(newNet * 10) / 10);
     }
   }, [localTareWeight, stableDisplayWeight, onNetWeightChange]);
 
@@ -112,7 +112,8 @@ export const CoffeeWeightDisplay = ({
       return;
     }
     
-    const incomingWeight = liveWeight > 0 ? liveWeight : grossWeight;
+    // v2.12.61: Support negative weight display (e.g. -0.4 when container removed)
+    const incomingWeight = liveWeight !== 0 ? liveWeight : grossWeight;
     
     // Handle zero weight immediately
     if (incomingWeight === 0) {
@@ -143,18 +144,19 @@ export const CoffeeWeightDisplay = ({
     
     if (isStable) {
       const avg = recentReadings.reduce((a, b) => a + b, 0) / recentReadings.length;
-      const roundedAvg = parseFloat(avg.toFixed(2));
+      // v2.12.61: Use consistent rounding that handles negative values
+      const roundedAvg = Math.round(avg * 10) / 10;
       if (roundedAvg !== stableDisplayWeight) {
         setStableDisplayWeight(roundedAvg);
         lastDisplayUpdateRef.current = now;
       }
     } else if (timeSinceLastUpdate > DISPLAY_UPDATE_INTERVAL) {
-      setStableDisplayWeight(parseFloat(incomingWeight.toFixed(2)));
+      setStableDisplayWeight(Math.round(incomingWeight * 10) / 10);
       lastDisplayUpdateRef.current = now;
     }
     
     // Track data received
-    if (incomingWeight > 0) {
+    if (incomingWeight !== 0) {
       setHasReceivedData(true);
       setLastWeightTime(now);
       setShowResubscribe(false);
@@ -226,14 +228,14 @@ export const CoffeeWeightDisplay = ({
 
           <span className="text-xs sm:text-sm font-semibold text-gray-500 uppercase tracking-wide">Gross</span>
           <span className={`text-2xl sm:text-3xl font-black ${
-            (scaleConnected || displayGrossWeight > 0) ? 'text-gray-900' : isConnecting ? 'text-yellow-600' : 'text-gray-400'
+            (scaleConnected || displayGrossWeight !== 0) ? 'text-gray-900' : isConnecting ? 'text-yellow-600' : 'text-gray-400'
           }`}>
             {isConnecting 
               ? '...' 
-              : displayGrossWeight > 0 
-                ? displayGrossWeight.toFixed(2)
+              : displayGrossWeight !== 0
+                ? (Math.round(displayGrossWeight * 10) / 10).toFixed(1)
                 : scaleConnected 
-                  ? '0.00'
+                  ? '0.0'
                   : '--'
             }
           </span>
@@ -273,7 +275,7 @@ export const CoffeeWeightDisplay = ({
             />
           ) : (
             <span className="text-2xl sm:text-3xl font-black text-amber-700">
-              {localTareWeight.toFixed(2)}
+              {(Math.floor(localTareWeight * 10) / 10).toFixed(1)}
             </span>
           )}
           
@@ -293,9 +295,9 @@ export const CoffeeWeightDisplay = ({
             netWeight > 0 ? 'text-green-700' : 'text-gray-400'
           }`}>
             {displayGrossWeight > 0 
-              ? netWeight.toFixed(2)
+              ? (Math.floor(netWeight * 10) / 10).toFixed(1)
               : scaleConnected 
-                ? '0.00'
+                ? '0.0'
                 : '--'
             }
           </span>

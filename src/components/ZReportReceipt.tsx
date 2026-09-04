@@ -80,7 +80,7 @@ export const ZReportReceipt = ({
         receipt += formatLine('Time', formattedTime, W) + '\n';
         receipt += sep + '\n';
         receipt += centerText('SUMMARY', W) + '\n';
-        receipt += formatLine(`Total ${weightLabel}`, `${data.totals.liters.toFixed(2)} ${weightUnit}`, W) + '\n';
+        receipt += formatLine(`Total ${weightLabel}`, `${(Math.floor(data.totals.liters * 10) / 10).toFixed(1)} ${weightUnit}`, W) + '\n';
         receipt += formatLine('Total Farmers', String(data.totals.farmers), W) + '\n';
         receipt += formatLine('Total Entries', String(data.totals.entries), W) + '\n';
         receipt += sep + '\n';
@@ -88,22 +88,22 @@ export const ZReportReceipt = ({
         // By Session (for dairy only)
         if (!isCoffee) {
           receipt += `BY ${periodLabel.toUpperCase()}\n`;
-          receipt += formatLine('Morning (AM)', `${data.bySession.AM.farmers} Farmers (${data.bySession.AM.liters.toFixed(2)}${weightUnit})`, W) + '\n';
-          receipt += formatLine('Evening (PM)', `${data.bySession.PM.farmers} Farmers (${data.bySession.PM.liters.toFixed(2)}${weightUnit})`, W) + '\n';
+          receipt += formatLine('Morning (AM)', `${data.bySession.AM.farmers} Farmers (${(Math.floor(data.bySession.AM.liters * 10) / 10).toFixed(1)}${weightUnit})`, W) + '\n';
+          receipt += formatLine('Evening (PM)', `${data.bySession.PM.farmers} Farmers (${(Math.floor(data.bySession.PM.liters * 10) / 10).toFixed(1)}${weightUnit})`, W) + '\n';
           receipt += sep + '\n';
         }
         
         // By Route
         receipt += `BY ${routeLabel.toUpperCase()}\n`;
         Object.entries(data.byRoute).forEach(([route, routeData]) => {
-          receipt += formatLine(route.substring(0, 20), `${routeData.total.toFixed(2)}${weightUnit}`, W) + '\n';
+          receipt += formatLine(route.substring(0, 20), `${(Math.floor(routeData.total * 10) / 10).toFixed(1)}${weightUnit}`, W) + '\n';
         });
         receipt += sep + '\n';
         
         // By Collector
         receipt += 'BY COLLECTOR\n';
         Object.entries(data.byCollector).forEach(([collector, collectorData]) => {
-          receipt += formatLine(collector.substring(0, 20), `${collectorData.liters.toFixed(2)}${weightUnit}`, W) + '\n';
+          receipt += formatLine(collector.substring(0, 20), `${(Math.floor(collectorData.liters * 10) / 10).toFixed(1)}${weightUnit}`, W) + '\n';
         });
         receipt += sep + '\n';
         
@@ -189,7 +189,7 @@ export const ZReportReceipt = ({
             <div className="text-xs font-bold text-center mb-1">SUMMARY</div>
             <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Total {weightLabel}</span>
-              <span className="font-bold">{data.totals.liters.toFixed(2)} {weightUnit}</span>
+              <span className="font-bold">{(Math.floor(data.totals.liters * 10) / 10).toFixed(1)} {weightUnit}</span>
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-muted-foreground">Total Farmers</span>
@@ -208,13 +208,13 @@ export const ZReportReceipt = ({
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Morning (AM)</span>
                 <span className="font-medium">
-                  {data.bySession.AM.farmers} Farmers ({data.bySession.AM.liters.toFixed(2)}{weightUnit})
+                  {data.bySession.AM.farmers} Farmers ({(Math.floor(data.bySession.AM.liters * 10) / 10).toFixed(1)}{weightUnit})
                 </span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Evening (PM)</span>
                 <span className="font-medium">
-                  {data.bySession.PM.farmers} Farmers ({data.bySession.PM.liters.toFixed(2)}{weightUnit})
+                  {data.bySession.PM.farmers} Farmers ({(Math.floor(data.bySession.PM.liters * 10) / 10).toFixed(1)}{weightUnit})
                 </span>
               </div>
             </div>
@@ -226,7 +226,7 @@ export const ZReportReceipt = ({
             {Object.entries(data.byRoute).map(([route, routeData]) => (
               <div key={route} className="flex justify-between text-xs">
                 <span className="text-muted-foreground truncate max-w-[60%]">{route}</span>
-                <span className="font-medium">{routeData.total.toFixed(2)}{weightUnit}</span>
+                <span className="font-medium">{(Math.floor(routeData.total * 10) / 10).toFixed(1)}{weightUnit}</span>
               </div>
             ))}
             {Object.keys(data.byRoute).length === 0 && (
@@ -240,7 +240,7 @@ export const ZReportReceipt = ({
             {Object.entries(data.byCollector).map(([collector, collectorData]) => (
               <div key={collector} className="flex justify-between text-xs">
                 <span className="text-muted-foreground truncate max-w-[60%]">{collector}</span>
-                <span className="font-medium">{collectorData.liters.toFixed(2)}{weightUnit}</span>
+                <span className="font-medium">{(Math.floor(collectorData.liters * 10) / 10).toFixed(1)}{weightUnit}</span>
               </div>
             ))}
             {Object.keys(data.byCollector).length === 0 && (

@@ -85,7 +85,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
                 key={receipt.orderId}
                 className="p-3 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm"
               >
-                {receipt.farmer_id} - {Number(receipt.weight || 0).toFixed(2)} Kg ⚠️
+                {receipt.farmer_id} - {(Math.floor(Number(receipt.weight || 0) * 10) / 10).toFixed(1)} Kg ⚠️
               </li>
             ))}
           </ul>

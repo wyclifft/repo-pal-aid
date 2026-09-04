@@ -197,7 +197,7 @@ export default function PeriodicReport() {
 
     setLoading(true);
     const formattedStartDate = format(startDate, "yyyy-MM-dd");
-    const formattedEndDate = format(endDate, "yyyy-MM-dd");
+    const formattedEndDate = format(endDate, "yyyy-MM-dd") + " 23:59:59";
     // v2.10.53: include route in cache key so per-route caches don't collide
     const routeKey = activeRoute?.tcode || 'ALL';
     const cacheKey = `${formattedStartDate}_${formattedEndDate}_${routeKey}_${farmerSearch.trim()}`;
@@ -413,7 +413,7 @@ export default function PeriodicReport() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold">Report Results</h2>
               <div className="text-sm text-muted-foreground">
-                {reportData.length} Farmer{reportData.length !== 1 ? 's' : ''} | {totalCollections} Collection{totalCollections !== 1 ? 's' : ''} | {totalWeight.toFixed(2)} {weightUnit} Total
+                {reportData.length} Farmer{reportData.length !== 1 ? 's' : ''} | {totalCollections} Collection{totalCollections !== 1 ? 's' : ''} | {(Math.floor(totalWeight * 10) / 10).toFixed(1)} {weightUnit} Total
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -435,7 +435,7 @@ export default function PeriodicReport() {
                       <TableCell>{item.farmer_name}</TableCell>
                       <TableCell>{item.route}</TableCell>
                       <TableCell>{item.collection_count}</TableCell>
-                      <TableCell>{item.total_weight.toFixed(2)}</TableCell>
+                      <TableCell>{(Math.floor(item.total_weight * 10) / 10).toFixed(1)}</TableCell>
                       <TableCell className="text-right">
                         <Button
                           variant="outline"

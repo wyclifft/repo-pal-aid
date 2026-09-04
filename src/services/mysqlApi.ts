@@ -232,6 +232,7 @@ export interface Farmer {
   currqty?: number; // 0 = hide monthly cumulative on receipt, 1 = show monthly cumulative
   crbal?: string; // Credit balance string from cm_members e.g. "CR02#11200,CR22#340"
   ccode?: string; // Credit code for filtering credit entries
+  status?: number; // 1 = active, 0 = inactive
   created_at?: string;
   updated_at?: string;
 }
@@ -1182,10 +1183,11 @@ export const farmerFrequencyApi = {
   /**
    * Get farmer's monthly cumulative frequency (collection count for current month)
    */
-  getMonthlyFrequency: async (farmerId: string, uniquedevcode: string, route?: string, season?: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
+  getMonthlyFrequency: async (farmerId: string, uniquedevcode: string, route?: string, season?: string, date?: string): Promise<ApiResponse<FarmerMonthlyFrequency>> => {
     let url = `/farmer-monthly-frequency?farmer_id=${encodeURIComponent(farmerId)}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
     if (route) url += `&route=${encodeURIComponent(route)}`;
     if (season) url += `&season=${encodeURIComponent(season)}`;
+    if (date) url += `&date=${encodeURIComponent(date)}`;
     return apiRequest<FarmerMonthlyFrequency>(url);
   },
 

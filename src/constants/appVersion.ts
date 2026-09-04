@@ -1,5 +1,33 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.12.58: SELL PRODUCE RECEIPT REFINEMENT.
+// v2.12.78: INACTIVE MEMBER STATUS VALIDATION.
+//   Enforced cm_members.status check (1 = active, 0 = inactive) across Buy,
+//   Sell, Store, and AI portals. When an inactive member is selected or resolved,
+//   transactions are blocked with the message "Member Inactive. Contact manager
+//   for activation." Works offline via cached IndexedDB member status records.
+//
+// v2.12.77: FIX: BROADCAST NEGATIVE WEIGHTS.
+//   Updated the Bluetooth broadcast layer to allow negative weights to be
+//   sent to the UI. Previously, they were blocked by logic-level guards.
+//
+// v2.12.76: FIX: NEGATIVE PARSER REGEX.
+//   Fixed DR Series parser regex to allow many leading zeros (scale format).
+//   Negative values like -0.4 are now correctly parsed as numbers instead of 0.
+//
+// v2.12.75: FIX: NEGATIVE WEIGHT PARSING.
+//   Updated Bluetooth parsing logic to allow negative values reported by
+//   the scale to reach the UI for display (e.g. -0.4 when container removed).
+//
+// v2.12.74: NEGATIVE WEIGHT DISPLAY SUPPORT.
+//   Enabled the UI to display negative weight values reported by the scale,
+//   supporting workflows where operators tare the scale with an empty container.
+//   Strict validation remains in place to prevent capturing weights ≤ 0.
+//
+// v2.12.73: STORE CUMULATIVE + DATE PICKER.
+//   Store: Automatically populates cumulative weight for selected member.
+//   Added date picker to check historical cumulative weights (monthly/season).
+//   Backend: Updated /api/farmer-monthly-frequency to support date parameter.
+//
+// v2.12.72: SELL PRODUCE RECEIPT REFINEMENT.
 //   Sell Produce: Fixed initial submission receipt title ("PURCHASE RECEIPT")
 //   and total label ("Total Weight [Kgs]"). Strictly suppressed cumulative
 //   totals for direct prints in Sell portal. Fixed custom label truncation
@@ -1254,12 +1282,25 @@
 //   field when a Group Number is selected.
 //   Cache: Bumped CACHE_VERSION to v65 to force asset refresh in built APKs.
 //
-export const APP_VERSION = '2.12.58';
-export const APP_VERSION_CODE = 218;
+// v2.12.72: STORE PRINT OPTIONS.
+//   Store: Added store-specific print copies setting. If store_print_copies
+//   is set in psettings, the Store module uses it instead of the global
+//   printoptions (which defaults to 1). If not set (0), it falls back to
+//   global printoptions.
+//   Settings: Added "Store Print Copies" display to Company Status.
+//
+// v2.12.61: WEIGHT PRECISION REFINEMENT.
+//   Weights: All weight and quantity displays in the UI and receipts now
+//   use one decimal place (e.g. 2.4 instead of 2.40) to match the required
+//   reporting standard. Standard rounding is applied.
+//   Monetary values: KES amounts preserve two decimal places.
+//
+export const APP_VERSION = '2.12.78';
+export const APP_VERSION_CODE = 228;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'sell-receipt-fix';
+export const APP_FIX_TAG = 'inactive-member-validation';
 
 
 

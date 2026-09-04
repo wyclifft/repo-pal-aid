@@ -82,7 +82,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
       
       // Keep only recent readings
       if (stableReadingsRef.current.length > STABLE_READING_COUNT * 2) {
-        stableReadingsRef.current = stableReadingsRef.current.slice(-STABLE_READING_COUNT);
+        stableReadingsRef.current = stableReadingsRef.current.slice(-DISPLAY_STABLE_COUNT);
       }
       
       // Update progress
@@ -94,8 +94,10 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
         const stableWeight = stableReadingsRef.current.slice(-STABLE_READING_COUNT)
           .reduce((a, b) => a + b, 0) / STABLE_READING_COUNT;
         
-        onWeightChange(parseFloat(stableWeight.toFixed(1)));
-        setManualWeight(stableWeight.toFixed(1));
+        // v2.12.61: Consistent rounding
+        const finalWeight = Math.round(stableWeight * 10) / 10;
+        onWeightChange(finalWeight);
+        setManualWeight(finalWeight.toFixed(1));
         onEntryTypeChange('scale');
         setIsWaitingForStable(false);
         setStableReadingProgress(100);
@@ -113,9 +115,10 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
         }
       }
     } else {
-      // No stable reading required - use weight directly (including 0)
+      // No stable reading required OR weight <= 0 - use weight directly (including negative)
+      // v2.12.61: Support negative display
       onWeightChange(newWeight);
-      setManualWeight(newWeight > 0 ? newWeight.toFixed(1) : '');
+      setManualWeight(newWeight !== 0 ? (Math.round(newWeight * 10) / 10).toFixed(1) : '');
       onEntryTypeChange('scale');
     }
   }, [requireStableReading, areReadingsStable, onWeightChange, onEntryTypeChange, isWaitingForStable]);
@@ -210,7 +213,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
         />
 
         <p className="text-3xl font-bold text-primary mb-4">
-          Weight: {weight.toFixed(1)} Kg
+          Weight: {(Math.round(weight * 10) / 10).toFixed(1)} Kg
         </p>
         
         {isBluetoothAvailable && (

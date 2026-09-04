@@ -19,6 +19,8 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSessionBlacklist } from '@/hooks/useSessionBlacklist';
 import { useAppSettings } from '@/hooks/useAppSettings';
+import { isFarmerInactive } from '@/hooks/useFarmerResolution';
+import { InactiveMemberDialog } from '@/components/InactiveMemberDialog';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { cumulativeMonitor, logPrintFinal } from '@/utils/cumulativeMonitor';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
@@ -88,6 +90,7 @@ const Index = () => {
   const [farmerId, setFarmerId] = useState('');
   const [farmerName, setFarmerName] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null); // Full farmer object with multOpt
+  const [inactiveFarmerDialog, setInactiveFarmerDialog] = useState<Farmer | null>(null);
   const [route, setRoute] = useState('');
   const [routeName, setRouteName] = useState('');
   const [selectedRouteCode, setSelectedRouteCode] = useState(''); // tcode from fm_tanks
@@ -1071,6 +1074,16 @@ const Index = () => {
   };
 
   const handleSelectFarmer = (farmer: Farmer) => {
+    if (isFarmerInactive(farmer)) {
+      setInactiveFarmerDialog(farmer);
+      setFarmerId('');
+      setFarmerName('');
+      setRoute('');
+      setSelectedFarmer(null);
+      setSearchValue('');
+      return;
+    }
+
     // Strip any leading # from farmer_id (some databases store it with prefix)
     const cleanFarmerId = farmer.farmer_id.replace(/^#/, '');
     setFarmerId(cleanFarmerId);
@@ -1421,8 +1434,12 @@ const Index = () => {
     
     // For coffee mode: weight = net, also store gross/tare/net
     // For dairy mode: weight = total weight (no tare deduction)
-    const captureWeight = parseFloat(Number(weight).toFixed(2));
+    const captureWeight = Math.floor(Number(weight) * 10) / 10;
     
+    const now = new Date();
+    const pad2 = (n: number) => String(n).padStart(2, '0');
+    const transdate = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+
     const captureData: MilkCollection = {
       reference_no: referenceNo,
       uploadrefno: uploadRefNo, // Type-specific ID for approval workflow
@@ -1434,7 +1451,8 @@ const Index = () => {
       weight: captureWeight, // Net weight for coffee, total for dairy
       user_id: currentUser?.user_id || 'unknown', // Login user_id for DB userId column
       clerk_name: currentUser ? (currentUser.username || currentUser.user_id) : 'unknown', // Display name for clerk column
-      collection_date: new Date(),
+      collection_date: now,
+      transdate, // v2.12.60: Explicit local date for server to avoid timezone shift
       multOpt: farmerMultOpt,
       orderId: Date.now(),
       synced: false, // Not synced - only locally captured
@@ -1451,7 +1469,7 @@ const Index = () => {
       delivered_by: selectedDeliverer ? selectedDeliverer.farmer_id : (deliveredBy || 'owner'),
       // Coffee sack weighing - gross/tare/net (orgtype C only)
       ...(isCoffee && {
-        gross_weight: parseFloat(Number(grossWeight).toFixed(2)),
+        gross_weight: Math.floor(Number(grossWeight) * 10) / 10,
         tare_weight: tareWeight,
         net_weight: captureWeight, // Same as weight for coffee
       }),
@@ -2693,6 +2711,20 @@ const Index = () => {
         locationCode={selectedRouteCode}
         locationName={routeName}
         deliveredBy={selectedDeliverer ? `${selectedDeliverer.farmer_id} - ${selectedDeliverer.name}` : deliveredBy}
+      />
+
+      {/* Inactive Member Dialog */}
+      <InactiveMemberDialog
+        open={!!inactiveFarmerDialog}
+        farmer={inactiveFarmerDialog ? { id: inactiveFarmerDialog.farmer_id.replace(/^#/, ''), name: inactiveFarmerDialog.name } : null}
+        onClose={() => {
+          setInactiveFarmerDialog(null);
+          setFarmerId('');
+          setFarmerName('');
+          setRoute('');
+          setSelectedFarmer(null);
+          setSearchValue('');
+        }}
       />
 
       {/* Reprint Modal */}

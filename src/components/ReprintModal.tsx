@@ -355,6 +355,7 @@ export const ReprintModal = ({
           user_id: collection.user_id,
           clerk_name: collection.clerk_name,
           collection_date: new Date(collection.collection_date),
+          transdate: collection.transdate, // v2.12.60: Forward explicit local date
           device_fingerprint: deviceFingerprint,
           entry_type: (collection.entry_type as 'scale' | 'manual') || 'manual',
           product_code: collection.product_code,
@@ -689,7 +690,7 @@ export const ReprintModal = ({
                         </>
                       ) : (
                         <>
-                          <div className="font-bold text-base sm:text-lg">{getTotalWeight(receipt.collections).toFixed(2)} Kg</div>
+                          <div className="font-bold text-base sm:text-lg">{(Math.floor(getTotalWeight(receipt.collections) * 10) / 10).toFixed(1)} Kg</div>
                           <div className="text-[10px] sm:text-xs text-muted-foreground">{receipt.collections.length} collections</div>
                         </>
                       )}

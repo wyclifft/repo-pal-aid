@@ -168,7 +168,7 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     const recentReadings = readings.slice(-STABLE_READING_COUNT);
     const min = Math.min(...recentReadings);
     const max = Math.max(...recentReadings);
-    return (max - min) <= STABLE_READING_THRESHOLD && min > 0;
+    return (max - min) <= STABLE_READING_THRESHOLD && min >= -50;
   }, []);
 
   // Handle weight reading from scale (BLE or Classic)
@@ -194,7 +194,7 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
       return;
     }
     
-    if (requireStableReading && newWeight > 0) {
+    if (requireStableReading && newWeight !== 0) {
       // Add to readings buffer
       stableReadingsRef.current.push(newWeight);
       
@@ -212,7 +212,8 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         const stableWeight = stableReadingsRef.current.slice(-STABLE_READING_COUNT)
           .reduce((a, b) => a + b, 0) / STABLE_READING_COUNT;
         
-        const finalWeight = parseFloat(stableWeight.toFixed(2));
+        // v2.12.61: Use consistent rounding
+        const finalWeight = Math.round(stableWeight * 10) / 10;
         
         // Only update and broadcast if it's the first stable reading OR weight changed significantly
         if (lastStableWeightRef.current === null || Math.abs(finalWeight - lastStableWeightRef.current) > 0.01) {
@@ -254,9 +255,18 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         }
       }
     } else {
-      // No stable reading required - use weight directly
+      // No stable reading required OR weight is <= 0 - use weight directly
+      // v2.12.61: Propagate negative values for display (e.g. tared scale with container removed)
       onWeightChangeRef.current(newWeight);
       onEntryTypeChangeRef.current('scale');
+
+      // If weight is <= 0, we are definitely not waiting for a stable capture reading
+      if (newWeight <= 0) {
+        updateWaitingState(false);
+        setStableReadingProgress(0);
+        stableReadingsRef.current = [];
+        lastStableWeightRef.current = newWeight;
+      }
     }
   }, [requireStableReading, areReadingsStable, updateWaitingState]);
 

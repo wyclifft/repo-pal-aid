@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type Item, type Sale, type Farmer, type CreditType, type BatchSaleRequest, type Session } from '@/services/mysqlApi';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, X, CornerDownLeft, Camera, Scale, Wifi, WifiOff, Image } from 'lucide-react';
+import { ArrowLeft, Search, X, CornerDownLeft, Camera, Scale, Wifi, WifiOff, Image, Calendar as CalendarIcon } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSalesSync } from '@/hooks/useSalesSync';
-import { useFarmerResolution } from '@/hooks/useFarmerResolution';
+import { useFarmerResolution, isFarmerInactive } from '@/hooks/useFarmerResolution';
+import { InactiveMemberDialog } from '@/components/InactiveMemberDialog';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { API_CONFIG } from '@/config/api';
@@ -23,6 +24,9 @@ import { resolveSessionMetadata, resolveDashboardActiveSession, resolveDashboard
 import type { ReprintItem } from '@/components/ReprintModal';
 import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
 import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
+import { format } from 'date-fns';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
 
 import { isMemberServedToday, markMemberAsServed } from '@/utils/servedMemberTracker';
 
@@ -41,7 +45,7 @@ interface ParsedCredit {
 const Store = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
-  const { settings: psettings, capturePhoto } = useAppSettings();
+  const { settings: psettings, capturePhoto, storePrintCopies } = useAppSettings();
   const [items, setItems] = useState<Item[]>([]);
   const [hasRoutes, setHasRoutes] = useState<boolean | null>(null);
   const [storeEnabled, setStoreEnabled] = useState<boolean | null>(null);
@@ -51,6 +55,7 @@ const Store = () => {
   // Member/Farmer state
   const [memberNo, setMemberNo] = useState('');
   const [selectedFarmer, setSelectedFarmer] = useState<Farmer | null>(null);
+  const [inactiveDialogFarmer, setInactiveDialogFarmer] = useState<Farmer | null>(null);
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [showFarmerSearch, setShowFarmerSearch] = useState(false);
   const [isMemberMode, setIsMemberMode] = useState(true); // true = Members (M prefix), false = Debtors (D prefix)
@@ -85,6 +90,11 @@ const Store = () => {
    // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
 
+  // Cumulative weight state
+  const [cumulativeWeight, setCumulativeWeight] = useState<number | null>(null);
+  const [cumulativeLoading, setCumulativeLoading] = useState(false);
+  const [viewDate, setViewDate] = useState<Date>(new Date());
+
   // v2.12.20: Resolve the active route (store/center) selected on the Dashboard.
   const routeName = useMemo(() => resolveDashboardActiveRoute()?.descript || '', []);
 
@@ -113,7 +123,7 @@ const Store = () => {
   const userId = currentUser?.user_id || 'unknown';
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
 
-  const { getFarmers, saveSale, getUnsyncedSales, getItems, isReady } = useIndexedDB();
+  const { getFarmers, saveSale, getUnsyncedSales, getItems, getFarmerCumulative, isReady } = useIndexedDB();
   const { syncPendingSales: syncPendingSalesHook } = useSalesSync();
   const { addStoreReceipt } = useReprint();
   const { queuePhotoUpload } = useBackgroundPhotoUpload();
@@ -138,6 +148,86 @@ const Store = () => {
     const interval = setInterval(updatePendingSalesCount, 10000);
     return () => clearInterval(interval);
   }, [updatePendingSalesCount]);
+
+  // v2.12.73: Fetch cumulative weight for the selected farmer and date
+  const fetchCumulative = useCallback(async (farmerId: string, date: Date) => {
+    if (!farmerId || !isReady) {
+      setCumulativeWeight(null);
+      return;
+    }
+
+    const fingerprint = await generateDeviceFingerprint();
+    const ymd = date.toISOString().split('T')[0];
+    const isCurrentMonth = format(date, 'yyyy-MM') === format(new Date(), 'yyyy-MM');
+
+    // Helper to get from local DB
+    const getLocal = async () => {
+      try {
+        const scode = activeSession?.SCODE;
+        // v2.12.73: Use local cache if offline or API fails
+        const cached = await getFarmerCumulative(farmerId, undefined, scode);
+        if (cached) {
+          return cached.baseCount + cached.localCount;
+        }
+      } catch (err) {
+        console.warn('[Store] Local cumulative lookup failed:', err);
+      }
+      return null;
+    };
+
+    if (!navigator.onLine) {
+      // Offline: only support current month/season from local DB
+      if (isCurrentMonth) {
+        const localWeight = await getLocal();
+        setCumulativeWeight(localWeight);
+      } else {
+        setCumulativeWeight(null); // No historical data offline
+      }
+      return;
+    }
+
+    try {
+      setCumulativeLoading(true);
+      const response = await mysqlApi.farmerFrequency.getMonthlyFrequency(
+        farmerId,
+        fingerprint,
+        undefined, // route
+        undefined, // season
+        ymd
+      );
+      if (response.success && response.data) {
+        setCumulativeWeight(response.data.cumulative_weight);
+      } else {
+        // API success but no data (or 0) - check local fallback just in case
+        if (isCurrentMonth) {
+          const localWeight = await getLocal();
+          setCumulativeWeight(localWeight);
+        } else {
+          setCumulativeWeight(0);
+        }
+      }
+    } catch (error) {
+      console.warn('[Store] Failed to fetch cumulative from API:', error);
+      // Fallback to local if current month
+      if (isCurrentMonth) {
+        const localWeight = await getLocal();
+        setCumulativeWeight(localWeight);
+      } else {
+        setCumulativeWeight(null);
+      }
+    } finally {
+      setCumulativeLoading(false);
+    }
+  }, [isReady, getFarmerCumulative, activeSession?.SCODE]);
+
+  // Update cumulative weight when farmer or date changes
+  useEffect(() => {
+    if (selectedFarmer) {
+      fetchCumulative(selectedFarmer.farmer_id, viewDate);
+    } else {
+      setCumulativeWeight(null);
+    }
+  }, [selectedFarmer, viewDate, fetchCumulative]);
 
   // Fetch active session on mount.
   // v2.10.56: PRIORITY → Dashboard selection (same source as Buy/Sell), so Store
@@ -427,6 +517,12 @@ const Store = () => {
 
   // Unified farmer selection handler with "already served" check
   const handleSelectFarmer = useCallback((farmer: Farmer) => {
+    if (isFarmerInactive(farmer)) {
+      setInactiveDialogFarmer(farmer);
+      setShowFarmerSearch(false);
+      return;
+    }
+
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
     if (isMemberServedToday(cleanId)) {
       setPendingFarmer(farmer);
@@ -438,6 +534,12 @@ const Store = () => {
     setMemberNo(farmer.farmer_id);
     try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
   }, []);
+
+  const handleInactiveDialogClose = () => {
+    setInactiveDialogFarmer(null);
+    setSelectedFarmer(null);
+    setMemberNo('');
+  };
 
   const confirmSelectServedFarmer = () => {
     if (pendingFarmer) {
@@ -743,9 +845,8 @@ const Store = () => {
         { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
         companyName
       );
-      // Apply printCopies from psettings.printOption
-      const printCopies = psettings?.printoptions !== undefined ? Number(psettings.printoptions) : 1;
-      receipt.printCopies = printCopies;
+      // Apply printCopies from useAppSettings (includes store_print_copies logic)
+      receipt.printCopies = storePrintCopies;
       setReceiptData(receipt);
       setShowReceipt(true);
 
@@ -777,6 +878,12 @@ const Store = () => {
 
       toast.success(`Sale completed: KES${cartTotal.toFixed(0)} [${refs.uploadrefno}]`);
       setCart([]);
+
+      // Refresh cumulative weight after sale
+      if (selectedFarmer) {
+        fetchCumulative(selectedFarmer.farmer_id, viewDate);
+      }
+
       // Clean up photo
       if (photoToUse?.preview) {
         URL.revokeObjectURL(photoToUse.preview);
@@ -908,7 +1015,29 @@ const Store = () => {
             </div>
             <div className="text-right">
               <div className="font-medium">{selectedFarmer?.farmer_id || '-'}</div>
-              <div className="text-sm text-gray-600">-KGS</div>
+              <div className="flex flex-col items-end">
+                <div className="text-sm text-gray-600 flex items-center gap-1">
+                  {cumulativeLoading ? '...' : (cumulativeWeight !== null ? `${cumulativeWeight.toFixed(1)}kg` : '-kg')}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="p-1 hover:bg-gray-100 rounded-full transition-colors">
+                        <CalendarIcon className="h-3.5 w-3.5 text-gray-400" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="end">
+                      <Calendar
+                        mode="single"
+                        selected={viewDate}
+                        onSelect={(date) => date && setViewDate(date)}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="text-[10px] text-gray-400 font-medium">
+                  {psettings?.orgtype === 'C' ? 'Current Season' : format(viewDate, 'MMM yyyy')}
+                </div>
+              </div>
             </div>
           </div>
           <div className="mt-2 border-t pt-2">
@@ -965,7 +1094,7 @@ const Store = () => {
                   </div>
                   <input
                     type="number"
-                    value={cartItem.quantity === 0 ? '' : cartItem.quantity}
+                    value={cartItem.quantity === 0 ? '' : (Math.floor(Number(cartItem.quantity) * 10) / 10).toFixed(1)}
                     onChange={(e) => {
                       const raw = e.target.value;
                       const parsed = parseFloat(raw);
@@ -1239,6 +1368,13 @@ const Store = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Inactive Member Dialog */}
+      <InactiveMemberDialog
+        open={!!inactiveDialogFarmer}
+        farmer={inactiveDialogFarmer ? { id: inactiveDialogFarmer.farmer_id.replace(/^#/, ''), name: inactiveDialogFarmer.name } : null}
+        onClose={handleInactiveDialogClose}
+      />
     </div>
   );
 };

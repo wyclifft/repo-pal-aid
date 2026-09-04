@@ -274,6 +274,9 @@ export const TransactionReceipt = ({
 
       const submitOnce = async (referenceNoToUse: string) => {
         console.log(`[SYNC] Submitting: ref=${referenceNoToUse} (row=${syncKey})`);
+        const pad2 = (n: number) => String(n).padStart(2, '0');
+        const transdate = `${transactionDate.getFullYear()}-${pad2(transactionDate.getMonth() + 1)}-${pad2(transactionDate.getDate())}`;
+
         return mysqlApi.milkCollection.create({
           reference_no: referenceNoToUse,
           uploadrefno: uploadrefno || referenceNoToUse,
@@ -285,6 +288,7 @@ export const TransactionReceipt = ({
           user_id: userId,
           clerk_name: clerkName,
           collection_date: transactionDate,
+          transdate, // v2.12.60: Explicit local date for server
           device_fingerprint: deviceFingerprint,
           entry_type: (entryType as 'scale' | 'manual') || 'manual',
           product_code: productCode,
@@ -483,7 +487,7 @@ export const TransactionReceipt = ({
 
   // Calculate display total
   const displayTotal = (transtype === 1 || isSellProduce)
-    ? totalWeight?.toFixed(2) 
+    ? (Math.floor((totalWeight || 0) * 10) / 10).toFixed(1)
     : totalAmount?.toFixed(2);
 
   return (
@@ -541,7 +545,7 @@ export const TransactionReceipt = ({
                 return (
                   <div key={syncKey} className="flex items-center justify-between text-xs gap-2">
                     <span className={`flex-1 ${hasMissingRef ? 'text-destructive' : ''}`}>{index + 1}: {refNo}</span>
-                    <span className="font-medium">{item.weight?.toFixed(2)}</span>
+                    <span className="font-medium">{(Math.floor((item.weight || 0) * 10) / 10).toFixed(1)}</span>
                   </div>
                 );
               })
@@ -554,7 +558,7 @@ export const TransactionReceipt = ({
                     {/* For Store (transtype 2) - show item name, qty, amount */}
                     {transtype === 2 && (
                       <div className="flex justify-between text-xs">
-                        <span>{item.item_name} x{item.quantity}</span>
+                        <span>{item.item_name} x{(Math.floor(Number(item.quantity || 0) * 10) / 10).toFixed(1)}</span>
                         <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
                       </div>
                     )}
@@ -563,7 +567,7 @@ export const TransactionReceipt = ({
                     {transtype === 3 && (
                       <>
                         <div className="flex justify-between text-xs">
-                          <span>{item.item_name} x{item.quantity}</span>
+                          <span>{item.item_name} x{(Math.floor(Number(item.quantity || 0) * 10) / 10).toFixed(1)}</span>
                           <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
                         </div>
                         {item.cowDetails && (
@@ -609,7 +613,7 @@ export const TransactionReceipt = ({
             {showCumulativeFrequency && !isSellProduce && cumulativeFrequency !== undefined && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Cumulative</span>
-                <span className="font-medium">{cumulativeFrequency.toFixed(2)}</span>
+                <span className="font-medium">{(Math.floor(cumulativeFrequency * 10) / 10).toFixed(1)}</span>
               </div>
             )}
             {showCumulativeFrequency && !isSellProduce && cumulativeByProduct && cumulativeByProduct.length > 1 && (
@@ -617,7 +621,7 @@ export const TransactionReceipt = ({
                 {cumulativeByProduct.map((prod) => (
                   <div key={prod.icode} className="flex justify-between text-[10px]">
                     <span className="text-muted-foreground">{prod.product_name || prod.icode}</span>
-                    <span>{prod.weight.toFixed(2)}</span>
+                    <span>{(Math.floor(prod.weight * 10) / 10).toFixed(1)}</span>
                   </div>
                 ))}
               </div>

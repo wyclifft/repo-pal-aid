@@ -68,7 +68,7 @@ export function PeriodicReportReceipt({
     
     try {
       const formattedStartDate = format(startDate, "yyyy-MM-dd");
-      const formattedEndDate = format(endDate, "yyyy-MM-dd");
+      const formattedEndDate = format(endDate, "yyyy-MM-dd") + " 23:59:59";
       
       console.log('📄 Fetching farmer detail:', { farmerId, formattedStartDate, formattedEndDate, route });
       
@@ -245,32 +245,42 @@ export function PeriodicReportReceipt({
                     DELIVERY BREAKDOWN BY DATE
                   </div>
                   {(() => {
-                    // Group by date, then by deliverer
-                    const dateGroups = new Map<string, Map<string, number>>();
+                    // Group by date to show detailed transactions under date headers
+                    const dateGroups = new Map<string, typeof data.transactions>();
 
                     data.transactions.forEach(tx => {
                       const dateKey = formatDisplayDate(tx.date);
-                      const delivererKey = tx.deliveredby || 'owner';
-
                       if (!dateGroups.has(dateKey)) {
-                        dateGroups.set(dateKey, new Map());
+                        dateGroups.set(dateKey, []);
                       }
-                      const delivererMap = dateGroups.get(dateKey)!;
-                      const currentWeight = delivererMap.get(delivererKey) || 0;
-                      delivererMap.set(delivererKey, currentWeight + (Number(tx.quantity) || 0));
+                      dateGroups.get(dateKey)!.push(tx);
                     });
 
-                    return Array.from(dateGroups.entries()).map(([date, deliverers]) => (
+                    return Array.from(dateGroups.entries()).map(([date, transactions]) => (
                       <div key={date} className="space-y-1">
                         <div className="font-bold text-[10px] bg-muted px-1">{date}</div>
-                        {Array.from(deliverers.entries()).map(([deliverer, weight]) => (
-                          <div key={deliverer} className="flex justify-between text-[10px] pl-2">
-                            <span className="truncate max-w-[70%]">
-                              {resolveMemberName(deliverer, allFarmers)}
-                            </span>
-                            <span className="font-semibold">{weight.toFixed(1)} {weightUnit}</span>
-                          </div>
-                        ))}
+                        {/* Column Headers for clarity (Ref, Deliverer, Qty) */}
+                        <div className="grid text-[9px] font-bold px-1 opacity-70" style={{ gridTemplateColumns: '14ch 1fr 6ch' }}>
+                          <span>REC NO</span>
+                          <span>DELIVERER</span>
+                          <span className="text-right">QTY</span>
+                        </div>
+                        {transactions.map((tx, idx) => {
+                          const ref = tx.rec_no;
+                          // v2.12.60: Keep more of the reference number on screen to avoid squeezing confusion
+                          const recDisplay = (ref && ref.length >= 10)
+                            ? `${ref.slice(0, 4)}-${ref.slice(-8)}`
+                            : ref || '----------';
+                          return (
+                            <div key={idx} className="grid text-[10px] pl-1" style={{ gridTemplateColumns: '14ch 1fr 6ch' }}>
+                              <span className="font-mono">{recDisplay}</span>
+                              <span className="truncate pr-1">
+                                {resolveMemberName(tx.deliveredby || 'owner', allFarmers).split(' - ')[0]}
+                              </span>
+                              <span className="font-semibold text-right">{(Math.floor(Number(tx.quantity) * 10) / 10).toFixed(1)}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     ));
                   })()}
@@ -293,7 +303,7 @@ export function PeriodicReportReceipt({
                           <span className="truncate max-w-[70%]">
                             {resolveMemberName(deliverer, allFarmers)}
                           </span>
-                          <span className="font-bold">{total.toFixed(2)} {weightUnit}</span>
+                          <span className="font-bold">{(Math.floor(total * 10) / 10).toFixed(1)} {weightUnit}</span>
                         </div>
                       ));
                   })()}
@@ -333,30 +343,30 @@ export function PeriodicReportReceipt({
                             <span>{g.label}{showCode && icode !== g.label ? ` (${icode})` : ''} RECORD</span>
                           </div>
                           <div className="border-t border-dashed border-muted-foreground/40" />
-                          <div className="grid font-bold text-[10px]" style={{ gridTemplateColumns: '11ch 11ch 1fr' }}>
+                          <div className="grid font-bold text-[10px]" style={{ gridTemplateColumns: '11ch 14ch 1fr' }}>
                             <span>DATE</span>
                             <span>REC NO</span>
                             <span className="text-right">QUANTITY</span>
                           </div>
                           <div className="border-t border-dotted border-muted-foreground/30" />
                           {g.rows.map((tx, idx) => {
-                            // v2.10.82: REC NO = devcode-LAST5 (e.g. BB01-00002)
+                            // v2.12.60: Keep more of the reference number on screen
                             const ref = tx.rec_no;
-                            const recDisplay = (ref && ref.length >= 9)
-                              ? `${ref.slice(0, 4)}-${ref.slice(-5)}`
-                              : '----------';
+                            const recDisplay = (ref && ref.length >= 10)
+                              ? `${ref.slice(0, 4)}-${ref.slice(-8)}`
+                              : ref || '----------';
                             return (
-                              <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '11ch 11ch 1fr' }}>
+                              <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '11ch 14ch 1fr' }}>
                                 <span>{formatDisplayDate(tx.date)}</span>
                                 <span>{recDisplay}</span>
-                                <span className="text-right">{Number(tx.quantity).toFixed(1)}</span>
+                                <span className="text-right">{(Math.floor(Number(tx.quantity) * 10) / 10).toFixed(1)}</span>
                               </div>
                             );
                           })}
                           <div className="border-t border-dotted border-muted-foreground/30" />
                           <div className="flex justify-between text-[11px] font-semibold">
                             <span>SUBTOTAL:</span>
-                            <span>{g.subtotal.toFixed(2)} {weightUnit}</span>
+                            <span>{(Math.floor(g.subtotal * 10) / 10).toFixed(1)} {weightUnit}</span>
                           </div>
                         </div>
                       ))}
@@ -367,7 +377,7 @@ export function PeriodicReportReceipt({
               <div className="border-t border-dashed border-muted-foreground/40" />
               <div className="flex justify-between font-bold pt-1">
                 <span>TOTAL:</span>
-                <span>{data.total_weight.toFixed(2)} {weightUnit}</span>
+                <span>{(Math.floor(data.total_weight * 10) / 10).toFixed(1)} {weightUnit}</span>
               </div>
               <div className="border-t border-dashed border-muted-foreground/40" />
               

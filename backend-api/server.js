@@ -1380,7 +1380,8 @@ const server = http.createServer(async (req, res) => {
       // Include multOpt to enable client-side duplicate session enforcement
       // Include currqty for controlling monthly cumulative display on receipts (1 = show, 0 = hide)
       // crbal is stored as a string like "CR01#200|CR02#150" - keep as string for parsing
-      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, gender, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members WHERE ccode = ?';
+      // Include status (1 = active, 0 = inactive)
+      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, gender, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal, IFNULL(status, 1) as status FROM cm_members WHERE ccode = ?';
       let params = [ccode];
       
       // Filter by exact route if specified (chkroute=1)
@@ -1407,7 +1408,7 @@ const server = http.createServer(async (req, res) => {
     // Original farmers endpoint (kept for backward compatibility)
     if (path === '/api/farmers' && method === 'GET') {
       const search = parsedUrl.query.search;
-      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, gender, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members';
+      let query = 'SELECT mcode as farmer_id, descript as name, route, ccode, gender, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal, IFNULL(status, 1) as status FROM cm_members';
       let params = [];
       if (search) {
         query += ' WHERE mcode LIKE ? OR descript LIKE ?';
@@ -1420,7 +1421,7 @@ const server = http.createServer(async (req, res) => {
 
     if (path.startsWith('/api/farmers/') && method === 'GET') {
       const id = path.split('/')[3];
-      const [rows] = await pool.query('SELECT mcode as farmer_id, descript as name, route, ccode, gender, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal FROM cm_members WHERE mcode = ?', [id]);
+      const [rows] = await pool.query('SELECT mcode as farmer_id, descript as name, route, ccode, gender, IFNULL(multOpt, 1) as multOpt, IFNULL(currqty, 0) as currqty, IFNULL(crbal, \'\') as crbal, IFNULL(status, 1) as status FROM cm_members WHERE mcode = ?', [id]);
       if (rows.length === 0) return sendJSON(res, { success: false, error: 'Farmer not found' }, 404);
       return sendJSON(res, { success: true, data: rows[0] });
     }
@@ -1828,7 +1829,8 @@ const server = http.createServer(async (req, res) => {
 
         const collectionDate = new Date(body.collection_date);
         const pad2 = (n) => String(n).padStart(2, '0');
-        const transdate = `${collectionDate.getFullYear()}-${pad2(collectionDate.getMonth() + 1)}-${pad2(collectionDate.getDate())}`; // YYYY-MM-DD local
+        // v2.12.60: Use transdate from client if provided to avoid timezone shifts on server
+        const transdate = body.transdate || `${collectionDate.getFullYear()}-${pad2(collectionDate.getMonth() + 1)}-${pad2(collectionDate.getDate())}`; // YYYY-MM-DD local
         const transtime = `${pad2(collectionDate.getHours())}:${pad2(collectionDate.getMinutes())}:${pad2(collectionDate.getSeconds())}`; // HH:MM:SS local
         const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
 
@@ -2249,7 +2251,7 @@ const server = http.createServer(async (req, res) => {
         FROM transactions t
         LEFT JOIN cm_members cm ON t.memberno = cm.mcode AND t.ccode = cm.ccode
         WHERE t.Transtype = 1
-          AND CAST(t.transdate AS DATE) BETWEEN ? AND ?
+          AND DATE(t.transdate) BETWEEN DATE(?) AND DATE(?)
           AND t.ccode = ?
       `;
       let params = [startDate, endDate, ccode];
@@ -2356,7 +2358,7 @@ const server = http.createServer(async (req, res) => {
       // v2.12.19: include icode + product_name per transaction (SARGable)
       const txParams = [nCcode, nFarmerId, startDate, endDate, nCcode];
       let txSql = `SELECT
-          t.transdate as date,
+          DATE_FORMAT(t.transdate, '%Y-%m-%d') as date,
           t.transrefno as rec_no,
           t.weight as quantity,
           t.transtime as time,
@@ -2367,7 +2369,7 @@ const server = http.createServer(async (req, res) => {
         LEFT JOIN fm_items i ON i.icode = t.icode AND i.ccode = ?
         WHERE t.memberno = ?
           AND t.Transtype = 1
-          AND t.transdate BETWEEN ? AND ?
+          AND DATE(t.transdate) BETWEEN DATE(?) AND DATE(?)
           AND t.ccode = ?`;
       if (nRouteFilter) {
         txSql += ` AND t.route = ?`;
@@ -2510,7 +2512,7 @@ const server = http.createServer(async (req, res) => {
         data: {
           date,
           totals: {
-            liters: parseFloat(totalLiters.toFixed(2)),
+            liters: Math.floor(totalLiters * 10) / 10,
             farmers: totalFarmers,
             entries: totalEntries
           },
@@ -2519,12 +2521,12 @@ const server = http.createServer(async (req, res) => {
             AM: {
               entries: bySession.AM.length,
               farmers: new Set(bySession.AM.map(c => c.farmer_id)).size,
-              liters: parseFloat(bySession.AM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0).toFixed(2))
+              liters: Math.floor(bySession.AM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0) * 10) / 10
             },
             PM: {
               entries: bySession.PM.length,
               farmers: new Set(bySession.PM.map(c => c.farmer_id)).size,
-              liters: parseFloat(bySession.PM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0).toFixed(2))
+              liters: Math.floor(bySession.PM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0) * 10) / 10
             }
           },
           byCollector,
@@ -2717,7 +2719,7 @@ const server = http.createServer(async (req, res) => {
           routeLabel,
           clerkName,
           totals: {
-            weight: parseFloat(totalWeight.toFixed(2)),
+            weight: Math.floor(totalWeight * 10) / 10,
             entries: totalEntries,
             farmers: totalFarmers
           },
@@ -3725,6 +3727,7 @@ if (path === '/api/sales' && method === 'POST') {
             email,
             cumulative_frequency_status,
             IFNULL(printOptions, 1) as printOptions,
+            IFNULL(store_print_copies, 0) as store_print_copies,
             IFNULL(chkRoute, 1) as chkRoute,
             IFNULL(rdesc, '') as rdesc,
             IFNULL(stableOpt, 0) as stableOpt,
@@ -3749,6 +3752,7 @@ if (path === '/api/sales' && method === 'POST') {
           const orgtype = companyRows[0].orgtype || 'D';
           appSettings = {
             printoptions: toDbInt(companyRows[0].printOptions, 1),
+            store_print_copies: toDbInt(companyRows[0].store_print_copies, 0),
             chkroute: toDbInt(companyRows[0].chkRoute, 1),
             rdesc: companyRows[0].rdesc,
             stableopt: toDbInt(companyRows[0].stableOpt),
@@ -4375,6 +4379,7 @@ if (path === '/api/sales' && method === 'POST') {
           email,
           cumulative_frequency_status,
           IFNULL(printOptions, 1) as printOptions,
+          IFNULL(store_print_copies, 0) as store_print_copies,
           IFNULL(chkRoute, 1) as chkRoute,
           IFNULL(rdesc, 'Route') as rdesc,
           IFNULL(stableOpt, 0) as stableOpt,
@@ -4403,6 +4408,7 @@ if (path === '/api/sales' && method === 'POST') {
             email: null,
             cumulative_frequency_status: 0,
             printoptions: 1,
+            store_print_copies: 0,
             chkroute: 1,
             rdesc: 'Route',
             stableopt: 0,
@@ -4429,6 +4435,7 @@ if (path === '/api/sales' && method === 'POST') {
           email: rows[0].email,
           cumulative_frequency_status: rows[0].cumulative_frequency_status || 0,
           printoptions: toDbInt(rows[0].printOptions, 1),
+          store_print_copies: toDbInt(rows[0].store_print_copies, 0),
           chkroute: toDbInt(rows[0].chkRoute, 1),
           rdesc: rows[0].rdesc,
           stableopt: toDbInt(rows[0].stableOpt),
@@ -4616,7 +4623,7 @@ if (path === '/api/sales' && method === 'POST') {
     // Farmer monthly cumulative frequency endpoint
     // Returns the count of collections for a farmer in the current month
     if (path === '/api/farmer-monthly-frequency' && method === 'GET') {
-      const { farmer_id, uniquedevcode, route } = parsedUrl.query;
+      const { farmer_id, uniquedevcode, route, date } = parsedUrl.query;
       
       if (!farmer_id || !uniquedevcode) {
         return sendJSON(res, { 
@@ -4670,7 +4677,8 @@ if (path === '/api/sales' && method === 'POST') {
         return `${y}-${m}-${day}`;
       };
 
-      const now = new Date();
+      // v2.12.73: Use provided date or default to now
+      const now = date ? new Date(date) : new Date();
       let periodStart = toYmdLocal(new Date(now.getFullYear(), now.getMonth(), 1));
       let periodEnd = toYmdLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
       

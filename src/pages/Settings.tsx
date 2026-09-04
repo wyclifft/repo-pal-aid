@@ -657,6 +657,10 @@ Date: ${new Date().toLocaleString()}
                 <span className="font-medium">{settings.printoptions}</span>
               </div>
               <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Store Print Copies:</span>
+                <span className="font-medium">{settings.store_print_copies || `${settings.printoptions} (default)`}</span>
+              </div>
+              <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Store Photo Required:</span>
                 <span className={`font-medium ${settings.capture_photo === 1 ? 'text-green-600' : 'text-amber-600'}`}>
                   {settings.capture_photo === 1 ? 'Yes' : 'No'}

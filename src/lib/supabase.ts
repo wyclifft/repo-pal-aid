@@ -10,6 +10,7 @@ export interface Farmer {
   currqty?: number; // 0 = hide monthly cumulative on receipt, 1 = show monthly cumulative
   crbal?: string; // Credit balance string from cm_members e.g. "CR02#11200,CR22#340"
   ccode?: string; // Credit code for filtering credit entries
+  status?: number; // 1 = active, 0 = inactive
 }
 
 export interface AppUser {
@@ -90,6 +91,7 @@ export interface MilkCollection {
   user_id?: string;           // → DB: userId (login user_id for tracking)
   clerk_name: string;         // → DB: clerk (display name/username)
   collection_date: Date;      // → DB: transdate
+  transdate?: string;         // v2.12.60: Explicit local date for server (YYYY-MM-DD)
   /**
    * Snapshot of member multOpt at the time of capture.
    * 0 = single delivery per session, 1 = multiple allowed.

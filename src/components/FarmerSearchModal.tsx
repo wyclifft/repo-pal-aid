@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Search } from 'lucide-react';
 import { type Farmer } from '@/lib/supabase';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { isFarmerInactive, showInactiveMemberToast } from '@/hooks/useFarmerResolution';
 
 interface FarmerSearchModalProps {
   isOpen: boolean;
@@ -68,6 +69,10 @@ export const FarmerSearchModal = ({
   }, [searchQuery, farmers]);
 
   const handleSelect = (farmer: Farmer) => {
+    if (isFarmerInactive(farmer)) {
+      showInactiveMemberToast();
+      return;
+    }
     onSelectFarmer(farmer);
     onClose();
   };
@@ -107,15 +112,27 @@ export const FarmerSearchModal = ({
               {filteredFarmers.map((farmer) => {
                 // Clean farmer_id for display (strip leading #)
                 const displayId = farmer.farmer_id.replace(/^#/, '').trim();
+                const inactive = isFarmerInactive(farmer);
                 return (
                   <div
                     key={farmer.farmer_id}
                     onClick={() => handleSelect(farmer)}
-                    className="flex items-center justify-between px-3 py-3 rounded-lg cursor-pointer hover:bg-teal-50 active:bg-teal-100 border border-gray-100 transition-colors min-h-[48px]"
+                    className={`flex items-center justify-between px-3 py-3 rounded-lg cursor-pointer transition-colors min-h-[48px] border ${
+                      inactive
+                        ? 'bg-red-50 hover:bg-red-100 border-red-200'
+                        : 'hover:bg-teal-50 active:bg-teal-100 border-gray-100'
+                    }`}
                   >
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-gray-900 truncate">
-                        {displayId}
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-gray-900 truncate">
+                          {displayId}
+                        </span>
+                        {inactive && (
+                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-red-600 text-white">
+                            INACTIVE
+                          </span>
+                        )}
                       </div>
                       <div className="text-sm text-gray-600 truncate">
                         {farmer.name}
