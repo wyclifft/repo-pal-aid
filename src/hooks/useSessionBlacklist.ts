@@ -42,11 +42,18 @@ const isCoffeeOrg = (): boolean => {
   }
 };
 
+export interface BlacklistDetail {
+  route?: string;
+  devcode?: string;
+  reference_no?: string;
+}
+
 export const useSessionBlacklist = (
   activeSessionTimeFrom?: number,
   activeSeasonCode?: string // v2.10.60: SCODE for coffee orgs (e.g. 'S0002')
 ) => {
   const [blacklistedFarmerIds, setBlacklistedFarmerIds] = useState<Set<string>>(new Set());
+  const [blacklistedFarmerDetails, setBlacklistedFarmerDetails] = useState<Map<string, BlacklistDetail>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
   const { getRecentReceipts } = useIndexedDB();
 
@@ -71,11 +78,13 @@ export const useSessionBlacklist = (
   ) => {
     if (farmersWithMultOptZero.size === 0) {
       setBlacklistedFarmerIds(new Set());
+      setBlacklistedFarmerDetails(new Map());
       return;
     }
 
     setIsLoading(true);
     const blacklist = new Set<string>();
+    const detailsMap = new Map<string, BlacklistDetail>();
     const today = getTodayDate();
     const sessionType = getSessionType();
     const coffee = isCoffeeOrg();
@@ -118,6 +127,11 @@ export const useSessionBlacklist = (
             // v2.12.41: Trust multOpt on the record itself if cache is missing/stale
             if (r.multOpt === 0 || farmersWithMultOptZero.has(cleanId)) {
               blacklist.add(cleanId);
+              detailsMap.set(cleanId, {
+                route: r.route,
+                devcode: (r as any).devcode || (r as any).device || localStorage.getItem('devcode') || 'Device',
+                reference_no: r.reference_no,
+              });
             }
           }
         });
@@ -143,6 +157,11 @@ export const useSessionBlacklist = (
             const fId = String(c.farmer_id || '').replace(/^#/, '').trim();
             if (farmersWithMultOptZero.has(fId)) {
               blacklist.add(fId);
+              detailsMap.set(fId, {
+                route: c.route,
+                devcode: c.devcode || 'Device',
+                reference_no: c.reference_no,
+              });
             }
           });
         } catch (e) {
@@ -151,6 +170,7 @@ export const useSessionBlacklist = (
       }
 
       setBlacklistedFarmerIds(blacklist);
+      setBlacklistedFarmerDetails(detailsMap);
       console.log(`🚫 Blacklisted ${blacklist.size} farmers for ${coffee ? `coffee/${seasonCode}` : sessionType} session:`, Array.from(blacklist));
     } catch (error) {
       console.error('Failed to refresh blacklist:', error);
@@ -160,11 +180,24 @@ export const useSessionBlacklist = (
   }, [getSessionType, getRecentReceipts, activeSeasonCode]);
 
   // Add a farmer to the blacklist (called after successful submission, not capture)
-  const addToBlacklist = useCallback((farmerId: string) => {
+  const addToBlacklist = useCallback((farmerId: string, details?: BlacklistDetail) => {
     const cleanId = farmerId.replace(/^#/, '').trim();
     setBlacklistedFarmerIds(prev => new Set([...prev, cleanId]));
-    console.log(`🚫 Added ${cleanId} to session blacklist`);
+    if (details) {
+      setBlacklistedFarmerDetails(prev => {
+        const next = new Map(prev);
+        next.set(cleanId, details);
+        return next;
+      });
+    }
+    console.log(`🚫 Added ${cleanId} to session blacklist`, details);
   }, []);
+
+  // Helper to look up blacklist details for a given farmer
+  const getBlacklistDetail = useCallback((farmerId: string): BlacklistDetail | null => {
+    const cleanId = farmerId.replace(/^#/, '').trim();
+    return blacklistedFarmerDetails.get(cleanId) || null;
+  }, [blacklistedFarmerDetails]);
 
   // Check if a farmer is blacklisted
   const isBlacklisted = useCallback((farmerId: string): boolean => {
@@ -175,10 +208,13 @@ export const useSessionBlacklist = (
   // Clear blacklist (e.g., when session changes)
   const clearBlacklist = useCallback(() => {
     setBlacklistedFarmerIds(new Set());
+    setBlacklistedFarmerDetails(new Map());
   }, []);
 
   return {
     blacklistedFarmerIds,
+    blacklistedFarmerDetails,
+    getBlacklistDetail,
     isBlacklisted,
     addToBlacklist,
     refreshBlacklist,

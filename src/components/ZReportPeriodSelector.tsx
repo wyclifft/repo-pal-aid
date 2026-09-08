@@ -23,11 +23,12 @@ export type ZReportPeriod = string;
 export interface SessionOptionInput {
   SCODE?: string;
   descript?: string;
+  milk_session_id?: string;
 }
 
 interface BuiltOption {
-  value: string;          // SCODE or 'all'
-  label: string;          // e.g. "Morning Z"
+  value: string;          // SCODE, milk_session_id, or 'all'
+  label: string;          // e.g. "Morning Z" or "AM Session Z (AG05849201)"
   description: string;    // e.g. "Morning session collections only"
   icon: JSX.Element;
 }
@@ -47,8 +48,23 @@ const buildOptions = (sessions: SessionOptionInput[]): BuiltOption[] => {
   const list: BuiltOption[] = [];
 
   (sessions || []).forEach((s) => {
+    const milkId = String(s?.milk_session_id || '').trim();
     const code = String(s?.SCODE || '').trim();
     const descript = String(s?.descript || '').trim();
+
+    if (milkId && milkId !== '0' && milkId.length === 10) {
+      if (seen.has(milkId)) return;
+      seen.add(milkId);
+      const sessionName = descript || code || 'Session';
+      list.push({
+        value: milkId,
+        label: `${sessionName} Z (${milkId})`,
+        description: `Milk Session ID: ${milkId}`,
+        icon: pickIcon(sessionName),
+      });
+      return;
+    }
+
     if (!code) return;
     const key = code.toUpperCase();
     if (seen.has(key)) return;
@@ -106,6 +122,12 @@ export const ZReportPeriodSelector = ({
     onClose();
   };
 
+  const handleSelectOption = (option: BuiltOption) => {
+    setSelectedPeriod(option.value);
+    onSelect(option.value, option.label);
+    onClose();
+  };
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-sm">
@@ -119,7 +141,11 @@ export const ZReportPeriodSelector = ({
         <div className="py-4">
           <RadioGroup
             value={selectedPeriod}
-            onValueChange={(value) => setSelectedPeriod(value)}
+            onValueChange={(value) => {
+              setSelectedPeriod(value);
+              const opt = options.find(o => o.value === value);
+              if (opt) handleSelectOption(opt);
+            }}
             className="space-y-3"
           >
             {options.map((option) => (
@@ -130,7 +156,7 @@ export const ZReportPeriodSelector = ({
                     ? 'border-primary bg-primary/5'
                     : 'border-border hover:bg-muted/50'
                 }`}
-                onClick={() => setSelectedPeriod(option.value)}
+                onClick={() => handleSelectOption(option)}
               >
                 <RadioGroupItem value={option.value} id={`zperiod-${option.value}`} />
                 <div className="flex-shrink-0">{option.icon}</div>
@@ -170,7 +196,7 @@ export const ZReportPeriodSelector = ({
  *   that pre-date season_code.
  * - v2.12.37: For Dairy (orgtype D), filter strictly by session column.
  */
-export const filterTransactionsByPeriod = <T extends { session?: string; season_code?: string }>(
+export const filterTransactionsByPeriod = <T extends { session?: string; season_code?: string; milk_session_id?: string }>(
   transactions: T[],
   period: ZReportPeriod,
   orgtype?: string
@@ -180,27 +206,31 @@ export const filterTransactionsByPeriod = <T extends { session?: string; season_
   const target = String(period).trim().toUpperCase();
   if (!target) return transactions;
 
-  // v2.12.37: Dairy (orgtype D) filters strictly by transactions.session (AM/PM)
-  // Replacing CAN-based filtering with session-based filtering for Dairy.
-  if (orgtype === 'D') {
-    let sessionTarget = target;
-    // Map common SCODEs to AM/PM if they come from dynamic session rows
-    if (['MO', 'MORNING', 'AM'].includes(target)) sessionTarget = 'AM';
-    else if (['AF', 'AFTERNOON', 'PM', 'EV', 'EVE', 'EVENING'].includes(target)) sessionTarget = 'PM';
-
+  // 10-digit milk_session_id filtering takes absolute priority
+  if (target.length === 10) {
     return transactions.filter(tx => {
-      const sess = String(tx.session || '').trim().toUpperCase();
-      return sess === sessionTarget;
+      const milkId = String(tx.milk_session_id || '').trim().toUpperCase();
+      return milkId === target;
     });
   }
 
-  // Coffee/Legacy logic: prioritize season_code (CAN)
   return transactions.filter(tx => {
+    const milkId = String(tx.milk_session_id || '').trim().toUpperCase();
+    if (milkId && milkId === target) return true;
+
+    if (orgtype === 'D') {
+      let sessionTarget = target;
+      if (['MO', 'MORNING', 'AM'].includes(target)) sessionTarget = 'AM';
+      else if (['AF', 'AFTERNOON', 'PM', 'EV', 'EVE', 'EVENING'].includes(target)) sessionTarget = 'PM';
+
+      const sess = String(tx.session || '').trim().toUpperCase();
+      const can = String(tx.season_code || '').trim().toUpperCase();
+      return sess === sessionTarget || can === sessionTarget;
+    }
+
     const can = String(tx.season_code || '').trim().toUpperCase();
-    if (can) return can === target;
-    // Legacy fallback (older rows without season_code populated)
     const sess = String(tx.session || '').trim().toUpperCase();
-    return sess === target;
+    return can === target || sess === target;
   });
 };
 

@@ -1,4 +1,27 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.82: MILK SESSION ID SANITATION & PM SESSION (0) Z-REPORT FIX.
+//   Sanitized store/AI sale backend inserts to save body/item milk_session_id or '' instead of literal 0.
+//   Updated Z-Report backend distinct session query and frontend session resolution to strictly require
+//   valid 10-character milk_session_id strings, preventing legacy or fallback '0' entries from rendering
+//   as 'PM SESSION (0)' or 'MILK SESSION ID : 0'. Auto-heals missing or invalid session IDs in active state.
+//
+// v2.12.81: DIRECT Z-REPORT PREVIEW & CONDITIONAL SESSION ID DISPLAY.
+//   Period Selector: Selecting any session option (AM, PM, Session ID, or All Z)
+//   immediately confirms and opens the receipt preview directly.
+//   Receipt & Print: Suppressed header SESSION ID when AM, PM, or All Z reports are
+//   selected, displaying SESSION ID strictly when a specific 10-digit session ID is selected.
+//
+// v2.12.80: Z-REPORT HEADER CLEANUP & SESSION ID LAYOUT.
+//   Removed session details from the top header title ("Z REPORT: PM SESSION Z (...)")
+//   so the header cleanly displays "Z REPORT".
+//   Structured session metadata so "SESSION: PM" is followed directly by "SESSION ID: <id>".
+//
+// v2.12.79: UNIQUE milk_session_id SESSION MANAGEMENT (Dairy orgtype=D).
+//   Added unique 10-digit milk_session_id generated on session open (devcode + time/random digits).
+//   Attached milk_session_id to all Buy and Sell transactions, IndexedDB, and server sync.
+//   Updated Z-Report session selector, preview, thermal print, and PDF export to filter & show milk_session_id.
+//   Added session close confirmation dialog displaying current & next milk_session_id prior to closing session.
+//
 // v2.12.78: INACTIVE MEMBER STATUS VALIDATION.
 //   Enforced cm_members.status check (1 = active, 0 = inactive) across Buy,
 //   Sell, Store, and AI portals. When an inactive member is selected or resolved,
@@ -1289,18 +1312,18 @@
 //   global printoptions.
 //   Settings: Added "Store Print Copies" display to Company Status.
 //
-// v2.12.61: WEIGHT PRECISION REFINEMENT.
-//   Weights: All weight and quantity displays in the UI and receipts now
-//   use one decimal place (e.g. 2.4 instead of 2.40) to match the required
-//   reporting standard. Standard rounding is applied.
-//   Monetary values: KES amounts preserve two decimal places.
+// v2.12.83: SESSION CLOSE, Z-REPORT & STORE SYNC ENHANCEMENTS.
+//   Session Close: Simplified closing prompt for orgtype C ("Are you sure you want to close this session?").
+//   Z-Report: Removed "No. of Session IDs" under BY COLLECTOR for orgtype C; fixed Season Description
+//   resolution so Z-reports show descriptive season names (e.g. MAIN CROP) instead of raw codes (S0002).
+//   Sync: Integrated native SQLite store_sale and ai_sale records into global background sync for all orgtypes.
 //
-export const APP_VERSION = '2.12.78';
-export const APP_VERSION_CODE = 228;
+export const APP_VERSION = '2.12.83';
+export const APP_VERSION_CODE = 232;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'inactive-member-validation';
+export const APP_FIX_TAG = 'zreport-session-orgc-sync-fix';
 
 
 

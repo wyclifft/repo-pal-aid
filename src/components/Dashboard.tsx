@@ -10,9 +10,11 @@ import { MemberSyncBanner } from '@/components/MemberSyncBanner';
 import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { SessionExpiredDialog } from '@/components/SessionExpiredDialog';
 import { AddMemberModal } from '@/components/AddMemberModal';
+import { CloseSessionConfirmDialog } from '@/components/CloseSessionConfirmDialog';
 
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { APP_VERSION, APP_VERSION_CODE } from '@/constants/appVersion';
+import { generateMilkSessionId } from '@/utils/sessionMetadata';
 import { useSync } from '@/contexts/SyncContext';
 import { useSessionClose } from '@/hooks/useSessionClose';
 import { useSessionExpiration } from '@/hooks/useSessionExpiration';
@@ -111,14 +113,21 @@ export const Dashboard = ({
   const [sessionActive, setSessionActive] = useState(() => {
     return initialDataRef.current?.active === true;
   });
-  
+
+  const [milkSessionId, setMilkSessionId] = useState<string | null>(() => {
+    return initialDataRef.current?.milk_session_id || null;
+  });
+
+  const [showCloseConfirmModal, setShowCloseConfirmModal] = useState(false);
+  const [nextMilkSessionIdPreview, setNextMilkSessionIdPreview] = useState<string | null>(null);
+
   // Initialize connection status from actual bluetooth state
   const [scaleConnected, setScaleConnected] = useState(() => isScaleConnected());
   const [printerConnected, setPrinterConnected] = useState(() => isPrinterConnected());
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [availableProductCount, setAvailableProductCount] = useState(0);
   const { syncAllData, isSyncing, isSyncingMembers, memberSyncCount } = useSync();
-  const { sessionPrintOnly, periodLabel, produceLabel } = useAppSettings();
+  const { sessionPrintOnly, periodLabel, produceLabel, isCoffee, settings } = useAppSettings();
   
   // Session expiration monitoring - only active when session is started
   const { 
@@ -174,6 +183,7 @@ export const Dashboard = ({
     setSelectedRoute(null);
     setSelectedSession(null);
     setSelectedProduct(null);
+    setMilkSessionId(null);
     localStorage.removeItem(SESSION_STORAGE_KEY);
   }, []);
   
@@ -221,15 +231,25 @@ export const Dashboard = ({
 
   // Persist session state to localStorage whenever it changes
   useEffect(() => {
+    // If session is active but milkSessionId is missing or invalid ('0' or not 10 chars), generate one (Dairy orgtype D only)
+    let activeMilkId = milkSessionId;
+    const cleanMilkId = String(activeMilkId || '').trim();
+    if (!isCoffee && sessionActive && (!cleanMilkId || cleanMilkId === '0' || cleanMilkId.length !== 10)) {
+      const devcode = localStorage.getItem('devcode') || '';
+      activeMilkId = generateMilkSessionId(devcode);
+      setMilkSessionId(activeMilkId);
+    }
+
     const sessionData = {
       route: selectedRoute,
       session: selectedSession,
       product: selectedProduct,
       active: sessionActive,
+      milk_session_id: (!isCoffee && sessionActive) ? activeMilkId : null,
       timestamp: Date.now()
     };
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionData));
-  }, [selectedRoute, selectedSession, selectedProduct, sessionActive]);
+  }, [selectedRoute, selectedSession, selectedProduct, sessionActive, milkSessionId, isCoffee]);
 
   const handleRouteChange = (route: Route | null) => {
     setSelectedRoute(route);
@@ -254,6 +274,14 @@ export const Dashboard = ({
 
   const handleNewSession = () => {
     if (selectedRoute && selectedSession) {
+      if (!isCoffee) {
+        const devcode = localStorage.getItem('devcode') || '';
+        const newMilkSessionId = generateMilkSessionId(devcode);
+        setMilkSessionId(newMilkSessionId);
+        console.log('🥛 [SESSION] New 10-digit milk_session_id generated:', newMilkSessionId);
+      } else {
+        setMilkSessionId(null);
+      }
       setSessionActive(true);
       // Reset expiration when starting a new session
       resetExpiration();
@@ -265,16 +293,33 @@ export const Dashboard = ({
     acknowledgeExpiration();
     setSessionActive(false);
     setSelectedSession(null);
+    setMilkSessionId(null);
     // Don't clear route/product - just require new session selection
     toast.info(`Please select an active ${periodLabel.toLowerCase()}`);
   }, [acknowledgeExpiration, periodLabel]);
 
-  // Legacy handler removed - now using useSessionClose hook
-  const handleCloseSession = () => {
+  // Session close handler with confirmation dialog
+  const handleCloseSessionClick = () => {
+    if (!isCoffee) {
+      const devcode = localStorage.getItem('devcode') || '';
+      const nextId = generateMilkSessionId(devcode);
+      setNextMilkSessionIdPreview(nextId);
+    } else {
+      setNextMilkSessionIdPreview(null);
+    }
+    setShowCloseConfirmModal(true);
+  };
+
+  const handleConfirmCloseSession = () => {
+    setShowCloseConfirmModal(false);
     closeSession();
   };
 
   const handleBuyProduce = () => {
+    if (isSessionExpired || !sessionActive) {
+      toast.error(`Session is expired or inactive. Please select an active ${periodLabel.toLowerCase()}`);
+      return;
+    }
     if (selectedRoute && selectedSession) {
       // Check clientFetch permissions
       if (selectedRoute.allowBuy === false) {
@@ -286,6 +331,10 @@ export const Dashboard = ({
   };
 
   const handleSellProduce = () => {
+    if (isSessionExpired || !sessionActive) {
+      toast.error(`Session is expired or inactive. Please select an active ${periodLabel.toLowerCase()}`);
+      return;
+    }
     if (selectedRoute && selectedSession) {
       // Check clientFetch permissions
       if (selectedRoute.allowSell === false) {
@@ -617,7 +666,7 @@ export const Dashboard = ({
               {/* Close Session */}
               <div className="flex justify-center">
                 <button
-                  onClick={handleCloseSession}
+                  onClick={handleCloseSessionClick}
                   disabled={!canClose}
                   className="px-6 py-2.5 bg-[#7E57C2] text-white font-bold rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
@@ -633,7 +682,7 @@ export const Dashboard = ({
               <div className="flex justify-center gap-3 flex-wrap">
                 <button
                   onClick={handleBuyProduce}
-                  disabled={selectedRoute?.allowBuy === false}
+                  disabled={selectedRoute?.allowBuy === false || isSessionExpired || !sessionActive}
                   className={`flex-1 max-w-[10rem] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem] disabled:opacity-50 disabled:cursor-not-allowed`}
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
@@ -641,7 +690,7 @@ export const Dashboard = ({
                 </button>
                 <button
                   onClick={handleSellProduce}
-                  disabled={selectedRoute?.allowSell === false}
+                  disabled={selectedRoute?.allowSell === false || isSessionExpired || !sessionActive}
                   className={`flex-1 max-w-[10rem] py-2.5 bg-[#7E57C2] text-white font-bold italic rounded-lg hover:bg-[#6D47B1] active:bg-[#5C37A0] transition-colors shadow-md min-h-[2.75rem] disabled:opacity-50 disabled:cursor-not-allowed`}
                   style={{ fontSize: 'clamp(0.75rem, 3vw, 0.875rem)' }}
                 >
@@ -722,6 +771,16 @@ export const Dashboard = ({
           onClose={() => setAddMemberOpen(false)}
         />
       )}
+
+      {/* Close Session Confirmation Dialog */}
+      <CloseSessionConfirmDialog
+        open={showCloseConfirmModal}
+        currentMilkSessionId={milkSessionId}
+        nextMilkSessionId={nextMilkSessionIdPreview}
+        onConfirm={handleConfirmCloseSession}
+        onCancel={() => setShowCloseConfirmModal(false)}
+        orgtype={settings?.orgtype || (isCoffee ? 'C' : 'D')}
+      />
     </div>
   );
 };

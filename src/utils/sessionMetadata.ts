@@ -131,3 +131,49 @@ export const resolveSessionMetadata = (
     backend_session,
   };
 };
+
+/**
+ * Generate a unique 10-character milk_session_id.
+ * Begins with devcode (e.g. AG05, BA02, 01) if available, followed by numeric digits
+ * derived from timestamp & random sequence to guarantee 10-character uniqueness.
+ */
+export const generateMilkSessionId = (devcode?: string): string => {
+  const dc = (devcode || (typeof localStorage !== 'undefined' ? localStorage.getItem('devcode') : '') || '00')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const prefix = dc.slice(0, 4) || '00'; // Up to 4 chars
+  const remainingLength = 10 - prefix.length;
+  const timeStr = Date.now().toString(); // e.g. "1712345678901"
+  const randStr = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  const digits = (timeStr + randStr).slice(-remainingLength);
+  return `${prefix}${digits}`;
+};
+
+/**
+ * Resolve the active milk_session_id from localStorage.active_session_data.
+ */
+export const resolveDashboardMilkSessionId = (): string | null => {
+  try {
+    if (isCoffeeOrg()) return null;
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('active_session_data') : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.active) return null;
+
+    // Auto-heal: if session is active but milk_session_id is missing or invalid ('0' or not 10 chars), generate & persist one
+    const currentId = String(parsed.milk_session_id || '').trim();
+    if (!currentId || currentId === '0' || currentId.length !== 10) {
+      const devcode = localStorage.getItem('devcode') || '';
+      const newMilkId = generateMilkSessionId(devcode);
+      parsed.milk_session_id = newMilkId;
+      localStorage.setItem('active_session_data', JSON.stringify(parsed));
+      console.log('🥛 [SESSION] Auto-healed missing/invalid milk_session_id:', newMilkId);
+      return newMilkId;
+    }
+
+    return currentId;
+  } catch {
+    return null;
+  }
+};
+

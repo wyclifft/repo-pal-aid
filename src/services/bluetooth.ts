@@ -2330,6 +2330,7 @@ export const printZReport = async (data: {
   isCoffee?: boolean;
   activeRouteCode?: string; // v2.12.21: prioritize this store in the print order
   periodFilter?: string; // Display label for selected period (e.g., "Morning Z", "All Z")
+  milkSessionId?: string; // Explicit 10-digit Milk Session ID if selected
   // v2.10.98: 'store' renders a stock-only Z report — no SUMMARY/SEASON/PRODUCE
   // metadata, item names left-aligned full-width, items+KSh totals only.
   reportType?: 'produce' | 'store';
@@ -2337,6 +2338,13 @@ export const printZReport = async (data: {
   // 58mm thermal paper = 32 characters per line
   const W = 32;
   const sep = '-'.repeat(W);
+
+  // Helper to determine if a transaction represents produce (weight in KGS) vs store merchandise
+  const isProduceTx = (tx: { product_code?: string; milk_session_id?: string; transtype?: number }) => {
+    const code = (tx.product_code || '').trim().toUpperCase();
+    const milkId = String((tx as any).milk_session_id || '').trim();
+    return code === 'S0001' || tx.transtype === 1 || milkId.length === 10 || (tx.transtype === 2 && data.isCoffee);
+  };
 
   // Format date as DD/MM/YYYY
   const formattedDate = new Date(data.date).toLocaleDateString('en-GB', {
@@ -2420,16 +2428,20 @@ export const printZReport = async (data: {
   // Header — Company Name (centered, intentional)
   receipt += centerText(data.companyName, W) + '\n';
   if (isStore) {
-    receipt += centerText('Z REPORT: STORE Z', W) + '\n';
-  } else if (data.periodFilter) {
-    receipt += centerText(`Z REPORT: ${data.periodFilter.toUpperCase()}`, W) + '\n';
+    receipt += centerText('STORE Z REPORT', W) + '\n';
+  } else {
+    receipt += centerText('Z REPORT', W) + '\n';
   }
   receipt += sep + '\n';
 
   // Metadata block — store mode emits only DATE + CENTER, no produce fields.
+  const milkSessionId = data.milkSessionId && String(data.milkSessionId).trim().length === 10 ? data.milkSessionId : null;
   if (!isStore) {
     receipt += `* ${data.produceLabel.toUpperCase()} SUMMARY\n`;
     receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
+    if (milkSessionId) {
+      receipt += `* SESSION ID: ${milkSessionId}\n`;
+    }
   }
   receipt += `* DATE: ${formattedDate}\n`;
 
@@ -2525,10 +2537,11 @@ export const printZReport = async (data: {
         }
       }
 
+      const isProduceGroup = !isStore && (transtype === 1 || typeGroup.transactions.every(t => isProduceTx(t)));
       if (showMoney) {
         const qtyStr = (Math.floor(sellAiItemCount * 10) / 10).toFixed(1);
-        const itemsLabel = sellAiItemCount === 1 ? 'item' : 'items';
-        const right = `${qtyStr} ${itemsLabel}  KSh ${typeGroup.totalAmount.toFixed(0)}`;
+        const unitLabel = isProduceGroup ? weightUnit : (sellAiItemCount === 1 ? 'item' : 'items');
+        const right = `${qtyStr} ${unitLabel}  KSh ${typeGroup.totalAmount.toFixed(0)}`;
         receipt += lr(`${typeGroup.typeLabel} TOTAL`, right) + '\n';
       } else {
         receipt += lr(`${typeGroup.typeLabel} TOTAL`, `${(Math.floor(typeGroup.totalWeight * 10) / 10).toFixed(1)} ${weightUnit}`) + '\n';
@@ -2540,32 +2553,39 @@ export const printZReport = async (data: {
   receipt += sep + '\n';
 
   // Grand totals — split by what each transtype represents:
-  //   TOTAL <kg> KGS    → BUY only (weight is meaningful)
-  //   TOTAL ITEMS <n>   → SELL+AI only (units sold)
-  //   TOTAL VALUE KSh n → SELL+AI only (monetary)
+  //   TOTAL BUY <kg> KGS          → BUY produce (weight)
+  //   TOTAL SELL PRODUCE <kg> KGS  → SELL produce (weight)
+  //   TOTAL STORE ITEMS <n> items  → Store merchandise
+  //   TOTAL VALUE KSh n            → Monetary amount
   let buyWeight = 0;
-  let sellAiItems = 0;
+  let sellProduceWeight = 0;
+  let storeItemsCount = 0;
   let sellAiAmount = 0;
-  const foundTypes = new Set<number>();
 
   for (const tx of data.transactions) {
     const tt = tx.transtype || 1;
-    foundTypes.add(tt);
     if (tt === 1) {
       buyWeight += tx.weight;
     } else {
       sellAiAmount += Number(tx.amount || 0);
-      sellAiItems += Math.max(0, Math.round(tx.weight || 0));
+      if (isProduceTx(tx)) {
+        sellProduceWeight += tx.weight;
+      } else {
+        storeItemsCount += Math.max(0, Math.round(tx.weight || 0));
+      }
     }
   }
 
   if (!isStore && buyWeight > 0) {
-    receipt += lr('TOTAL', `${(Math.floor(buyWeight * 10) / 10).toFixed(1)} ${weightUnit}`) + '\n';
+    receipt += lr('TOTAL BUY', `${(Math.floor(buyWeight * 10) / 10).toFixed(1)} ${weightUnit}`) + '\n';
   }
-  if (sellAiItems > 0) {
-    const qtyStr = (Math.floor(sellAiItems * 10) / 10).toFixed(1);
-    const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
-    receipt += lr('TOTAL ITEMS', `${qtyStr} ${itemsLabel}`) + '\n';
+  if (!isStore && sellProduceWeight > 0) {
+    receipt += lr('TOTAL SELL PRODUCE', `${(Math.floor(sellProduceWeight * 10) / 10).toFixed(1)} ${weightUnit}`) + '\n';
+  }
+  if (storeItemsCount > 0) {
+    const qtyStr = (Math.floor(storeItemsCount * 10) / 10).toFixed(1);
+    const itemsLabel = storeItemsCount === 1 ? 'item' : 'items';
+    receipt += lr('TOTAL STORE ITEMS', `${qtyStr} ${itemsLabel}`) + '\n';
   }
   if (sellAiAmount > 0) {
     receipt += lr('TOTAL VALUE', `KSh ${sellAiAmount.toFixed(0)}`) + '\n';

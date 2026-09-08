@@ -82,6 +82,7 @@ export interface MilkCollection {
   farmer_id: string;          // → DB: memberno
   farmer_name: string;        // Display only, not stored directly
   route: string;              // → DB: route
+  devcode?: string;           // Device code that performed the collection
   // → DB: session column
   // Dairy (orgtype D): "AM" | "PM"
   // Coffee (orgtype C): SCODE (v2.10.51 — NEVER descript, NEVER AM/PM)
@@ -106,6 +107,7 @@ export interface MilkCollection {
   entry_type?: 'scale' | 'manual';
   // Season SCODE for coffee (orgtype C) - saved to transactions.CAN column
   season_code?: string;       // → DB: CAN (stores session.SCODE for all orgtypes)
+  milk_session_id?: string;   // → DB: milk_session_id (10-digit unique session code)
   // Coffee sack weighing - gross/tare/net (orgtype C only)
   gross_weight?: number;      // Gross weight from scale (before sack deduction)
   tare_weight?: number;       // Fixed sack weight (1 kg per sack)

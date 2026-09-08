@@ -360,6 +360,7 @@ export const ReprintModal = ({
           entry_type: (collection.entry_type as 'scale' | 'manual') || 'manual',
           product_code: collection.product_code,
           season_code: collection.season_code,
+          milk_session_id: collection.milk_session_id,
           transtype: collection.transtype || 1,
         });
       };

@@ -89,15 +89,31 @@ export const DeviceZReportReceipt = ({
   // Produce report → only transtype 1, with normal period filtering preserved.
   const filteredTransactions = useMemo(() => {
     if (!data?.transactions?.length) return [];
+
     if (isStoreReport) {
-      return data.transactions.filter(t => {
+      // Store Portal Report: Only sales/AI from Store portal (no milk_session_id)
+      const storeOnly = data.transactions.filter(t => {
         const tt = Number((t as any).transtype) || 1;
+        const milkId = String((t as any).milk_session_id || '').trim();
+        // If it has a 10-character milk_session_id, it belongs to a Dairy Milk Session, not Store portal
+        if (milkId.length === 10) return false;
         return tt === 2 || tt === 3;
       });
+      return filterTransactionsByPeriod(storeOnly, selectedPeriod, data.orgtype);
     }
+
+    // Produce Session Report: Buy produce (1) and Sell produce (2)
     const produceOnly = data.transactions.filter(t => {
       const tt = Number((t as any).transtype) || 1;
-      return tt === 1;
+      const milkId = String((t as any).milk_session_id || '').trim();
+      if (tt === 1) return true;
+      // In Dairy (orgtype D), include transtype=2 (Sell Produce) if it belongs to a milk session.
+      // In Coffee (orgtype C), include transtype=2 (Sell Produce) unconditionally.
+      if (tt === 2) {
+        if (data.orgtype === 'C') return true;
+        if (data.orgtype === 'D' && milkId.length === 10) return true;
+      }
+      return false;
     });
     return filterTransactionsByPeriod(produceOnly, selectedPeriod, data.orgtype);
   }, [data?.transactions, selectedPeriod, isStoreReport, data?.orgtype]);
@@ -177,7 +193,35 @@ export const DeviceZReportReceipt = ({
   const centerName = useMemo(() => {
     return routeName || '';
   }, [routeName]);
-  
+
+  const activeMilkSessionId = useMemo(() => {
+    if (selectedPeriod && String(selectedPeriod).trim().length === 10 && selectedPeriod !== 'all' && selectedPeriod !== '0') {
+      return selectedPeriod;
+    }
+    return null;
+  }, [selectedPeriod]);
+
+  const activeSessionName = useMemo(() => {
+    const isCoffeeOrg = data?.isCoffee || data?.orgtype === 'C';
+    if (isCoffeeOrg && data?.seasonName) {
+      return String(data.seasonName).toUpperCase();
+    }
+
+    if (filteredTransactions.length > 0) {
+      const sess = (filteredTransactions[0] as any).session || (filteredTransactions[0] as any).season_code;
+      if (sess) {
+        return String(sess).toUpperCase();
+      }
+    }
+    if (selectedPeriod && selectedPeriod !== 'all' && selectedPeriod.length < 10) {
+      let code = selectedPeriod.toUpperCase();
+      if (['MO', 'MORNING', 'AM'].includes(code)) code = 'AM';
+      if (['AF', 'AFTERNOON', 'PM', 'EV', 'EVE', 'EVENING'].includes(code)) code = 'PM';
+      return code;
+    }
+    return (data?.seasonName || 'AM').toUpperCase();
+  }, [filteredTransactions, selectedPeriod, data?.seasonName, data?.isCoffee, data?.orgtype]);
+
   if (!data) return null;
 
   // Format date as DD/MM/YYYY
@@ -214,7 +258,7 @@ export const DeviceZReportReceipt = ({
           companyName: data.companyName,
           produceLabel: data.produceLabel,
           periodLabel: data.periodLabel,
-          seasonName: data.seasonName,
+          seasonName: activeSessionName,
           date: data.date,
           factoryName: centerName || routeName || data.routeLabel || 'FACTORY',
           routeLabel: data.routeLabel || 'Center',
@@ -233,6 +277,7 @@ export const DeviceZReportReceipt = ({
             session: tx.session,
             price: tx.price,
             amount: tx.amount,
+            milk_session_id: (tx as any).milk_session_id,
           })),
           totalWeight: filteredTotals.weight,
           totalAmount: filteredTotals.amount,
@@ -241,6 +286,7 @@ export const DeviceZReportReceipt = ({
           isCoffee: data.isCoffee,
           activeRouteCode, // v2.12.21: pass active store context to printer
           periodFilter: periodDisplayLabel, // Pass period label for display on receipt
+          milkSessionId: activeMilkSessionId || undefined,
           reportType, // v2.10.98: store mode strips produce metadata in print
         });
         
@@ -270,7 +316,12 @@ export const DeviceZReportReceipt = ({
     setIsDownloading(true);
     
     try {
-      const success = await generateDeviceZReportPDF(data, routeName);
+      const reportDataForPDF: DeviceZReportData = {
+        ...data,
+        seasonName: activeSessionName,
+        transactions: filteredTransactions,
+      };
+      const success = await generateDeviceZReportPDF(reportDataForPDF, routeName, selectedPeriod);
       if (success) {
         toast.success('Report file saved');
       } else {
@@ -290,6 +341,13 @@ export const DeviceZReportReceipt = ({
   // Get last 5 digits of reference number
   const getShortRef = (refno: string) => (refno || '').slice(-6);
 
+  // Helper to determine if a transaction represents produce (weight in KGS/LITERS) vs store merchandise (items)
+  const isProduceTx = (tx: { product_code?: string; milk_session_id?: string; transtype?: number }) => {
+    const code = (tx.product_code || '').trim().toUpperCase();
+    const milkId = String(tx.milk_session_id || '').trim();
+    return code === 'S0001' || tx.transtype === 1 || milkId.length === 10 || (tx.transtype === 2 && data?.orgtype === 'C');
+  };
+
   // Render transactions for a type group.
   const renderTypeSection = (group: TypeGroup, isFirst: boolean) => {
     const showMoney = group.transtype !== 1;
@@ -302,11 +360,13 @@ export const DeviceZReportReceipt = ({
     const distinctProducts = new Set(group.transactions.map(t => t.product_code || '')).size;
     const showProductDividers = distinctProducts > 1;
 
-    // Integer item count for SELL/AI subtotal display.
+    // Unit label for section subtotal: produce sales use KGS, store items use items.
+    const isProduceGroup = !isStoreReport && (group.transtype === 1 || group.transactions.every(t => isProduceTx(t)));
     const itemCount = showMoney
       ? group.transactions.reduce((s, t) => s + Math.max(0, Math.round(t.weight || 0)), 0)
       : 0;
     const itemsLabel = itemCount === 1 ? 'item' : 'items';
+    const subtotalUnitLabel = isProduceGroup ? weightUnit : itemsLabel;
 
     return (
       <div key={group.transtype} className={!isFirst ? 'mt-3' : ''}>
@@ -378,7 +438,7 @@ export const DeviceZReportReceipt = ({
           <span className="tabular-nums">
             {showMoney ? (
               <>
-                {(Math.floor(group.totalWeight * 10) / 10).toFixed(1)} {itemsLabel}
+                {(Math.floor(group.totalWeight * 10) / 10).toFixed(1)} {subtotalUnitLabel}
                 <span className="ml-3">KSh {group.totalAmount.toFixed(0)}</span>
               </>
             ) : (
@@ -390,6 +450,16 @@ export const DeviceZReportReceipt = ({
     );
   };
 
+  if (!data) {
+    return (
+      <Dialog open={open} onOpenChange={onClose}>
+        <DialogContent className="max-w-xs p-6 text-center flex flex-col items-center justify-center gap-3">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+          <p className="font-medium text-sm text-muted-foreground">Loading Z Report data...</p>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -403,7 +473,7 @@ export const DeviceZReportReceipt = ({
           <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base uppercase tracking-wide">{data.companyName}</h3>
             <p className="font-bold text-sm mt-1">
-              {isStoreReport ? 'STORE Z REPORT' : `Z REPORT: ${periodDisplayLabel.toUpperCase()}`}
+              {isStoreReport ? 'STORE Z REPORT' : 'Z REPORT'}
             </p>
           </div>
 
@@ -415,7 +485,14 @@ export const DeviceZReportReceipt = ({
                 <span>{data.produceLabel.toUpperCase()}</span>
 
                 <span className="font-semibold">{data.periodLabel.toUpperCase()}</span>
-                <span>{data.seasonName}</span>
+                <span>{activeSessionName}</span>
+              </>
+            )}
+
+            {!isStoreReport && activeMilkSessionId && (
+              <>
+                <span className="font-semibold">SESSION ID</span>
+                <span className="font-mono">{activeMilkSessionId}</span>
               </>
             )}
 
@@ -462,15 +539,27 @@ export const DeviceZReportReceipt = ({
 
           {/* Grand Totals */}
           {(() => {
-            const buyWeight = filteredTransactions.filter(tx => (tx.transtype || 1) === 1).reduce((s, tx) => s + tx.weight, 0);
-            let sellAiItems = 0;
+            const buyWeight = filteredTransactions
+              .filter(tx => (tx.transtype || 1) === 1)
+              .reduce((s, tx) => s + tx.weight, 0);
+
+            // Sell Produce transactions (transtype=2 with produce code or milk session)
+            const sellProduceWeight = filteredTransactions
+              .filter(tx => (tx.transtype || 1) !== 1 && isProduceTx(tx))
+              .reduce((s, tx) => s + tx.weight, 0);
+
+            // Actual Store merchandise transactions (transtype=2 or 3 without produce code)
+            let storeItemsCount = 0;
             let sellAiAmount = 0;
             filteredTransactions.forEach(tx => {
               if ((tx.transtype || 1) === 1) return;
               sellAiAmount += Number(tx.amount || 0);
-              sellAiItems += Number(tx.weight || 0);
+              if (!isProduceTx(tx)) {
+                storeItemsCount += Number(tx.weight || 0);
+              }
             });
-            const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
+            const itemsLabel = storeItemsCount === 1 ? 'item' : 'items';
+
             return (
               <div className="border-t-2 border-double pt-2 mt-2 space-y-1">
                 {buyWeight > 0 && (
@@ -479,10 +568,16 @@ export const DeviceZReportReceipt = ({
                     <span className="tabular-nums">{(Math.floor(buyWeight * 10) / 10).toFixed(1)} {weightUnit}</span>
                   </div>
                 )}
-                {sellAiItems > 0 && (
+                {sellProduceWeight > 0 && (
                   <div className="flex justify-between font-bold text-sm">
-                    <span>GRAND TOTAL ITEMS</span>
-                    <span className="tabular-nums">{(Math.floor(sellAiItems * 10) / 10).toFixed(1)} {itemsLabel}</span>
+                    <span>GRAND TOTAL SELL PRODUCE</span>
+                    <span className="tabular-nums">{(Math.floor(sellProduceWeight * 10) / 10).toFixed(1)} {weightUnit}</span>
+                  </div>
+                )}
+                {storeItemsCount > 0 && (
+                  <div className="flex justify-between font-bold text-sm">
+                    <span>GRAND TOTAL STORE ITEMS</span>
+                    <span className="tabular-nums">{(Math.floor(storeItemsCount * 10) / 10).toFixed(1)} {itemsLabel}</span>
                   </div>
                 )}
                 {sellAiAmount > 0 && (

@@ -14,7 +14,8 @@ const initOnlineListener = () => {
   if (typeof window !== 'undefined' && !onlineListenerAttached) {
     const handleOnline = () => {
       console.log('[ONLINE] App back online - triggering sync handlers');
-      // Small delay to ensure network is stable
+      // Staggered jitter delay (500ms - 2500ms) to prevent thundering herd spikes on reconnect
+      const jitterMs = Math.floor(Math.random() * 2000) + 500;
       setTimeout(() => {
         onlineHandlers.forEach(handler => {
           try {
@@ -23,7 +24,7 @@ const initOnlineListener = () => {
             console.error('[SYNC] Error in online handler:', error);
           }
         });
-      }, 500);
+      }, jitterMs);
     };
     window.addEventListener('online', handleOnline);
     onlineListenerAttached = true;

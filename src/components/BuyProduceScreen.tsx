@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { CornerDownLeft, Search, X } from 'lucide-react';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
-import { type Route, type Session } from '@/services/mysqlApi';
+import { type Route, type Session, mysqlApi } from '@/services/mysqlApi';
+import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { useHaptics } from '@/hooks/useHaptics';
@@ -33,6 +34,9 @@ interface BuyProduceScreenProps {
   onEntryTypeChange?: (entryType: 'scale' | 'manual') => void;
   blacklistedFarmerIds?: Set<string>; // Farmers who already delivered (multOpt=0)
   sessionSubmittedFarmerIds?: Set<string>; // Local tracking of submitted farmers this session
+  getBlacklistDetail?: (farmerId: string) => { route?: string; devcode?: string; reference_no?: string } | null;
+  onRefreshBlacklist?: () => void;
+  addToBlacklist?: (farmerId: string, details?: { route?: string; devcode?: string; reference_no?: string }) => void;
   onFarmersLoaded?: (farmers: Farmer[]) => void;
   allFarmers?: Farmer[]; // For Delivered By search
   captureDisabled?: boolean;
@@ -76,6 +80,9 @@ export const BuyProduceScreen = ({
   onEntryTypeChange,
   blacklistedFarmerIds,
   sessionSubmittedFarmerIds,
+  getBlacklistDetail,
+  onRefreshBlacklist,
+  addToBlacklist,
   onFarmersLoaded,
   allFarmers = [],
   captureDisabled,
@@ -101,7 +108,16 @@ export const BuyProduceScreen = ({
   const [duplicateDialog, setDuplicateDialog] = useState<{
     farmer: { id: string; name: string };
     reason: DuplicateDeliveryReason;
+    route?: string;
+    device?: string;
   } | null>(null);
+
+  // Eager refresh of session blacklist whenever BuyProduceScreen mounts or receives handler
+  useEffect(() => {
+    if (onRefreshBlacklist) {
+      onRefreshBlacklist();
+    }
+  }, [onRefreshBlacklist]);
   const [inactiveDialogFarmer, setInactiveDialogFarmer] = useState<Farmer | null>(null);
   const farmerInputRef = useRef<HTMLInputElement>(null);
   const deliveredByRef = useRef<HTMLInputElement>(null);
@@ -251,12 +267,59 @@ export const BuyProduceScreen = ({
   };
 
   // Show the duplicate-delivery modal (and a short fallback toast for POS UI lag).
-  const showDuplicateDialog = (farmer: Farmer, reason: DuplicateDeliveryReason) => {
+  const showDuplicateDialog = (
+    farmer: Farmer,
+    reason: DuplicateDeliveryReason,
+    overrideDevice?: string,
+    overrideRoute?: string
+  ) => {
+    const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
+    const detail = getBlacklistDetail ? getBlacklistDetail(cleanId) : null;
+    const realDevice = overrideDevice || detail?.devcode || 'Other Device';
+    const realRoute = overrideRoute || detail?.route || farmer.route;
+
     setDuplicateDialog({
-      farmer: { id: farmer.farmer_id.replace(/^#/, '').trim(), name: farmer.name },
+      farmer: { id: cleanId, name: farmer.name },
       reason,
+      route: realRoute,
+      device: realDevice,
     });
-    toast.error(`${farmer.name} already delivered this session`, { duration: 2000 });
+    const routeStr = realRoute ? ` (Route: ${realRoute})` : '';
+    const devStr = realDevice ? ` (Device: ${realDevice})` : '';
+    toast.error(`Member ${farmer.name || farmer.farmer_id} has delivered this session${routeStr}${devStr}`, { duration: 3000 });
+  };
+
+  // Live online check for multOpt=0 farmers to catch transactions made on other devices in real-time
+  const checkOnlineDuplicate = async (farmer: Farmer): Promise<{ isDuplicate: boolean; devcode?: string; route?: string } | null> => {
+    if (!navigator.onLine) return null;
+    try {
+      const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
+      const currentSessionType = getSessionType();
+      const today = new Date().toISOString().split('T')[0];
+      const deviceFingerprint = await generateDeviceFingerprint();
+
+      const collections = await mysqlApi.milkCollection.getAll({
+        farmerId: cleanId,
+        session: currentSessionType,
+        dateFrom: today,
+        dateTo: today,
+        uniquedevcode: deviceFingerprint
+      });
+
+      if (collections && collections.length > 0) {
+        const match = collections[0];
+        const matchDevcode = match.devcode || 'Other Device';
+        const matchRoute = match.route || farmer.route;
+        return {
+          isDuplicate: true,
+          devcode: matchDevcode,
+          route: matchRoute
+        };
+      }
+    } catch (e) {
+      console.warn('Online duplicate check failed:', e);
+    }
+    return { isDuplicate: false };
   };
 
   // Resolve numeric input to full farmer ID (only from available farmers)
@@ -273,7 +336,8 @@ export const BuyProduceScreen = ({
       const cleanId = exactMatch.farmer_id.replace(/^#/, '').trim();
       const reason = exactMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
       if (reason) {
-        showDuplicateDialog(exactMatch, reason);
+        const detail = getBlacklistDetail ? getBlacklistDetail(cleanId) : null;
+        showDuplicateDialog(exactMatch, reason, detail?.devcode, detail?.route);
         return null;
       }
       return exactMatch;
@@ -289,7 +353,8 @@ export const BuyProduceScreen = ({
         const cleanId = paddedMatch.farmer_id.replace(/^#/, '').trim();
         const reason = paddedMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
         if (reason) {
-          showDuplicateDialog(paddedMatch, reason);
+          const detail = getBlacklistDetail ? getBlacklistDetail(cleanId) : null;
+          showDuplicateDialog(paddedMatch, reason, detail?.devcode, detail?.route);
           return null;
         }
         return paddedMatch;
@@ -304,7 +369,8 @@ export const BuyProduceScreen = ({
         const cleanId = numericMatch.farmer_id.replace(/^#/, '').trim();
         const reason = numericMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
         if (reason) {
-          showDuplicateDialog(numericMatch, reason);
+          const detail = getBlacklistDetail ? getBlacklistDetail(cleanId) : null;
+          showDuplicateDialog(numericMatch, reason, detail?.devcode, detail?.route);
           return null;
         }
         return numericMatch;
@@ -315,10 +381,10 @@ export const BuyProduceScreen = ({
   };
 
   // Handle arrow button - resolve and select farmer
-  const handleEnter = () => {
+  const handleEnter = async () => {
     const farmer = resolveFarmerId(memberNo);
     if (farmer) {
-      handleSelectFarmer(farmer);
+      await handleSelectFarmer(farmer);
     } else if (memberNo.trim()) {
       toast.error(`Farmer "${memberNo}" not found`);
     }
@@ -351,7 +417,7 @@ export const BuyProduceScreen = ({
     onBack();
   };
 
-  const handleSelectFarmer = (farmer: Farmer) => {
+  const handleSelectFarmer = async (farmer: Farmer) => {
     if (isFarmerInactive(farmer)) {
       setInactiveDialogFarmer(farmer);
       setShowSearchModal(false);
@@ -361,10 +427,25 @@ export const BuyProduceScreen = ({
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
     const reason = farmer.multOpt === 0 ? getBlockReason(cleanId, true) : null;
     if (reason) {
-      showDuplicateDialog(farmer, reason);
+      const detail = getBlacklistDetail ? getBlacklistDetail(cleanId) : null;
+      showDuplicateDialog(farmer, reason, detail?.devcode, detail?.route);
       setShowSearchModal(false);
       return;
     }
+
+    // Live online check for multOpt=0 farmers (detects transactions made on other devices while screen is open)
+    if (farmer.multOpt === 0 && navigator.onLine) {
+      const onlineCheck = await checkOnlineDuplicate(farmer);
+      if (onlineCheck?.isDuplicate) {
+        if (addToBlacklist) {
+          addToBlacklist(cleanId, { devcode: onlineCheck.devcode, route: onlineCheck.route });
+        }
+        showDuplicateDialog(farmer, 'blacklist', onlineCheck.devcode, onlineCheck.route);
+        setShowSearchModal(false);
+        return;
+      }
+    }
+
     setMemberNo(cleanId);
     setShowSearchModal(false);
     onSelectFarmer(farmer);
@@ -572,6 +653,9 @@ export const BuyProduceScreen = ({
           farmer={duplicateDialog?.farmer ?? null}
           sessionLabel={sessionLabelForDialog}
           reason={duplicateDialog?.reason ?? 'blacklist'}
+          route={duplicateDialog?.route}
+          device={duplicateDialog?.device || 'Unknown Device'}
+          onConfirmSync={handleDuplicateDialogClose}
           onClose={handleDuplicateDialogClose}
         />
 

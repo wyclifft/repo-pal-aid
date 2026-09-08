@@ -5,7 +5,7 @@ import { mysqlApi, type ZReportData, type DeviceZReportData } from '@/services/m
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Download, Calendar, AlertTriangle, Eye } from 'lucide-react';
+import { ArrowLeft, Download, Calendar, AlertTriangle, Eye, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
@@ -50,6 +50,16 @@ const ZReport = () => {
   // v2.12.20: Active route from dashboard for Store Z context
   const activeRoute = useMemo(() => resolveDashboardActiveRoute(), []);
 
+  // Current company code for cache isolation
+  const currentCcode = useMemo(() => {
+    try {
+      const settings = JSON.parse(localStorage.getItem('app_settings') || '{}');
+      return (settings?.ccode || localStorage.getItem('ccode') || '').trim();
+    } catch {
+      return (localStorage.getItem('ccode') || '').trim();
+    }
+  }, []);
+
   // Device Z Report state (for receipt/print only)
   const [deviceReportData, setDeviceReportData] = useState<DeviceZReportData | null>(null);
 
@@ -61,6 +71,8 @@ const ZReport = () => {
   }, [isAuthenticated, navigate, isSessionClose]);
   const [reportData, setReportData] = useState<ZReportData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isDeviceLoading, setIsDeviceLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
   
@@ -70,6 +82,7 @@ const ZReport = () => {
   // one option per session row (matched by transactions.CAN → sessions.SCODE,
   // labeled with sessions.descript). Works offline using whatever the rest
   // of the app (SessionSelector) has already cached.
+  const [baseSessionList, setBaseSessionList] = useState<Array<{ SCODE?: string; descript?: string }>>([]);
   const [sessionList, setSessionList] = useState<Array<{ SCODE?: string; descript?: string }>>([]);
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +90,7 @@ const ZReport = () => {
       try {
         const cached = await getSessions();
         if (!cancelled && Array.isArray(cached)) {
+          setBaseSessionList(cached as any);
           setSessionList(cached as any);
         }
       } catch (err) {
@@ -128,6 +142,14 @@ const ZReport = () => {
   }, []);
 
   useEffect(() => {
+    // Reset period selection and preview modals when selected date changes
+    setSelectedPeriod('all');
+    setSelectedPeriodLabel('All Z');
+    setShowReceiptPreview(false);
+    setShowDeviceReceiptPreview(false);
+    setShowPeriodSelector(false);
+    setShowTypeSelector(false);
+
     fetchReport();
     fetchDeviceReport();
   }, [selectedDate, deviceFingerprint]);
@@ -141,6 +163,7 @@ const ZReport = () => {
   const fetchDeviceReport = useCallback(async (_period?: ZReportPeriod) => {
     if (!deviceFingerprint || !navigator.onLine) return;
 
+    setIsDeviceLoading(true);
     try {
       const data = await mysqlApi.zReport.getByDevice(selectedDate, deviceFingerprint);
       if (data) {
@@ -149,14 +172,52 @@ const ZReport = () => {
           data.clerkName = currentUser?.username || 'Clerk';
         }
         setDeviceReportData(data);
+
+        // Dynamic session IDs strictly for the selectedDate
+        const dynamicSessions = (data.sessionsList || [])
+          .filter(s => {
+            const mid = String(s.milk_session_id || '').trim();
+            return mid !== '' && mid !== '0' && mid.length === 10;
+          })
+          .map(s => ({
+            milk_session_id: s.milk_session_id,
+            SCODE: s.season_code || s.session,
+            descript: `${s.session} Session`
+          }));
+
+        // Merge date-specific dynamic sessions with baseSessionList without accumulating stale dates
+        const seen = new Set<string>();
+        const merged: Array<{ milk_session_id?: string; SCODE?: string; descript?: string }> = [];
+
+        dynamicSessions.forEach(ds => {
+          const key = ds.milk_session_id || ds.SCODE || '';
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            merged.push(ds);
+          }
+        });
+
+        baseSessionList.forEach(bs => {
+          const key = (bs as any).milk_session_id || bs.SCODE || '';
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            merged.push(bs);
+          } else if (!key) {
+            merged.push(bs);
+          }
+        });
+
+        setSessionList(merged);
         console.log('[Z-REPORT] Device report loaded:', data.transactions.length, 'transactions (client-side period filter applied later)');
       }
     } catch (err) {
       console.error('[Z-REPORT] Failed to fetch device report:', err);
+    } finally {
+      setIsDeviceLoading(false);
     }
-  }, [selectedDate, deviceFingerprint, currentUser]);
+  }, [selectedDate, deviceFingerprint, currentUser, baseSessionList]);
 
-  const fetchReport = async () => {
+  const fetchReport = useCallback(async () => {
     if (!deviceFingerprint) {
       return;
     }
@@ -165,11 +226,11 @@ const ZReport = () => {
     
     // 1. ALWAYS load from cache first for instant display
     try {
-      const cached = await getZReport(selectedDate);
+      const cached = await getZReport(selectedDate, currentCcode);
       if (cached) {
         setReportData(cached);
         setLoading(false);
-        console.log('[Z-REPORT] Loaded from cache');
+        console.log('[Z-REPORT] Loaded from cache for ccode:', currentCcode);
       }
     } catch (cacheError) {
       console.error('Cache read error:', cacheError);
@@ -177,6 +238,7 @@ const ZReport = () => {
 
     // 2. Then fetch fresh data in background if online
     if (navigator.onLine) {
+      setIsRefreshing(true);
       try {
         const data = await mysqlApi.zReport.get(selectedDate, deviceFingerprint);
         if (data) {
@@ -190,18 +252,20 @@ const ZReport = () => {
           };
           setReportData(safeData);
           try {
-            await saveZReport(selectedDate, safeData);
+            await saveZReport(selectedDate, safeData, currentCcode);
           } catch (saveErr) {
             console.warn('Failed to cache Z Report:', saveErr);
           }
         }
       } catch (error) {
         console.error('Error syncing report:', error);
+      } finally {
+        setIsRefreshing(false);
       }
     }
     
     setLoading(false);
-  };
+  }, [deviceFingerprint, selectedDate, currentCcode, getZReport, saveZReport]);
 
   // Auto-print when autoprint param is true (triggered by session close with sessPrint=1)
   useEffect(() => {
@@ -379,7 +443,10 @@ const ZReport = () => {
   if (loading && !reportData) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center">
-        <div className="text-white text-xl">Loading report...</div>
+        <div className="text-white text-xl flex items-center gap-3">
+          <Loader2 className="h-6 w-6 animate-spin text-white" />
+          <span>Loading Z report...</span>
+        </div>
       </div>
     );
   }
@@ -417,10 +484,14 @@ const ZReport = () => {
               onClick={handlePrintClick} 
               variant="default" 
               size="sm"
-              disabled={sessionPrintOnly && !isSyncComplete}
+              disabled={(sessionPrintOnly && !isSyncComplete) || isDeviceLoading}
               className="bg-primary"
             >
-              <Eye className="mr-2 h-4 w-4" />
+              {isDeviceLoading ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Eye className="mr-2 h-4 w-4" />
+              )}
               View & Print
             </Button>
           </div>
@@ -509,14 +580,22 @@ const ZReport = () => {
         {/* Date Selector */}
         <Card className="print:hidden">
           <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <Calendar className="h-5 w-5 text-muted-foreground" />
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#667eea]"
-              />
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-muted-foreground" />
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#667eea]"
+                />
+              </div>
+              {(loading || isDeviceLoading || isRefreshing) && (
+                <div className="flex items-center gap-2 text-sm text-[#667eea] font-medium bg-purple-50 px-3 py-1.5 rounded-md border border-purple-200 animate-pulse">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#667eea]" />
+                  <span>Fetching report data...</span>
+                </div>
+              )}
               {isOffline && (
                 <span className="text-sm text-orange-600 font-semibold">
                   📡 Offline Mode
@@ -606,22 +685,30 @@ const ZReport = () => {
                   <TableHeader>
                     <TableRow>
                       <TableHead>{routeLabel}</TableHead>
-                      {!isCoffee && <TableHead className="text-right">AM Entries</TableHead>}
-                      {!isCoffee && <TableHead className="text-right">PM Entries</TableHead>}
-                      {isCoffee && <TableHead className="text-right">Entries</TableHead>}
+                      {!isCoffee && <TableHead className="text-right">AM Farmers</TableHead>}
+                      {!isCoffee && <TableHead className="text-right">PM Farmers</TableHead>}
+                      {isCoffee && <TableHead className="text-right">Farmers</TableHead>}
                       <TableHead className="text-right">Total {weightLabel}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {Object.entries(reportData.byRoute).map(([route, data]) => (
-                      <TableRow key={route}>
-                        <TableCell className="font-medium">{route}</TableCell>
-                        {!isCoffee && <TableCell className="text-right">{data.AM.length}</TableCell>}
-                        {!isCoffee && <TableCell className="text-right">{data.PM.length}</TableCell>}
-                        {isCoffee && <TableCell className="text-right">{data.AM.length + data.PM.length}</TableCell>}
-                        <TableCell className="text-right">{(Math.floor(data.total * 10) / 10).toFixed(1)} {weightUnit}</TableCell>
-                      </TableRow>
-                    ))}
+                    {Object.entries(reportData.byRoute).map(([route, data]) => {
+                      const amFarmers = new Set((data.AM || []).map((c: any) => c.farmer_id)).size;
+                      const pmFarmers = new Set((data.PM || []).map((c: any) => c.farmer_id)).size;
+                      const totalFarmers = new Set([
+                        ...(data.AM || []).map((c: any) => c.farmer_id),
+                        ...(data.PM || []).map((c: any) => c.farmer_id)
+                      ]).size;
+                      return (
+                        <TableRow key={route}>
+                          <TableCell className="font-medium">{route}</TableCell>
+                          {!isCoffee && <TableCell className="text-right">{amFarmers}</TableCell>}
+                          {!isCoffee && <TableCell className="text-right">{pmFarmers}</TableCell>}
+                          {isCoffee && <TableCell className="text-right">{totalFarmers}</TableCell>}
+                          <TableCell className="text-right">{(Math.floor(data.total * 10) / 10).toFixed(1)} {weightUnit}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -638,19 +725,31 @@ const ZReport = () => {
                     <TableRow>
                       <TableHead>Collector</TableHead>
                       <TableHead className="text-right">Farmers</TableHead>
-                      <TableHead className="text-right">Entries</TableHead>
+                      {!isCoffee && <TableHead className="text-right">No of Session IDs</TableHead>}
                       <TableHead className="text-right">Total {weightLabel}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {Object.entries(reportData.byCollector).map(([collector, data]) => (
-                      <TableRow key={collector}>
-                        <TableCell className="font-medium">{collector}</TableCell>
-                        <TableCell className="text-right">{data.farmers}</TableCell>
-                        <TableCell className="text-right">{data.entries}</TableCell>
-                        <TableCell className="text-right">{(Math.floor(data.liters * 10) / 10).toFixed(1)} {weightUnit}</TableCell>
-                      </TableRow>
-                    ))}
+                    {Object.entries(reportData.byCollector).map(([collector, data]) => {
+                      const sessionIdsCount = data.sessionIds ?? (
+                        reportData.collections
+                          ? new Set(
+                              reportData.collections
+                                .filter((c: any) => (c.clerk_name || 'Unknown') === collector)
+                                .map((c: any) => (c.milk_session_id || c.season_code || c.session || '').trim())
+                                .filter(Boolean)
+                            ).size
+                          : 0
+                      );
+                      return (
+                        <TableRow key={collector}>
+                          <TableCell className="font-medium">{collector}</TableCell>
+                          <TableCell className="text-right">{data.farmers}</TableCell>
+                          {!isCoffee && <TableCell className="text-right">{sessionIdsCount}</TableCell>}
+                          <TableCell className="text-right">{(Math.floor(data.liters * 10) / 10).toFixed(1)} {weightUnit}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </CardContent>

@@ -446,15 +446,15 @@ const findActiveSeason = async (ccode, date, conn = pool) => {
 const findSeasonDescript = async (scode, ccode, conn = pool) => {
   const seasonalTableExists = await hasSeasonsTable();
 
-  if (!seasonalTableExists) {
+  if (!seasonalTableExists || !scode) {
     return null;
   }
 
   try {
     const [rows] = await conn.query(
       `SELECT descript FROM Seasons
-        WHERE scode = ? AND ccode = ? LIMIT 1`,
-      [norm(scode), norm(ccode)]
+        WHERE (TRIM(scode) = TRIM(?) OR TRIM(id) = TRIM(?)) AND TRIM(ccode) = TRIM(?) LIMIT 1`,
+      [norm(scode), norm(scode), norm(ccode)]
     );
     return rows.length ? rows[0].descript : null;
   } catch (e) {
@@ -1479,7 +1479,13 @@ const server = http.createServer(async (req, res) => {
       
       // Build query with STRICT ccode filtering
       // Transtype = 1 is used for all produce purchases (milk/coffee collections)
-      let query = 'SELECT * FROM transactions WHERE Transtype = 1';
+      let query = `
+        SELECT t.*,
+               COALESCE(NULLIF(TRIM(d.devcode), ''), NULLIF(TRIM(d.device), ''), NULLIF(TRIM(t.deviceserial), ''), 'Device') AS devcode
+        FROM transactions t
+        LEFT JOIN devSettings d ON (TRIM(d.uniquedevcode) = TRIM(t.deviceserial) OR TRIM(d.devcode) = TRIM(t.deviceserial))
+        WHERE t.Transtype = 1
+      `;
       let params = [];
       
       // When checking for accumulation (farmer_id + session + date range provided),
@@ -1490,18 +1496,18 @@ const server = http.createServer(async (req, res) => {
           return sendJSON(res, { success: true, data: [] });
         }
         // STRICT: Filter by BOTH memberno AND ccode for accumulation checks
-        query += ' AND memberno = ? AND ccode = ? AND session = ? AND transdate >= ? AND transdate <= ?';
+        query += ' AND t.memberno = ? AND t.ccode = ? AND t.session = ? AND t.transdate >= ? AND t.transdate <= ?';
         params.push(farmer_id, ccode, session, date_from, date_to);
       } else {
         // For general listing, apply filters as provided
-        if (ccode !== null) { query += ' AND ccode = ?'; params.push(ccode); }
-        if (farmer_id) { query += ' AND memberno = ?'; params.push(farmer_id); }
-        if (session) { query += ' AND session = ?'; params.push(session); }
-        if (date_from) { query += ' AND transdate >= ?'; params.push(date_from); }
-        if (date_to) { query += ' AND transdate <= ?'; params.push(date_to); }
+        if (ccode !== null) { query += ' AND t.ccode = ?'; params.push(ccode); }
+        if (farmer_id) { query += ' AND t.memberno = ?'; params.push(farmer_id); }
+        if (session) { query += ' AND t.session = ?'; params.push(session); }
+        if (date_from) { query += ' AND t.transdate >= ?'; params.push(date_from); }
+        if (date_to) { query += ' AND t.transdate <= ?'; params.push(date_to); }
       }
       
-      query += ' ORDER BY transdate DESC';
+      query += ' ORDER BY t.transdate DESC';
       const [rows] = await pool.query(query, params);
       
       // Map transactions fields back to expected format
@@ -1512,6 +1518,7 @@ const server = http.createServer(async (req, res) => {
         farmer_id: row.memberno,           // DB: memberno
         farmer_name: row.memberno,         // Display placeholder (resolved on frontend)
         route: row.route,                  // DB: route
+        devcode: row.devcode || row.deviceserial || 'Device', // DB: devcode/deviceserial
         session: row.session,              // DB: session (AM/PM or season name)
         weight: row.weight,                // DB: weight
         clerk_name: row.clerk,             // DB: clerk
@@ -1928,15 +1935,24 @@ const server = http.createServer(async (req, res) => {
 
           console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
 
-          if (multOpt === 0) {
+          const overrideMultOpt = body.override_multopt === true || body.override_multopt === 1 || body.override_multopt === '1';
+
+          if (multOpt === 0 && !overrideMultOpt) {
             const [existingTransRows] = await conn.query(
-              `SELECT transrefno, Uploadrefno FROM transactions
-               WHERE memberno = ?
-                 AND session = ?
-                 AND transdate = ?
-                 AND Transtype = 1
-                 AND ccode = ?
-               ORDER BY transrefno ASC
+              `SELECT
+                 t.transrefno,
+                 t.Uploadrefno,
+                 t.deviceserial,
+                 t.route,
+                 COALESCE(NULLIF(TRIM(d.devcode), ''), NULLIF(TRIM(d.device), ''), NULLIF(TRIM(t.deviceserial), ''), 'Device') AS devcode
+               FROM transactions t
+               LEFT JOIN devSettings d ON (TRIM(d.uniquedevcode) = TRIM(t.deviceserial) OR TRIM(d.devcode) = TRIM(t.deviceserial))
+               WHERE t.memberno = ?
+                 AND t.session = ?
+                 AND t.transdate = ?
+                 AND t.Transtype = 1
+                 AND t.ccode = ?
+               ORDER BY t.transrefno ASC
                LIMIT 1`,
               [cleanFarmerId, normalizedSession, transdate, ccode]
             );
@@ -1944,6 +1960,13 @@ const server = http.createServer(async (req, res) => {
             if (existingTransRows.length > 0) {
               const existingRef = existingTransRows[0].transrefno;
               const existingUploadRef = existingTransRows[0].Uploadrefno;
+              const existingDevice = existingTransRows[0].devcode || existingTransRows[0].deviceserial || 'Unknown Device';
+              const existingRoute = existingTransRows[0].route || 'Unknown Route';
+
+              const routeStr = existingRoute ? `Route: ${existingRoute}` : '';
+              const deviceStr = existingDevice ? `Device: ${existingDevice}` : '';
+              const tags = [routeStr, deviceStr].filter(Boolean).join(', ');
+              const detailMsg = `Member ${cleanFarmerId} has delivered this session${tags ? ` (${tags})` : ''}`;
 
               if (!uploadrefno) {
                 console.log(
@@ -1952,9 +1975,11 @@ const server = http.createServer(async (req, res) => {
                 return sendJSON(res, {
                   success: false,
                   error: 'DUPLICATE_SESSION_DELIVERY',
-                  message: `Member already delivered in ${normalizedSession} session today`,
+                  message: detailMsg,
                   existing_reference: existingRef,
                   existing_uploadrefno: existingUploadRef,
+                  existing_device: existingDevice,
+                  existing_route: existingRoute,
                   farmer_id: cleanFarmerId,
                   session: normalizedSession,
                   date: transdate,
@@ -1969,9 +1994,11 @@ const server = http.createServer(async (req, res) => {
                 return sendJSON(res, {
                   success: false,
                   error: 'DUPLICATE_SESSION_DELIVERY',
-                  message: `Member already delivered in ${normalizedSession} session today`,
+                  message: detailMsg,
                   existing_reference: existingRef,
                   existing_uploadrefno: existingUploadRef,
+                  existing_device: existingDevice,
+                  existing_route: existingRoute,
                   farmer_id: cleanFarmerId,
                   session: normalizedSession,
                   date: transdate,
@@ -1989,13 +2016,14 @@ const server = http.createServer(async (req, res) => {
           try {
             const productCode = body.product_code || '';
             const deliveredBy = body.delivered_by || 'owner';
+            const milkSessionId = body.milk_session_id || '';
 
             const [result] = await conn.query(
               `INSERT INTO transactions
                 (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session,
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice,
-                 amount, icode, CAN, time, capType, entry_type, deliveredby)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?)`,
+                 amount, icode, CAN, time, capType, entry_type, deliveredby, milk_session_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?, ?)`,
               [
                 attemptTransrefno,
                 attemptUploadrefno ? String(attemptUploadrefno) : '',
@@ -2015,6 +2043,7 @@ const server = http.createServer(async (req, res) => {
                 timestamp,
                 body.entry_type || 'manual',
                 deliveredBy,
+                milkSessionId,
               ]
             );
 
@@ -2452,11 +2481,13 @@ const server = http.createServer(async (req, res) => {
 
       const nCcode = norm(deviceRows[0].ccode);
 
-      // Fetch all collections for the specified date and company
+      // Fetch all collections fo ew`]\
+      / `2q r the specified date and company
       // DB columns → Frontend fields mapping
       const [collections] = await pool.query(
         `SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, t.route, t.weight, t.session,
                 t.transdate as collection_date, t.clerk as clerk_name, t.icode as product_code, t.entry_type,
+                t.milk_session_id, t.CAN as season_code,
                 r.descript as route_name
          FROM transactions t
          LEFT JOIN fm_tanks r ON TRIM(t.route) = TRIM(r.tcode) AND t.ccode = r.ccode
@@ -2494,17 +2525,22 @@ const server = http.createServer(async (req, res) => {
       const byCollector = collections.reduce((acc, c) => {
         const collector = c.clerk_name || 'Unknown';
         if (!acc[collector]) {
-          acc[collector] = { entries: 0, liters: 0, farmers: new Set() };
+          acc[collector] = { entries: 0, liters: 0, farmers: new Set(), sessionIds: new Set() };
         }
         acc[collector].entries++;
         acc[collector].liters += parseFloat(c.weight || 0);
         acc[collector].farmers.add(c.farmer_id);
+        const sessId = (c.milk_session_id || c.season_code || c.session || '').trim();
+        if (sessId) {
+          acc[collector].sessionIds.add(sessId);
+        }
         return acc;
       }, {});
 
-      // Convert collector farmers Set to count
+      // Convert collector farmers and sessionIds Sets to counts
       Object.keys(byCollector).forEach(key => {
         byCollector[key].farmers = byCollector[key].farmers.size;
+        byCollector[key].sessionIds = byCollector[key].sessionIds.size;
       });
 
       return sendJSON(res, {
@@ -2544,6 +2580,7 @@ const server = http.createServer(async (req, res) => {
       const uniquedevcode = parsedUrl.query.uniquedevcode;
       const seasonFilter = parsedUrl.query.season; // Optional exact session filter
       const periodFilter = parsedUrl.query.period; // Optional period filter: morning, afternoon, evening, all
+      const milkSessionIdFilter = parsedUrl.query.milk_session_id; // Optional 10-digit milk_session_id filter
 
       if (!uniquedevcode) {
         return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400, origin);
@@ -2572,62 +2609,39 @@ const server = http.createServer(async (req, res) => {
       const produceLabel = isCoffee ? 'COFFEE' : 'MILK';
 
       // Get the device's unique identifier (deviceserial) from the fingerprint
-      // The deviceserial in transactions matches the uniquedevcode from devSettings
       const deviceSerial = uniquedevcode;
 
-      // Define CAN column codes for each period (original session SCODE values)
-      // These codes match the sessions.SCODE values from the sessions table
-      // Morning: MO (or sometimes just using 'AM')
-      // Afternoon: AF (or sometimes just using 'PM')
-      // Evening: EV, EVE
       const periodCANCodes = {
         morning: ['MO', 'AM', 'MORNING'],
         afternoon: ['AF', 'PM', 'AFTERNOON'],
         evening: ['EV', 'EVE', 'EVENING', 'NIGHT']
       };
 
-      // Define normalized session column values for each period
-      // The session column is normalized to AM/PM during milk-collection insertion:
-      // - Morning (MO, AM, MORNING) → session='AM'
-      // - Afternoon (AF, PM, AFTERNOON) → session='PM'
-      // - Evening (EV, EVENING) → session='PM' (because the normalization checks for 'EVENING' → PM)
-      // NOTE: EV sessions are normalized to PM in the session column! So we can't rely on session alone.
-      const periodNormalizedSession = {
-        morning: ['AM'],
-        afternoon: ['PM'],
-        evening: ['PM'] // EV is normalized to PM in session column, so we MUST use CAN
-      };
-
-      // Build query - filter by deviceserial to ensure per-device reporting
-      // Include ALL transaction types: 1=Buy Produce, 2=Sell/Store, 3=AI
-      // Join fm_tanks to get route description and fm_items for product name
       let query = `
         SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id,
                t.route, t.weight, t.session, t.transdate as collection_date,
                t.transtime, t.clerk as clerk_name, t.icode as product_code,
-               t.entry_type, t.CAN as season_code, t.Transtype as transtype,
+               t.entry_type, t.CAN as season_code, t.milk_session_id, t.Transtype as transtype,
                t.iprice, t.amount,
                i.descript as product_name,
                TRIM(r.descript) as route_name
         FROM transactions t
         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
         LEFT JOIN fm_tanks r ON t.route = r.tcode AND r.ccode = ?
-        WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND t.deviceserial = ?
+        WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND t.deviceserial = ? AND t.ccode = ?
       `;
-      const queryParams = [norm(ccode), norm(ccode), date, deviceSerial];
+      const queryParams = [norm(ccode), norm(ccode), date, deviceSerial, norm(ccode)];
 
-      // Add period filter if provided
-      // CRITICAL: Use CAN column for accurate filtering because session column is normalized
-      // The CAN column stores the original SCODE (MO, AF, EV) from sessions table
-      if (periodFilter && periodFilter !== 'all' && periodCANCodes[periodFilter]) {
+      // Add milk_session_id filter if explicitly requested
+      if (milkSessionIdFilter && milkSessionIdFilter !== 'all' && milkSessionIdFilter !== '0' && milkSessionIdFilter.length === 10) {
+        query += ` AND t.milk_session_id = ?`;
+        queryParams.push(norm(milkSessionIdFilter));
+      } else if (periodFilter && periodFilter !== 'all' && periodCANCodes[periodFilter]) {
         const canCodes = periodCANCodes[periodFilter];
-        // Build OR condition to match CAN column against period codes
         const canConditions = canCodes.map(() => 't.CAN = ?').join(' OR ');
         query += ` AND (${canConditions})`;
-        // Add CAN codes for filtering
         queryParams.push(...canCodes.map(s => norm(s)));
       } else if (seasonFilter) {
-        // Legacy exact session filter
         query += ` AND t.session = ?`;
         queryParams.push(seasonFilter);
       }
@@ -2635,6 +2649,21 @@ const server = http.createServer(async (req, res) => {
       query += ` ORDER BY t.Transtype ASC, t.icode ASC, t.route ASC, t.transtime ASC, t.memberno`;
 
       const [collections] = await pool.query(query, queryParams);
+
+      // Extract distinct milk_session_id records for this device & date for session prompt options
+      const [distinctSessionRows] = await pool.query(
+        `SELECT DISTINCT t.milk_session_id, t.session, t.CAN as season_code, COUNT(*) as count
+         FROM transactions t
+         WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND t.deviceserial = ? AND t.ccode = ? AND t.milk_session_id IS NOT NULL AND TRIM(t.milk_session_id) != '' AND TRIM(t.milk_session_id) != '0' AND CHAR_LENGTH(TRIM(t.milk_session_id)) = 10
+         GROUP BY t.milk_session_id, t.session, t.CAN`,
+        [date, deviceSerial, norm(ccode)]
+      );
+      const sessionsList = distinctSessionRows.map(s => ({
+        milk_session_id: (s.milk_session_id || '').trim(),
+        session: s.session || 'AM',
+        season_code: s.season_code || '',
+        count: s.count
+      }));
 
       // Get season/session name for header
       let seasonName = '';
@@ -2658,13 +2687,10 @@ const server = http.createServer(async (req, res) => {
       const totalFarmers = new Set(collections.map(c => c.farmer_id)).size;
       const totalEntries = collections.length;
 
-
       // Format transactions for frontend display
       const transactions = collections.map(c => {
-        // Extract short ref number (last 5 chars of transrefno for compactness)
         const refno = c.transrefno ? c.transrefno.slice(-5) : '';
 
-        // Format time as HH:MM AM/PM
         let timeStr = '';
         if (c.transtime) {
           const timeParts = String(c.transtime).split(':');
@@ -2677,8 +2703,6 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        // Determine transaction type label based on Transtype
-        // 1 = Buy Produce, 2 = Sell/Store, 3 = AI
         let transTypeLabel = 'BUY';
         const transtype = parseInt(c.transtype) || 1;
         if (transtype === 2) {
@@ -2694,13 +2718,14 @@ const server = http.createServer(async (req, res) => {
           weight: parseFloat(c.weight || 0),
           time: timeStr,
           session: c.session,
-          season_code: c.season_code || '', // CAN column - original session SCODE (MO, AF, EV)
-          route: c.route || '', // Route code for grouping
-          route_name: c.route_name || c.route || '', // Full descriptive center name
-          product_code: c.product_code || '', // Product code for produce grouping
-          product_name: c.product_name || '', // Product name for produce grouping
-          transtype: transtype, // 1=Buy, 2=Sell/Store, 3=AI
-          transTypeLabel: transTypeLabel, // Human readable label
+          season_code: c.season_code || '',
+          milk_session_id: c.milk_session_id || '',
+          route: c.route || '',
+          route_name: c.route_name || c.route || '',
+          product_code: c.product_code || '',
+          product_name: c.product_name || '',
+          transtype: transtype,
+          transTypeLabel: transTypeLabel,
           price: parseFloat(c.iprice || 0),
           amount: parseFloat(c.amount || 0)
         };
@@ -2724,9 +2749,11 @@ const server = http.createServer(async (req, res) => {
             farmers: totalFarmers
           },
           transactions,
-          isCoffee
+          sessionsList,
+          isCoffee,
+          orgtype
         }
-      }, 200, origin);
+      });
     }
 
     // Items endpoint with invtype filtering
@@ -3022,7 +3049,7 @@ if (path === '/api/sales' && method === 'POST') {
             toNumOrZero(amount),
             body.item_code || '',
             salesSeasonVal,
-            timestamp, 0, 0,
+            timestamp, 0, body.milk_session_id || '',
             photoFilename,
             photoDirectory,
             body.cow_name || '',
@@ -3263,7 +3290,7 @@ if (path === '/api/sales' && method === 'POST') {
                 toNumOrZero(amount),
                 item.item_code || '',
                 batchSeasonVal,
-                timestamp, 0, 0,
+                timestamp, 0, item.milk_session_id || body.milk_session_id || '',
                 photoFilename, photoDirectory,
                 item.cow_name || '', item.cow_breed || '',
                 toIntOrNull(item.number_of_calves),
@@ -3456,6 +3483,111 @@ if (path === '/api/sales' && method === 'POST') {
       }));
       
       return sendJSON(res, { success: true, data: mappedRows });
+    }
+
+    // GET /api/sales/check-served - Check if a member was served today in Store/AI across all devices in ccode
+    if (path === '/api/sales/check-served' && method === 'GET') {
+      const { memberno, farmer_id, ccode, date, device_fingerprint, uniquedevcode } = parsedUrl.query;
+      const targetMember = (memberno || farmer_id || '').toString().trim();
+
+      if (!targetMember) {
+        return sendJSON(res, { success: false, error: 'MEMBERNO_REQUIRED' }, 400);
+      }
+
+      let targetCcode = ccode;
+      const devFingerprint = device_fingerprint || uniquedevcode || req.headers['x-device-fingerprint'];
+      if (!targetCcode && devFingerprint) {
+        const [devRows] = await pool.query(
+          'SELECT ccode FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
+          [devFingerprint]
+        );
+        if (devRows.length > 0 && devRows[0].ccode) {
+          targetCcode = devRows[0].ccode;
+        } else {
+          const [appRows] = await pool.query(
+            'SELECT ccode FROM approved_devices WHERE device_fingerprint = ? LIMIT 1',
+            [devFingerprint]
+          );
+          if (appRows.length > 0 && appRows[0].ccode) {
+            targetCcode = appRows[0].ccode;
+          }
+        }
+      }
+
+      if (!targetCcode) {
+        return sendJSON(res, { success: false, error: 'CCODE_REQUIRED' }, 400);
+      }
+
+      const checkDate = date || new Date().toISOString().split('T')[0];
+      const rawMember = targetMember.replace(/^#/, '').trim();
+      const nMember = norm(rawMember);
+      const nCcode = norm(targetCcode);
+      const checkDateStr = String(checkDate).trim();
+
+      // Calculate half-open date range [checkDateStr, nextDayStr) for SARGable index scanning
+      const startDate = checkDateStr;
+      const nextDayObj = new Date(checkDateStr);
+      nextDayObj.setDate(nextDayObj.getDate() + 1);
+      const nextDayStr = nextDayObj.toISOString().split('T')[0];
+
+      try {
+        const [rows] = await pool.query(
+          `SELECT
+            t.memberno,
+            t.ccode,
+            t.route,
+            COALESCE(NULLIF(TRIM(r.descript), ''), NULLIF(TRIM(t.route), ''), 'Store') AS location_name,
+            t.deviceserial,
+            t.clerk,
+            COALESCE(NULLIF(TRIM(d1.devcode), ''), NULLIF(TRIM(d1.device), ''), NULLIF(TRIM(d2.devcode), ''), NULLIF(TRIM(d2.device), ''), NULLIF(TRIM(t.clerk), ''), 'Device') AS device_name,
+            t.transdate,
+            t.transtime,
+            t.Transtype
+          FROM (
+            SELECT ID, memberno, ccode, route, deviceserial, clerk, transdate, transtime, Transtype
+            FROM transactions
+            WHERE ccode = ?
+              AND (memberno = ? OR memberno = ? OR memberno = ?)
+              AND Transtype IN (2, 3)
+              AND transdate >= ? AND transdate < ?
+            ORDER BY ID DESC
+            LIMIT 1
+          ) t
+          LEFT JOIN fm_tanks r ON r.tcode = t.route AND r.ccode = t.ccode
+          LEFT JOIN devSettings d1 ON d1.uniquedevcode = t.deviceserial
+          LEFT JOIN devSettings d2 ON d2.devcode = t.deviceserial AND d2.uniquedevcode <> t.deviceserial`,
+          [nCcode, nMember, '#' + nMember, rawMember, startDate, nextDayStr]
+        );
+
+        if (rows.length > 0) {
+          const tx = rows[0];
+          // Use transactions.route for location primary, fallback to location_name or Store
+          const loc = tx.route || tx.location_name || 'Store';
+          const dev = tx.device_name || tx.deviceserial || tx.clerk || 'POS Device';
+          return sendJSON(res, {
+            success: true,
+            data: {
+              served: true,
+              location: loc,
+              device: dev,
+              clerk: tx.clerk,
+              route: tx.route,
+              transdate: tx.transdate,
+              transtime: tx.transtime
+            }
+          });
+        }
+
+        return sendJSON(res, {
+          success: true,
+          data: {
+            served: false
+          }
+        });
+      } catch (err) {
+        console.error('[/api/sales/check-served] Error:', err);
+        return sendJSON(res, { success: false, error: err.message }, 500);
+      }
     }
 
     // ==================== DEVICE IDENTITY RESOLUTION (v2.10.109) ====================
@@ -4072,9 +4204,10 @@ if (path === '/api/sales' && method === 'POST') {
           try {
             const safeUniqueDevCode = String(body.device_fingerprint || '').trim() || '000';
             const safeDeviceLabel = String(body.device_info || body.model || '').trim() || '000';
+            const safeCcode = String(body.ccode || '').trim() || '000';
             await pool.query(
-              'INSERT INTO devSettings (uniquedevcode, device, authorized, trnid) VALUES (?, ?, 0, 0)',
-              [safeUniqueDevCode, safeDeviceLabel]
+              'INSERT INTO devSettings (uniquedevcode, device, authorized, trnid, ccode) VALUES (?, ?, 0, 0, ?)',
+              [safeUniqueDevCode, safeDeviceLabel, safeCcode]
             );
 
             console.log('📱 Created devSettings record for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
@@ -5813,7 +5946,12 @@ const txStatus = isSuccess ? 'paid' : 'failed';
 // NOT bound in-flight request duration or hold MySQL pool slots; those
 // are guarded separately by request body / handler timeouts.
 const PORT = process.env.PORT || 3000;
+
+// Reverse-proxy HTTP Keep-Alive tuning (Nginx / PM2 cluster compatibility)
+server.keepAliveTimeout = Number(process.env.KEEP_ALIVE_TIMEOUT || 65000);
+server.headersTimeout = Number(process.env.HEADERS_TIMEOUT || 66000);
+
 server.setTimeout(REQUEST_TIMEOUT_MS, (socket) => {
   try { socket.destroy(); } catch (_) { /* noop */ }
 });
-server.listen(PORT, () => console.log(`✅ Server running on port ${PORT} (pool=${POOL_LIMIT}, queue=${QUEUE_LIMIT}, timeout=${REQUEST_TIMEOUT_MS}ms)`));
+server.listen(PORT, () => console.log(`✅ Server running on port ${PORT} (pid=${process.pid}, pool=${POOL_LIMIT}, queue=${QUEUE_LIMIT}, timeout=${REQUEST_TIMEOUT_MS}ms)`));

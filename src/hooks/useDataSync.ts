@@ -6,6 +6,7 @@ import { useAppSettings } from '@/hooks/useAppSettings';
 import { mysqlApi } from '@/services/mysqlApi';
 import { farmerFrequencyApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { resolveDashboardMilkSessionId } from '@/utils/sessionMetadata';
 import { toast } from 'sonner';
 import { 
   isNativeStorageAvailable, 
@@ -247,7 +248,18 @@ export const useDataSync = () => {
                   `DUPLICATE_SESSION_DELIVERY: server already has uploadrefno=${existingUploadRef}`
                 );
               }
-              recordConflict(cleanFarmerId, normalizedSession, receiptDate, receipt.reference_no, String(existingUploadRef || ''));
+              const existingDevice = (existing as any)?.deviceserial || (existing as any)?.clerk_name || 'Other Device';
+              const existingRoute = (existing as any)?.route || receipt.route || '';
+              recordConflict(
+                cleanFarmerId,
+                normalizedSession,
+                receiptDate,
+                receipt.reference_no,
+                String(existingUploadRef || ''),
+                existingDevice,
+                existingRoute,
+                receipt.orderId
+              );
               return { success: false, conflict: true };
             }
           }
@@ -272,6 +284,7 @@ export const useDataSync = () => {
         entry_type: receipt.entry_type,
         product_code: receipt.product_code,
         season_code: receipt.season_code,
+        milk_session_id: receipt.milk_session_id || resolveDashboardMilkSessionId() || undefined,
         transtype: receipt.transtype,
         delivered_by: receipt.delivered_by,
       });
@@ -496,7 +509,19 @@ export const useDataSync = () => {
         }
 
         if (errorCode === 'DUPLICATE_SESSION_DELIVERY' || combinedMsg.includes('session delivery')) {
-          recordConflict(String(receipt.farmer_id).replace(/^#/, '').trim(), normalizedSession, new Date(receipt.collection_date).toISOString().split('T')[0], receipt.reference_no);
+          const existingDevice = (result as any)?.existing_device;
+          const existingRoute = (result as any)?.existing_route || receipt.route;
+          const existingUploadRef = (result as any)?.existing_uploadrefno;
+          recordConflict(
+            String(receipt.farmer_id).replace(/^#/, '').trim(),
+            normalizedSession,
+            new Date(receipt.collection_date).toISOString().split('T')[0],
+            receipt.reference_no,
+            existingUploadRef,
+            existingDevice,
+            existingRoute,
+            receipt.orderId
+          );
           return { success: false, conflict: true };
         } else if (isIdempotent) {
           // Idempotent recovery for duplicates already on server
@@ -621,17 +646,35 @@ export const useDataSync = () => {
       sessionVal: string,
       dateVal: string,
       localRef: string,
-      remoteUploadRef?: string
+      remoteUploadRef?: string,
+      existingDevice?: string,
+      existingRoute?: string,
+      orderId?: number
     ) => {
       const key = `${farmerId}|${sessionVal}|${dateVal}`;
       conflictKeysSeen.add(key);
       if (!conflictKeysToasted.has(key)) {
         conflictKeysToasted.add(key);
-        toast.error(`Farmer ${farmerId} already has a synced delivery for ${sessionVal} on ${dateVal}.`, { duration: 8000 });
 
-        // v2.12.41: Dispatch event to update session blacklist in real-time
+        const routeStr = existingRoute ? `Route: ${existingRoute}` : '';
+        const deviceStr = existingDevice ? `Device: ${existingDevice}` : '';
+        const tags = [routeStr, deviceStr].filter(Boolean).join(', ');
+        const simpleMsg = `Member ${farmerId} has delivered this session${tags ? ` (${tags})` : ''}.`;
+
+        toast.error(simpleMsg, { duration: 8000 });
+
+        // Dispatch event with device, route, and orderId to trigger prompt dialog
         window.dispatchEvent(new CustomEvent('duplicateDetected', {
-          detail: { farmerId, session: sessionVal, date: dateVal }
+          detail: {
+            farmerId,
+            session: sessionVal,
+            date: dateVal,
+            localRef,
+            remoteUploadRef,
+            device: existingDevice,
+            route: existingRoute,
+            orderId
+          }
         }));
       }
     };
@@ -801,12 +844,17 @@ export const useDataSync = () => {
       }
 
       if (mountedRef.current) {
-        const totalPending = receiptsOnly.length + salesCount + nativeMilkCount + nativeSalesCount;
-        console.log(`[SYNC] Pending Count Update: total=${totalPending} (milk=${receiptsOnly.length + nativeMilkCount}, sales=${salesCount + nativeSalesCount})`);
+        const pendingMilkTotal = receiptsOnly.length + nativeMilkCount;
+        const totalPending = pendingMilkTotal + salesCount + nativeSalesCount;
+        console.log(`[SYNC] Pending Count Update: total=${totalPending} (milk=${pendingMilkTotal}, sales=${salesCount + nativeSalesCount})`);
 
         setPendingCount(totalPending);
-        setPendingMilkCount(receiptsOnly.length + nativeMilkCount);
+        setPendingMilkCount(pendingMilkTotal);
         setPendingSalesCount(salesCount + nativeSalesCount);
+
+        if (pendingMilkTotal === 0) {
+          setConflictedReceiptsCount(0);
+        }
 
         // AUTO-SYNC TRIGGER: If we found pending records and we're online and not already syncing
         if (

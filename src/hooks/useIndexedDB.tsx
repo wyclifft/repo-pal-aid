@@ -59,8 +59,8 @@ interface IndexedDBContextType {
   deleteSale: (orderId: number) => Promise<void>;
   saveItems: (items: any[]) => void;
   getItems: () => Promise<any[]>;
-  saveZReport: (date: string, data: any) => Promise<void>;
-  getZReport: (date: string) => Promise<any | null>;
+  saveZReport: (date: string, data: any, ccode?: string) => Promise<void>;
+  getZReport: (date: string, ccode?: string) => Promise<any | null>;
   savePeriodicReport: (cacheKey: string, data: any) => Promise<void>;
   getPeriodicReport: (cacheKey: string) => Promise<any | null>;
   savePrintedReceipts: (receipts: any[]) => Promise<void>;
@@ -725,13 +725,13 @@ export const useIndexedDBStandalone = () => {
   /**
    * Save Z Report data to IndexedDB
    */
-  const saveZReport = useCallback((date: string, data: any): Promise<void> => {
+  const saveZReport = useCallback((date: string, data: any, ccode?: string): Promise<void> => {
     return new Promise((resolve, reject) => {
       if (!db) return reject(new Error('DB not ready'));
       try {
         const tx = db.transaction('z_reports', 'readwrite');
         const store = tx.objectStore('z_reports');
-        const request = store.put({ date, data, timestamp: Date.now() });
+        const request = store.put({ date, data, ccode, timestamp: Date.now() });
         request.onsuccess = () => {
           console.log('Z Report cached successfully');
           resolve();
@@ -751,14 +751,22 @@ export const useIndexedDBStandalone = () => {
   /**
    * Get Z Report data from IndexedDB
    */
-  const getZReport = useCallback(async (date: string): Promise<any | null> => {
+  const getZReport = useCallback(async (date: string, ccode?: string): Promise<any | null> => {
     if (!db) return null;
     try {
       return new Promise((resolve, reject) => {
         const tx = db.transaction('z_reports', 'readonly');
         const store = tx.objectStore('z_reports');
         const request = store.get(date);
-        request.onsuccess = () => resolve(request.result?.data || null);
+        request.onsuccess = () => {
+          const row = request.result;
+          if (!row) return resolve(null);
+          if (ccode && row.ccode && row.ccode !== ccode) {
+            console.log(`[Z-REPORT] Cache ccode mismatch: stored=${row.ccode}, requested=${ccode}`);
+            return resolve(null);
+          }
+          resolve(row.data || null);
+        };
         request.onerror = () => reject(request.error);
       });
     } catch (error) {
@@ -1072,6 +1080,57 @@ export const useIndexedDBStandalone = () => {
             byProduct: globalRow.byProduct || [],
             keyPresent: true,
             fallbackScope: 'ALL',
+          };
+        }
+      }
+
+      // v2.12.83: SEASON FALLBACK — If exact month key misses or has 0, but a specific season code (scode)
+      // is provided, search farmer_cumulative for any row belonging to this farmer and season.
+      // Coffee seasons span multiple months; the backend batch prewarm stores rows under month_start
+      // (e.g. 2025-10), while offline lookups use current system month (e.g. 2026-03).
+      if (seasonKey !== 'ALL') {
+        const seasonRow: any = await new Promise((resolve) => {
+          const tx = db.transaction('farmer_cumulative', 'readonly');
+          const store = tx.objectStore('farmer_cumulative');
+          const prefix = `${cleanId}__`;
+          const req = store.openCursor();
+          let bestMatch: any = null;
+          req.onsuccess = () => {
+            const cursor = req.result;
+            if (cursor) {
+              const val = cursor.value;
+              const k = String(cursor.key || '');
+              if (k.startsWith(prefix)) {
+                const kScode = String(val.scode || k.split('__')[3] || '').trim().toUpperCase();
+                const kRoute = String(val.route || k.split('__')[1] || '').trim().toUpperCase();
+                if (kScode === seasonKey && (routeKey === 'ALL' || kRoute === routeKey || kRoute === 'ALL')) {
+                  if (!bestMatch || (val.baseCount || 0) > (bestMatch.baseCount || 0)) {
+                    bestMatch = val;
+                  }
+                }
+              }
+              cursor.continue();
+            } else {
+              resolve(bestMatch);
+            }
+          };
+          req.onerror = () => resolve(null);
+        });
+
+        if (seasonRow && (seasonRow.baseCount > 0 || seasonRow.localCount > 0)) {
+          if (isFocusedFarmer(cleanId)) {
+            plogFocus('CUM:READ-SEASON-FALLBACK', `${cleanId} season=${seasonKey} found cached row base=${seasonRow.baseCount}`,
+              { farmerId: cleanId, season: seasonKey, baseCount: seasonRow.baseCount, localCount: seasonRow.localCount });
+          }
+          return {
+            baseCount: seasonRow.baseCount || 0,
+            localCount: seasonRow.localCount || 0,
+            month: seasonRow.month || month,
+            route: routeKey,
+            scode: seasonKey,
+            byProduct: seasonRow.byProduct || [],
+            keyPresent: true,
+            fallbackScope: 'SEASON',
           };
         }
       }

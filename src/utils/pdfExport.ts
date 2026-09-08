@@ -146,10 +146,16 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       lines.push(`BY ${isCoffee ? 'CENTER' : 'ROUTE'}`);
       lines.push('='.repeat(48));
       Object.entries(reportData.byRoute).forEach(([route, data]) => {
+        const amFarmers = new Set((data.AM || []).map((c: any) => c.farmer_id)).size;
+        const pmFarmers = new Set((data.PM || []).map((c: any) => c.farmer_id)).size;
+        const totalFarmers = new Set([
+          ...(data.AM || []).map((c: any) => c.farmer_id),
+          ...(data.PM || []).map((c: any) => c.farmer_id)
+        ]).size;
         if (isCoffee) {
-          lines.push(`${route}: ${data.AM.length + data.PM.length} entries, Total=${(Math.floor(data.total * 10) / 10).toFixed(1)} ${weightUnit}`);
+          lines.push(`${route}: ${totalFarmers} farmers, Total=${(Math.floor(data.total * 10) / 10).toFixed(1)} ${weightUnit}`);
         } else {
-          lines.push(`${route}: AM=${data.AM.length}, PM=${data.PM.length}, Total=${(Math.floor(data.total * 10) / 10).toFixed(1)} ${weightUnit}`);
+          lines.push(`${route}: AM=${amFarmers} farmers, PM=${pmFarmers} farmers, Total=${(Math.floor(data.total * 10) / 10).toFixed(1)} ${weightUnit}`);
         }
       });
       lines.push('');
@@ -157,7 +163,21 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       lines.push('BY COLLECTOR');
       lines.push('='.repeat(48));
       Object.entries(reportData.byCollector).forEach(([collector, data]) => {
-        lines.push(`${collector}: ${data.farmers} farmers, ${data.entries} entries, ${(Math.floor(data.liters * 10) / 10).toFixed(1)} ${weightUnit}`);
+        const sessionCount = data.sessionIds ?? (
+          reportData.collections
+            ? new Set(
+                reportData.collections
+                  .filter((c: any) => (c.clerk_name || 'Unknown') === collector)
+                  .map((c: any) => (c.milk_session_id || c.season_code || c.session || '').trim())
+                  .filter(Boolean)
+              ).size
+            : 0
+        );
+        if (isCoffee) {
+          lines.push(`${collector}: ${data.farmers} farmers, ${(Math.floor(data.liters * 10) / 10).toFixed(1)} ${weightUnit}`);
+        } else {
+          lines.push(`${collector}: ${data.farmers} farmers, ${sessionCount} session IDs, ${(Math.floor(data.liters * 10) / 10).toFixed(1)} ${weightUnit}`);
+        }
       });
 
       const fileName = `z-report-${reportData.date}.pdf`;
@@ -327,7 +347,7 @@ const downloadWithFallback = async (blob: Blob, fileName: string, resolve: (succ
  * Body: Transaction list (MNO, REFNO, QTY, TIME)
  * Footer: Totals, Clerk, Print Time, Device Code
  */
-export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeName?: string): Promise<boolean> => {
+export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeName?: string, selectedPeriod?: string): Promise<boolean> => {
   return new Promise((resolve) => {
     try {
       const weightUnit = 'KGS';
@@ -353,10 +373,15 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       const lines: string[] = [];
 
       // Header
+      const pdfMilkId = (selectedPeriod && String(selectedPeriod).trim().length === 10 && selectedPeriod !== 'all') ? selectedPeriod : null;
       lines.push(reportData.companyName.toUpperCase());
+      lines.push('Z REPORT');
       lines.push('');
       lines.push(`* ${reportData.produceLabel.toUpperCase()} SUMMARY`);
       lines.push(`* ${reportData.periodLabel.toUpperCase()}: ${reportData.seasonName}`);
+      if (pdfMilkId) {
+        lines.push(`* SESSION ID: ${pdfMilkId}`);
+      }
       lines.push(`* DATE: ${formattedDate}`);
       lines.push('');
       lines.push(`* ${factoryName.toUpperCase().replace(' FACTORY', '')} FACTORY`);
@@ -376,8 +401,16 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
         g.amount += Number((tx as any).amount || 0);
       }
 
+      // Helper to determine produce vs store merchandise
+      const isProduceTx = (tx: any) => {
+        const code = String(tx.product_code || '').trim().toUpperCase();
+        const milkId = String(tx.milk_session_id || '').trim();
+        return code === 'S0001' || (tx.transtype || 1) === 1 || milkId.length === 10 || ((tx.transtype || 1) === 2 && reportData.orgtype === 'C');
+      };
+
       let buyWeight = 0;
-      let sellAiItems = 0;
+      let sellProduceWeight = 0;
+      let storeItemsCount = 0;
       let sellAiAmount = 0;
 
       // Render each section with aligned columns.
@@ -385,27 +418,37 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       for (const [tt, g] of typeGroups) {
         if (sectionIdx > 0) lines.push('');
         const showMoney = tt !== 1;
+        const isProduceSection = reportData.orgtype !== 'S' && g.rows.every(t => isProduceTx(t));
         lines.push(`== ${g.label} ==`);
 
         if (showMoney) {
           // SELL/AI: MNO(10) REF(8) QTY(6 R) KSh(10 R) TIME(8 R) — total 46
           lines.push(`${padL('MNO',10)} ${padL('REF',8)} ${padR('QTY',6)} ${padR('KSh',10)} ${padR('TIME',8)}`);
           lines.push('-'.repeat(46));
-          let groupItems = 0;
+          let groupQty = 0;
           for (const tx of g.rows) {
-            const qtyInt = Math.max(0, Math.round(tx.weight || 0));
-            groupItems += qtyInt;
+            const rawQty = Number(tx.weight || 0);
+            groupQty += rawQty;
+            const qtyFormatted = isProduceSection
+              ? (Math.floor(rawQty * 10) / 10).toFixed(1)
+              : String(Math.max(0, Math.round(rawQty)));
+
             lines.push(
               `${padL((tx.farmer_id || '').substring(0, 10), 10)} ` +
               `${padL((tx.refno || '').slice(-8), 8)} ` +
-              `${padR(String(qtyInt), 6)} ` +
+              `${padR(qtyFormatted, 6)} ` +
               `${padR(Number((tx as any).amount || 0).toFixed(0), 10)} ` +
               `${padR((tx.time || '').substring(0, 8), 8)}`
             );
           }
-          const itemsLabel = groupItems === 1 ? 'item' : 'items';
-          lines.push(`${g.label} TOTAL    ${groupItems} ${itemsLabel}    KSh ${g.amount.toFixed(0)}`);
-          sellAiItems += groupItems;
+          if (isProduceSection) {
+            sellProduceWeight += groupQty;
+            lines.push(`${g.label} TOTAL    ${(Math.floor(groupQty * 10) / 10).toFixed(1)} ${weightUnit}    KSh ${g.amount.toFixed(0)}`);
+          } else {
+            const itemsLabel = groupQty === 1 ? 'item' : 'items';
+            lines.push(`${g.label} TOTAL    ${Math.round(groupQty)} ${itemsLabel}    KSh ${g.amount.toFixed(0)}`);
+            storeItemsCount += Math.round(groupQty);
+          }
           sellAiAmount += g.amount;
         } else {
           // BUY: MNO(10) REF(8) AMOUNT(10 R) TIME(8 R) — total 40
@@ -433,11 +476,14 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       lines.push('');
       lines.push('='.repeat(48));
       if (buyWeight > 0) {
-        lines.push(`TOTAL                    ${(Math.floor(buyWeight * 10) / 10).toFixed(1)} ${weightUnit}`);
+        lines.push(`TOTAL BUY                ${(Math.floor(buyWeight * 10) / 10).toFixed(1)} ${weightUnit}`);
       }
-      if (sellAiItems > 0) {
-        const itemsLabel = sellAiItems === 1 ? 'item' : 'items';
-        lines.push(`TOTAL ITEMS              ${sellAiItems} ${itemsLabel}`);
+      if (sellProduceWeight > 0) {
+        lines.push(`TOTAL SELL PRODUCE       ${(Math.floor(sellProduceWeight * 10) / 10).toFixed(1)} ${weightUnit}`);
+      }
+      if (storeItemsCount > 0) {
+        const itemsLabel = storeItemsCount === 1 ? 'item' : 'items';
+        lines.push(`TOTAL STORE ITEMS        ${storeItemsCount} ${itemsLabel}`);
       }
       if (sellAiAmount > 0) {
         lines.push(`TOTAL VALUE              KSh ${sellAiAmount.toFixed(0)}`);

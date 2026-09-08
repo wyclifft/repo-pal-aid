@@ -343,6 +343,7 @@ export interface MilkCollection {
   farmer_id: string;          // → DB: memberno
   farmer_name: string;        // → Not stored, derived from cm_members
   route: string;              // → DB: route
+  devcode?: string;           // Device code that performed the collection
   session: string;            // → DB: session - AM/PM for dairy, season name for coffee
   session_descript?: string;  // v2.10.50: full session descript - backend fallback when SCODE missing
   weight: number;             // → DB: weight (net weight for coffee, total weight for dairy)
@@ -365,6 +366,7 @@ export interface MilkCollection {
   entry_type?: 'scale' | 'manual';
   // Season SCODE from sessions table - saved to transactions.CAN column
   season_code?: string;       // → DB: CAN (stores session.SCODE for all orgtypes)
+  milk_session_id?: string;   // → DB: milk_session_id (10-digit unique session code)
   // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
   transtype?: number;         // → DB: Transtype (default: 1)
   // Coffee sack weighing - gross/tare/net (orgtype C only)
@@ -455,6 +457,9 @@ export const milkCollectionApi = {
     error?: string;
     message?: string;
     existing_reference?: string;
+    existing_uploadrefno?: string;
+    existing_device?: string;
+    existing_route?: string;
     cumulative_weight?: number;
     by_product?: ProductCumulative[];
   }> => {
@@ -464,6 +469,9 @@ export const milkCollectionApi = {
       uploadrefno?: string;
       backend_id?: number;
       existing_reference?: string;
+      existing_uploadrefno?: string;
+      existing_device?: string;
+      existing_route?: string;
       cumulative_weight?: number;
       by_product?: ProductCumulative[];
     }>('/milk-collection', {
@@ -481,6 +489,9 @@ export const milkCollectionApi = {
       error: response.error,
       message: response.message,
       existing_reference: rawData?.existing_reference,
+      existing_uploadrefno: rawData?.existing_uploadrefno,
+      existing_device: rawData?.existing_device,
+      existing_route: rawData?.existing_route,
       cumulative_weight: rawData?.cumulative_weight,
       by_product: rawData?.by_product
     };
@@ -801,6 +812,7 @@ export interface ZReportData {
       farmers: number;
       entries: number;
       liters: number;
+      sessionIds?: number;
     };
   };
   collections: MilkCollection[];
@@ -815,6 +827,7 @@ export interface DeviceZReportTransaction {
   time: string;           // HH:MM AM/PM format
   session: string;        // Normalized session (AM/PM)
   season_code?: string;   // Original session SCODE from CAN column (MO, AF, EV)
+  milk_session_id?: string; // 10-digit unique milk_session_id
   route?: string;         // Route/center code for grouping
   route_name?: string;    // Full route/center description from fm_tanks.descript
   product_code?: string;  // Product code for produce grouping
@@ -823,6 +836,14 @@ export interface DeviceZReportTransaction {
   transTypeLabel?: string; // Human readable: "BUY", "SELL", "AI"
   price?: number;         // Unit price (for Store/AI)
   amount?: number;        // Total amount (for Store/AI)
+}
+
+export interface DeviceZReportSessionSummary {
+  milk_session_id: string;
+  session: string;
+  season_code?: string;
+  time_range?: string;
+  count?: number;
 }
 
 export interface DeviceZReportData {
@@ -841,6 +862,7 @@ export interface DeviceZReportData {
     farmers: number;
   };
   transactions: DeviceZReportTransaction[];
+  sessionsList?: DeviceZReportSessionSummary[];
   isCoffee: boolean;      // For weight unit display
   orgtype?: string;       // v2.12.37: Org type for filtering logic (D/C/S)
 }
@@ -859,13 +881,22 @@ export const zReportApi = {
    * Filters by deviceserial (device code) and date
    * @param period - Optional period filter: 'morning', 'afternoon', 'evening', 'all'
    */
-  getByDevice: async (date: string, uniquedevcode: string, seasonCode?: string, period?: string): Promise<DeviceZReportData | null> => {
+  getByDevice: async (
+    date: string,
+    uniquedevcode: string,
+    seasonCode?: string,
+    period?: string,
+    milkSessionId?: string
+  ): Promise<DeviceZReportData | null> => {
     let url = `/z-report/device?date=${date}&uniquedevcode=${encodeURIComponent(uniquedevcode)}`;
     if (seasonCode) {
       url += `&season=${encodeURIComponent(seasonCode)}`;
     }
     if (period && period !== 'all') {
       url += `&period=${encodeURIComponent(period)}`;
+    }
+    if (milkSessionId) {
+      url += `&milk_session_id=${encodeURIComponent(milkSessionId)}`;
     }
     const response = await apiRequest<DeviceZReportData>(url);
     return response.data || null;
@@ -1055,6 +1086,47 @@ export const salesApi = {
     const url = params.toString() ? `/sales?${params.toString()}` : '/sales';
     const response = await apiRequest<Sale[]>(url);
     return response.data || [];
+  },
+
+  /**
+   * Check if a member has been served today across any device in this ccode
+   */
+  checkServedToday: async (
+    memberNo: string,
+    ccode?: string,
+    deviceFingerprint?: string
+  ): Promise<{
+    served: boolean;
+    location?: string;
+    device?: string;
+    clerk?: string;
+    route?: string;
+    transdate?: string;
+    transtime?: string;
+  }> => {
+    try {
+      const params = new URLSearchParams();
+      params.append('memberno', memberNo);
+      if (ccode) params.append('ccode', ccode);
+      if (deviceFingerprint) params.append('device_fingerprint', deviceFingerprint);
+
+      const response = await apiRequest<{
+        served: boolean;
+        location?: string;
+        device?: string;
+        clerk?: string;
+        route?: string;
+        transdate?: string;
+        transtime?: string;
+      }>(`/sales/check-served?${params.toString()}`, {}, 3000);
+
+      if (response.success && response.data) {
+        return response.data;
+      }
+      return { served: false };
+    } catch {
+      return { served: false };
+    }
   }
 };
 

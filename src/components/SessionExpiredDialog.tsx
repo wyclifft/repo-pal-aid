@@ -1,13 +1,11 @@
-import { AlertTriangle, Clock, WifiOff } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { useOfflineStatus } from '@/hooks/useOfflineStatus';
 
 interface SessionExpiredDialogProps {
   open: boolean;
@@ -18,104 +16,44 @@ interface SessionExpiredDialogProps {
 }
 
 /**
- * Dialog shown when the user's selected session/season has expired.
- * Forces user to select an active session before continuing data entry.
- * Note: This does NOT block data syncing - only data ENTRY.
- * When offline, cached sessions remain available for selection.
+ * Ultra-short, concise dialog shown when the selected session/season has expired.
+ * Prompts the user to select an active session immediately.
  */
 export const SessionExpiredDialog = ({
   open,
   sessionName,
   periodLabel = 'Session',
-  pendingCount = 0,
   onSelectSession,
 }: SessionExpiredDialogProps) => {
-  const { isOnline } = useOfflineStatus();
-
   return (
-    <Dialog open={open} onOpenChange={() => {/* Prevent closing by clicking outside */}}>
+    <Dialog open={open} onOpenChange={() => {}}>
       <DialogContent 
-        className="max-w-md mx-auto" 
+        className="max-w-sm mx-auto p-5 rounded-xl"
         hideCloseButton
         onPointerDownOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
         <DialogHeader className="text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-amber-100">
-            <AlertTriangle className="h-8 w-8 text-amber-600" />
+          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100">
+            <AlertTriangle className="h-7 w-7 text-amber-600" />
           </div>
-          <DialogTitle className="text-xl font-bold text-gray-900">
+          <DialogTitle className="text-lg font-bold text-gray-900">
             {periodLabel} Expired
           </DialogTitle>
-          <DialogDescription className="text-gray-600 mt-2">
-            {sessionName ? (
-              <>
-                The <strong>{sessionName}</strong> {periodLabel.toLowerCase()} has ended.
-              </>
-            ) : (
-              <>
-                Your selected {periodLabel.toLowerCase()} has ended.
-              </>
-            )}
-          </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 mt-4">
-          {/* Info about what this means */}
-          <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
-            <div className="flex items-start gap-3">
-              <Clock className="h-5 w-5 text-gray-400 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="font-medium text-gray-800 mb-1">
-                  Data entry is paused
-                </p>
-                <p>
-                  You must select an active {periodLabel.toLowerCase()} to continue 
-                  capturing new collections.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Offline notice */}
-          {!isOnline && (
-            <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
-              <div className="flex items-start gap-3">
-                <WifiOff className="h-5 w-5 text-gray-400 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="font-medium text-gray-800 mb-1">
-                    You are offline
-                  </p>
-                  <p>
-                    Cached {periodLabel.toLowerCase()}s are available for selection.
-                    Your data is safe and will sync when connectivity is restored.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Pending sync note */}
-          {pendingCount > 0 && (
-            <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-700">
-              <p className="font-medium mb-1">
-                ✓ Pending data is safe
-              </p>
-              <p className="text-blue-600">
-                Your {pendingCount} pending record{pendingCount !== 1 ? 's' : ''} will 
-                continue syncing in the background. No data will be lost.
-              </p>
-            </div>
-          )}
-
-          {/* Action button */}
-          <Button
-            onClick={onSelectSession}
-            className="w-full py-6 text-lg font-semibold bg-[#26A69A] hover:bg-[#1E8E82]"
-          >
-            Select {!isOnline ? 'Cached' : 'Active'} {periodLabel}
-          </Button>
+        <div className="py-2 text-center text-sm text-gray-700 bg-amber-50/80 border border-amber-200 rounded-lg p-3">
+          <p className="font-semibold text-gray-800">
+            {sessionName ? `${sessionName} ${periodLabel.toLowerCase()} has ended.` : `Your ${periodLabel.toLowerCase()} has ended.`} Please select an active {periodLabel.toLowerCase()} to continue.
+          </p>
         </div>
+
+        <Button
+          onClick={onSelectSession}
+          className="w-full mt-2 py-3 text-base font-semibold bg-[#26A69A] hover:bg-[#1E8E82] text-white rounded-lg shadow-sm"
+        >
+          Select Active {periodLabel}
+        </Button>
       </DialogContent>
     </Dialog>
   );

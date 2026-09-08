@@ -4,6 +4,7 @@ import { Printer, X, RefreshCw, Check, AlertTriangle } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { resolveDashboardMilkSessionId } from '@/utils/sessionMetadata';
 import { toast } from 'sonner';
 import type { CowDetails } from '@/components/CowDetailsModal';
 
@@ -293,6 +294,7 @@ export const TransactionReceipt = ({
           entry_type: (entryType as 'scale' | 'manual') || 'manual',
           product_code: productCode,
           season_code: seasonCode,
+          milk_session_id: (item as any).milk_session_id || resolveDashboardMilkSessionId() || undefined,
           transtype,
         });
       };

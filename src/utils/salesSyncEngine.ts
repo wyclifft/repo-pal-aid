@@ -1,7 +1,7 @@
 import { mysqlApi, type Sale, type BatchSaleRequest } from '@/services/mysqlApi';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { resolveSessionMetadata } from '@/utils/sessionMetadata';
-import { markNativeRecordSynced } from '@/services/offlineStorage';
+import { markNativeRecordSynced, isNativeStorageAvailable, getUnsyncedFromLocalDB } from '@/services/offlineStorage';
 
 interface SaleRecord extends Sale {
   orderId?: number;
@@ -15,6 +15,7 @@ interface SaleRecord extends Sale {
   cow_breed?: string;
   number_of_calves?: string;
   other_details?: string;
+  fromNative?: boolean;
 }
 
 /**
@@ -35,6 +36,39 @@ export const syncSalesFromDB = async (
     const pendingSales: SaleRecord[] = allRecords.filter(
       (r: any) => r.type === 'sale' || r.type === 'ai'
     );
+
+    // v2.12.83: Combine with native SQLite storage sales (store_sale and ai_sale) if available
+    if (isNativeStorageAvailable()) {
+      try {
+        const nativeStoreRaw = await getUnsyncedFromLocalDB('store_sale');
+        const nativeAIRaw = await getUnsyncedFromLocalDB('ai_sale');
+        const nativeCombined = [...nativeStoreRaw, ...nativeAIRaw];
+
+        const idbRefs = new Set(
+          pendingSales.map(s => (s.transrefno || s.uploadrefno || '').trim().toUpperCase())
+        );
+
+        for (const record of nativeCombined) {
+          try {
+            const payload = typeof record.payload === 'string' ? JSON.parse(record.payload) : record.payload;
+            const ref = (payload.transrefno || record.referenceNo || '').trim().toUpperCase();
+            if (ref && !idbRefs.has(ref)) {
+              pendingSales.push({
+                ...payload,
+                transrefno: payload.transrefno || record.referenceNo,
+                type: record.recordType === 'ai_sale' ? 'ai' : 'sale',
+                fromNative: true,
+              });
+              idbRefs.add(ref);
+            }
+          } catch (pErr) {
+            console.warn('[SYNC-ENGINE] Failed to parse native sale record:', pErr);
+          }
+        }
+      } catch (natErr) {
+        console.warn('[SYNC-ENGINE] Failed to fetch native sales records:', natErr);
+      }
+    }
 
     if (pendingSales.length === 0) {
       return { synced: 0, failed: 0 };

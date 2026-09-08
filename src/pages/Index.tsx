@@ -1,7 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MoreVertical } from 'lucide-react';
+import { MoreVertical, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+} from '@/components/ui/alert-dialog';
 import { Login } from '@/components/Login';
 import { Dashboard } from '@/components/Dashboard';
 import { BuyProduceScreen } from '@/components/BuyProduceScreen';
@@ -19,9 +27,13 @@ import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSessionBlacklist } from '@/hooks/useSessionBlacklist';
 import { useAppSettings } from '@/hooks/useAppSettings';
+import { useSessionExpiration } from '@/hooks/useSessionExpiration';
+import { SessionExpiredDialog } from '@/components/SessionExpiredDialog';
 import { isFarmerInactive } from '@/hooks/useFarmerResolution';
 import { InactiveMemberDialog } from '@/components/InactiveMemberDialog';
+import { DuplicateDeliveryDialog } from '@/components/DuplicateDeliveryDialog';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
+import { resolveDashboardMilkSessionId } from '@/utils/sessionMetadata';
 import { cumulativeMonitor, logPrintFinal } from '@/utils/cumulativeMonitor';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
@@ -62,6 +74,7 @@ const Index = () => {
   const [showCollection, setShowCollection] = useState(false); // Controls dashboard vs collection view
   const [collectionMode, setCollectionMode] = useState<'buy' | 'sell'>('buy'); // Buy or Sell mode
   const [showSupervisor, setShowSupervisor] = useState(false); // v2.12.17: Supervisor portal
+  const [showUnsavedCapturesDialog, setShowUnsavedCapturesDialog] = useState(false);
 
   // v2.12.19: Handle hardware back button to navigate to Dashboard
   useEffect(() => {
@@ -222,6 +235,7 @@ const Index = () => {
     getPrintedReceipts, 
     getUnsyncedReceipts, 
     clearUnsyncedReceipts, 
+    markReceiptSynced,
     isReady,
     getFarmers,
     saveFarmers,
@@ -231,7 +245,19 @@ const Index = () => {
     getUnsyncedWeightForFarmer,
     bumpFarmerCumulativeBase
   } = useIndexedDB();
-  
+
+  // Duplicate delivery prompt state for sync conflicts
+  const [syncConflict, setSyncConflict] = useState<{
+    farmerId: string;
+    farmerName?: string;
+    session: string;
+    date: string;
+    route?: string;
+    device?: string;
+    localRef?: string;
+    orderId?: number;
+  } | null>(null);
+
   // Data sync hook for background syncing
   const { isSyncing, pendingCount, pendingMilkCount, pendingSalesCount, conflictedReceiptsCount, syncAllData } = useSync();
   
@@ -262,6 +288,44 @@ const Index = () => {
   // If useCumulativeRouteFilter is false (all routes), we pass undefined to allow
   // the backend/IndexedDB to calculate across all routes.
   const cumulativeRouteCode = useCumulativeRouteFilter ? (selectedRouteCode || undefined) : undefined;
+
+  // Top-level Session Expiration Monitoring (protects BuyProduceScreen, SellProduceScreen, and App Resume)
+  const {
+    isExpired: isSessionExpired,
+    acknowledgeExpiration: acknowledgeTopLevelExpiration,
+  } = useSessionExpiration({
+    session: activeSession,
+    enabled: !!activeSession,
+    checkIntervalMs: 15000,
+  });
+
+  // When session expires top-level
+  useEffect(() => {
+    if (isSessionExpired && activeSession) {
+      if (capturedCollections.length > 0) {
+        // Unsubmitted captures exist! Keep collection view open, disable NEW captures, prompt submit.
+        toast.warning(
+          `Session expired! Please submit your ${capturedCollections.length} captured item(s) to finish.`,
+          { duration: 8000 }
+        );
+      } else {
+        // No captures: auto-exit collection mode to Dashboard
+        if (showCollection) {
+          setShowCollection(false);
+          setCollectionMode(null);
+          setActiveSession(null);
+        }
+      }
+    }
+  }, [isSessionExpired, activeSession, capturedCollections.length, showCollection]);
+
+  const handleTopLevelSessionExpiredSelect = useCallback(() => {
+    acknowledgeTopLevelExpiration();
+    setShowCollection(false);
+    setCollectionMode(null);
+    setActiveSession(null);
+    toast.info(`Please select an active ${periodLabel.toLowerCase()}`);
+  }, [acknowledgeTopLevelExpiration, periodLabel]);
 
   // Load all company farmers for Delivered By search
   useEffect(() => {
@@ -309,7 +373,7 @@ const Index = () => {
   const activeSeasonCode = activeSession
     ? String((activeSession as any).SCODE ?? (activeSession as any).scode ?? '').trim()
     : undefined;
-  const { blacklistedFarmerIds, isBlacklisted, addToBlacklist, refreshBlacklist, clearBlacklist, getSessionType } = useSessionBlacklist(activeSessionTimeFrom, activeSeasonCode);
+  const { blacklistedFarmerIds, getBlacklistDetail, isBlacklisted, addToBlacklist, refreshBlacklist, clearBlacklist, getSessionType } = useSessionBlacklist(activeSessionTimeFrom, activeSeasonCode);
   
   // Local session-scoped set to track submitted farmers (extra safeguard for edge cases)
   // This covers scenarios where IndexedDB might not have the record yet
@@ -318,21 +382,37 @@ const Index = () => {
   // v2.12.41: Listen for duplicate detection events from sync engine
   useEffect(() => {
     const handleDuplicate = (e: any) => {
-      const { farmerId: fId, session: sVal } = e.detail;
+      const { farmerId: fId, session: sVal, date: dVal, device: dev, route: rt, localRef, orderId } = e.detail || {};
       const currentSessionType = getSessionType();
 
       // Only blacklist if it matches current session
       if (sVal === currentSessionType) {
-        const cleanId = fId.replace(/^#/, '').trim();
+        const cleanId = String(fId || '').replace(/^#/, '').trim();
         addToBlacklist(cleanId);
         setSessionSubmittedFarmers(prev => new Set([...prev, cleanId]));
         console.log(`🚫 Blacklisted ${cleanId} due to sync conflict event`);
       }
+
+      const cleanFId = String(fId || '').replace(/^#/, '').trim();
+      const matchedFarmer = loadedFarmers.find(
+        f => f.farmer_id.replace(/^#/, '').trim() === cleanFId
+      );
+
+      setSyncConflict({
+        farmerId: cleanFId,
+        farmerName: matchedFarmer?.name || '',
+        session: sVal || '',
+        date: dVal || new Date().toISOString().split('T')[0],
+        route: rt || matchedFarmer?.route || '',
+        device: dev || 'Other Device',
+        localRef: localRef || '',
+        orderId: orderId
+      });
     };
 
     window.addEventListener('duplicateDetected', handleDuplicate);
     return () => window.removeEventListener('duplicateDetected', handleDuplicate);
-  }, [addToBlacklist, getSessionType]);
+  }, [addToBlacklist, getSessionType, loadedFarmers]);
 
   // Get set of farmer IDs with multOpt=0
   const farmersWithMultOptZero = useCallback(() => {
@@ -350,14 +430,17 @@ const Index = () => {
     setLoadedFarmers(farmers);
   }, []);
 
-  // Refresh blacklist when session changes or farmers load
-  // NOTE: We don't include capturedCollections because blacklisting happens AFTER submission, not capture
-  useEffect(() => {
+  const handleRefreshBlacklist = useCallback(() => {
     if (activeSession && loadedFarmers.length > 0) {
-      // Pass empty array for capturedCollections - we only check submitted records, not captures
       refreshBlacklist([], farmersWithMultOptZero());
     }
   }, [activeSession, loadedFarmers, refreshBlacklist, farmersWithMultOptZero]);
+
+  // Refresh blacklist when session changes or farmers load
+  // NOTE: We don't include capturedCollections because blacklisting happens AFTER submission, not capture
+  useEffect(() => {
+    handleRefreshBlacklist();
+  }, [handleRefreshBlacklist]);
 
   // v2.10.63: Eager preload of cached farmers on app start.
   // After app restart, activeSession is restored from localStorage but loadedFarmers
@@ -1281,6 +1364,11 @@ const Index = () => {
 
   // Handle going back to dashboard
   const handleBackToDashboard = () => {
+    if (isSubmitting) return;
+    if (capturedCollections.length > 0) {
+      setShowUnsavedCapturesDialog(true);
+      return;
+    }
     setShowCollection(false);
     // Clear collection state
     handleClearRoute();
@@ -1463,6 +1551,8 @@ const Index = () => {
       entry_type: entryType,
       // Season SCODE from active session → DB: CAN column
       season_code: activeSession?.SCODE || '',
+      // 10-digit unique milk_session_id for Dairy Buy/Sell
+      milk_session_id: resolveDashboardMilkSessionId() || undefined,
       // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
       transtype: collectionMode === 'sell' ? 2 : 1,
       // Delivery tracking: save Member ID if a member was searched/selected, otherwise manual name
@@ -1645,6 +1735,7 @@ const Index = () => {
             entry_type: capture.entry_type, // Pass entry_type to backend
             product_code: capture.product_code, // Pass selected product icode → DB: icode column
             season_code: capture.season_code, // Pass session SCODE → DB: CAN column
+            milk_session_id: capture.milk_session_id, // 10-digit unique session ID
             session_descript: capture.session_descript, // v2.10.50: backend fallback for coffee orgs missing SCODE
             transtype: capture.transtype, // Pass transtype: 1 = Buy, 2 = Sell
             delivered_by: capture.delivered_by, // Delivery tracking
@@ -1687,10 +1778,22 @@ const Index = () => {
             // Check if it's a duplicate session delivery error
             if (result.error === 'DUPLICATE_SESSION_DELIVERY') {
               console.warn(`⚠️ Member already delivered in ${capture.session} session`);
-              toast.error(
-                `${capture.farmer_name} has already delivered in the ${capture.session} session today.`,
-                { duration: 6000 }
-              );
+              const routeTag = result.existing_route || capture.route;
+              const deviceTag = result.existing_device || 'Other Device';
+              const simpleMsg = result.message || `Member ${capture.farmer_name || capture.farmer_id} has delivered this session (Route: ${routeTag}, Device: ${deviceTag}).`;
+
+              toast.error(simpleMsg, { duration: 6000 });
+
+              setSyncConflict({
+                farmerId: capture.farmer_id.replace(/^#/, '').trim(),
+                farmerName: capture.farmer_name,
+                session: capture.session,
+                date: new Date(capture.collection_date).toISOString().split('T')[0],
+                route: routeTag,
+                device: deviceTag,
+                localRef: referenceNo,
+              });
+
               // Do NOT clear captures and do NOT blacklist here.
               // We hard-stop so we don't accidentally mark this farmer as submitted
               // when the server is rejecting inserts.
@@ -1718,13 +1821,25 @@ const Index = () => {
           }
         } catch (err: unknown) {
           // Check if the error response contains duplicate session info
-          const errorData = (err as { data?: { error?: string; message?: string; existing_reference?: string } })?.data;
+          const errorData = (err as { data?: { error?: string; message?: string; existing_reference?: string; existing_device?: string; existing_route?: string } })?.data;
           if (errorData?.error === 'DUPLICATE_SESSION_DELIVERY') {
             console.warn(`[SYNC] Member already delivered in ${capture.session} session`);
-            toast.error(
-              `${capture.farmer_name} has already delivered in the ${capture.session} session today.`,
-              { duration: 6000 }
-            );
+            const routeTag = errorData.existing_route || capture.route;
+            const deviceTag = errorData.existing_device || 'Other Device';
+            const simpleMsg = errorData.message || `Member ${capture.farmer_name || capture.farmer_id} has delivered this session (Route: ${routeTag}, Device: ${deviceTag}).`;
+
+            toast.error(simpleMsg, { duration: 6000 });
+
+            setSyncConflict({
+              farmerId: capture.farmer_id.replace(/^#/, '').trim(),
+              farmerName: capture.farmer_name,
+              session: capture.session,
+              date: new Date(capture.collection_date).toISOString().split('T')[0],
+              route: routeTag,
+              device: deviceTag,
+              localRef: referenceNo,
+            });
+
             // Do NOT clear captures and do NOT blacklist here.
             hardStopped = true;
             break;
@@ -2581,7 +2696,8 @@ const Index = () => {
     (isBlacklisted(farmerId) || sessionSubmittedFarmers.has(cleanFarmerIdForCheck));
   
   // v2.12.40: Disable capture for blacklisted farmers to prevent "stuck" transactions
-  const captureDisabledForSelectedFarmer = isSelectedFarmerBlacklisted || (appSettings.stableopt === 1 && !isScaleStable && entryType === 'scale');
+  // Also disable capture when session is expired to prevent adding new weights while allowing pending submission
+  const captureDisabledForSelectedFarmer = isSelectedFarmerBlacklisted || (appSettings.stableopt === 1 && !isScaleStable && entryType === 'scale') || isSessionExpired;
   
   // For multOpt=0: disable Submit only after first successful submission in this session
   // Check both: hook blacklist (persistent) AND local session tracking (edge case coverage)
@@ -2614,6 +2730,9 @@ const Index = () => {
           onEntryTypeChange={setEntryType}
           blacklistedFarmerIds={blacklistedFarmerIds}
           sessionSubmittedFarmerIds={sessionSubmittedFarmers}
+          getBlacklistDetail={getBlacklistDetail}
+          onRefreshBlacklist={handleRefreshBlacklist}
+          addToBlacklist={addToBlacklist}
           onFarmersLoaded={handleFarmersLoaded}
           allFarmers={allCompanyFarmers}
           captureDisabled={captureDisabledForSelectedFarmer}
@@ -2727,6 +2846,55 @@ const Index = () => {
         }}
       />
 
+      {/* Duplicate / Cross-Device Sync Conflict Dialog */}
+      <DuplicateDeliveryDialog
+        open={!!syncConflict}
+        farmer={syncConflict ? { id: syncConflict.farmerId, name: syncConflict.farmerName || '' } : null}
+        sessionLabel={syncConflict?.session || ''}
+        reason="blacklist"
+        route={syncConflict?.route}
+        device={syncConflict?.device}
+        date={syncConflict?.date}
+        onConfirmSync={async () => {
+          if (syncConflict) {
+            const refToClean = (syncConflict.localRef || '').trim().toUpperCase();
+
+            // 1. Clean IDB by orderId if present
+            if (syncConflict.orderId) {
+              try { await markReceiptSynced(syncConflict.orderId); } catch (e) {}
+            }
+
+            // 2. Clean IDB by reference_no matching
+            if (refToClean) {
+              try {
+                const unsynced = await getUnsyncedReceipts();
+                const matches = unsynced.filter(r => (r.reference_no || '').trim().toUpperCase() === refToClean);
+                for (const m of matches) {
+                  if (m.orderId && typeof m.orderId === 'number') {
+                    await markReceiptSynced(m.orderId);
+                  }
+                }
+              } catch (e) {}
+
+              // 3. Clean Native SQLite storage
+              try { await markNativeRecordSynced(refToClean); } catch (e) {}
+            }
+
+            toast.success(`Duplicate delivery resolved for member ${syncConflict.farmerId}.`);
+            setSyncConflict(null);
+
+            // 4. Trigger count update & background sync immediately so stuck badge updates
+            window.dispatchEvent(new Event('receiptSaved'));
+            window.dispatchEvent(new Event('syncDataRequested'));
+            try {
+              await updatePendingCount(true);
+              syncAll();
+            } catch (e) {}
+          }
+        }}
+        onClose={() => setSyncConflict(null)}
+      />
+
       {/* Reprint Modal */}
       <ReprintModal
         open={reprintModalOpen}
@@ -2741,6 +2909,65 @@ const Index = () => {
           deleteReceipts(indices);
         }}
       />
+
+      {/* Session Expired Dialog - App-wide global blocker (shown when no pending captures exist) */}
+      <SessionExpiredDialog
+        open={isSessionExpired && capturedCollections.length === 0}
+        sessionName={activeSession?.descript}
+        periodLabel={periodLabel}
+        pendingCount={pendingCount}
+        onSelectSession={handleTopLevelSessionExpiredSelect}
+      />
+
+      {/* Unsaved Captures Dialog (Back button confirmation in Buy/Sell portal) */}
+      <AlertDialog open={showUnsavedCapturesDialog} onOpenChange={setShowUnsavedCapturesDialog}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="h-5 w-5" />
+              Unsubmitted Captures
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm text-gray-600 dark:text-gray-300 pt-2">
+              You have <span className="font-semibold text-gray-900 dark:text-white">{capturedCollections.length}</span> captured item{capturedCollections.length > 1 ? 's' : ''} for <span className="font-semibold text-gray-900 dark:text-white">{selectedFarmer?.name || 'the selected member'}</span> that {capturedCollections.length > 1 ? 'have' : 'has'} not been submitted yet.
+              <br /><br />
+              Would you like to submit them or clear them before leaving?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setShowUnsavedCapturesDialog(false)}
+              className="w-full sm:w-auto"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setShowUnsavedCapturesDialog(false);
+                setCapturedCollections([]);
+                setShowCollection(false);
+                handleClearRoute();
+                toast.info('Captured items cleared');
+              }}
+              className="w-full sm:w-auto"
+            >
+              Clear Captures
+            </Button>
+            <Button
+              onClick={async () => {
+                setShowUnsavedCapturesDialog(false);
+                await handleSubmit();
+                setShowCollection(false);
+                handleClearRoute();
+              }}
+              className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
+            >
+              Submit Captures
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

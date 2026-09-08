@@ -28,11 +28,12 @@ import { format } from 'date-fns';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 
-import { isMemberServedToday, markMemberAsServed } from '@/utils/servedMemberTracker';
+import { isMemberServedToday, markMemberAsServed, checkMemberServedToday, getServedMemberLocalDetails } from '@/utils/servedMemberTracker';
 
 interface CartItem {
   item: Item;
   quantity: number;
+  rawQuantity?: string;
   lineTotal: number;
 }
 
@@ -86,6 +87,7 @@ const Store = () => {
   // Served member confirmation state
   const [showAlreadyServedConfirm, setShowAlreadyServedConfirm] = useState(false);
   const [pendingFarmer, setPendingFarmer] = useState<Farmer | null>(null);
+  const [servedInfo, setServedInfo] = useState<{ location?: string; device?: string } | null>(null);
 
    // Active session state for CAN column
   const [activeSession, setActiveSession] = useState<Session | null>(null);
@@ -123,7 +125,7 @@ const Store = () => {
   const userId = currentUser?.user_id || 'unknown';
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
 
-  const { getFarmers, saveSale, getUnsyncedSales, getItems, getFarmerCumulative, isReady } = useIndexedDB();
+  const { getFarmers, saveSale, getUnsyncedSales, getItems, getFarmerCumulative, getFarmerTotalCumulative, isReady } = useIndexedDB();
   const { syncPendingSales: syncPendingSalesHook } = useSalesSync();
   const { addStoreReceipt } = useReprint();
   const { queuePhotoUpload } = useBackgroundPhotoUpload();
@@ -158,13 +160,15 @@ const Store = () => {
 
     const fingerprint = await generateDeviceFingerprint();
     const ymd = date.toISOString().split('T')[0];
-    const isCurrentMonth = format(date, 'yyyy-MM') === format(new Date(), 'yyyy-MM');
+    const scode = activeSession?.SCODE;
 
     // Helper to get from local DB
     const getLocal = async () => {
       try {
-        const scode = activeSession?.SCODE;
-        // v2.12.73: Use local cache if offline or API fails
+        const res = await getFarmerTotalCumulative(farmerId, undefined, scode);
+        if (res && typeof res.total === 'number') {
+          return res.total;
+        }
         const cached = await getFarmerCumulative(farmerId, undefined, scode);
         if (cached) {
           return cached.baseCount + cached.localCount;
@@ -176,13 +180,9 @@ const Store = () => {
     };
 
     if (!navigator.onLine) {
-      // Offline: only support current month/season from local DB
-      if (isCurrentMonth) {
-        const localWeight = await getLocal();
-        setCumulativeWeight(localWeight);
-      } else {
-        setCumulativeWeight(null); // No historical data offline
-      }
+      // Offline: fetch active season cumulative from local DB
+      const localWeight = await getLocal();
+      setCumulativeWeight(localWeight !== null ? localWeight : 0);
       return;
     }
 
@@ -192,33 +192,23 @@ const Store = () => {
         farmerId,
         fingerprint,
         undefined, // route
-        undefined, // season
+        scode,     // season
         ymd
       );
       if (response.success && response.data) {
         setCumulativeWeight(response.data.cumulative_weight);
       } else {
-        // API success but no data (or 0) - check local fallback just in case
-        if (isCurrentMonth) {
-          const localWeight = await getLocal();
-          setCumulativeWeight(localWeight);
-        } else {
-          setCumulativeWeight(0);
-        }
+        const localWeight = await getLocal();
+        setCumulativeWeight(localWeight !== null ? localWeight : 0);
       }
     } catch (error) {
       console.warn('[Store] Failed to fetch cumulative from API:', error);
-      // Fallback to local if current month
-      if (isCurrentMonth) {
-        const localWeight = await getLocal();
-        setCumulativeWeight(localWeight);
-      } else {
-        setCumulativeWeight(null);
-      }
+      const localWeight = await getLocal();
+      setCumulativeWeight(localWeight !== null ? localWeight : 0);
     } finally {
       setCumulativeLoading(false);
     }
-  }, [isReady, getFarmerCumulative, activeSession?.SCODE]);
+  }, [isReady, getFarmerCumulative, getFarmerTotalCumulative, activeSession?.SCODE]);
 
   // Update cumulative weight when farmer or date changes
   useEffect(() => {
@@ -515,8 +505,8 @@ const Store = () => {
     return null;
   }, [farmers, isMemberMode]);
 
-  // Unified farmer selection handler with "already served" check
-  const handleSelectFarmer = useCallback((farmer: Farmer) => {
+  // Unified farmer selection handler with "already served" check across ccode
+  const handleSelectFarmer = useCallback(async (farmer: Farmer) => {
     if (isFarmerInactive(farmer)) {
       setInactiveDialogFarmer(farmer);
       setShowFarmerSearch(false);
@@ -524,12 +514,31 @@ const Store = () => {
     }
 
     const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
-    if (isMemberServedToday(cleanId)) {
+
+    // 1. Check local device storage first for instant response if served on this device
+    const localServed = getServedMemberLocalDetails(cleanId);
+    if (localServed?.served) {
+      setServedInfo({ location: localServed.location, device: localServed.device });
       setPendingFarmer(farmer);
       setShowAlreadyServedConfirm(true);
       return;
     }
 
+    // 2. Check backend across all devices in this ccode
+    try {
+      const fingerprint = await generateDeviceFingerprint();
+      const checkResult = await checkMemberServedToday(cleanId, farmer.ccode, fingerprint);
+      if (checkResult.served) {
+        setServedInfo({ location: checkResult.location, device: checkResult.device });
+        setPendingFarmer(farmer);
+        setShowAlreadyServedConfirm(true);
+        return;
+      }
+    } catch (e) {
+      console.warn('[Store] Cross-device served check failed:', e);
+    }
+
+    setServedInfo(null);
     setSelectedFarmer(farmer);
     setMemberNo(farmer.farmer_id);
     try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
@@ -546,6 +555,7 @@ const Store = () => {
       setSelectedFarmer(pendingFarmer);
       setMemberNo(pendingFarmer.farmer_id);
       setPendingFarmer(null);
+      setServedInfo(null);
       setShowAlreadyServedConfirm(false);
       try { Haptics.impact({ style: ImpactStyle.Light }); } catch {}
     }
@@ -589,8 +599,10 @@ const Store = () => {
     const existingIndex = cart.findIndex(c => c.item.icode === item.icode);
     if (existingIndex >= 0) {
       const updated = [...cart];
-      updated[existingIndex].quantity += 1;
-      updated[existingIndex].lineTotal = updated[existingIndex].quantity * item.sprice;
+      const newQty = updated[existingIndex].quantity + 1;
+      updated[existingIndex].quantity = newQty;
+      delete updated[existingIndex].rawQuantity;
+      updated[existingIndex].lineTotal = newQty * item.sprice;
       setCart(updated);
     } else {
       setCart([...cart, { item, quantity: 1, lineTotal: item.sprice }]);
@@ -600,19 +612,20 @@ const Store = () => {
     try { Haptics.impact({ style: ImpactStyle.Medium }); } catch {}
   };
 
-  // Update item quantity
-  // Update item quantity — does NOT remove on empty field (user may be mid-edit)
+  // Update item quantity — retains raw input string while user is mid-edit
   const handleQuantityChange = (index: number, newQty: number, raw?: string) => {
+    const updated = [...cart];
+    if (raw !== undefined) {
+      updated[index].rawQuantity = raw;
+    }
     if (raw === '') {
       // User cleared the field — keep item, show empty input
-      const updated = [...cart];
       updated[index].quantity = 0;
       updated[index].lineTotal = 0;
       setCart(updated);
       return;
     }
     if (newQty < 0) return; // Don't allow negative
-    const updated = [...cart];
     updated[index].quantity = newQty;
     updated[index].lineTotal = newQty * updated[index].item.sprice;
     setCart(updated);
@@ -786,8 +799,14 @@ const Store = () => {
         }
         console.log(`✅ Batch sale complete: ${batchItems.length} items, uploadrefno=${refs.uploadrefno}`);
 
-        // Mark member as served today on this device
-        markMemberAsServed(selectedFarmer.farmer_id);
+        // Mark member as served today on this device tagging location and clerk/device
+        const storeLoc = selectedRouteTcode || selectedFarmer.route || routeName || localStorage.getItem('device_company_name') || 'Store';
+        const storeDev = localStorage.getItem('devcode') || clerkName || 'POS Device';
+        markMemberAsServed(
+          selectedFarmer.farmer_id,
+          storeLoc,
+          storeDev
+        );
 
         // v2.12.30: Clear items from native storage if they were there
         for (const item of batchItems) {
@@ -831,8 +850,14 @@ const Store = () => {
         }
         console.log(`💾 Saved ${batchItems.length} items offline for sync`);
 
-        // Mark member as served today on this device
-        markMemberAsServed(selectedFarmer.farmer_id);
+        // Mark member as served today on this device tagging location and clerk/device
+        const storeLoc = selectedRouteTcode || selectedFarmer.route || routeName || localStorage.getItem('device_company_name') || 'Store';
+        const storeDev = localStorage.getItem('devcode') || clerkName || 'POS Device';
+        markMemberAsServed(
+          selectedFarmer.farmer_id,
+          storeLoc,
+          storeDev
+        );
 
         window.dispatchEvent(new Event('receiptSaved'));
       }
@@ -1094,7 +1119,21 @@ const Store = () => {
                   </div>
                   <input
                     type="number"
-                    value={cartItem.quantity === 0 ? '' : (Math.floor(Number(cartItem.quantity) * 10) / 10).toFixed(1)}
+                    value={
+                      cartItem.rawQuantity !== undefined
+                        ? cartItem.rawQuantity
+                        : cartItem.quantity === 0
+                        ? ''
+                        : String(cartItem.quantity)
+                    }
+                    onFocus={(e) => e.target.select()}
+                    onBlur={() => {
+                      const updated = [...cart];
+                      if (updated[index]) {
+                        delete updated[index].rawQuantity;
+                        setCart(updated);
+                      }
+                    }}
                     onChange={(e) => {
                       const raw = e.target.value;
                       const parsed = parseFloat(raw);
@@ -1342,9 +1381,9 @@ const Store = () => {
       <Dialog open={showAlreadyServedConfirm} onOpenChange={setShowAlreadyServedConfirm}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Already Served</DialogTitle>
-            <DialogDescription>
-              Member <strong>{pendingFarmer?.name} [{pendingFarmer?.farmer_id}]</strong> has already been served on this device today.
+            <DialogTitle>Already Served Today</DialogTitle>
+            <DialogDescription className="text-sm text-gray-700 mt-2">
+              Member <strong>{pendingFarmer?.name} ({pendingFarmer?.farmer_id})</strong> has already been served today on Route: <strong className="text-amber-800">{servedInfo?.location || 'Store'}</strong>, Device: <strong className="text-amber-800">{servedInfo?.device || localStorage.getItem('devcode') || 'POS Device'}</strong>.
               <br /><br />
               Do you want to sell to them again?
             </DialogDescription>
@@ -1354,6 +1393,7 @@ const Store = () => {
               onClick={() => {
                 setShowAlreadyServedConfirm(false);
                 setPendingFarmer(null);
+                setServedInfo(null);
               }}
               className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg font-medium"
             >
@@ -1361,7 +1401,7 @@ const Store = () => {
             </button>
             <button
               onClick={confirmSelectServedFarmer}
-              className="px-4 py-2 bg-[#7E57C2] text-white rounded-lg font-medium"
+              className="px-4 py-2 bg-[#7E57C2] text-white rounded-lg font-semibold"
             >
               Continue
             </button>

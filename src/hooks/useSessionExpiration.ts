@@ -23,7 +23,7 @@ interface UseSessionExpirationResult {
 export const useSessionExpiration = ({
   session,
   enabled = true,
-  checkIntervalMs = 60000, // Check every minute
+  checkIntervalMs = 15000, // Check every 15 seconds
 }: UseSessionExpirationOptions): UseSessionExpirationResult => {
   const { isCoffee } = useAppSettings();
   const [isExpired, setIsExpired] = useState(false);
@@ -126,6 +126,7 @@ export const useSessionExpiration = ({
   useEffect(() => {
     if (!enabled || !session) {
       setExpiresInMinutes(null);
+      setIsExpired(false);
       return;
     }
 
@@ -154,9 +155,9 @@ export const useSessionExpiration = ({
         setExpiresInMinutes(null);
       }
 
-      // Trigger expiration only if session WAS active and is now NOT active
-      if (wasActiveRef.current && !currentlyActive) {
-        console.log('[SESSION EXPIRATION] Session expired:', session.descript);
+      // Trigger expiration if enabled and the active session is no longer active for current time
+      if (!currentlyActive) {
+        console.log('[SESSION EXPIRATION] Session expired/inactive:', session.descript);
         setIsExpired(true);
       }
     };
@@ -164,10 +165,45 @@ export const useSessionExpiration = ({
     // Initial check
     checkExpiration();
 
-    // Set up interval for periodic checks
+    // Set up interval for periodic checks (default 15s)
     const interval = setInterval(checkExpiration, checkIntervalMs);
 
-    return () => clearInterval(interval);
+    // Event listeners for app visibility & focus changes (app resume)
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' || document.hasFocus()) {
+        console.log('[SESSION EXPIRATION] App resumed/focused — re-checking session expiry');
+        checkExpiration();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    // Capacitor App state change listener (native android app resume)
+    let appStateListener: any = null;
+    import('@capacitor/app').then(({ App }) => {
+      App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) {
+          console.log('[SESSION EXPIRATION] Native app state active — re-checking session expiry');
+          checkExpiration();
+        }
+      }).then(listener => {
+        appStateListener = listener;
+      }).catch(err => {
+        console.warn('[SESSION EXPIRATION] Capacitor App listener error:', err);
+      });
+    }).catch(() => {
+      // Not on native platform or plugin unavailable
+    });
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      if (appStateListener && typeof appStateListener.remove === 'function') {
+        appStateListener.remove();
+      }
+    };
   }, [session, enabled, checkIntervalMs, isSessionActive, calculateExpiresInMinutes]);
 
   return {
