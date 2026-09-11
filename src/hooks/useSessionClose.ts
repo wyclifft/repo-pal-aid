@@ -29,7 +29,7 @@ export const useSessionClose = (
   selectedDate?: string
 ): SessionCloseState => {
   const navigate = useNavigate();
-  const { sessionPrintOnly } = useAppSettings();
+  const { sessionPrintOnly, isCoffee } = useAppSettings();
   const { syncOfflineReceipts, isSyncing, pendingCount } = useSync();
   const { getUnsyncedReceipts, isReady } = useIndexedDB();
   
@@ -126,9 +126,9 @@ export const useSessionClose = (
     // Refresh sync status first
     await updateSyncStatus();
     
-    // If sessPrint is disabled (0), just close immediately
-    if (!sessionPrintOnly) {
-      console.log('📝 sessPrint=0: Closing session without Z-report');
+    // For Coffee orgs or when sessPrint is disabled (0), close session immediately
+    if (isCoffee || !sessionPrintOnly) {
+      console.log('📝 Closing session without Z-report requirement');
       onCloseSuccess();
       toast.success('Session closed');
       return true;
@@ -192,7 +192,8 @@ export const useSessionClose = (
     }
   }, [
     sessionPrintOnly, 
-    isSyncComplete, 
+    isCoffee,
+    isSyncComplete,
     syncOfflineReceipts, 
     getUnsyncedReceipts, 
     updateSyncStatus, 

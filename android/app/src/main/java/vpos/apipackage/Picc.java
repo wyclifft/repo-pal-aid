@@ -103,6 +103,10 @@ public class Picc {
     public static native int Lib_PiccWriSl1KeyToAv2(byte[] bArr, byte b, byte b2, byte b3);
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "Picc: Failed to load PosApi native library", t);
+        }
     }
 }

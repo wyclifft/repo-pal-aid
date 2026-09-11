@@ -82,8 +82,20 @@ const AIPage = () => {
   // v2.12.20: Resolve the active route (store/center) selected on the Dashboard.
   const routeName = useMemo(() => resolveDashboardActiveRoute()?.descript || '', []);
 
-  // clientFetch from route data (3=AI)
-  const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
+  // clientFetch from route data (3=AI) - initialize eagerly from cache to never block offline use
+  const [clientFetch, setClientFetch] = useState<number>(() => {
+    const cached = localStorage.getItem('ai_clientFetch') || localStorage.getItem('active_session_data');
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (parsed?.route?.clientFetch) return parsed.route.clientFetch;
+      } catch {
+        const num = parseInt(cached, 10);
+        if (!isNaN(num)) return num;
+      }
+    }
+    return 2; // Default fallback matching route L002
+  });
 
   const { getFarmers, getItems, isReady } = useIndexedDB();
   const { saveOfflineSale, syncPendingSales } = useSalesSync();
@@ -463,8 +475,8 @@ const AIPage = () => {
       return;
     }
 
-    if (clientFetch === undefined) {
-      console.warn('[AI] clientFetch is undefined — uploadrefno will not include routing digit');
+    if (clientFetch === undefined || clientFetch === null) {
+      console.warn('[AI] clientFetch is undefined — using persistent cache fallback');
     }
 
     setSubmitting(true);

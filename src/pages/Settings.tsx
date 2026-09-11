@@ -666,6 +666,20 @@ Date: ${new Date().toLocaleString()}
                   {settings.capture_photo === 1 ? 'Yes' : 'No'}
                 </span>
               </div>
+              {settings.orgtype === 'C' && (
+                <>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Sack Tare Weight:</span>
+                    <span className="font-medium">{settings.sackTare ?? 1} kg</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Sack Edit (sackEdit):</span>
+                    <span className={`font-medium ${settings.allowSackEdit === 1 ? 'text-green-600' : 'text-amber-600'}`}>
+                      {settings.allowSackEdit === 1 ? '1 (Editable)' : '0 (Fixed/Locked)'}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
 
             <Separator />

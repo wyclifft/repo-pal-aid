@@ -9,6 +9,10 @@ public class Scan {
     public static native int Lib_ScanRead(short s, String[] strArr);
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "Scan: Failed to load PosApi native library", t);
+        }
     }
 }

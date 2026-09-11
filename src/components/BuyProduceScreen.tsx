@@ -137,8 +137,8 @@ export const BuyProduceScreen = ({
     }
   }, [selectedFarmer?.farmer_id, selectedFarmer?.gender]);
 
-  // For coffee, always default to 1 kg regardless of allowSackEdit
-  const effectiveTareWeight = sackTareWeight > 0 ? sackTareWeight : 1;
+  // For coffee, use sackTareWeight from psettings (allows 0 kg)
+  const effectiveTareWeight = typeof sackTareWeight === 'number' && !isNaN(sackTareWeight) && sackTareWeight >= 0 ? sackTareWeight : 1;
   
   // Track current effective tare weight (starts from psettings, can be edited by user)
   const [currentTareWeight, setCurrentTareWeight] = useState(effectiveTareWeight);
@@ -169,9 +169,9 @@ export const BuyProduceScreen = ({
     console.log('📱 BuyProduceScreen - Supervisor mode:', { allowDigital, allowManual }, '| manualDisabled:', manualDisabled, 'digitalDisabled:', digitalDisabled, 'psettingsAutoWeightOnly:', psettingsAutoWeightOnly);
   }, [allowDigital, allowManual, manualDisabled, digitalDisabled, psettingsAutoWeightOnly]);
 
-  // Sync currentTareWeight when psettings value changes (always default to 1 if not set)
+  // Sync currentTareWeight when psettings value changes (allows 0 kg)
   useEffect(() => {
-    const tareValue = sackTareWeight > 0 ? sackTareWeight : 1;
+    const tareValue = typeof sackTareWeight === 'number' && !isNaN(sackTareWeight) && sackTareWeight >= 0 ? sackTareWeight : 1;
     setCurrentTareWeight(tareValue);
   }, [sackTareWeight]);
 

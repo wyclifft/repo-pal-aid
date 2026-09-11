@@ -65,6 +65,10 @@ public class Sys {
     public static native int Test_uarts();
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "Sys: Failed to load PosApi native library", t);
+        }
     }
 }

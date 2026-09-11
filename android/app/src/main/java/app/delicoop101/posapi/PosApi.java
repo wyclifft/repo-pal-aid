@@ -106,6 +106,9 @@ public final class PosApi {
         Throwable t = initError;
         if (t == null) return null;
         String msg = t.getMessage();
+        if (t instanceof UnsatisfiedLinkError) {
+            return "32-bit POS library (libPosApi.so) not loaded. Ensure APK is built with armeabi-v7a ABI filter. Details: " + (msg == null ? "" : msg);
+        }
         return t.getClass().getSimpleName() + (msg == null ? "" : ": " + msg);
     }
 

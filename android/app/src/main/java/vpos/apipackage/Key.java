@@ -9,6 +9,10 @@ public class Key {
     public static native int Lib_KbGetKey();
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "Key: Failed to load PosApi native library", t);
+        }
     }
 }

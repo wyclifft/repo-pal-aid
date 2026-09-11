@@ -13,6 +13,10 @@ public class Mcr {
     public static native int Lib_McrReset();
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "Mcr: Failed to load PosApi native library", t);
+        }
     }
 }

@@ -67,6 +67,10 @@ public class Icc {
     public static native int Lib_SleWriteWithoutPB4428(byte b, byte b2, int i, byte[] bArr);
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "Icc: Failed to load PosApi native library", t);
+        }
     }
 }

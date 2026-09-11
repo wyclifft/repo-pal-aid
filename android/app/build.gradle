@@ -23,24 +23,8 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 232
-        versionName "2.12.83"
-
-
-
-        // v2.11.28: vendor POS SDK ships 32-bit libPosApi.so / libPaypassApi.so only.
-        // Pin the ABI so the loader never picks a 64-bit process without them.
-        // v2.12.13: Added arm64-v8a for compatibility with Android 15/16 devices
-        // (like Galaxy A36) that require 64-bit support. PosApi handles the
-        // missing 64-bit vendor libs gracefully via UnsatisfiedLinkError catch.
-        ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a"
-        }
-
-
-
-
-
+        versionCode 233
+        versionName "2.12.84"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

@@ -15,6 +15,10 @@ public class Fingerprint {
     public static native int Lib_FpRegister();
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "Fingerprint: Failed to load PosApi native library", t);
+        }
     }
 }

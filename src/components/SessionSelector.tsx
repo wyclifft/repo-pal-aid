@@ -38,7 +38,7 @@ export const SessionSelector = ({
     try {
       const cached = localStorage.getItem('app_settings');
       if (cached) {
-        return JSON.parse(cached)?.orgtype || 'D';
+        return String(JSON.parse(cached)?.orgtype || 'D').trim().toUpperCase();
       }
     } catch { /* ignore */ }
     return 'D';
@@ -72,20 +72,33 @@ export const SessionSelector = ({
   // Check if a session/season is enabled based on date range (current date within range)
   // Uses backend-provided dateEnabled flag for accurate validation
   const isDateEnabled = useCallback((session: Session): boolean => {
-    // Backend provides dateEnabled flag - use it directly (most reliable)
+    const isCoffeeOrg = String(orgtype || '').trim().toUpperCase() === 'C';
+    if (isCoffeeOrg) {
+      // For coffee orgs, allow current and past seasons. Only future seasons (datefrom > today) are disabled.
+      const today = new Date().toISOString().split('T')[0];
+      if (session.datefrom && session.datefrom > today) {
+        return false;
+      }
+      return true;
+    }
+
+    // Backend provides dateEnabled flag - use it directly (most reliable) for dairy
     if (session.dateEnabled !== undefined) {
       return session.dateEnabled;
     }
     
     // Fallback: If no date fields, assume enabled (regular sessions)
-    if (!session.datefrom || !session.dateto) {
+    if (!session.datefrom) {
       return true;
     }
     
     // Manual date check as fallback for seasons
     const today = new Date().toISOString().split('T')[0];
+    if (!session.dateto) {
+      return true;
+    }
     return today >= session.datefrom && today <= session.dateto;
-  }, []);
+  }, [orgtype]);
 
   // Check if a session/season is a PAST season (date range has ended)
   // Past seasons should be selectable for historical data entry
@@ -187,7 +200,7 @@ export const SessionSelector = ({
       setPeriodLabel(backendPeriodLabel);
     }
     if (backendOrgtype) {
-      setOrgtype(backendOrgtype);
+      setOrgtype(String(backendOrgtype).trim().toUpperCase());
     }
     
     setSessions(data);
@@ -195,9 +208,22 @@ export const SessionSelector = ({
     const active = findActiveSession(data);
     setActiveSession(active);
     
-    // Auto-select active session if none selected
+    // Auto-select active session if none selected and nothing is persisted in localStorage
     if (active && !selectedSession) {
-      onSessionChange(active);
+      let hasPersistedSession = false;
+      try {
+        const saved = localStorage.getItem('active_session_data');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed?.session) {
+            hasPersistedSession = true;
+          }
+        }
+      } catch { /* ignore */ }
+
+      if (!hasPersistedSession) {
+        onSessionChange(active);
+      }
     }
     
     if (isFromNetwork) {

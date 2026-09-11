@@ -47,12 +47,19 @@ export const useSessionExpiration = ({
     if (sess.dateEnabled !== undefined) {
       return sess.dateEnabled;
     }
-    if (!sess.datefrom || !sess.dateto) {
+    if (!sess.datefrom) {
       return true; // No date restrictions
     }
     const today = new Date().toISOString().split('T')[0];
+    if (isCoffee) {
+      // FOR ORGTYPE = C ONLY: allow current AND past seasons (datefrom <= today).
+      return sess.datefrom <= today;
+    }
+    if (!sess.dateto) {
+      return true;
+    }
     return today >= sess.datefrom && today <= sess.dateto;
-  }, []);
+  }, [isCoffee]);
 
   // Check if session is currently active (within time window)
   const isSessionActive = useCallback((sess: Session): boolean => {
@@ -124,7 +131,7 @@ export const useSessionExpiration = ({
 
   // Monitor session for expiration
   useEffect(() => {
-    if (!enabled || !session) {
+    if (isCoffee || !enabled || !session) {
       setExpiresInMinutes(null);
       setIsExpired(false);
       return;

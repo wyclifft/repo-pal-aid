@@ -101,7 +101,15 @@ public class PaySys {
     public static native void postest();
 
     static {
-        System.loadLibrary("PosApi");
-        System.loadLibrary("PaypassApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "PaySys: Failed to load PosApi native library", t);
+        }
+        try {
+            System.loadLibrary("PaypassApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "PaySys: Failed to load PaypassApi native library", t);
+        }
     }
 }

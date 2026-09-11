@@ -11,6 +11,10 @@ public class IDCard {
     public static native int Lib_IDCardRead2(String[] strArr);
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "IDCard: Failed to load PosApi native library", t);
+        }
     }
 }

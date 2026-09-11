@@ -1159,7 +1159,7 @@ const server = http.createServer(async (req, res) => {
         [ccode]
       );
 
-      const orgtype = psettingsRows.length > 0 ? psettingsRows[0].orgtype : 'D';
+      const orgtype = psettingsRows.length > 0 ? String(psettingsRows[0].orgtype || 'D').trim().toUpperCase() : 'D';
       const periodLabel = orgtype === 'C' ? 'Season' : 'Session';
 
       const SeasonsAvailable = await hasSeasonsTable();
@@ -1167,6 +1167,7 @@ const server = http.createServer(async (req, res) => {
       if (orgtype === 'C' && SeasonsAvailable) {
         // Coffee mode: Seasons table (id, scode, Descript, ccode, datefrom, dateto).
         // NOTE: Seasons has no time_from/time_to — coffee is date-range driven.
+        // Allow both current and past seasons (datefrom <= today); only future seasons are disabled.
         const today = toYmdLocal(new Date()); // local YYYY-MM-DD (never toISOString)
 
         const [seasonRows] = await pool.query(
@@ -1178,13 +1179,13 @@ const server = http.createServer(async (req, res) => {
             DATE_FORMAT(datefrom, '%Y-%m-%d') as datefrom,
             DATE_FORMAT(dateto, '%Y-%m-%d') as dateto,
             CASE
-              WHEN ? >= DATE(datefrom) AND ? <= DATE(dateto) THEN 1
+              WHEN DATE(datefrom) <= ? THEN 1
               ELSE 0
             END as dateEnabled
            FROM Seasons
            WHERE TRIM(ccode) = TRIM(?)
            ORDER BY datefrom DESC`,
-          [today, today, ccode]
+          [today, ccode]
         );
 
         const processedSeasons = seasonRows.map(row => ({
@@ -1426,9 +1427,74 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, data: rows[0] });
     }
     
-    // Fetch cm_credits lookup table for credit code descriptions
+    // Fetch cm_credits lookup table for credit code descriptions (with ccode scoping, self-healing, and D004 defaults)
     if (path === '/api/credits' && method === 'GET') {
-      const [rows] = await pool.query('SELECT crcode, descript FROM cm_credits ORDER BY crcode');
+      const uniquedevcode = parsedUrl.query.uniquedevcode || parsedUrl.query.device_fingerprint || req.headers['x-device-fingerprint'];
+      let targetCcode = parsedUrl.query.ccode;
+
+      if (!targetCcode && uniquedevcode) {
+        try {
+          const [devRows] = await pool.query('SELECT ccode FROM devSettings WHERE uniquedevcode = ? LIMIT 1', [uniquedevcode]);
+          if (devRows.length > 0 && devRows[0].ccode) {
+            targetCcode = devRows[0].ccode;
+          }
+        } catch (err) {
+          console.warn('[API:credits] Failed to resolve ccode from devSettings:', err.message);
+        }
+      }
+
+      // If app data was cleared and device isn't registered yet, fall back to D004
+      if (!targetCcode) {
+        targetCcode = 'D004';
+      }
+
+      // Self-heal cm_credits table in MySQL directly so the database has correct descriptions
+      try {
+        await pool.query(`
+          UPDATE cm_credits SET descript = CASE crcode
+            WHEN 'CR02' THEN 'Advance'
+            WHEN 'CR03' THEN 'Fertilizer'
+            WHEN 'CR12' THEN 'Goods'
+            WHEN 'CR16' THEN 'Credit 16 / General Credit'
+            WHEN 'CR18' THEN 'Credit 18'
+            ELSE descript
+          END
+          WHERE crcode IN ('CR02', 'CR03', 'CR12', 'CR16', 'CR18')
+        `);
+      } catch (dbErr) {
+        // ignore if table/columns differ
+      }
+
+      let rows = [];
+      try {
+        const [filteredRows] = await pool.query('SELECT crcode, descript FROM cm_credits WHERE ccode = ? ORDER BY crcode', [targetCcode]);
+        if (filteredRows && filteredRows.length > 0) {
+          rows = filteredRows;
+        } else {
+          const [allRows] = await pool.query('SELECT crcode, descript FROM cm_credits ORDER BY crcode');
+          rows = allRows;
+        }
+      } catch (e) {
+        const [allRows] = await pool.query('SELECT crcode, descript FROM cm_credits ORDER BY crcode');
+        rows = allRows;
+      }
+
+      // Ensure D004 overrides are always applied
+      const overrides = {
+        'CR02': 'Advance',
+        'CR03': 'Fertilizer',
+        'CR12': 'Goods',
+        'CR16': 'Credit 16 / General Credit',
+        'CR18': 'Credit 18'
+      };
+      rows = rows.map(r => {
+        const code = String(r.crcode || '').trim().toUpperCase();
+        if (overrides[code]) {
+          return { ...r, descript: overrides[code] };
+        }
+        return r;
+      });
+
       return sendJSON(res, { success: true, data: rows });
     }
 
@@ -2481,8 +2547,7 @@ const server = http.createServer(async (req, res) => {
 
       const nCcode = norm(deviceRows[0].ccode);
 
-      // Fetch all collections fo ew`]\
-      / `2q r the specified date and company
+      // Fetch all collections for the specified date and company
       // DB columns → Frontend fields mapping
       const [collections] = await pool.query(
         `SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, t.route, t.weight, t.session,
@@ -3882,30 +3947,35 @@ if (path === '/api/sales' && method === 'POST') {
           companyName = companyRows[0].cname;
           cumulativeFrequencyStatus = companyRows[0].cumulative_frequency_status || 0;
           const orgtype = companyRows[0].orgtype || 'D';
+          const cRow = companyRows[0];
+          const rawSackEdit = cRow.sackEdit ?? cRow.SackEdit ?? cRow.allowSackEdit ?? cRow.allowsackedit ?? cRow.sackedit;
+          const rawSackTare = cRow.sackTare ?? cRow.SackTare ?? cRow.sacktare;
+
           appSettings = {
-            printoptions: toDbInt(companyRows[0].printOptions, 1),
-            store_print_copies: toDbInt(companyRows[0].store_print_copies, 0),
-            chkroute: toDbInt(companyRows[0].chkRoute, 1),
-            rdesc: companyRows[0].rdesc,
-            stableopt: toDbInt(companyRows[0].stableOpt),
-            sessprint: toDbInt(companyRows[0].sessPrint),
-            autow: toDbInt(companyRows[0].AutoW),
-            online: toDbInt(companyRows[0].onlinemode),
+            printoptions: toDbInt(cRow.printOptions, 1),
+            store_print_copies: toDbInt(cRow.store_print_copies, 0),
+            chkroute: toDbInt(cRow.chkRoute, 1),
+            rdesc: cRow.rdesc,
+            stableopt: toDbInt(cRow.stableOpt),
+            sessprint: toDbInt(cRow.sessPrint),
+            autow: toDbInt(cRow.AutoW),
+            online: toDbInt(cRow.onlinemode),
             orgtype: orgtype,
-            printcumm: toDbInt(companyRows[0].printcumm),
-            zeroOpt: toDbInt(companyRows[0].zeroopt),
-            sackTare: companyRows[0].sackTare,
-            sackEdit: toDbInt(companyRows[0].sackEdit),
-            payments_active: toDbInt(companyRows[0].payments_active),
-            sacco_module_active: toDbInt(companyRows[0].sacco_module_active),
-            cumulative_route_filter: toDbInt(companyRows[0].cumulative_route_filter),
-            capture_photo: toDbInt(companyRows[0].capture_photo, 1),
+            printcumm: toDbInt(cRow.printcumm),
+            zeroOpt: toDbInt(cRow.zeroopt),
+            sackTare: rawSackTare !== undefined && rawSackTare !== null ? parseFloat(rawSackTare) : 1,
+            sackEdit: rawSackEdit !== undefined && rawSackEdit !== null ? toDbInt(rawSackEdit) : 0,
+            allowSackEdit: rawSackEdit !== undefined && rawSackEdit !== null ? toDbInt(rawSackEdit) : 0,
+            payments_active: toDbInt(cRow.payments_active),
+            sacco_module_active: toDbInt(cRow.sacco_module_active),
+            cumulative_route_filter: toDbInt(cRow.cumulative_route_filter),
+            capture_photo: toDbInt(cRow.capture_photo, 1),
             // Derived labels from orgtype
             periodLabel: orgtype === 'C' ? 'Season' : 'Session',
             // Additional company info
-            caddress: companyRows[0].caddress,
-            tel: companyRows[0].tel,
-            email: companyRows[0].email
+            caddress: cRow.caddress,
+            tel: cRow.tel,
+            email: cRow.email
           };
         }
       }
@@ -4552,37 +4622,47 @@ if (path === '/api/sales' && method === 'POST') {
             periodLabel: 'Session',
             printcumm: 0,
             zeroOpt: 0,
+            sackTare: 1,
+            sackEdit: 0,
+            allowSackEdit: 0,
             payments_active: 0
           } 
         });
       }
       
       const orgtype = rows[0].orgtype || 'D';
-      return sendJSON(res, { 
+      const pRow = rows[0];
+      const rawSackEdit = pRow.sackEdit ?? pRow.SackEdit ?? pRow.allowSackEdit ?? pRow.allowsackedit ?? pRow.sackedit;
+      const rawSackTare = pRow.sackTare ?? pRow.SackTare ?? pRow.sacktare;
+
+      return sendJSON(res, {
         success: true, 
         data: {
-          ccode: rows[0].ccode,
-          company_name: rows[0].company_name,
-          caddress: rows[0].caddress,
-          tel: rows[0].tel,
-          email: rows[0].email,
-          cumulative_frequency_status: rows[0].cumulative_frequency_status || 0,
-          printoptions: toDbInt(rows[0].printOptions, 1),
-          store_print_copies: toDbInt(rows[0].store_print_copies, 0),
-          chkroute: toDbInt(rows[0].chkRoute, 1),
-          rdesc: rows[0].rdesc,
-          stableopt: toDbInt(rows[0].stableOpt),
-          sessprint: toDbInt(rows[0].sessPrint),
-          autow: toDbInt(rows[0].AutoW),
-          online: toDbInt(rows[0].onlinemode),
+          ccode: pRow.ccode,
+          company_name: pRow.company_name,
+          caddress: pRow.caddress,
+          tel: pRow.tel,
+          email: pRow.email,
+          cumulative_frequency_status: pRow.cumulative_frequency_status || 0,
+          printoptions: toDbInt(pRow.printOptions, 1),
+          store_print_copies: toDbInt(pRow.store_print_copies, 0),
+          chkroute: toDbInt(pRow.chkRoute, 1),
+          rdesc: pRow.rdesc,
+          stableopt: toDbInt(pRow.stableOpt),
+          sessprint: toDbInt(pRow.sessPrint),
+          autow: toDbInt(pRow.AutoW),
+          online: toDbInt(pRow.onlinemode),
           orgtype: orgtype,
           periodLabel: orgtype === 'C' ? 'Season' : 'Session',
-          printcumm: toDbInt(rows[0].printcumm),
-          zeroOpt: toDbInt(rows[0].zeroopt),
-          payments_active: toDbInt(rows[0].payments_active),
-          sacco_module_active: toDbInt(rows[0].sacco_module_active),
-          cumulative_route_filter: toDbInt(rows[0].cumulative_route_filter),
-          capture_photo: toDbInt(rows[0].capture_photo, 1)
+          printcumm: toDbInt(pRow.printcumm),
+          zeroOpt: toDbInt(pRow.zeroopt),
+          sackTare: rawSackTare !== undefined && rawSackTare !== null ? parseFloat(rawSackTare) : 1,
+          sackEdit: rawSackEdit !== undefined && rawSackEdit !== null ? toDbInt(rawSackEdit) : 0,
+          allowSackEdit: rawSackEdit !== undefined && rawSackEdit !== null ? toDbInt(rawSackEdit) : 0,
+          payments_active: toDbInt(pRow.payments_active),
+          sacco_module_active: toDbInt(pRow.sacco_module_active),
+          cumulative_route_filter: toDbInt(pRow.cumulative_route_filter),
+          capture_photo: toDbInt(pRow.capture_photo, 1)
         }
       });
     }

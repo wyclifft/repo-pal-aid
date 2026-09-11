@@ -341,11 +341,10 @@ const Index = () => {
   }, [isReady, getFarmers]);
 
   // Sync tare weight from psettings when loaded
-  // For coffee (orgtype='C'), always default to 1 kg if not set
+  // For coffee (orgtype='C'), use psettings value (allows 0 kg)
   useEffect(() => {
     if (isCoffee) {
-      // Use psettings value if valid, otherwise default to 1 kg
-      const tareValue = sackTareWeight > 0 ? sackTareWeight : 1;
+      const tareValue = typeof sackTareWeight === 'number' && !isNaN(sackTareWeight) && sackTareWeight >= 0 ? sackTareWeight : 1;
       setTareWeight(tareValue);
     }
   }, [isCoffee, sackTareWeight]);
@@ -1407,12 +1406,24 @@ const Index = () => {
       return;
     }
 
+    // For coffee mode: weight = net, also store gross/tare/net
+    // For dairy mode: weight = total weight (no tare deduction)
+    const captureWeight = Math.floor(Number(weight) * 10) / 10;
+
     // Validate single farmer for consecutive captures
     if (capturedCollections.length > 0) {
       const firstCapture = capturedCollections[0];
       if (firstCapture.farmer_id !== farmerId) {
         toast.error(`Please submit/print receipts for ${firstCapture.farmer_name} before capturing for a different farmer`);
         return;
+      }
+
+      // Consecutive same weight prompt (applies for ALL orgtypes regardless of entry type)
+      const lastCapture = capturedCollections[capturedCollections.length - 1];
+      if (lastCapture.weight === captureWeight) {
+        if (!window.confirm(`Are you sure you want to capture the exact same weight (${captureWeight} Kg) again?`)) {
+          return; // User cancelled
+        }
       }
     }
 
@@ -1519,11 +1530,7 @@ const Index = () => {
     // Create local capture record (NOT synced to DB yet)
     // Clean farmer_id - reuse currentSessionType computed above
     const cleanFarmerId = farmerId.replace(/^#/, '').trim();
-    
-    // For coffee mode: weight = net, also store gross/tare/net
-    // For dairy mode: weight = total weight (no tare deduction)
-    const captureWeight = Math.floor(Number(weight) * 10) / 10;
-    
+
     const now = new Date();
     const pad2 = (n: number) => String(n).padStart(2, '0');
     const transdate = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
@@ -1551,8 +1558,8 @@ const Index = () => {
       entry_type: entryType,
       // Season SCODE from active session → DB: CAN column
       season_code: activeSession?.SCODE || '',
-      // 10-digit unique milk_session_id for Dairy Buy/Sell
-      milk_session_id: resolveDashboardMilkSessionId() || undefined,
+      // 10-digit unique milk_session_id for Dairy Buy/Sell (ensure it falls back properly)
+      milk_session_id: resolveDashboardMilkSessionId() || (isCoffee ? undefined : '0'),
       // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
       transtype: collectionMode === 'sell' ? 2 : 1,
       // Delivery tracking: save Member ID if a member was searched/selected, otherwise manual name

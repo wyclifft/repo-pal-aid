@@ -100,8 +100,20 @@ const Store = () => {
   // v2.12.20: Resolve the active route (store/center) selected on the Dashboard.
   const routeName = useMemo(() => resolveDashboardActiveRoute()?.descript || '', []);
 
-  // clientFetch from route data (2=Store, 3=AI)
-  const [clientFetch, setClientFetch] = useState<number | undefined>(undefined);
+  // clientFetch from route data (2=Store, 3=AI) - initialize eagerly from cache to never block offline use
+  const [clientFetch, setClientFetch] = useState<number>(() => {
+    const cached = localStorage.getItem('store_clientFetch') || localStorage.getItem('active_session_data');
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (parsed?.route?.clientFetch) return parsed.route.clientFetch;
+      } catch {
+        const num = parseInt(cached, 10);
+        if (!isNaN(num)) return num;
+      }
+    }
+    return 2; // Default fallback matching route L002
+  });
 
   // Scale weight state
   const [weight, setWeight] = useState(0);
@@ -710,9 +722,9 @@ const Store = () => {
       return;
     }
 
-    // Warn if clientFetch is missing — uploadrefno will lack routing digit
-    if (clientFetch === undefined) {
-      console.warn('[Store] clientFetch is undefined — uploadrefno will not include routing digit');
+    // Non-blocking warning if clientFetch is somehow missing (fallback handles it seamlessly)
+    if (clientFetch === undefined || clientFetch === null) {
+      console.warn('[Store] clientFetch is undefined — using persistent cache fallback');
     }
 
     setSubmitting(true);

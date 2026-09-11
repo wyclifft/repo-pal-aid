@@ -330,7 +330,32 @@ const getNextTrnId = async (): Promise<number> => {
 export const generateOfflineReference = async (clientFetch?: number): Promise<string | null> => {
   return withLock(async () => {
     const devcode = localStorage.getItem('devcode');
-    const effectiveClientFetch = clientFetch !== undefined && clientFetch !== null ? clientFetch : 1;
+
+    // Robust cache-first resolution for clientFetch (non-blocking, offline-safe):
+    let effectiveClientFetch = clientFetch;
+    if (effectiveClientFetch === undefined || effectiveClientFetch === null) {
+      try {
+        const activeSessionData = localStorage.getItem('active_session_data') || localStorage.getItem('delicoop_session_data');
+        if (activeSessionData) {
+          const parsed = JSON.parse(activeSessionData);
+          if (parsed?.route?.clientFetch !== undefined && parsed?.route?.clientFetch !== null) {
+            effectiveClientFetch = Number(parsed.route.clientFetch);
+          }
+        }
+      } catch {}
+
+      if (effectiveClientFetch === undefined || effectiveClientFetch === null) {
+        const cachedCF = localStorage.getItem('store_clientFetch') || localStorage.getItem('ai_clientFetch') || localStorage.getItem('milk_clientFetch');
+        if (cachedCF) {
+          effectiveClientFetch = parseInt(cachedCF, 10);
+        }
+      }
+
+      // Final non-blocking fallback (prevents ever blocking offline users)
+      if (effectiveClientFetch === undefined || effectiveClientFetch === null) {
+        effectiveClientFetch = 2; // Matches route L002 persistent clientFetch cache
+      }
+    }
 
     if (devcode) {
       const config = await getDeviceConfig();

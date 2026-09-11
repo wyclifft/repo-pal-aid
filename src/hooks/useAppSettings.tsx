@@ -396,8 +396,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             email: deviceData.app_settings?.email ?? DEFAULT_SETTINGS.email,
             cumulative_frequency_status: parseInt(String(deviceData.cumulative_frequency_status ?? DEFAULT_SETTINGS.cumulative_frequency_status), 10),
             periodLabel: deviceData.app_settings?.periodLabel ?? DEFAULT_SETTINGS.periodLabel,
-            sackTare: parseFloat(String(deviceData.app_settings?.sackTare ?? DEFAULT_SETTINGS.sackTare)),
-            allowSackEdit: parseInt(String(deviceData.app_settings?.sackEdit ?? deviceData.app_settings?.allowSackEdit ?? DEFAULT_SETTINGS.allowSackEdit), 10),
+            sackTare: parseFloat(String(deviceData.app_settings?.sackTare ?? deviceData.app_settings?.SackTare ?? deviceData.app_settings?.sacktare ?? DEFAULT_SETTINGS.sackTare)),
+            allowSackEdit: parseInt(String(deviceData.app_settings?.sackEdit ?? deviceData.app_settings?.allowSackEdit ?? deviceData.app_settings?.SackEdit ?? deviceData.app_settings?.sackedit ?? deviceData.app_settings?.allowsackedit ?? DEFAULT_SETTINGS.allowSackEdit), 10),
             payments_active: parseInt(String(deviceData.app_settings?.payments_active ?? DEFAULT_SETTINGS.payments_active), 10),
             sacco_module_active: parseInt(String(deviceData.app_settings?.sacco_module_active ?? DEFAULT_SETTINGS.sacco_module_active), 10),
             cumulative_route_filter: parseInt(String(deviceData.app_settings?.cumulative_route_filter ?? DEFAULT_SETTINGS.cumulative_route_filter), 10),
@@ -409,7 +409,9 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           console.log('🔄 Settings refreshed from server:', {
             autow: newSettings.autow,
             stableopt: newSettings.stableopt,
-            sessprint: newSettings.sessprint
+            sessprint: newSettings.sessprint,
+            sackTare: newSettings.sackTare,
+            allowSackEdit: newSettings.allowSackEdit
           });
           
           setSettings(newSettings);
@@ -585,8 +587,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
 
   // Derived helper values - computed from current settings state
   // These will automatically update when settings state changes
-  const isDairy = settings.orgtype === 'D';
-  const isCoffee = settings.orgtype === 'C';
+  const isDairy = String(settings.orgtype || '').trim().toUpperCase() === 'D';
+  const isCoffee = String(settings.orgtype || '').trim().toUpperCase() === 'C';
   // v2.12.0 — 'S' = Sacco (Yetu member payments portal)
   const isSacco = String(settings.orgtype || '').trim().toUpperCase() === 'S';
   // Trim rdesc since DB column may have trailing whitespace
@@ -611,7 +613,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const useRouteFilter = settings.chkroute === 1;
   const companyName = settings.company_name || localStorage.getItem('device_company_name') || '';
   // Coffee sack weighing settings
-  const sackTareWeight = settings.sackTare ?? 1; // Default 1 kg
+  const sackTareWeight = typeof settings.sackTare === 'number' && !isNaN(settings.sackTare) && settings.sackTare >= 0 ? settings.sackTare : 1;
   const allowSackEdit = settings.allowSackEdit === 1; // 0 = fixed, 1 = editable
   const paymentsActive = settings.payments_active === 1; // v2.11.0
   const saccoModuleActive = settings.sacco_module_active === 1; // v2.12.18

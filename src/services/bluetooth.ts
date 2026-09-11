@@ -2603,9 +2603,9 @@ export const printZReport = async (data: {
     transactions: data.transactions.length,
     total: data.totalWeight,
     totalAmount: sellAiAmount,
-    totalItems: sellAiItems,
+    totalItems: storeItemsCount,
     device: data.deviceCode,
-    typeGroups: Array.from(foundTypes)
+    storeGroups: storeGroups.map(sg => sg.routeName)
   });
 
   // Try Classic Bluetooth printer first

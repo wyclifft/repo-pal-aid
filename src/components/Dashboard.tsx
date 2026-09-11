@@ -114,6 +114,9 @@ export const Dashboard = ({
     return initialDataRef.current?.active === true;
   });
 
+  // Session is effectively active only when a route/center AND session/season are both selected
+  const effectiveSessionActive = sessionActive && Boolean(selectedRoute) && Boolean(selectedSession);
+
   const [milkSessionId, setMilkSessionId] = useState<string | null>(() => {
     return initialDataRef.current?.milk_session_id || null;
   });
@@ -136,7 +139,7 @@ export const Dashboard = ({
     resetExpiration 
   } = useSessionExpiration({
     session: selectedSession,
-    enabled: sessionActive, // Only monitor when session is active
+    enabled: effectiveSessionActive, // Only monitor when session is active
     checkIntervalMs: 30000, // Check every 30 seconds for responsiveness
   });
   
@@ -316,33 +319,43 @@ export const Dashboard = ({
   };
 
   const handleBuyProduce = () => {
-    if (isSessionExpired || !sessionActive) {
+    if (!isCoffee && (isSessionExpired || !effectiveSessionActive)) {
       toast.error(`Session is expired or inactive. Please select an active ${periodLabel.toLowerCase()}`);
       return;
     }
-    if (selectedRoute && selectedSession) {
-      // Check clientFetch permissions
-      if (selectedRoute.allowBuy === false) {
-        toast.error('Buy Produce is not enabled for this route');
-        return;
-      }
-      onStartCollection(selectedRoute, selectedSession, selectedProduct);
+    if (!selectedRoute) {
+      toast.error('Please select a center/route first');
+      return;
     }
+    if (!selectedSession) {
+      toast.error(`Please select a ${periodLabel.toLowerCase()} first`);
+      return;
+    }
+    if (selectedRoute.allowBuy === false) {
+      toast.error('Buy Produce is not enabled for this route');
+      return;
+    }
+    onStartCollection(selectedRoute, selectedSession, selectedProduct);
   };
 
   const handleSellProduce = () => {
-    if (isSessionExpired || !sessionActive) {
+    if (!isCoffee && (isSessionExpired || !effectiveSessionActive)) {
       toast.error(`Session is expired or inactive. Please select an active ${periodLabel.toLowerCase()}`);
       return;
     }
-    if (selectedRoute && selectedSession) {
-      // Check clientFetch permissions
-      if (selectedRoute.allowSell === false) {
-        toast.error('Sell Produce is not enabled for this route');
-        return;
-      }
-      onStartSelling(selectedRoute, selectedSession, selectedProduct);
+    if (!selectedRoute) {
+      toast.error('Please select a center/route first');
+      return;
     }
+    if (!selectedSession) {
+      toast.error(`Please select a ${periodLabel.toLowerCase()} first`);
+      return;
+    }
+    if (selectedRoute.allowSell === false) {
+      toast.error('Sell Produce is not enabled for this route');
+      return;
+    }
+    onStartSelling(selectedRoute, selectedSession, selectedProduct);
   };
 
   const handleReconnect = async () => {
@@ -647,7 +660,7 @@ export const Dashboard = ({
               </span>
             )}
           </div>
-          {sessionActive ? (
+          {effectiveSessionActive ? (
             <div className="space-y-3">
               {/* Sync Warning Banner when sessPrint=1 and sync incomplete */}
               {sessionPrintOnly && !isSyncComplete && (

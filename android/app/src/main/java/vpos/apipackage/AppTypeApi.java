@@ -9,6 +9,10 @@ public class AppTypeApi {
     public static native int showAppWin(int i, byte[] bArr);
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "AppTypeApi: Failed to load PosApi native library", t);
+        }
     }
 }

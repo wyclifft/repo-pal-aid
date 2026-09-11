@@ -61,6 +61,10 @@ public class Pci {
     public static native int Lib_PciWritePinKey(byte b, byte b2, byte[] bArr, byte b3, byte b4);
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "Pci: Failed to load PosApi native library", t);
+        }
     }
 }

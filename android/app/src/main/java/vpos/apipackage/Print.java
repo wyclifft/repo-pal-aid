@@ -63,7 +63,11 @@ public class Print {
     public static native int Lib_SetLinPixelDis(char c);
 
     static {
-        System.loadLibrary("PosApi");
+        try {
+            System.loadLibrary("PosApi");
+        } catch (Throwable t) {
+            android.util.Log.e("VPOS", "Print: Failed to load PosApi native library", t);
+        }
     }
 
     public static int Lib_PrnStr(String str) throws UnsupportedEncodingException {
