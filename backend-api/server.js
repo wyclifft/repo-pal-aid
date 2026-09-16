@@ -4601,6 +4601,63 @@ if (path === '/api/sales' && method === 'POST') {
       );
       
       if (rows.length === 0) {
+        // v2.13.0: Check if login attempt is an Individual Farmer using mcode as userid and ccode as password
+        const cleanMcode = String(userid).trim();
+        const cleanCcode = String(password).trim();
+        const numericPartMatch = cleanMcode.replace(/^[^0-9]+/, '').replace(/^0+/, '');
+
+        let memberRows = [];
+        try {
+          const [exactMember] = await pool.query(
+            'SELECT mcode, descript, route, ccode FROM cm_members WHERE ccode = ? AND mcode = ? LIMIT 1',
+            [cleanCcode, cleanMcode]
+          );
+          if (exactMember.length > 0) {
+            memberRows = exactMember;
+          } else if (numericPartMatch) {
+            const [flexMember] = await pool.query(
+              `SELECT mcode, descript, route, ccode
+               FROM cm_members
+               WHERE ccode = ? AND (
+                 mcode = ? OR
+                 CAST(REPLACE(REPLACE(UPPER(mcode), 'M', ''), 'm', '') AS UNSIGNED) = ?
+               ) LIMIT 1`,
+              [cleanCcode, cleanMcode, parseInt(numericPartMatch, 10)]
+            );
+            memberRows = flexMember;
+          }
+        } catch (memberErr) {
+          console.warn('[AUTH][FARMER] Member lookup error:', memberErr.message);
+        }
+
+        if (memberRows.length > 0) {
+          const member = memberRows[0];
+          const memberId = member.mcode;
+
+          // Automatically provision in Users table if not already present
+          try {
+            await pool.query(
+              `INSERT IGNORE INTO Users (userid, password, ccode, admin, supervisor, username)
+               VALUES (?, 'rt001', ?, 0, 0, ?)`,
+              [memberId, cleanCcode, member.descript || memberId]
+            );
+          } catch (provErr) {
+            console.warn('[AUTH][FARMER] User auto-provision warning:', provErr.message);
+          }
+
+          // Fetch the newly provisioned or existing user record
+          const [userRows] = await pool.query(
+            'SELECT * FROM Users WHERE TRIM(userid) = ? AND ccode = ? LIMIT 1',
+            [memberId, cleanCcode]
+          );
+          if (userRows.length > 0) {
+            rows = userRows;
+            console.log(`[AUTH][FARMER] Auto-authenticated farmer member=${memberId} ccode=${cleanCcode}`);
+          }
+        }
+      }
+
+      if (rows.length === 0) {
         return sendJSON(res, { 
           success: true, 
           data: { 
@@ -4667,7 +4724,100 @@ if (path === '/api/sales' && method === 'POST') {
       });
     }
 
-    // ==================== BATCH CUMULATIVE ENDPOINT ====================
+    // =========================================================================
+  // v2.13.0: Farmer Self-Service Endpoints (orgtype = 'I')
+  // These endpoints are scoped by ccode and mcode to ensure absolute data
+  // isolation between individual farmers.
+  // =========================================================================
+
+  // Fetch paginated history of personal collections
+  if (path === '/api/farmer/collections' && method === 'GET') {
+    const { ccode, mcode, limit = 50, offset = 0 } = parsedUrl.query;
+
+    if (!ccode || !mcode) {
+      return sendJSON(res, { success: false, error: 'Missing ccode or mcode' }, 400);
+    }
+
+    try {
+      // Map Transactions table to match typical frontend expected keys
+      const [rows] = await pool.query(
+        `SELECT
+           transrefno as reference_no,
+           transtime as session,
+           transdate as date,
+           FORMAT(netpay, 2) as weight,
+           user as clerk_name,
+           vehicle as route,
+           remarks
+         FROM transactions
+         WHERE ccode = ? AND memberno = ? AND transtype = 1
+         ORDER BY transdate DESC, transid DESC
+         LIMIT ? OFFSET ?`,
+        [ccode, mcode, parseInt(limit, 10), parseInt(offset, 10)]
+      );
+
+      return sendJSON(res, { success: true, data: rows });
+    } catch (err) {
+      console.error('Farmer collections error:', err);
+      return sendJSON(res, { success: false, error: 'Database error fetching collections' }, 500);
+    }
+  }
+
+  // Fetch personal periodic statement summary (current active period)
+  if (path === '/api/farmer/reports' && method === 'GET') {
+    const { ccode, mcode } = parsedUrl.query;
+
+    if (!ccode || !mcode) {
+      return sendJSON(res, { success: false, error: 'Missing ccode or mcode' }, 400);
+    }
+
+    try {
+      // We look up the active session/season for the ccode
+      const [orgRows] = await pool.query(`SELECT IFNULL(orgtype, 'D') as orgtype FROM psettings WHERE cno = ? LIMIT 1`, [ccode]);
+      const orgtype = orgRows.length > 0 ? String(orgRows[0].orgtype).toUpperCase() : 'D';
+
+      let totalWeight = 0;
+      let totalAmount = 0; // if price exists
+      let deductAmount = 0; // if store deducts exist
+
+      // Calculate current month / season range
+      // For Dairy (D) default to current month
+      const currentYear = new Date().getFullYear();
+      const currentMonth = new Date().getMonth() + 1;
+
+      // Basic sum for testing the portal
+      const [sums] = await pool.query(
+        `SELECT SUM(netpay) as total_weight
+         FROM transactions
+         WHERE ccode = ? AND memberno = ? AND transtype = 1
+         AND MONTH(transdate) = ? AND YEAR(transdate) = ?`,
+        [ccode, mcode, currentMonth, currentYear]
+      );
+
+      const [storeSums] = await pool.query(
+        `SELECT SUM(dr) as total_dr
+         FROM transactions
+         WHERE ccode = ? AND memberno = ? AND transtype = 2
+         AND MONTH(transdate) = ? AND YEAR(transdate) = ?`,
+        [ccode, mcode, currentMonth, currentYear]
+      );
+
+      return sendJSON(res, {
+        success: true,
+        data: {
+          periodLabel: orgtype === 'C' ? 'Current Season' : 'Current Month',
+          totalWeight: sums[0].total_weight || 0,
+          totalDeductions: storeSums[0].total_dr || 0,
+          netBalanceEstimate: (sums[0].total_weight || 0) * 50 - (storeSums[0].total_dr || 0) // example rate calc
+        }
+      });
+    } catch (err) {
+      console.error('Farmer reports error:', err);
+      return sendJSON(res, { success: false, error: 'Database error fetching reports' }, 500);
+    }
+  }
+
+  // ==================== BATCH CUMULATIVE ENDPOINT ====================
     // Returns cumulative weights for ALL farmers under a device's ccode in ONE query
     if (path === '/api/farmer-monthly-frequency-batch' && method === 'GET') {
       const { uniquedevcode, route } = parsedUrl.query;
@@ -4981,6 +5131,119 @@ if (path === '/api/sales' && method === 'POST') {
     }
 
     // Authentication endpoints
+
+    // v2.13.0: Farmer self-service auth endpoint (orgtype = 'I')
+    // Bypasses approved_devices table, normalizes mcode
+    if (path === '/api/farmer/auth/login' && method === 'POST') {
+      const body = await parseBody(req);
+      const { ccode, mcode } = body;
+
+      if (!ccode || !mcode) {
+        return sendJSON(res, { success: false, error: 'Company code and member ID are required' }, 400);
+      }
+
+      // Normalize mcode:
+      // M00001 -> M00001
+      // 00001 -> M00001 or 1 -> M00001 (based on typical CM conventions, we strip and match flexibly)
+      const cleanMcode = String(mcode).trim();
+      const numericPartMatch = cleanMcode.replace(/^[^0-9]+/, '').replace(/^0+/, '');
+
+      try {
+        // First try exact match
+        let [rows] = await pool.query(
+          'SELECT mcode as farmer_id, descript as name, route, ccode FROM cm_members WHERE ccode = ? AND mcode = ? LIMIT 1',
+          [ccode, cleanMcode]
+        );
+
+        // If exact fails and we have a numeric part, try flexible match
+        if (rows.length === 0 && numericPartMatch) {
+           [rows] = await pool.query(
+              `SELECT mcode as farmer_id, descript as name, route, ccode
+               FROM cm_members
+               WHERE ccode = ? AND (
+                 mcode = ? OR
+                 CAST(REPLACE(REPLACE(UPPER(mcode), 'M', ''), 'm', '') AS UNSIGNED) = ?
+               ) LIMIT 1`,
+              [ccode, cleanMcode, parseInt(numericPartMatch, 10)]
+           );
+        }
+
+        if (rows.length === 0) {
+        // v2.13.0: Check if login attempt is an Individual Farmer using mcode as userid and ccode as password
+        const cleanMcode = String(userid).trim();
+        const cleanCcode = String(password).trim();
+        const numericPartMatch = cleanMcode.replace(/^[^0-9]+/, '').replace(/^0+/, '');
+
+        let memberRows = [];
+        try {
+          const [exactMember] = await pool.query(
+            'SELECT mcode, descript, route, ccode FROM cm_members WHERE ccode = ? AND mcode = ? LIMIT 1',
+            [cleanCcode, cleanMcode]
+          );
+          if (exactMember.length > 0) {
+            memberRows = exactMember;
+          } else if (numericPartMatch) {
+            const [flexMember] = await pool.query(
+              `SELECT mcode, descript, route, ccode
+               FROM cm_members
+               WHERE ccode = ? AND (
+                 mcode = ? OR
+                 CAST(REPLACE(REPLACE(UPPER(mcode), 'M', ''), 'm', '') AS UNSIGNED) = ?
+               ) LIMIT 1`,
+              [cleanCcode, cleanMcode, parseInt(numericPartMatch, 10)]
+            );
+            memberRows = flexMember;
+          }
+        } catch (memberErr) {
+          console.warn('[AUTH][FARMER] Member lookup error:', memberErr.message);
+        }
+
+        if (memberRows.length > 0) {
+          const member = memberRows[0];
+          const memberId = member.mcode;
+
+          // Automatically provision in Users table if not already present
+          try {
+            await pool.query(
+              `INSERT IGNORE INTO Users (userid, password, ccode, admin, supervisor, username)
+               VALUES (?, 'rt001', ?, 0, 0, ?)`,
+              [memberId, cleanCcode, member.descript || memberId]
+            );
+          } catch (provErr) {
+            console.warn('[AUTH][FARMER] User auto-provision warning:', provErr.message);
+          }
+
+          // Fetch the newly provisioned or existing user record
+          const [userRows] = await pool.query(
+            'SELECT * FROM Users WHERE TRIM(userid) = ? AND ccode = ? LIMIT 1',
+            [memberId, cleanCcode]
+          );
+          if (userRows.length > 0) {
+            rows = userRows;
+            console.log(`[AUTH][FARMER] Auto-authenticated farmer member=${memberId} ccode=${cleanCcode}`);
+          }
+        }
+      }
+
+      if (rows.length === 0) {
+          return sendJSON(res, { success: false, error: 'Invalid Company Code or Member ID' }, 401);
+        }
+
+        const farmer = rows[0];
+
+        console.log(`🌾 Farmer login success: ${farmer.farmer_id} at ${farmer.ccode}`);
+        return sendJSON(res, {
+          success: true,
+          farmer: farmer,
+          message: 'Login successful'
+        });
+
+      } catch (error) {
+        console.error('Farmer login error:', error);
+        return sendJSON(res, { success: false, error: 'Internal server error' }, 500);
+      }
+    }
+
     if (path === '/api/auth/login' && method === 'POST') {
       const body = await parseBody(req);
       const { userid, password, device_fingerprint } = body;
@@ -5033,6 +5296,63 @@ if (path === '/api/sales' && method === 'POST') {
       // lookup found nothing (so we can still emit a precise error — either
       // "Invalid credentials" or the existing cross-company "Access denied").
       if (rows.length === 0) {
+        // v2.13.0: Check if login attempt is an Individual Farmer using mcode as userid and ccode as password
+        const cleanMcode = String(userid).trim();
+        const cleanCcode = String(password).trim();
+        const numericPartMatch = cleanMcode.replace(/^[^0-9]+/, '').replace(/^0+/, '');
+
+        let memberRows = [];
+        try {
+          const [exactMember] = await pool.query(
+            'SELECT mcode, descript, route, ccode FROM cm_members WHERE ccode = ? AND mcode = ? LIMIT 1',
+            [cleanCcode, cleanMcode]
+          );
+          if (exactMember.length > 0) {
+            memberRows = exactMember;
+          } else if (numericPartMatch) {
+            const [flexMember] = await pool.query(
+              `SELECT mcode, descript, route, ccode
+               FROM cm_members
+               WHERE ccode = ? AND (
+                 mcode = ? OR
+                 CAST(REPLACE(REPLACE(UPPER(mcode), 'M', ''), 'm', '') AS UNSIGNED) = ?
+               ) LIMIT 1`,
+              [cleanCcode, cleanMcode, parseInt(numericPartMatch, 10)]
+            );
+            memberRows = flexMember;
+          }
+        } catch (memberErr) {
+          console.warn('[AUTH][FARMER] Member lookup error:', memberErr.message);
+        }
+
+        if (memberRows.length > 0) {
+          const member = memberRows[0];
+          const memberId = member.mcode;
+
+          // Automatically provision in Users table if not already present
+          try {
+            await pool.query(
+              `INSERT IGNORE INTO Users (userid, password, ccode, admin, supervisor, username)
+               VALUES (?, 'rt001', ?, 0, 0, ?)`,
+              [memberId, cleanCcode, member.descript || memberId]
+            );
+          } catch (provErr) {
+            console.warn('[AUTH][FARMER] User auto-provision warning:', provErr.message);
+          }
+
+          // Fetch the newly provisioned or existing user record
+          const [userRows] = await pool.query(
+            'SELECT * FROM Users WHERE TRIM(userid) = ? AND ccode = ? LIMIT 1',
+            [memberId, cleanCcode]
+          );
+          if (userRows.length > 0) {
+            rows = userRows;
+            console.log(`[AUTH][FARMER] Auto-authenticated farmer member=${memberId} ccode=${cleanCcode}`);
+          }
+        }
+      }
+
+      if (rows.length === 0) {
         const [legacy] = await pool.query(
           'SELECT * FROM Users WHERE TRIM(userid) = ? AND TRIM(password) = ?',
           [userid.trim(), password.trim()]
@@ -5042,6 +5362,63 @@ if (path === '/api/sales' && method === 'POST') {
       
       console.log('🔍 Query result:', rows.length > 0 ? 'User found' : 'No match');
       
+      if (rows.length === 0) {
+        // v2.13.0: Check if login attempt is an Individual Farmer using mcode as userid and ccode as password
+        const cleanMcode = String(userid).trim();
+        const cleanCcode = String(password).trim();
+        const numericPartMatch = cleanMcode.replace(/^[^0-9]+/, '').replace(/^0+/, '');
+
+        let memberRows = [];
+        try {
+          const [exactMember] = await pool.query(
+            'SELECT mcode, descript, route, ccode FROM cm_members WHERE ccode = ? AND mcode = ? LIMIT 1',
+            [cleanCcode, cleanMcode]
+          );
+          if (exactMember.length > 0) {
+            memberRows = exactMember;
+          } else if (numericPartMatch) {
+            const [flexMember] = await pool.query(
+              `SELECT mcode, descript, route, ccode
+               FROM cm_members
+               WHERE ccode = ? AND (
+                 mcode = ? OR
+                 CAST(REPLACE(REPLACE(UPPER(mcode), 'M', ''), 'm', '') AS UNSIGNED) = ?
+               ) LIMIT 1`,
+              [cleanCcode, cleanMcode, parseInt(numericPartMatch, 10)]
+            );
+            memberRows = flexMember;
+          }
+        } catch (memberErr) {
+          console.warn('[AUTH][FARMER] Member lookup error:', memberErr.message);
+        }
+
+        if (memberRows.length > 0) {
+          const member = memberRows[0];
+          const memberId = member.mcode;
+
+          // Automatically provision in Users table if not already present
+          try {
+            await pool.query(
+              `INSERT IGNORE INTO Users (userid, password, ccode, admin, supervisor, username)
+               VALUES (?, 'rt001', ?, 0, 0, ?)`,
+              [memberId, cleanCcode, member.descript || memberId]
+            );
+          } catch (provErr) {
+            console.warn('[AUTH][FARMER] User auto-provision warning:', provErr.message);
+          }
+
+          // Fetch the newly provisioned or existing user record
+          const [userRows] = await pool.query(
+            'SELECT * FROM Users WHERE TRIM(userid) = ? AND ccode = ? LIMIT 1',
+            [memberId, cleanCcode]
+          );
+          if (userRows.length > 0) {
+            rows = userRows;
+            console.log(`[AUTH][FARMER] Auto-authenticated farmer member=${memberId} ccode=${cleanCcode}`);
+          }
+        }
+      }
+
       if (rows.length === 0) {
         // Debug: Check if user exists
         const [userCheck] = await pool.query(
@@ -5121,7 +5498,19 @@ if (path === '/api/sales' && method === 'POST') {
       // 2 = digital capture only (no Z)
       // 3 = manual capture only (no Z)
       // 4 = manual or digital capture + print Z
-      return sendJSON(res, { 
+      // Check if user is an individual farmer (exists in cm_members)
+      let isFarmer = false;
+      try {
+        const [mCheck] = await pool.query(
+          'SELECT 1 FROM cm_members WHERE ccode = ? AND mcode = ? LIMIT 1',
+          [user.ccode, user.userid]
+        );
+        if (mCheck.length > 0) {
+          isFarmer = true;
+        }
+      } catch (e) {}
+
+      return sendJSON(res, {
         success: true, 
         data: {
           user_id: user.userid,
@@ -5136,7 +5525,8 @@ if (path === '/api/sales' && method === 'POST') {
           // v2.10.40: expose add_members permission for member-creation gating
           add_members: toBool(user.add_members),
           // v2.11.1: expose Payments permission from real MySQL table `Users`
-          can_access_payments: toBool(user.can_access_payments)
+          can_access_payments: toBool(user.can_access_payments),
+          is_farmer: isFarmer
         }
       }, 200, origin, req.headers);
     }
@@ -5866,6 +6256,63 @@ const ref = String(body.transactionReference || body.payment_reference || '').tr
         `SELECT payment_id, ccode, status FROM payments WHERE payment_reference = ? LIMIT 1`,
         [ref]
       );
+      if (rows.length === 0) {
+        // v2.13.0: Check if login attempt is an Individual Farmer using mcode as userid and ccode as password
+        const cleanMcode = String(userid).trim();
+        const cleanCcode = String(password).trim();
+        const numericPartMatch = cleanMcode.replace(/^[^0-9]+/, '').replace(/^0+/, '');
+
+        let memberRows = [];
+        try {
+          const [exactMember] = await pool.query(
+            'SELECT mcode, descript, route, ccode FROM cm_members WHERE ccode = ? AND mcode = ? LIMIT 1',
+            [cleanCcode, cleanMcode]
+          );
+          if (exactMember.length > 0) {
+            memberRows = exactMember;
+          } else if (numericPartMatch) {
+            const [flexMember] = await pool.query(
+              `SELECT mcode, descript, route, ccode
+               FROM cm_members
+               WHERE ccode = ? AND (
+                 mcode = ? OR
+                 CAST(REPLACE(REPLACE(UPPER(mcode), 'M', ''), 'm', '') AS UNSIGNED) = ?
+               ) LIMIT 1`,
+              [cleanCcode, cleanMcode, parseInt(numericPartMatch, 10)]
+            );
+            memberRows = flexMember;
+          }
+        } catch (memberErr) {
+          console.warn('[AUTH][FARMER] Member lookup error:', memberErr.message);
+        }
+
+        if (memberRows.length > 0) {
+          const member = memberRows[0];
+          const memberId = member.mcode;
+
+          // Automatically provision in Users table if not already present
+          try {
+            await pool.query(
+              `INSERT IGNORE INTO Users (userid, password, ccode, admin, supervisor, username)
+               VALUES (?, 'rt001', ?, 0, 0, ?)`,
+              [memberId, cleanCcode, member.descript || memberId]
+            );
+          } catch (provErr) {
+            console.warn('[AUTH][FARMER] User auto-provision warning:', provErr.message);
+          }
+
+          // Fetch the newly provisioned or existing user record
+          const [userRows] = await pool.query(
+            'SELECT * FROM Users WHERE TRIM(userid) = ? AND ccode = ? LIMIT 1',
+            [memberId, cleanCcode]
+          );
+          if (userRows.length > 0) {
+            rows = userRows;
+            console.log(`[AUTH][FARMER] Auto-authenticated farmer member=${memberId} ccode=${cleanCcode}`);
+          }
+        }
+      }
+
       if (rows.length === 0) {
         console.warn(`[PAY][CALLBACK] unknown ref=${ref}`);
         return sendJSON(res, { success: false, error: 'unknown reference' }, 404);

@@ -8,7 +8,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ReprintProvider } from "@/contexts/ReprintContext";
 import { SyncProvider, useSync } from "@/contexts/SyncContext";
 import { IndexedDBProvider } from "@/hooks/useIndexedDB";
-import { AppSettingsProvider } from "@/hooks/useAppSettings";
+import { AppSettingsProvider, useAppSettings } from "@/hooks/useAppSettings";
 import { SplashScreen } from "@/components/SplashScreen";
 import { SyncOverlay } from "@/components/SyncOverlay";
 import { BackendStatusBanner } from "@/components/BackendStatusBanner";
@@ -140,12 +140,39 @@ const PageWrapper = ({ children }: { children: React.ReactNode }) => {
 };
 
 // Wrapper component to use hooks inside context providers
+import { FarmerLoginScreen } from "@/components/farmer/FarmerLoginScreen";
+import { FarmerDashboard } from "@/components/farmer/FarmerDashboard";
+
 const AppContent = () => {
   const mountedRef = useRef(true);
 
   // v2.12.0 — Sacco installs run as a dedicated member portal: every route
   // resolves to the Sacco portal and all other modules stay unreachable.
   const { portalMode } = useSaccoAccess();
+
+  // v2.13.0 — Individual Farmer Portal (orgtype = 'I')
+  // Automatically blocks normal clerk routes if logged in as a farmer
+  const { settings } = useAppSettings();
+  const [farmerSession, setFarmerSession] = useState<any>(null);
+
+  // Load saved farmer session on mount
+  useEffect(() => {
+    try {
+      const session = localStorage.getItem('farmer_session');
+      if (session) {
+        setFarmerSession(JSON.parse(session));
+      }
+    } catch (e) {}
+  }, []);
+
+  const handleFarmerLogin = (farmer: any) => {
+    setFarmerSession(farmer);
+  };
+
+  const handleFarmerLogout = () => {
+    localStorage.removeItem('farmer_session');
+    setFarmerSession(null);
+  };
 
   // Initialize global data sync
   const {

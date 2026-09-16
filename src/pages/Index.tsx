@@ -17,6 +17,7 @@ import { SellProduceScreen } from '@/components/SellProduceScreen';
 import { SupervisorTransactions } from '@/components/SupervisorTransactions';
 import { ReceiptModal } from '@/components/ReceiptModal';
 import { ReprintModal } from '@/components/ReprintModal';
+import { FarmerDashboard } from '@/components/farmer/FarmerDashboard';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useReprint } from '@/contexts/ReprintContext';
@@ -2620,6 +2621,19 @@ const Index = () => {
 
   // Show Dashboard first
   if (!showCollection && !showSupervisor) {
+    if ((currentUser as any)?.is_farmer) {
+      return (
+        <FarmerDashboard
+          farmer={{
+            farmer_id: currentUser?.user_id,
+            name: currentUser?.username || currentUser?.user_id,
+            ccode: currentUser?.ccode
+          }}
+          onLogout={handleLogout}
+        />
+      );
+    }
+
     console.log('[INDEX] Rendering Dashboard');
     const captureMode = getCaptureMode(currentUser?.supervisor);
   

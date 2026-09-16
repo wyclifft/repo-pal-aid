@@ -1,0 +1,80 @@
+# Nginx High-Performance Configuration Template for VPS
+# Path: /etc/nginx/sites-available/api
+# Enable: sudo ln -s /etc/nginx/sites-available/api /etc/nginx/sites-enabled/
+
+upstream node_backend {
+    # PM2 Cluster mode HTTP upstream
+    server 127.0.0.1:3000 max_fails=3 fail_timeout=10s;
+
+    # Persistent keep-alive sockets between Nginx and Node workers
+    keepalive 64;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name backend.maddasystems.co.ke;
+
+    # Redirect all HTTP traffic to HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name backend.maddasystems.co.ke;
+
+    # SSL Certificates (Managed by Certbot / Let's Encrypt)
+    ssl_certificate /etc/letsencrypt/live/backend.maddasystems.co.ke/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/backend.maddasystems.co.ke/privkey.pem;
+
+    # SSL Hardening Settings
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # High-Performance Compression Offloading
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 5;
+    gzip_min_length 256;
+    gzip_types
+        application/json
+        application/javascript
+        text/css
+        text/plain
+        text/xml;
+
+    # Buffer & Timeout Tuning for High Concurrency
+    client_body_buffer_size 128k;
+    client_max_body_size 10M;
+    client_header_timeout 15s;
+    client_body_timeout 15s;
+    keepalive_timeout 65s;
+
+    # Security Headers
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Proxy to Node PM2 Cluster
+    location / {
+        proxy_pass http://node_backend;
+        proxy_http_version 1.1;
+
+        # Keep-Alive connection reuse headers
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Disable response proxy buffering for ultra-fast JSON responses
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 5s;
+    }
+}
