@@ -993,6 +993,8 @@ export interface Sale {
   user_id?: string;     // → DB: userId (login user_id for tracking)
   sold_by: string;      // → DB: clerk (display name/username)
   sale_date?: string;   // → DB: transdate
+  transdate?: string;   // YYYY-MM-DD local transaction creation date
+  transtime?: string;   // HH:MM:SS local transaction creation time
   remarks?: string;
   device_fingerprint?: string; // → DB: deviceserial
   photo?: string;       // Base64 encoded buyer photo for theft prevention
@@ -1019,6 +1021,8 @@ export interface BatchSaleRequest {
   user_id?: string;     // → DB: userId (login user_id for tracking)
   sold_by: string;      // → DB: clerk (display name/username)
   device_fingerprint: string;
+  transdate?: string;   // YYYY-MM-DD local transaction creation date
+  transtime?: string;   // HH:MM:SS local transaction creation time
   photo?: string;  // ONE photo for entire batch
   season?: string; // → DB: CAN (session.SCODE for all orgtypes)
   session_label?: string; // → DB: session column. Coffee=SCODE (v2.10.51), Dairy=descript (e.g. AM/PM/MORNING)
@@ -1029,6 +1033,8 @@ export interface BatchSaleRequest {
     item_name: string;
     quantity: number;
     price: number;
+    transdate?: string;
+    transtime?: string;
   }>;
 }
 
@@ -1217,6 +1223,22 @@ export const authApi = {
         device_fingerprint ? { userid, password, device_fingerprint } : { userid, password }
       ),
     });
+  },
+
+  /**
+   * Sync all users belonging to the company for offline authentication.
+   */
+  syncCompanyUsers: async (
+    device_fingerprint?: string,
+    ccode?: string
+  ): Promise<ApiResponse<AuthUser[]>> => {
+    const params = new URLSearchParams();
+    if (device_fingerprint) params.append('device_fingerprint', device_fingerprint);
+    if (ccode) params.append('ccode', ccode);
+
+    const queryString = params.toString();
+    const endpoint = `/users/sync${queryString ? `?${queryString}` : ''}`;
+    return apiRequest<AuthUser[]>(endpoint, { method: 'GET' });
   },
 };
 

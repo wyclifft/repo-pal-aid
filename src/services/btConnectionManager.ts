@@ -158,30 +158,14 @@ interface SavedDevice {
 
 function getSavedDevice(role: BtRole): SavedDevice | null {
   if (role === "scale") {
-    // v2.10.100: Classic SPP is the weight-bearing transport on dual-mode
-    // modules (HC-04 etc.). Always prefer the Classic record over BLE — the
-    // BLE half (e.g. HC-04BLE) never streams weight.
+    // Prefer stored Classic SPP scale device if present
     const cls = getStoredClassicDevice();
     if (cls) {
-      // If a stale BLE entry still lingers alongside a Classic record, drop
-      // it once so we never schedule BLE retries against the wrong half.
-      const staleBle = getStoredDeviceInfo();
-      if (staleBle) {
-        btlog("info", "scale", `migration: cleared stale BLE record (${staleBle.deviceName}) in favour of Classic SPP (${cls.name})`);
-        try { clearStoredDevice(); } catch {}
-      }
       return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
     }
+    // Otherwise use stored BLE scale device
     const ble = getStoredDeviceInfo();
     if (ble) {
-      // v2.10.99: Drop the BLE half of dual-mode scales (e.g. HC-04BLE) — it
-      // never streams weight. Clear once so we stop scheduling retries every
-      // few seconds and flooding the persistent log.
-      if (isBleHalfOfDualModeScale(ble.deviceName)) {
-        btlog("warn", "scale", `saved device "${ble.deviceName}" is BLE half of dual-mode scale — clearing; pair the SPP port (e.g. HC-04) with PIN 1234`);
-        try { clearStoredDevice(); } catch {}
-        return null;
-      }
       return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: ble.connectionType === "classic-spp" ? "classic" : "ble" };
     }
     return null;
@@ -201,6 +185,29 @@ function isLowLevelConnected(role: BtRole): boolean {
   if (role === "scale") return isScaleConnected() || isClassicScaleConnected();
   return isPrinterConnected() || isClassicPrinterConnected();
 }
+
+// ─── cross-role lock & anti-oscillation tracker ──────────────────────────────────
+
+let globalConnectionLock: Promise<void> = Promise.resolve();
+
+function withGlobalLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = globalConnectionLock;
+  let resolveCurrent: () => void;
+  globalConnectionLock = new Promise<void>((resolve) => {
+    resolveCurrent = resolve;
+  });
+  return prev.then(async () => {
+    try {
+      return await fn();
+    } finally {
+      resolveCurrent!();
+    }
+  });
+}
+
+const lastConnectAttemptAt: Record<BtRole, number> = { scale: 0, printer: 0 };
+const lastConnectedAt: Record<BtRole, number> = { scale: 0, printer: 0 };
+const crossRoleDisconnectCount: Record<BtRole, number> = { scale: 0, printer: 0 };
 
 // ─── connect attempts ──────────────────────────────────────────────────────────
 
@@ -259,17 +266,40 @@ async function ensureConnected(role: BtRole): Promise<void> {
 
   let saved = getSavedDevice(role);
 
+  // Check if scale and printer share the exact same physical device MAC address
+  const otherRole: BtRole = role === "scale" ? "printer" : "scale";
+  const otherSaved = getSavedDevice(otherRole);
+  if (
+    saved &&
+    otherSaved &&
+    saved.deviceId &&
+    otherSaved.deviceId &&
+    saved.deviceId.toUpperCase() === otherSaved.deviceId.toUpperCase()
+  ) {
+    if (isLowLevelConnected(otherRole) || state[otherRole].status === "connected") {
+      btlog(
+        "info",
+        role,
+        `Scale and printer share the same device address (${saved.deviceId}). ${otherRole} is currently active. Skipping concurrent connection attempt to prevent RFCOMM collision.`
+      );
+      setStatus(role, "connected", {
+        deviceName: saved.deviceName,
+        lastError: null,
+        retryAt: null,
+        attempt: 0,
+      });
+      return;
+    }
+  }
+
   // v2.11.15: Auto-discovery for internal POS printers (CS10 etc)
-  // If we are on native, role is printer, and no device is saved, look for a paired CS10.
   if (!saved && role === 'printer' && Capacitor.isNativePlatform()) {
     try {
       const paired = await getPairedPrinters();
       const internal = paired.find(d => isInternalPosPrinter(d.name));
       if (internal) {
         btlog("info", "printer", `auto-discovery: found internal POS printer "${internal.name}" (${internal.address})`);
-        // Map to a SavedDevice structure for the connector below
         saved = { deviceId: internal.address, deviceName: internal.name, type: "classic" };
-        // We don't write to localStorage here — let the first successful connection handle persistence.
       }
     } catch (e) {
       btlog("warn", "printer", "auto-discovery failed", e);
@@ -292,12 +322,16 @@ async function ensureConnected(role: BtRole): Promise<void> {
     retryAt: null,
   });
 
+  lastConnectAttemptAt[role] = Date.now();
+
   const op = (async () => {
-    const result = await tryConnectOnce(role, saved);
+    // Serialize connection attempts using the global lock to prevent radio collision
+    const result = await withGlobalLock(() => tryConnectOnce(role, saved));
     if (result.ok) {
+      lastConnectedAt[role] = Date.now();
+      crossRoleDisconnectCount[role] = 0;
       setStatus(role, "connected", { lastError: null, retryAt: null, attempt: 0 });
     } else if (result.requiresGesture) {
-      // Cancel any pending retry — looping cannot succeed without a gesture.
       if (s.retryTimer) { clearTimeout(s.retryTimer); s.retryTimer = null; }
       s.pausedForGesture = true;
       s.attempt = 0;
@@ -307,7 +341,6 @@ async function ensureConnected(role: BtRole): Promise<void> {
     } else {
       s.attempt += 1;
       s.lastError = "connect failed";
-      // After many attempts, surface 'failed' but keep retrying in background
       if (s.attempt >= BACKOFF_MS.length) {
         setStatus(role, "failed", {});
       }
@@ -377,7 +410,7 @@ export function installAutoReconnect() {
   installed = true;
   btlog("info", "scale", "BT manager installed");
 
-  // Listen for low-level disconnect broadcasts and trigger reconnect.
+  // Listen for low-level disconnect broadcasts and trigger reconnect with oscillation protection.
   const handle = (role: BtRole) => (e: Event) => {
     const detail = (e as CustomEvent<{ connected: boolean }>).detail;
     if (!detail) return;
@@ -395,6 +428,34 @@ export function installAutoReconnect() {
         setStatus(role, "idle", { deviceName: null });
         return;
       }
+
+      // Check if low-level disconnect occurred immediately after the other role connected
+      const otherRole: BtRole = role === "scale" ? "printer" : "scale";
+      const timeSinceOtherConnectAttempt = Date.now() - lastConnectAttemptAt[otherRole];
+
+      if (timeSinceOtherConnectAttempt < 10000) {
+        crossRoleDisconnectCount[role] = (crossRoleDisconnectCount[role] || 0) + 1;
+        const count = crossRoleDisconnectCount[role];
+        const staggerDelay = Math.min(30000, 8000 + count * 3000);
+
+        btlog(
+          "warn",
+          role,
+          `Low-level disconnect coincided with ${otherRole} connection (${timeSinceOtherConnectAttempt}ms ago). Staggering ${role} reconnect by ${staggerDelay}ms to break ping-pong loop.`
+        );
+
+        state[role].attempt = Math.max(state[role].attempt, 2);
+        state[role].retryAt = Date.now() + staggerDelay;
+        setStatus(role, "reconnecting", {});
+
+        if (state[role].retryTimer) clearTimeout(state[role].retryTimer!);
+        state[role].retryTimer = setTimeout(() => {
+          state[role].retryTimer = null;
+          void ensureConnected(role);
+        }, staggerDelay);
+        return;
+      }
+
       btlog("warn", role, "low-level disconnect event → reconnecting");
       state[role].attempt = 0;
       setStatus(role, "disconnected", {});
@@ -405,13 +466,13 @@ export function installAutoReconnect() {
   window.addEventListener("scaleConnectionChange", handle("scale"));
   window.addEventListener("printerConnectionChange", handle("printer"));
 
-  // Resume from background: try to (re)connect both roles immediately.
+  // Resume from background: try to (re)connect both roles with stagger.
   const onResume = () => {
-    btlog("info", "scale", "app resumed → ensureConnected both roles");
+    btlog("info", "scale", "app resumed → ensureConnected both roles (staggered)");
     state.scale.attempt = 0;
     state.printer.attempt = 0;
     void ensureConnected("scale");
-    void ensureConnected("printer");
+    setTimeout(() => void ensureConnected("printer"), 600);
   };
 
   if (Capacitor.isNativePlatform()) {
@@ -429,11 +490,11 @@ export function installAutoReconnect() {
   });
 
   window.addEventListener("online", () => {
-    btlog("info", "scale", "network online → ensureConnected both roles");
+    btlog("info", "scale", "network online → ensureConnected both roles (staggered)");
     state.scale.attempt = 0;
     state.printer.attempt = 0;
     void ensureConnected("scale");
-    void ensureConnected("printer");
+    setTimeout(() => void ensureConnected("printer"), 600);
   });
 
   // v2.10.87: Web Bluetooth requires a user gesture for requestDevice. If

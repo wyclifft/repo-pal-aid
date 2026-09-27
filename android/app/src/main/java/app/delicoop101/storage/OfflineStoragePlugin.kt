@@ -149,10 +149,10 @@ class OfflineStoragePlugin : Plugin() {
     @PluginMethod
     fun markAsSynced(call: PluginCall) {
         val id = call.getInt("id")?.toLong()
-        val referenceNo = call.getString("referenceNo")
+        val referenceNo = call.getString("referenceNo")?.trim()
         val backendId = call.getInt("backendId")?.toLong()
 
-        if (id == null && referenceNo == null) {
+        if (id == null && referenceNo.isNullOrEmpty()) {
             call.reject("Either id or referenceNo is required")
             return
         }
@@ -163,25 +163,20 @@ class OfflineStoragePlugin : Plugin() {
                 
                 Log.d(TAG, "[SYNC] Attempting to mark synced: id=$id, ref=$referenceNo, backendId=$backendId")
 
-                val recordId = if (id != null) {
-                    id
+                val updatedCount = if (id != null) {
+                    db.syncRecordDao().markSynced(id, backendId = backendId)
                 } else {
-                    // Find by reference number
-                    val record = db.syncRecordDao().getByReferenceNo(referenceNo!!)
-                    if (record == null) {
-                        Log.w(TAG, "[SYNC] getByReferenceNo returned null for: $referenceNo")
-                    }
-                    record?.id
+                    db.syncRecordDao().markSyncedByReference(referenceNo!!, backendId = backendId)
                 }
                 
-                if (recordId != null) {
-                    db.syncRecordDao().markSynced(recordId, backendId = backendId)
-                    Log.d(TAG, "[SYNC] MARK SYNCED SUCCESS: id=$recordId, ref=$referenceNo, backendId=$backendId")
-                    DatabaseLogger.info(TAG, "Record confirmed synced in native DB", "id=$recordId, ref=$referenceNo, backendId=$backendId")
+                if (updatedCount > 0) {
+                    Log.d(TAG, "[SYNC] MARK SYNCED SUCCESS: id=$id, ref=$referenceNo, count=$updatedCount, backendId=$backendId")
+                    DatabaseLogger.info(TAG, "Record confirmed synced in native DB", "id=$id, ref=$referenceNo, count=$updatedCount, backendId=$backendId")
 
                     withContext(Dispatchers.Main) {
                         val result = JSObject()
                         result.put("success", true)
+                        result.put("updatedCount", updatedCount)
                         call.resolve(result)
                     }
                 } else {
@@ -206,10 +201,10 @@ class OfflineStoragePlugin : Plugin() {
     @PluginMethod
     fun markSyncFailed(call: PluginCall) {
         val id = call.getInt("id")?.toLong()
-        val referenceNo = call.getString("referenceNo")
+        val referenceNo = call.getString("referenceNo")?.trim()
         val error = call.getString("error") ?: "Unknown error"
 
-        if (id == null && referenceNo == null) {
+        if (id == null && referenceNo.isNullOrEmpty()) {
             call.reject("Either id or referenceNo is required")
             return
         }
@@ -218,21 +213,20 @@ class OfflineStoragePlugin : Plugin() {
             try {
                 val db = DelicoopDatabase.getInstance(context)
                 
-                val recordId = if (id != null) {
-                    id
+                val updatedCount = if (id != null) {
+                    db.syncRecordDao().markSyncFailed(id, error)
                 } else {
-                    val record = db.syncRecordDao().getByReferenceNo(referenceNo!!)
-                    record?.id
+                    db.syncRecordDao().markSyncFailedByReference(referenceNo!!, error)
                 }
                 
-                if (recordId != null) {
-                    db.syncRecordDao().markSyncFailed(recordId, error)
-                    Log.w(TAG, "[SYNC] Marked sync failed: id=$recordId, error=$error")
-                    DatabaseLogger.warn(TAG, "Sync attempt failed", "id=$recordId, error=$error")
+                if (updatedCount > 0) {
+                    Log.w(TAG, "[SYNC] Marked sync failed: id=$id, ref=$referenceNo, count=$updatedCount, error=$error")
+                    DatabaseLogger.warn(TAG, "Sync attempt failed", "id=$id, ref=$referenceNo, error=$error")
 
                     withContext(Dispatchers.Main) {
                         val result = JSObject()
                         result.put("success", true)
+                        result.put("updatedCount", updatedCount)
                         call.resolve(result)
                     }
                 } else {

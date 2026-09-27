@@ -284,6 +284,17 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         
         saveUser(userWithPassword);
         onLogin(userWithPassword, false, password); // Pass password to cache credentials
+
+        // Sync all company users in background for offline use
+        mysqlApi.auth.syncCompanyUsers(deviceFingerprint, userData.ccode)
+          .then(async (res) => {
+            if (res.success && res.data?.length) {
+              const { cacheCompanyUsers } = await import('@/utils/companyUsersCache');
+              await cacheCompanyUsers(res.data);
+            }
+          })
+          .catch((e) => console.warn('[AUTH] Background user sync failed:', e));
+
         toast.success('Login successful');
       } catch (err: any) {
   console.error("=================================");
@@ -298,46 +309,47 @@ export const Login = memo(({ onLogin }: LoginProps) => {
 }    } else {
       console.log('[OFFLINE] Offline login attempt for user:', userId);
       
-      // Check cached credentials from localStorage (stored on first online login)
-      const cachedCredsStr = localStorage.getItem('cachedCredentials');
-      console.log('[OFFLINE] Cached credentials found:', !!cachedCredsStr);
+      const { getCachedUsersMap } = await import('@/utils/companyUsersCache');
+      const usersMap = getCachedUsersMap();
+      const normInputUserId = userId.toLowerCase().trim();
+      const cachedCreds = usersMap[normInputUserId];
       
-      if (!cachedCredsStr) {
-        console.log('[OFFLINE] No cached credentials - first login must be online');
-        toast.error('First-time login must be done online. Connect to internet and try again.');
+      if (!cachedCreds) {
+        console.log('[OFFLINE] No cached credentials found for user:', userId);
+        toast.error('No offline credentials found for this user. First login or sync must be done online.');
         setLoading(false);
         return;
       }
       
       try {
-        const cachedCreds = JSON.parse(cachedCredsStr);
-        console.log('[OFFLINE] Cached user_id:', cachedCreds.user_id, 'Input user_id:', userId);
+        console.log('[OFFLINE] Found cached credentials for user:', cachedCreds.user_id);
 
-        const userIdMatch = cachedCreds.user_id?.toLowerCase().trim() === userId.toLowerCase().trim();
-
-        // SECURITY (v2.10.83): preferred path validates the SHA-256 hash; the legacy
-        // plaintext-password field is accepted ONCE so devices upgraded from earlier
-        // builds can still log in offline, then transparently rewritten as a hash.
+        const cleanInputPassword = (password || '').toString().trim();
         let passwordMatch = false;
+
+        // 1. Check SHA-256 hash match
         if (cachedCreds.passwordHash) {
-          const inputHash = await hashPassword(cachedCreds.user_id, password);
+          const inputHash = await hashPassword(cachedCreds.user_id, cleanInputPassword);
           passwordMatch = hashesEqual(inputHash, cachedCreds.passwordHash);
-        } else if (typeof cachedCreds.password === 'string') {
-          // Legacy cache — verify against plaintext, then upgrade in place.
-          passwordMatch = cachedCreds.password === password;
+        }
+
+        // 2. Fallback to plaintext string match
+        if (!passwordMatch && cachedCreds.password) {
+          const cleanCachedPassword = cachedCreds.password.toString().trim();
+          passwordMatch = cleanCachedPassword === cleanInputPassword;
           if (passwordMatch) {
-            const upgradedHash = await hashPassword(cachedCreds.user_id, password);
+            const upgradedHash = await hashPassword(cachedCreds.user_id, cleanInputPassword);
             if (upgradedHash) {
-              const upgraded = { ...cachedCreds, passwordHash: upgradedHash, hashVersion: 1 };
-              delete upgraded.password;
-              localStorage.setItem('cachedCredentials', JSON.stringify(upgraded));
-              console.log('[OFFLINE] Upgraded legacy plaintext credential cache to hashed form');
+              cachedCreds.passwordHash = upgradedHash;
+              usersMap[normInputUserId] = cachedCreds;
+              localStorage.setItem('cachedUsersMap', JSON.stringify(usersMap));
+              console.log('[OFFLINE] Upgraded plaintext credential cache to hashed form for:', cachedCreds.user_id);
             }
           }
         }
 
-        if (!userIdMatch || !passwordMatch) {
-          console.log('[OFFLINE] Credential mismatch - userIdMatch:', userIdMatch, 'passwordMatch:', passwordMatch);
+        if (!passwordMatch) {
+          console.log('[OFFLINE] Credential mismatch for user:', userId);
           toast.error('Invalid credentials (offline)');
           setLoading(false);
           return;
@@ -350,21 +362,22 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           username: cachedCreds.username || cachedCreds.user_id,
           email: cachedCreds.email || '',
           ccode: cachedCreds.ccode || '',
-          admin: cachedCreds.admin ?? false,
-          supervisor: cachedCreds.supervisor ?? 0,
+          admin: Boolean(cachedCreds.admin),
+          supervisor: typeof cachedCreds.supervisor === 'number' ? cachedCreds.supervisor : 0,
           dcode: cachedCreds.dcode || '',
           groupid: cachedCreds.groupid || '',
           depart: cachedCreds.depart || '',
-          can_access_payments: cachedCreds.can_access_payments ?? false
+          can_access_payments: Boolean(cachedCreds.can_access_payments)
         };
         
         console.log('👤 Offline login - Cached user data:', {
-          user_id: cachedCreds.user_id,
-          admin: cachedCreds.admin,
-          role: cachedCreds.role
+          user_id: user.user_id,
+          admin: user.admin,
+          supervisor: user.supervisor,
+          role: user.role
         });
 
-        // For offline login, try to get cached device approval but don't block on it
+        // For offline login, try to get cached device approval
         let cachedApproval = null;
         try {
           if (isReady) {
@@ -373,42 +386,8 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         } catch (dbError) {
           console.warn('IndexedDB not available for offline login, using localStorage fallback');
         }
-        
-        if (!cachedApproval) {
-          // Check localStorage for device approval as fallback
-          const storedApproval = localStorage.getItem('device_approved');
-          const storedUserId = localStorage.getItem('device_user_id');
-          
-          if (storedApproval === 'true' && storedUserId === userId) {
-            console.log('✅ Using localStorage device approval fallback');
-            setDeviceStatus('approved');
-            onLogin(user, true);
-            toast.success('Offline login successful');
-            setLoading(false);
-            return;
-          }
-          
-          console.log('⚠️ No cached device approval found, but user exists - allowing offline login');
-          console.log('User should reconnect online to refresh device approval status');
-          
-          // Save approval to localStorage for future offline logins
-          localStorage.setItem('device_approved', 'true');
-          localStorage.setItem('device_user_id', userId);
-          
-          setDeviceStatus('approved');
-          onLogin(user, true);
-          toast.success('Offline login successful (limited mode)');
-          setLoading(false);
-          return;
-        }
 
-        if (cachedApproval.user_id !== userId) {
-          toast.error('This device is registered to a different user. Connect online to verify.');
-          setLoading(false);
-          return;
-        }
-
-        if (!cachedApproval.approved) {
+        if (cachedApproval && !cachedApproval.approved) {
           setDeviceStatus('pending');
           setCurrentDeviceId(deviceFingerprint);
           toast.error('Device pending approval. Connect to internet to check status.');
@@ -416,13 +395,19 @@ export const Login = memo(({ onLogin }: LoginProps) => {
           return;
         }
 
-        console.log('✅ Offline login success with approved device:', user.user_id);
+        // Save approval to localStorage for offline access
+        localStorage.setItem('device_approved', 'true');
+        localStorage.setItem('device_user_id', user.user_id);
+
+        console.log('✅ Offline login success for user:', user.user_id);
         setDeviceStatus('approved');
         onLogin(user, true);
         toast.success('Offline login successful');
+        setLoading(false);
       } catch (err) {
         console.error('Offline login error:', err);
         toast.error('Offline login failed. Please try again.');
+        setLoading(false);
       }
     }
 

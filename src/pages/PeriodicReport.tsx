@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { formatWeight } from "@/utils/weightUtils";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { format } from "date-fns";
@@ -435,7 +436,7 @@ export default function PeriodicReport() {
                       <TableCell>{item.farmer_name}</TableCell>
                       <TableCell>{item.route}</TableCell>
                       <TableCell>{item.collection_count}</TableCell>
-                      <TableCell>{(Math.floor(item.total_weight * 10) / 10).toFixed(1)}</TableCell>
+                      <TableCell>{formatWeight(item.total_weight)}</TableCell>
                       <TableCell className="text-right">
                         <Button
                           variant="outline"

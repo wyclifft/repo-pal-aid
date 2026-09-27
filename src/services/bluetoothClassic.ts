@@ -334,11 +334,7 @@ const CLASSIC_SCALE_PATTERNS = [
  * never be offered as a Classic SPP scale option.
  */
 const isBleHalfOfDualModeScale = (deviceName: string | undefined): boolean => {
-  if (!deviceName) return false;
-  const upper = deviceName.trim().toUpperCase();
-  if (!/BLE$/.test(upper)) return false;
-  const base = upper.replace(/[-_ ]?BLE$/, '');
-  return /^(HC-?\d+|HM-?\d+|BTM|JDY|CC41|BT[-_])/.test(base);
+  return false;
 };
 
 /**

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { formatWeight, roundWeight } from '@/utils/weightUtils';
 import { CornerDownLeft, Search, X } from 'lucide-react';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
 import { type Route, type Session, mysqlApi } from '@/services/mysqlApi';
@@ -219,10 +220,17 @@ export const BuyProduceScreen = ({
     return !(f.multOpt === 0 && (inBlacklist || inSessionQueue));
   });
 
-  // Derive session type (AM/PM) from session time_from.
-  // v2.12.6: coffee seasons have NO time_from/time_to — never touch those
-  // fields for orgtype 'C'; fall back to the device clock when absent.
+  // Derive session type (AM/PM) respecting explicit session SCODE/descript first.
   const getSessionType = (): 'AM' | 'PM' => {
+    const rawCode = String(
+      (session as any)?.SCODE || (session as any)?.Icode || (session as any)?.descript || (session as any)?.session || ''
+    ).trim().toUpperCase();
+    if (rawCode === 'PM' || rawCode.includes('PM') || rawCode.includes('EVENING') || rawCode.includes('AFTERNOON')) {
+      return 'PM';
+    }
+    if (rawCode === 'AM' || rawCode.includes('AM') || rawCode.includes('MORNING')) {
+      return 'AM';
+    }
     const raw = (session as any)?.time_from;
     if (isCoffee || raw === null || raw === undefined || raw === '') {
       return new Date().getHours() >= 12 ? 'PM' : 'AM';
@@ -327,53 +335,71 @@ export const BuyProduceScreen = ({
     if (!input.trim()) return null;
 
     const numericInput = input.replace(/\D/g, '');
+    const mprefixStr = route?.mprefix ? String(route.mprefix).trim() : '';
 
-    // Search by exact farmer_id first (in ALL cached farmers to detect blocked ones)
-    const exactMatch = cachedFarmers.find(
-      f => f.farmer_id.toLowerCase() === input.toLowerCase()
-    );
-    if (exactMatch) {
-      const cleanId = exactMatch.farmer_id.replace(/^#/, '').trim();
-      const reason = exactMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
+    const checkAndReturnMatch = (f: Farmer | undefined): Farmer | null => {
+      if (!f) return null;
+      const cleanId = f.farmer_id.replace(/^#/, '').trim();
+      const reason = f.multOpt === 0 ? getBlockReason(cleanId, true) : null;
       if (reason) {
         const detail = getBlacklistDetail ? getBlacklistDetail(cleanId) : null;
-        showDuplicateDialog(exactMatch, reason, detail?.devcode, detail?.route);
+        showDuplicateDialog(f, reason, detail?.devcode, detail?.route);
         return null;
       }
-      return exactMatch;
+      return f;
+    };
+
+    // 1. Search by exact farmer_id first (in ALL cached farmers to detect blocked ones)
+    const exactMatch = cachedFarmers.find(
+      f => f.farmer_id.toLowerCase() === input.toLowerCase() ||
+           f.farmer_id.replace(/^#/, '').toLowerCase() === input.toLowerCase()
+    );
+    if (exactMatch) {
+      return checkAndReturnMatch(exactMatch);
     }
 
-    // If pure numeric, resolve to padded format (e.g., 1 -> M00001)
+    // 2. Try mprefix prepended match and suffix matching (e.g. mprefix = "915", input = "200" -> "915200" or suffix "200")
+    if (mprefixStr && numericInput) {
+      const prefixedId = `${mprefixStr}${numericInput}`;
+      const prefixedMatch = cachedFarmers.find(
+        f => f.farmer_id.toLowerCase() === prefixedId.toLowerCase() ||
+             f.farmer_id.replace(/^#/, '').toLowerCase() === prefixedId.toLowerCase()
+      );
+      if (prefixedMatch) {
+        return checkAndReturnMatch(prefixedMatch);
+      }
+
+      const suffixMatch = cachedFarmers.find(f => {
+        const cleanFId = f.farmer_id.replace(/^#/, '').trim();
+        if (!cleanFId.startsWith(mprefixStr)) return false;
+        const suffix = cleanFId.slice(mprefixStr.length);
+        if (!suffix) return false;
+        const suffixNumeric = suffix.replace(/\D/g, '');
+        return suffix.toLowerCase() === input.trim().toLowerCase() ||
+               (Boolean(suffixNumeric) && parseInt(suffixNumeric, 10) === parseInt(numericInput, 10));
+      });
+      if (suffixMatch) {
+        return checkAndReturnMatch(suffixMatch);
+      }
+    }
+
+    // 3. If pure numeric, resolve to padded format (e.g., 1 -> M00001)
     if (numericInput && numericInput === input.trim()) {
       const paddedId = `M${numericInput.padStart(5, '0')}`;
       const paddedMatch = cachedFarmers.find(
         f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
       );
       if (paddedMatch) {
-        const cleanId = paddedMatch.farmer_id.replace(/^#/, '').trim();
-        const reason = paddedMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
-        if (reason) {
-          const detail = getBlacklistDetail ? getBlacklistDetail(cleanId) : null;
-          showDuplicateDialog(paddedMatch, reason, detail?.devcode, detail?.route);
-          return null;
-        }
-        return paddedMatch;
+        return checkAndReturnMatch(paddedMatch);
       }
 
-      // Also try matching by numeric portion
+      // 4. Also try matching by numeric portion
       const numericMatch = cachedFarmers.find(f => {
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
         return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
       });
       if (numericMatch) {
-        const cleanId = numericMatch.farmer_id.replace(/^#/, '').trim();
-        const reason = numericMatch.multOpt === 0 ? getBlockReason(cleanId, true) : null;
-        if (reason) {
-          const detail = getBlacklistDetail ? getBlacklistDetail(cleanId) : null;
-          showDuplicateDialog(numericMatch, reason, detail?.devcode, detail?.route);
-          return null;
-        }
-        return numericMatch;
+        return checkAndReturnMatch(numericMatch);
       }
     }
 
@@ -528,7 +554,7 @@ export const BuyProduceScreen = ({
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 px-3 sm:px-4 py-2 sm:py-4 space-y-2 sm:space-y-4 overflow-y-auto" style={{ paddingBottom: 'max(1rem, calc(env(safe-area-inset-bottom) + 0.5rem))' }}>
+      <div className="flex-1 px-3 sm:px-4 py-2 sm:py-4 space-y-2 sm:space-y-4 overflow-y-auto pb-32 sm:pb-8">
         {/* Weight Display - Coffee mode shows Gross/Sack/Net, Dairy mode shows simple weight */}
         {isCoffee ? (
           <CoffeeWeightDisplay
@@ -579,9 +605,9 @@ export const BuyProduceScreen = ({
                 // For coffee: manual entry is gross weight, calculate net using CURRENT tare (may be edited)
                 onGrossWeightChange?.(grossValue);
                 const netValue = Math.max(0, grossValue - currentTareWeight);
-                const truncatedNetValue = Math.floor(netValue * 10) / 10;
-                onNetWeightChange?.(truncatedNetValue);
-                onWeightChange?.(truncatedNetValue); // Main weight is net
+                const cleanNetValue = roundWeight(netValue, 3);
+                onNetWeightChange?.(cleanNetValue);
+                onWeightChange?.(cleanNetValue); // Main weight is net
                 onEntryTypeChange?.('manual');
               } else {
                 onManualWeightChange?.(grossValue);
@@ -672,11 +698,11 @@ export const BuyProduceScreen = ({
             <div>
               <span className="text-gray-600 text-[10px]">MEMBER</span>
               <p className="font-semibold text-xs">
-                {selectedFarmer ? `${selectedFarmer.id} - ${selectedFarmer.name}` : '-'}
+                {selectedFarmer ? `${selectedFarmer.route || selectedFarmer.farmer_id} - ${selectedFarmer.name}` : '-'}
               </p>
             </div>
             <span className="font-bold text-base">
-              {totalCapturedWeight > 0 ? `${(Math.floor(totalCapturedWeight * 10) / 10).toFixed(1)}KGS` : '-KGS'}
+              {totalCapturedWeight > 0 ? `${formatWeight(totalCapturedWeight)} KGS` : '-KGS'}
             </span>
           </div>
           
@@ -688,7 +714,7 @@ export const BuyProduceScreen = ({
           <div className="flex justify-between items-center text-[10px]">
             <span className="font-bold">WEIGHT TODAY</span>
             <span className="text-gray-600">
-              {todayWeight > 0 ? `${(Math.floor(todayWeight * 10) / 10).toFixed(1)} KGS` : '-'}
+              {todayWeight > 0 ? `${formatWeight(todayWeight)} KGS` : '-'}
             </span>
           </div>
         </div>
@@ -787,11 +813,11 @@ export const BuyProduceScreen = ({
                   {/* Coffee mode: show Gross/Sack/Net breakdown */}
                   {isCoffee && c.gross_weight !== undefined ? (
                     <div className="text-right text-xs">
-                      <div className="text-gray-500">G:{(Math.floor((c.gross_weight || 0) * 10) / 10).toFixed(1)} S:{(Math.floor((c.tare_weight || 0) * 10) / 10).toFixed(1)}</div>
-                      <div className="font-bold text-green-700">Net: {(Math.floor(c.weight * 10) / 10).toFixed(1)}</div>
+                      <div className="text-gray-500">G:{formatWeight(c.gross_weight)} S:{formatWeight(c.tare_weight)}</div>
+                      <div className="font-bold text-green-700">Net: {formatWeight(c.weight)}</div>
                     </div>
                   ) : (
-                    <span className="font-bold text-gray-900">{(Math.floor(c.weight * 10) / 10).toFixed(1)}</span>
+                    <span className="font-bold text-gray-900">{formatWeight(c.weight)}</span>
                   )}
                 </div>
               ))}

@@ -205,11 +205,13 @@ export const SessionSelector = ({
     
     setSessions(data);
     
+    const activeSessions = data.filter(s => isSessionActive(s));
+    const activeCount = activeSessions.length;
     const active = findActiveSession(data);
     setActiveSession(active);
     
     // Auto-select active session if none selected and nothing is persisted in localStorage
-    if (active && !selectedSession) {
+    if (!selectedSession) {
       let hasPersistedSession = false;
       try {
         const saved = localStorage.getItem('active_session_data');
@@ -222,7 +224,23 @@ export const SessionSelector = ({
       } catch { /* ignore */ }
 
       if (!hasPersistedSession) {
-        onSessionChange(active);
+        // 1. Check if user previously selected a session
+        const lastSelectedCode = localStorage.getItem('user_last_selected_session');
+        if (lastSelectedCode) {
+          const userPreferred = data.find(s => {
+            const scode = (s.Icode || (s as any).SCODE || s.descript || '').toString().trim().toUpperCase();
+            return scode === lastSelectedCode.trim().toUpperCase();
+          });
+          if (userPreferred) {
+            onSessionChange(userPreferred);
+            return;
+          }
+        }
+
+        // 2. Stop auto-selecting if multiple sessions overlap (activeCount > 1)
+        if (activeCount === 1 && active) {
+          onSessionChange(active);
+        }
       }
     }
     
@@ -476,6 +494,10 @@ export const SessionSelector = ({
             // Check if selected session is selectable (past or active, not future)
             if (!isSessionSelectable(selected)) {
               return; // Prevent selection of future sessions
+            }
+            const code = (selected.Icode || (selected as any).SCODE || selected.descript || '').toString().trim();
+            if (code) {
+              localStorage.setItem('user_last_selected_session', code);
             }
             onSessionChange(selected);
           }

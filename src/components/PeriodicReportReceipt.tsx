@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { formatWeight } from "@/utils/weightUtils";
 import { format } from "date-fns";
 import { Printer, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -277,7 +278,7 @@ export function PeriodicReportReceipt({
                               <span className="truncate pr-1">
                                 {resolveMemberName(tx.deliveredby || 'owner', allFarmers).split(' - ')[0]}
                               </span>
-                              <span className="font-semibold text-right">{(Math.floor(Number(tx.quantity) * 10) / 10).toFixed(1)}</span>
+                              <span className="font-semibold text-right">{formatWeight(Number(tx.quantity))}</span>
                             </div>
                           );
                         })}
@@ -303,7 +304,7 @@ export function PeriodicReportReceipt({
                           <span className="truncate max-w-[70%]">
                             {resolveMemberName(deliverer, allFarmers)}
                           </span>
-                          <span className="font-bold">{(Math.floor(total * 10) / 10).toFixed(1)} {weightUnit}</span>
+                          <span className="font-bold">{formatWeight(total)} {weightUnit}</span>
                         </div>
                       ));
                   })()}
@@ -359,14 +360,14 @@ export function PeriodicReportReceipt({
                               <div key={idx} className="grid text-[10px]" style={{ gridTemplateColumns: '11ch 14ch 1fr' }}>
                                 <span>{formatDisplayDate(tx.date)}</span>
                                 <span>{recDisplay}</span>
-                                <span className="text-right">{(Math.floor(Number(tx.quantity) * 10) / 10).toFixed(1)}</span>
+                                <span className="text-right">{formatWeight(Number(tx.quantity))}</span>
                               </div>
                             );
                           })}
                           <div className="border-t border-dotted border-muted-foreground/30" />
                           <div className="flex justify-between text-[11px] font-semibold">
                             <span>SUBTOTAL:</span>
-                            <span>{(Math.floor(g.subtotal * 10) / 10).toFixed(1)} {weightUnit}</span>
+                            <span>{formatWeight(g.subtotal)} {weightUnit}</span>
                           </div>
                         </div>
                       ))}
@@ -377,7 +378,7 @@ export function PeriodicReportReceipt({
               <div className="border-t border-dashed border-muted-foreground/40" />
               <div className="flex justify-between font-bold pt-1">
                 <span>TOTAL:</span>
-                <span>{(Math.floor(data.total_weight * 10) / 10).toFixed(1)} {weightUnit}</span>
+                <span>{formatWeight(data.total_weight)} {weightUnit}</span>
               </div>
               <div className="border-t border-dashed border-muted-foreground/40" />
               

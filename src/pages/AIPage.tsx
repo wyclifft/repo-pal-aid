@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { formatWeight } from '@/utils/weightUtils';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type Item, type Farmer, type CreditType, type Session } from '@/services/mysqlApi';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, X, CornerDownLeft, Wifi, WifiOff, Beef } from 'lucide-react';
+import { ArrowLeft, Search, X, CornerDownLeft, Wifi, WifiOff, Beef, Calendar as CalendarIcon } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { format } from 'date-fns';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSalesSync } from '@/hooks/useSalesSync';
 import { useFarmerResolution, isFarmerInactive } from '@/hooks/useFarmerResolution';
@@ -97,12 +101,83 @@ const AIPage = () => {
     return 2; // Default fallback matching route L002
   });
 
-  const { getFarmers, getItems, isReady } = useIndexedDB();
+  // Cumulative weight state (matching Store.tsx)
+  const [cumulativeWeight, setCumulativeWeight] = useState<number | null>(null);
+  const [cumulativeLoading, setCumulativeLoading] = useState(false);
+  const [viewDate, setViewDate] = useState<Date>(new Date());
+
+  const { getFarmers, getItems, isReady, getFarmerCumulative, getFarmerTotalCumulative } = useIndexedDB();
   const { saveOfflineSale, syncPendingSales } = useSalesSync();
   const { addAIReceipt } = useReprint();
   
   // Online status tracking
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // Fetch cumulative weight for selected farmer
+  const fetchCumulative = useCallback(async (farmerId: string, date: Date) => {
+    if (!farmerId || !isReady) {
+      setCumulativeWeight(null);
+      return;
+    }
+
+    const fingerprint = await generateDeviceFingerprint();
+    const ymd = date.toISOString().split('T')[0];
+    const scode = activeSession?.SCODE;
+
+    const getLocal = async () => {
+      try {
+        const res = await getFarmerTotalCumulative(farmerId, undefined, scode);
+        if (res && typeof res.total === 'number') {
+          return res.total;
+        }
+        const cached = await getFarmerCumulative(farmerId, undefined, scode);
+        if (cached) {
+          return cached.baseCount + cached.localCount;
+        }
+      } catch (err) {
+        console.warn('[AI] Local cumulative lookup failed:', err);
+      }
+      return null;
+    };
+
+    if (!navigator.onLine) {
+      const localWeight = await getLocal();
+      setCumulativeWeight(localWeight !== null ? localWeight : 0);
+      return;
+    }
+
+    try {
+      setCumulativeLoading(true);
+      const response = await mysqlApi.farmerFrequency.getMonthlyFrequency(
+        farmerId,
+        fingerprint,
+        undefined,
+        scode,
+        ymd
+      );
+      if (response.success && response.data) {
+        setCumulativeWeight(response.data.cumulative_weight);
+      } else {
+        const localWeight = await getLocal();
+        setCumulativeWeight(localWeight !== null ? localWeight : 0);
+      }
+    } catch (error) {
+      console.warn('[AI] Failed to fetch cumulative from API:', error);
+      const localWeight = await getLocal();
+      setCumulativeWeight(localWeight !== null ? localWeight : 0);
+    } finally {
+      setCumulativeLoading(false);
+    }
+  }, [isReady, getFarmerCumulative, getFarmerTotalCumulative, activeSession?.SCODE]);
+
+  // Update cumulative weight when farmer or viewDate changes
+  useEffect(() => {
+    if (selectedFarmer) {
+      fetchCumulative(selectedFarmer.farmer_id, viewDate);
+    } else {
+      setCumulativeWeight(null);
+    }
+  }, [selectedFarmer, viewDate, fetchCumulative]);
 
   // Fetch active session on mount.
   // v2.10.56: PRIORITY → Dashboard selection (same source as Buy/Sell), so AI
@@ -381,14 +456,14 @@ const AIPage = () => {
   // Filter items for search
   useEffect(() => {
     if (!itemSearchQuery.trim()) {
-      setFilteredItems(items.slice(0, 50));
+      setFilteredItems(items);
       return;
     }
     const query = itemSearchQuery.toLowerCase();
     const filtered = items.filter(item =>
       item.descript.toLowerCase().includes(query) ||
       item.icode.toLowerCase().includes(query)
-    ).slice(0, 50);
+    );
     setFilteredItems(filtered);
   }, [itemSearchQuery, items]);
 
@@ -508,6 +583,13 @@ const AIPage = () => {
           currentTransRefNo = newRef;
         }
         batchItemRefs.push(currentTransRefNo);
+
+        // Local creation date and time for auditing and offline sync
+        const now = new Date();
+        const pad2 = (n: number) => String(n).padStart(2, '0');
+        const currentTransdate = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+        const currentTranstime = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+
         // Read Dashboard-selected route tcode from localStorage
         const dashboardSession = JSON.parse(localStorage.getItem('active_session_data') || localStorage.getItem('delicoop_session_data') || '{}');
         const selectedRouteTcode = dashboardSession?.route?.tcode || '';
@@ -531,6 +613,8 @@ const AIPage = () => {
           user_id: userId, // Login user_id for DB userId column
           sold_by: clerkName, // Display name for DB clerk column
           device_fingerprint: deviceFingerprint,
+          transdate: currentTransdate,
+          transtime: currentTranstime,
           season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
           session_label: sessionMeta.backend_session, // → DB: session. Coffee=SCODE, Dairy=descript (v2.10.51)
           // Cow details for AI
@@ -551,7 +635,7 @@ const AIPage = () => {
           // Save offline for later sync
           await saveOfflineSale(aiTransaction);
           // Dual-write to native SQLite (fire-and-forget backup)
-          saveToLocalDB(currentTransRefNo, 'ai_sale', aiTransaction).catch(() => {});
+          saveToLocalDB(currentTransRefNo, 'ai_sale', aiTransaction, userId, deviceFingerprint).catch(() => {});
           console.log(`💾 AI transaction saved offline: ${refs.transrefno}`);
         }
       }
@@ -608,16 +692,64 @@ const AIPage = () => {
   // Farmer search modal filtering — strict prefix only.
   // v2.10.52: removed the crbal requirement so new debtors are visible.
   const [farmerSearchQuery, setFarmerSearchQuery] = useState('');
+  const [farmerDisplayLimit, setFarmerDisplayLimit] = useState(50);
+  const [itemDisplayLimit, setItemDisplayLimit] = useState(50);
+
+  useEffect(() => {
+    if (showFarmerSearch) setFarmerDisplayLimit(50);
+  }, [showFarmerSearch]);
+
+  useEffect(() => {
+    setFarmerDisplayLimit(50);
+  }, [farmerSearchQuery]);
+
+  useEffect(() => {
+    if (showItemSearch) setItemDisplayLimit(50);
+  }, [showItemSearch]);
+
+  useEffect(() => {
+    setItemDisplayLimit(50);
+  }, [itemSearchQuery]);
+
   const prefix = isMemberMode ? 'M' : 'D';
-  const prefixFilteredFarmers = farmers.filter(f =>
-    f.farmer_id.toUpperCase().startsWith(prefix)
-  );
-  const filteredFarmers = farmerSearchQuery.trim()
-    ? prefixFilteredFarmers.filter(f =>
-        f.farmer_id.toLowerCase().includes(farmerSearchQuery.toLowerCase()) ||
-        f.name.toLowerCase().includes(farmerSearchQuery.toLowerCase())
-      ).slice(0, 50)
-    : prefixFilteredFarmers.slice(0, 50);
+  const prefixFilteredFarmers = useMemo(() => {
+    return farmers.filter(f => f.farmer_id.toUpperCase().startsWith(prefix));
+  }, [farmers, prefix]);
+
+  const filteredFarmers = useMemo(() => {
+    if (!farmerSearchQuery.trim()) return prefixFilteredFarmers;
+    const query = farmerSearchQuery.toLowerCase();
+    return prefixFilteredFarmers.filter(f =>
+      f.farmer_id.toLowerCase().includes(query) ||
+      f.name.toLowerCase().includes(query)
+    );
+  }, [prefixFilteredFarmers, farmerSearchQuery]);
+
+  const visibleFarmers = useMemo(() => {
+    return filteredFarmers.slice(0, farmerDisplayLimit);
+  }, [filteredFarmers, farmerDisplayLimit]);
+
+  const visibleItems = useMemo(() => {
+    return filteredItems.slice(0, itemDisplayLimit);
+  }, [filteredItems, itemDisplayLimit]);
+
+  const handleFarmerScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop <= clientHeight + 200) {
+      if (farmerDisplayLimit < filteredFarmers.length) {
+        setFarmerDisplayLimit((prev) => Math.min(prev + 50, filteredFarmers.length));
+      }
+    }
+  };
+
+  const handleItemScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop <= clientHeight + 200) {
+      if (itemDisplayLimit < filteredItems.length) {
+        setItemDisplayLimit((prev) => Math.min(prev + 50, filteredItems.length));
+      }
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#26A69A]">
@@ -709,7 +841,29 @@ const AIPage = () => {
             </div>
             <div className="text-right">
               <div className="font-medium">{selectedFarmer?.farmer_id || '-'}</div>
-              <div className="text-sm text-gray-600">-KGS</div>
+              <div className="flex flex-col items-end">
+                <div className="text-sm text-gray-600 flex items-center gap-1">
+                  {cumulativeLoading ? '...' : (cumulativeWeight !== null ? `${formatWeight(cumulativeWeight)}kg` : '-kg')}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="p-1 hover:bg-gray-100 rounded-full transition-colors">
+                        <CalendarIcon className="h-3.5 w-3.5 text-gray-400" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="end">
+                      <Calendar
+                        mode="single"
+                        selected={viewDate}
+                        onSelect={(date) => date && setViewDate(date)}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="text-[10px] text-gray-400 font-medium">
+                  {psettings?.orgtype === 'C' ? 'Current Season' : format(viewDate, 'MMM yyyy')}
+                </div>
+              </div>
             </div>
           </div>
           <div className="mt-2 border-t pt-2">
@@ -761,7 +915,7 @@ const AIPage = () => {
                   <div>
                     <p className="font-semibold text-sm">{cartItem.item.descript}</p>
                     <p className="text-xs text-gray-500">
-                      Qty: {(Math.floor(Number(cartItem.quantity || 0) * 10) / 10).toFixed(1)} × KES{cartItem.item.sprice}
+                      Qty: {formatWeight(Number(cartItem.quantity || 0))} × KES{cartItem.item.sprice}
                     </p>
                     {cartItem.cowDetails?.cowName && (
                       <p className="text-[10px] text-purple-600 flex items-center gap-1 mt-1">
@@ -820,8 +974,8 @@ const AIPage = () => {
               className="w-full px-3 py-2 border rounded-lg"
             />
           </div>
-          <div className="flex-1 overflow-y-auto divide-y max-h-[50vh]">
-            {filteredFarmers.map((f) => (
+          <div className="flex-1 overflow-y-auto divide-y max-h-[50vh]" onScroll={handleFarmerScroll}>
+            {visibleFarmers.map((f) => (
               <button
                 key={f.farmer_id}
                 onClick={() => handleSelectFarmer(f)}
@@ -833,6 +987,11 @@ const AIPage = () => {
             ))}
             {filteredFarmers.length === 0 && (
               <p className="p-4 text-center text-gray-500">No {isMemberMode ? 'members' : 'debtors'} found</p>
+            )}
+            {filteredFarmers.length > visibleFarmers.length && (
+              <p className="p-2 text-center text-xs text-gray-500">
+                Showing {visibleFarmers.length} of {filteredFarmers.length} members — scroll to view more
+              </p>
             )}
           </div>
         </DialogContent>
@@ -858,24 +1017,31 @@ const AIPage = () => {
               onChange={(e) => setItemSearchQuery(e.target.value)}
               className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4"
             />
-            <div className="max-h-[40vh] overflow-y-auto divide-y">
+            <div className="max-h-[40vh] overflow-y-auto divide-y" onScroll={handleItemScroll}>
               {loading ? (
                 <p className="p-4 text-center text-gray-500">Loading...</p>
               ) : filteredItems.length === 0 ? (
                 <p className="p-4 text-center text-gray-500">No AI services found</p>
               ) : (
-                filteredItems.map((item) => (
-                  <button
-                    key={item.icode}
-                    onClick={() => handleSelectItem(item)}
-                    className="w-full text-left p-3 hover:bg-purple-50 transition-colors"
-                  >
-                    <p className="font-semibold text-[#5E35B1]">{item.descript}</p>
-                    <p className="text-sm text-gray-500">
-                      {item.icode} - KES {item.sprice}
+                <>
+                  {visibleItems.map((item) => (
+                    <button
+                      key={item.icode}
+                      onClick={() => handleSelectItem(item)}
+                      className="w-full text-left p-3 hover:bg-purple-50 transition-colors"
+                    >
+                      <p className="font-semibold text-[#5E35B1]">{item.descript}</p>
+                      <p className="text-sm text-gray-500">
+                        {item.icode} - KES {item.sprice}
+                      </p>
+                    </button>
+                  ))}
+                  {filteredItems.length > visibleItems.length && (
+                    <p className="p-2 text-center text-xs text-gray-500">
+                      Showing {visibleItems.length} of {filteredItems.length} items — scroll to view more
                     </p>
-                  </button>
-                ))
+                  )}
+                </>
               )}
             </div>
           </div>

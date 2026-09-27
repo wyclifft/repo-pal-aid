@@ -36,7 +36,7 @@ export const DeliveredBySearch = forwardRef<HTMLInputElement, DeliveredBySearchP
         (numericQuery && farmerId.includes(numericQuery)) ||
         farmerName.includes(query)
       );
-    }).slice(0, 10);
+    }).slice(0, 50);
   }, [value, farmers]);
 
   // Handle clicking outside to close dropdown

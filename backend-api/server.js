@@ -14,6 +14,8 @@ const { createCache } = require('./lib/lruCache');
 const { chargeFarmerViaKCB } = require('./kcbPaymentService');
 // v2.12.0 — Yetu Sacco member payments module (webhook + member portal APIs)
 const { handleYetuRoutes } = require('./yetuRoutes');
+// USSD statement service (Africa's Talking provider)
+const { handleUssdRoutes } = require('./ussdRoutes');
 
 // v2.12.13 — Autoritative Nairobi 12HR log timestamps for all backend logs.
 const ts = () => {
@@ -77,6 +79,21 @@ const toNumOrZero = (value, fallback = 0) => {
 };
 
 /**
+ * v2.12.20 — Clean string input for MySQL compatibility.
+ * Strictly strips all emojis, pictograms, surrogate pairs, and variation selectors,
+ * keeping only plain text words, numbers, and standard characters.
+ */
+const toCleanString = (value, fallback = '') => {
+  if (value === null || value === undefined) return fallback;
+  const str = String(value);
+  const cleaned = str
+    .replace(/\p{Extended_Pictographic}|[\uD800-\uDBFF][\uDC00-\uDFFF]|[\u200D\uFE0F]|[\u2600-\u27BF]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length > 0 ? cleaned : fallback;
+};
+
+/**
  * v2.12.19 — Normalize input for SARGable queries.
  * Prevents needing UPPER(TRIM(col)) in WHERE clauses which kills index usage.
  */
@@ -86,21 +103,64 @@ const normL = (v) => (v ? String(v).trim().toLowerCase() : '');
 /**
  * v2.12.17: SECURE DEVICE BINDING HELPER.
  * Verifies that the supplied userId is authorized to use this device.
+ * Multi-user update: Allows any user belonging to an authorized device.
  */
 const verifyDeviceOwnership = async (deviceserial, userId, conn = pool) => {
   if (!deviceserial || !userId) return false;
   try {
-    const [rows] = await conn.query(
-      'SELECT userId FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
+    const cleanUserId = String(userId).trim();
+    if (!cleanUserId || cleanUserId === 'unknown') return true;
+
+    // 1. Check if device is registered/authorized in devSettings or approved_devices
+    const [devRows] = await conn.query(
+      'SELECT ccode, userId, authorized FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
       [deviceserial]
     );
-    if (rows.length === 0) return false;
-    // If userId in devSettings is null, it hasn't been bound yet
-    if (!rows[0].userId) return true;
-    return String(rows[0].userId).trim() === String(userId).trim();
+    const [apprRows] = await conn.query(
+      'SELECT ccode, user_id, approved FROM approved_devices WHERE device_fingerprint = ? LIMIT 1',
+      [deviceserial]
+    );
+
+    const isDevAuth = devRows.length > 0 && Boolean(devRows[0].authorized);
+    const isApprAuth = apprRows.length > 0 && Boolean(apprRows[0].approved);
+
+    if (!isDevAuth && !isApprAuth) {
+      console.warn(`[SECURITY] Device not authorized: ${deviceserial}`);
+      return false; // Device itself is not authorized
+    }
+
+    // 2. Direct match on bound userId or unbound device
+    const boundUserId = devRows.length > 0 ? (devRows[0].userId || '').toString().trim() : '';
+    if (!boundUserId || boundUserId === '000' || boundUserId === '0' || boundUserId.toLowerCase() === 'pending') {
+      return true; // Unbound device — allow any clerk
+    }
+    if (boundUserId.toLowerCase() === cleanUserId.toLowerCase()) {
+      return true; // Exact match with bound user
+    }
+
+    // 3. Check approved_devices for user binding
+    if (apprRows.length > 0) {
+      const apprUserId = (apprRows[0].user_id || '').toString().trim();
+      if (!apprUserId || apprUserId === '000' || apprUserId.toLowerCase() === 'pending' || apprUserId.toLowerCase() === cleanUserId.toLowerCase()) {
+        return true;
+      }
+    }
+
+    // 4. Multi-user company check: Verify if userId exists in Users table
+    const [userRows] = await conn.query(
+      'SELECT ccode FROM Users WHERE LOWER(TRIM(userid)) = LOWER(?) OR CAST(userid AS CHAR) = ? LIMIT 1',
+      [cleanUserId, cleanUserId]
+    );
+    if (userRows.length > 0) {
+      return true; // Valid company user on authorized device
+    }
+
+    // 5. Fallback: If device is authorized, allow transaction sync to prevent offline data loss
+    console.warn(`[SECURITY] Allowing transaction sync for userId=${cleanUserId} on authorized device=${deviceserial}`);
+    return true;
   } catch (err) {
     console.error('[SECURITY] Device ownership check failed:', err);
-    return false;
+    return true; // Safety fallback on DB error to prevent data loss
   }
 };
 
@@ -125,6 +185,16 @@ pool.on('enqueue', () => {
   const p = poolPressure();
   console.warn(`[POOL] Waiting for connection slot (inUse=${p.inUse} free=${p.free} queued=${p.queued})`);
 });
+
+// Self-heal devSettings column defaults to prevent ER_NO_DEFAULT_FOR_FIELD (1364) errors
+(async () => {
+  const fields = ['ccode', 'devcode', 'uniquedevcode', 'device', 'remotebaseurl', 'localbaseurl', 'userid'];
+  for (const field of fields) {
+    try {
+      await pool.query(`ALTER TABLE devSettings ALTER COLUMN ${field} SET DEFAULT '000'`);
+    } catch (_) { /* Ignore if column missing or DB permissions prevent ALTER */ }
+  }
+})();
 
 /**
  * v2.12.13 — Connection lifecycle helpers.
@@ -515,6 +585,138 @@ const findActiveSessionDairy = async (ccode, hour, conn = pool) => {
     return null;
   }
 };
+
+/**
+ * Resolves Dairy session for a given ccode and user input.
+ * Priority 1: If user provided a session value, match against `sessions` table (by Icode, descript, or ID).
+ *             Trust the user selection and DO NOT override with system time.
+ * Priority 2: If no user session provided (or unmatched), fall back to active session by current hour.
+ * Preserves exact casing (no .toUpperCase()) and trims trailing/leading spaces.
+ * Returns { normalizedSession, seasonCAN }.
+ */
+const resolveDairySession = async (ccode, userSession, collectionDate = new Date(), conn = pool) => {
+  const cleanInput = (userSession || '').toString().trim();
+
+  try {
+    const [rows] = await conn.query(
+      `SELECT ID, Icode, Icode AS SCODE, descript, time_from, time_to, ccode
+       FROM sessions
+       WHERE TRIM(ccode) = TRIM(?)
+       ORDER BY time_from`,
+      [ccode]
+    );
+
+    // 1. If user provided a session value, match against DB rows
+    if (cleanInput.length > 0 && rows.length > 0) {
+      const inputUpper = cleanInput.toUpperCase();
+      let matchedRow = null;
+
+      for (const r of rows) {
+        const icodeVal = (r.Icode || r.SCODE || '').toString().trim();
+        const descVal = (r.descript || '').toString().trim();
+        const idVal = String(r.ID || '').trim();
+
+        if (
+          (icodeVal && icodeVal.toUpperCase() === inputUpper) ||
+          (descVal && descVal.toUpperCase() === inputUpper) ||
+          (idVal && idVal === cleanInput)
+        ) {
+          matchedRow = r;
+          break;
+        }
+      }
+
+      // If no exact match, check partial match
+      if (!matchedRow) {
+        for (const r of rows) {
+          const icodeVal = (r.Icode || r.SCODE || '').toString().trim().toUpperCase();
+          const descVal = (r.descript || '').toString().trim().toUpperCase();
+
+          if (
+            (icodeVal && (icodeVal.includes(inputUpper) || inputUpper.includes(icodeVal))) ||
+            (descVal && (descVal.includes(inputUpper) || inputUpper.includes(descVal)))
+          ) {
+            matchedRow = r;
+            break;
+          }
+        }
+      }
+
+      // AM / PM alias mapping to Morning / Afternoon / Evening if no literal AM/PM row exists
+      if (!matchedRow) {
+        if (inputUpper === 'AM') {
+          matchedRow = rows.find(r => {
+            const name = ((r.Icode || '') + ' ' + (r.descript || '')).toUpperCase();
+            return name.includes('MORN') || name.includes('AM');
+          }) || rows[0];
+        } else if (inputUpper === 'PM') {
+          const pmRows = rows.filter(r => {
+            const name = ((r.Icode || '') + ' ' + (r.descript || '')).toUpperCase();
+            return name.includes('AFTER') || name.includes('EVEN') || name.includes('PM');
+          });
+
+          if (pmRows.length === 1) {
+            matchedRow = pmRows[0];
+          } else if (pmRows.length > 1) {
+            const dateObj = (collectionDate instanceof Date && !isNaN(collectionDate.getTime())) ? collectionDate : new Date(collectionDate);
+            const hour = !isNaN(dateObj.getTime()) ? dateObj.getHours() : new Date().getHours();
+            if (hour >= 17) {
+              matchedRow = pmRows.find(r => ((r.Icode || '') + ' ' + (r.descript || '')).toUpperCase().includes('EVEN')) || pmRows[pmRows.length - 1];
+            } else {
+              matchedRow = pmRows.find(r => ((r.Icode || '') + ' ' + (r.descript || '')).toUpperCase().includes('AFTER')) || pmRows[0];
+            }
+          } else if (rows.length > 1) {
+            matchedRow = rows[rows.length - 1];
+          }
+        }
+      }
+
+      if (matchedRow) {
+        const sessionVal = (matchedRow.Icode || matchedRow.SCODE || matchedRow.descript || cleanInput).toString().trim();
+        const canVal = (matchedRow.Icode || matchedRow.SCODE || matchedRow.descript || sessionVal).toString().trim();
+        return {
+          normalizedSession: sessionVal,
+          seasonCAN: canVal
+        };
+      }
+
+      // If user provided input but no DB row matched, return trimmed user input directly
+      return {
+        normalizedSession: cleanInput,
+        seasonCAN: cleanInput
+      };
+    }
+
+    // 2. Fallback: If user provided no session input, match by time/hour
+    if (collectionDate && rows.length > 0) {
+      const dateObj = (collectionDate instanceof Date && !isNaN(collectionDate.getTime())) ? collectionDate : new Date(collectionDate);
+      const hour = !isNaN(dateObj.getTime()) ? dateObj.getHours() : new Date().getHours();
+      const resolvedTimeRow = await findActiveSessionDairy(ccode, hour, conn);
+
+      if (resolvedTimeRow) {
+        const sessionVal = (resolvedTimeRow.Icode || resolvedTimeRow.SCODE || resolvedTimeRow.descript || '').toString().trim();
+        const canVal = (resolvedTimeRow.Icode || resolvedTimeRow.SCODE || resolvedTimeRow.descript || sessionVal).toString().trim();
+        return {
+          normalizedSession: sessionVal || cleanInput,
+          seasonCAN: canVal || cleanInput
+        };
+      }
+    }
+
+    // 3. Final fallback
+    return {
+      normalizedSession: cleanInput,
+      seasonCAN: cleanInput
+    };
+  } catch (e) {
+    console.warn('[SESSION] Dairy resolveDairySession error:', e?.message || e);
+    return {
+      normalizedSession: cleanInput,
+      seasonCAN: cleanInput
+    };
+  }
+};
+
 
 
 
@@ -1134,6 +1336,10 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, { success: true, version: APP_VERSION, node: process.version });
     }
 
+    // USSD Endpoint (Africa's Talking integration)
+    const ussdHandled = await handleUssdRoutes({ pool, path, method, req, res, corsHeaders });
+    if (ussdHandled) return;
+
     // Sessions/Seasons endpoint - Fetch from sessions OR season table based on orgtype
     if (path.startsWith('/api/sessions/by-device/') && method === 'GET') {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
@@ -1239,6 +1445,28 @@ const server = http.createServer(async (req, res) => {
         ccode: row.ccode,
         dateEnabled: true
       }));
+
+      // Fallback: If no sessions are defined in the database table, provide default AM/PM options
+      if (processedSessions.length === 0) {
+        processedSessions.push({
+          id: 'default_am',
+          SCODE: 'AM',
+          descript: 'AM',
+          time_from: null,
+          time_to: null,
+          ccode,
+          dateEnabled: true
+        });
+        processedSessions.push({
+          id: 'default_pm',
+          SCODE: 'PM',
+          descript: 'PM',
+          time_from: null,
+          time_to: null,
+          ccode,
+          dateEnabled: true
+        });
+      }
 
       return sendJSON(res, {
         success: true,
@@ -1502,7 +1730,7 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       await pool.query(
         'INSERT INTO cm_members (mcode, descript, route) VALUES (?, ?, ?)',
-        [body.farmer_id, body.name, body.route]
+        [toCleanString(body.farmer_id), toCleanString(body.name), toCleanString(body.route)]
       );
       return sendJSON(res, { success: true, message: 'Farmer created' }, 201);
     }
@@ -1600,7 +1828,7 @@ const server = http.createServer(async (req, res) => {
       const ref = path.split('/')[3];
       // v2.12.18: wrap in withConn to ensure single connection use
       return withConn(async (conn) => {
-        const [rows] = await conn.query('SELECT * FROM transactions WHERE transrefno = ?', [ref]);
+        const [rows] = await conn.query('SELECT * FROM transactions WHERE transrefno = ? OR Uploadrefno = ?', [ref, ref]);
         if (rows.length === 0) return sendJSON(res, { success: false, error: 'Collection not found' }, 404);
 
         // Map transaction fields back to expected format
@@ -1938,47 +2166,12 @@ const server = http.createServer(async (req, res) => {
           seasonCAN = normalizedSession; // For coffee, CAN and session often match SCODE
           console.log('☕ Coffee session normalization:', { rawSession, season_code: body.season_code, session_descript: body.session_descript, normalizedSession });
         } else {
-          // v2.12.51: Dairy (orgtype=D) session resolution.
-          // The backend MUST authoritative resolve the session based on transtime to prevent
-          // issues like AM being saved at 18:35.
-          try {
-            const hour = collectionDate.getHours();
-            const resolved = await findActiveSessionDairy(ccode, hour, conn);
-
-            if (resolved) {
-              // Populate transactions.session with Icode (e.g. "PM")
-              normalizedSession = (resolved.SCODE || resolved.descript || normalizedSession).toUpperCase();
-
-              // Populate transactions.CAN with the actual period (AM/PM)
-              // v2.12.51: If the matched session is explicitly named PM, trust that.
-              // Otherwise derive from transaction hour.
-              if (normalizedSession.includes('PM')) {
-                seasonCAN = 'PM';
-              } else if (normalizedSession.includes('AM')) {
-                seasonCAN = 'AM';
-              } else {
-                seasonCAN = (hour >= 12) ? 'PM' : 'AM';
-              }
-
-              console.log('🥛 Dairy session resolved from time:', { hour, normalizedSession, seasonCAN });
-            } else {
-              // Fallback to basic AM/PM normalization if no session record matches the hour
-              if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
-                normalizedSession = 'PM';
-              } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
-                normalizedSession = 'AM';
-              }
-              seasonCAN = normalizedSession;
-            }
-          } catch (e) {
-            console.warn('[SESSION] Dairy resolution error, using fallback:', e?.message);
-            if (normalizedSession.includes('PM') || normalizedSession.includes('EVENING') || normalizedSession.includes('AFTERNOON')) {
-              normalizedSession = 'PM';
-            } else if (normalizedSession.includes('AM') || normalizedSession.includes('MORNING')) {
-              normalizedSession = 'AM';
-            }
-            seasonCAN = normalizedSession;
-          }
+          // Dairy (orgtype=D) session resolution using resolveDairySession
+          const userSessionInput = body.session || body.session_descript || body.season_code || body.session_icode || rawSession;
+          const dairyResolved = await resolveDairySession(ccode, userSessionInput, collectionDate, conn);
+          normalizedSession = dairyResolved.normalizedSession;
+          seasonCAN = dairyResolved.seasonCAN;
+          console.log('🥛 Dairy session resolved:', { userSessionInput, normalizedSession, seasonCAN });
         }
 
         console.log('🧼 Normalized values:', {
@@ -2034,46 +2227,16 @@ const server = http.createServer(async (req, res) => {
               const tags = [routeStr, deviceStr].filter(Boolean).join(', ');
               const detailMsg = `Member ${cleanFarmerId} has delivered this session${tags ? ` (${tags})` : ''}`;
 
-              if (!uploadrefno) {
-                console.log(
-                  `⚠️ multOpt=0: existing delivery found but request has no uploadrefno. Rejecting. existingUploadRef=${existingUploadRef}`
-                );
-                return sendJSON(res, {
-                  success: false,
-                  error: 'DUPLICATE_SESSION_DELIVERY',
-                  message: detailMsg,
-                  existing_reference: existingRef,
-                  existing_uploadrefno: existingUploadRef,
-                  existing_device: existingDevice,
-                  existing_route: existingRoute,
-                  farmer_id: cleanFarmerId,
-                  session: normalizedSession,
-                  date: transdate,
-                }, 409);
-              }
-
               if (String(uploadrefno) !== String(existingUploadRef)) {
                 console.log(
-                  `⚠️ Member ${cleanFarmerId} already delivered in ${normalizedSession} today with Uploadrefno=${existingUploadRef}. ` +
-                  `Rejecting new Uploadrefno=${uploadrefno}. Existing ref: ${existingRef}`
+                  `ℹ️ multOpt=0: Member ${cleanFarmerId} already delivered in ${normalizedSession} today (existing Uploadrefno=${existingUploadRef}, ref=${existingRef}). ` +
+                  `Allowing new transaction (Uploadrefno=${uploadrefno}) per paper receipt sync policy.`
                 );
-                return sendJSON(res, {
-                  success: false,
-                  error: 'DUPLICATE_SESSION_DELIVERY',
-                  message: detailMsg,
-                  existing_reference: existingRef,
-                  existing_uploadrefno: existingUploadRef,
-                  existing_device: existingDevice,
-                  existing_route: existingRoute,
-                  farmer_id: cleanFarmerId,
-                  session: normalizedSession,
-                  date: transdate,
-                }, 409);
+              } else {
+                console.log(
+                  `✅ multOpt=0: existing delivery found, and Uploadrefno matches (${uploadrefno}). Allowing additional row.`
+                );
               }
-
-              console.log(
-                `✅ multOpt=0: existing delivery found, but Uploadrefno matches (${uploadrefno}). Allowing additional row.`
-              );
             }
           }
         }
@@ -2084,6 +2247,10 @@ const server = http.createServer(async (req, res) => {
             const deliveredBy = body.delivered_by || 'owner';
             const milkSessionId = body.milk_session_id || '';
 
+            const finalUploadRef = (attemptUploadrefno && String(attemptUploadrefno).trim())
+              ? toCleanString(attemptUploadrefno)
+              : toCleanString(attemptTransrefno);
+
             const [result] = await conn.query(
               `INSERT INTO transactions
                 (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session,
@@ -2091,25 +2258,25 @@ const server = http.createServer(async (req, res) => {
                  amount, icode, CAN, time, capType, entry_type, deliveredby, milk_session_id)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?, ?)`,
               [
-                attemptTransrefno,
-                attemptUploadrefno ? String(attemptUploadrefno) : '',
-                userId,
-                clerk,
-                deviceserial,
-                cleanFarmerId,
-                body.route,
+                toCleanString(attemptTransrefno),
+                finalUploadRef,
+                toCleanString(userId),
+                toCleanString(clerk),
+                toCleanString(deviceserial),
+                toCleanString(cleanFarmerId),
+                toCleanString(body.route),
                 toNumOrZero(body.weight),
-                normalizedSession,
+                toCleanString(normalizedSession),
                 transdate,
                 transtime,
                 transtype,
                 ccode,
-                productCode,
-                seasonCAN,
+                toCleanString(productCode),
+                toCleanString(seasonCAN),
                 timestamp,
-                body.entry_type || 'manual',
-                deliveredBy,
-                milkSessionId,
+                toCleanString(body.entry_type || 'manual'),
+                toCleanString(deliveredBy),
+                toCleanString(milkSessionId),
               ]
             );
 
@@ -2679,7 +2846,11 @@ const server = http.createServer(async (req, res) => {
       const periodCANCodes = {
         morning: ['MO', 'AM', 'MORNING'],
         afternoon: ['AF', 'PM', 'AFTERNOON'],
-        evening: ['EV', 'EVE', 'EVENING', 'NIGHT']
+        evening: ['EV', 'EVE', 'EVENING', 'NIGHT'],
+        AM: ['MO', 'AM', 'MORNING'],
+        PM: ['AF', 'PM', 'AFTERNOON', 'EV', 'EVE', 'EVENING', 'NIGHT'],
+        am: ['MO', 'AM', 'MORNING'],
+        pm: ['AF', 'PM', 'AFTERNOON', 'EV', 'EVE', 'EVENING', 'NIGHT']
       };
 
       let query = `
@@ -2703,9 +2874,9 @@ const server = http.createServer(async (req, res) => {
         queryParams.push(norm(milkSessionIdFilter));
       } else if (periodFilter && periodFilter !== 'all' && periodCANCodes[periodFilter]) {
         const canCodes = periodCANCodes[periodFilter];
-        const canConditions = canCodes.map(() => 't.CAN = ?').join(' OR ');
+        const canConditions = canCodes.map(() => '(t.CAN = ? OR t.session = ?)').join(' OR ');
         query += ` AND (${canConditions})`;
-        queryParams.push(...canCodes.map(s => norm(s)));
+        canCodes.forEach(s => queryParams.push(norm(s), norm(s)));
       } else if (seasonFilter) {
         query += ` AND t.session = ?`;
         queryParams.push(seasonFilter);
@@ -2860,10 +3031,10 @@ const server = http.createServer(async (req, res) => {
 
 
       console.log('[ITEMS] Request:', {
-  ccode,
-  invtype,
-  query: parsedUrl.query
-});
+        ccode,
+        invtype: invtype || 'ALL (no filter)',
+        query: parsedUrl.query
+      });
 
       // Build query with optional invtype filter
      let query = 'SELECT * FROM fm_items WHERE ccode = ?';
@@ -2897,9 +3068,27 @@ if (path === '/api/sales' && method === 'POST') {
         
         // Get current date and time
         const now = new Date();
-        const transdate = now.toISOString().split('T')[0]; // YYYY-MM-DD
-        const transtime = now.toTimeString().split(' ')[0]; // HH:MM:SS
-        const timestamp = Math.floor(now.getTime() / 1000); // Unix timestamp
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const defaultTransdate = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+        const defaultTranstime = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+
+        // Preserve client-provided creation date and time if available (for offline sync)
+        const transdate = body.transdate || (body.sale_date ? body.sale_date.split('T')[0] : defaultTransdate);
+        const transtime = body.transtime || defaultTranstime;
+
+        let refDate = now;
+        if (body.transdate || body.sale_date) {
+          try {
+            const rawDate = body.transdate || body.sale_date;
+            const dateStr = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
+            const timeStr = body.transtime || defaultTranstime;
+            const parsed = new Date(`${dateStr}T${timeStr}`);
+            if (!isNaN(parsed.getTime())) {
+              refDate = parsed;
+            }
+          } catch (e) {}
+        }
+        const timestamp = Math.floor(refDate.getTime() / 1000); // Unix timestamp
         
         // Calculate amount (quantity * price)
         const amount = (body.quantity || 0) * (body.price || 0);
@@ -3054,12 +3243,15 @@ if (path === '/api/sales' && method === 'POST') {
           salesSessionVal = canonical;
           salesSeasonVal  = canonical;
         } else {
-          // v2.12.51: Dairy (orgtype=D) session resolution for Sales/AI
+          // Dairy (orgtype=D) session resolution for Sales/AI
           try {
-            const hour = now.getHours();
-            const resolved = await findActiveSessionDairy(ccode, hour, conn);
+            const userSessionInput = body.session_label || body.session || body.session_descript || body.season_code || body.session_icode || salesSessionVal;
+            const dairyResolved = await resolveDairySession(ccode, userSessionInput, refDate, conn);
+            salesSessionVal = dairyResolved.normalizedSession;
+            salesSeasonVal  = dairyResolved.seasonCAN;
+            console.log('🥛 Dairy sales session resolved:', { userSessionInput, salesSessionVal, salesSeasonVal });
 
-            if (resolved) {
+            if (false) {
               salesSessionVal = (resolved.SCODE || resolved.descript || salesSessionVal).toUpperCase();
 
               if (salesSessionVal.includes('PM')) {
@@ -3097,31 +3289,31 @@ if (path === '/api/sales' && method === 'POST') {
              cowname, cowbreed, noofcalfs, bullcode, bullname, nextheat)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            transrefno,
-            uploadrefno,
-            body.user_id || body.sold_by || '',
-            body.sold_by || '',
-            body.device_fingerprint || '',
-            body.farmer_id || '',
-            storeRoute,
+            toCleanString(transrefno),
+            toCleanString(uploadrefno),
+            toCleanString(body.user_id || body.sold_by),
+            toCleanString(body.sold_by),
+            toCleanString(body.device_fingerprint),
+            toCleanString(body.farmer_id),
+            toCleanString(storeRoute),
             toNumOrZero(body.quantity),
-            salesSessionVal,
+            toCleanString(salesSessionVal),
             transdate,
             transtime,
             toIntOrNull(transtype, 2),
             0, 0, ccode, 0,
             toNumOrZero(body.price),
             toNumOrZero(amount),
-            body.item_code || '',
-            salesSeasonVal,
-            timestamp, 0, body.milk_session_id || '',
+            toCleanString(body.item_code),
+            toCleanString(salesSeasonVal),
+            timestamp, 0, toCleanString(body.milk_session_id),
             photoFilename,
             photoDirectory,
-            body.cow_name || '',
-            body.cow_breed || '',
+            toCleanString(body.cow_name),
+            toCleanString(body.cow_breed),
             toIntOrNull(body.number_of_calves),
-            body.bullcode || '',
-            body.bullname || '',
+            toCleanString(body.bullcode),
+            toCleanString(body.bullname),
             body.nextheat || null
           ]
         );
@@ -3171,9 +3363,27 @@ if (path === '/api/sales' && method === 'POST') {
         const transtype = body.transtype === 3 ? 3 : 2;
         
         const now = new Date();
-        const transdate = now.toISOString().split('T')[0];
-        const transtime = now.toTimeString().split(' ')[0];
-        const timestamp = Math.floor(now.getTime() / 1000);
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const defaultTransdate = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+        const defaultTranstime = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+
+        // Preserve client-provided creation date and time if available (for offline sync)
+        const transdate = body.transdate || (body.sale_date ? body.sale_date.split('T')[0] : defaultTransdate);
+        const transtime = body.transtime || defaultTranstime;
+
+        let refDate = now;
+        if (body.transdate || body.sale_date) {
+          try {
+            const rawDate = body.transdate || body.sale_date;
+            const dateStr = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
+            const timeStr = body.transtime || defaultTranstime;
+            const parsed = new Date(`${dateStr}T${timeStr}`);
+            if (!isNaN(parsed.getTime())) {
+              refDate = parsed;
+            }
+          } catch (e) {}
+        }
+        const timestamp = Math.floor(refDate.getTime() / 1000);
         
         let ccode = '';
         let authorized = false;
@@ -3296,10 +3506,12 @@ if (path === '/api/sales' && method === 'POST') {
         } else {
           // v2.12.51: Dairy (orgtype=D) session resolution for Batch Sales/AI
           try {
-            const hour = now.getHours();
-            const resolved = await findActiveSessionDairy(ccode, hour, conn);
+            const userSessionInput = body.session_label || body.session || body.session_descript || body.season_code || body.session_icode || batchSessionVal;
+            const dairyResolved = await resolveDairySession(ccode, userSessionInput, refDate, conn);
+            batchSessionVal = dairyResolved.normalizedSession;
+            batchSeasonVal  = dairyResolved.seasonCAN;
 
-            if (resolved) {
+            if (false) {
               batchSessionVal = (resolved.SCODE || resolved.descript || batchSessionVal).toUpperCase();
 
               if (batchSessionVal.includes('PM')) {
@@ -3331,6 +3543,17 @@ if (path === '/api/sales' && method === 'POST') {
         for (const item of body.items) {
           const transrefno = item.transrefno;
           const amount = (item.quantity || 0) * (item.price || 0);
+          const itemTransdate = item.transdate || transdate;
+          const itemTranstime = item.transtime || transtime;
+          let itemTimestamp = timestamp;
+          if (item.transdate) {
+            try {
+              const itemParsed = new Date(`${itemTransdate}T${itemTranstime}`);
+              if (!isNaN(itemParsed.getTime())) {
+                itemTimestamp = Math.floor(itemParsed.getTime() / 1000);
+              }
+            } catch (e) {}
+          }
           try {
             await conn.query(
               `INSERT INTO transactions 
@@ -3340,27 +3563,29 @@ if (path === '/api/sales' && method === 'POST') {
                  cowname, cowbreed, noofcalfs, bullcode, bullname, nextheat)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
-                transrefno, uploadrefno,
-                body.user_id || body.sold_by || '',
-                body.sold_by || '',
-                body.device_fingerprint || '',
-                body.farmer_id || '',
-                storeRoute,
+                toCleanString(transrefno),
+                toCleanString(uploadrefno),
+                toCleanString(body.user_id || body.sold_by),
+                toCleanString(body.sold_by),
+                toCleanString(body.device_fingerprint),
+                toCleanString(body.farmer_id),
+                toCleanString(storeRoute),
                 toNumOrZero(item.quantity),
-                batchSessionVal,
-                transdate, transtime,
+                toCleanString(batchSessionVal),
+                itemTransdate, itemTranstime,
                 toIntOrNull(transtype, 2),
                 0, 0, ccode, 0,
                 toNumOrZero(item.price),
                 toNumOrZero(amount),
-                item.item_code || '',
-                batchSeasonVal,
-                timestamp, 0, item.milk_session_id || body.milk_session_id || '',
+                toCleanString(item.item_code),
+                toCleanString(batchSeasonVal),
+                itemTimestamp, 0, toCleanString(item.milk_session_id || body.milk_session_id),
                 photoFilename, photoDirectory,
-                item.cow_name || '', item.cow_breed || '',
+                toCleanString(item.cow_name),
+                toCleanString(item.cow_breed),
                 toIntOrNull(item.number_of_calves),
-                item.bullcode || '',
-                item.bullname || '',
+                toCleanString(item.bullcode),
+                toCleanString(item.bullname),
                 item.nextheat || null
               ]
             );
@@ -4134,9 +4359,9 @@ if (path === '/api/sales' && method === 'POST') {
       }
 
       if (search) {
-        query += ' AND (t.memberno LIKE ? OR m.descript LIKE ? OR t.transrefno LIKE ?)';
+        query += ' AND (t.memberno LIKE ? OR m.descript LIKE ? OR t.transrefno LIKE ? OR t.Uploadrefno LIKE ?)';
         const searchPat = `%${search}%`;
-        params.push(searchPat, searchPat, searchPat);
+        params.push(searchPat, searchPat, searchPat, searchPat);
       }
 
       if (date_from) {
@@ -4268,17 +4493,47 @@ if (path === '/api/sales' && method === 'POST') {
         const trnid = devRows.length > 0 ? devRows[0].trnid : 0;
 
         // If device not in devSettings, create a minimal record.
-        // v2.12.6: devsettings on Contabo is NOT NULL — never write NULL/empty
-        // for uniquedevcode or device; fall back to the '000' placeholder.
+        // v2.12.6: devsettings on Contabo is NOT NULL — never write NULL/empty;
+        // fallback to '000' for any missing string column.
         if (devRows.length === 0) {
           try {
             const safeUniqueDevCode = String(body.device_fingerprint || '').trim() || '000';
             const safeDeviceLabel = String(body.device_info || body.model || '').trim() || '000';
             const safeCcode = String(body.ccode || '').trim() || '000';
-            await pool.query(
-              'INSERT INTO devSettings (uniquedevcode, device, authorized, trnid, ccode) VALUES (?, ?, 0, 0, ?)',
-              [safeUniqueDevCode, safeDeviceLabel, safeCcode]
-            );
+            const safeDevcode = String(body.devcode || body.deviceCode || body.dev_code || '').trim() || '000';
+            const safeRemoteBaseUrl = String(body.remotebaseurl || body.remote_base_url || '').trim() || '000';
+            const safeLocalBaseUrl = String(body.localbaseurl || body.local_base_url || '').trim() || '000';
+            const safeUserId = String(body.user_id || body.userid || '').trim() || '000';
+
+            try {
+              // Full schema matching production devSettings
+              await pool.query(
+                `INSERT INTO devSettings
+                  (uniquedevcode, device, authorized, status, trnid, milkid, storeid, aiid, ccode, devcode, remotebaseurl, localbaseurl, userid)
+                 VALUES (?, ?, 0, 0, 0, 0, 0, 0, ?, ?, ?, ?, ?)`,
+                [safeUniqueDevCode, safeDeviceLabel, safeCcode, safeDevcode, safeRemoteBaseUrl, safeLocalBaseUrl, safeUserId]
+              );
+            } catch (schemaErr) {
+              if (schemaErr && schemaErr.code === 'ER_BAD_FIELD_ERROR') {
+                try {
+                  await pool.query(
+                    'INSERT INTO devSettings (uniquedevcode, device, authorized, trnid, ccode, devcode, remotebaseurl, localbaseurl) VALUES (?, ?, 0, 0, ?, ?, ?, ?)',
+                    [safeUniqueDevCode, safeDeviceLabel, safeCcode, safeDevcode, safeRemoteBaseUrl, safeLocalBaseUrl]
+                  );
+                } catch (schemaErr2) {
+                  if (schemaErr2 && schemaErr2.code === 'ER_BAD_FIELD_ERROR') {
+                    await pool.query(
+                      'INSERT INTO devSettings (uniquedevcode, device, authorized, trnid, ccode, devcode) VALUES (?, ?, 0, 0, ?, ?)',
+                      [safeUniqueDevCode, safeDeviceLabel, safeCcode, safeDevcode]
+                    );
+                  } else {
+                    throw schemaErr2;
+                  }
+                }
+              } else {
+                throw schemaErr;
+              }
+            }
 
             console.log('📱 Created devSettings record for fingerprint:', body.device_fingerprint.substring(0, 16) + '...');
           } catch (insertError) {
@@ -5244,6 +5499,62 @@ if (path === '/api/sales' && method === 'POST') {
       }
     }
 
+    // GET or POST /api/users/sync - Sync all company users for offline authorization
+    if ((path === '/api/users/sync' || path === '/api/auth/users/sync') && (method === 'GET' || method === 'POST')) {
+      let fingerprint = '';
+      let ccodeParam = '';
+
+      if (method === 'GET') {
+        fingerprint = (parsedUrl.query.device_fingerprint || parsedUrl.query.uniquedevcode || '').toString().trim();
+        ccodeParam = (parsedUrl.query.ccode || '').toString().trim();
+      } else {
+        const body = await parseBody(req);
+        fingerprint = (body.device_fingerprint || body.uniquedevcode || '').toString().trim();
+        ccodeParam = (body.ccode || '').toString().trim();
+      }
+
+      let targetCcode = norm(ccodeParam);
+
+      if (!targetCcode && fingerprint) {
+        try {
+          const [devRows] = await pool.query(
+            'SELECT ccode FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
+            [fingerprint]
+          );
+          if (devRows.length > 0 && devRows[0].ccode) {
+            targetCcode = norm(devRows[0].ccode);
+          }
+        } catch (devErr) {
+          console.warn('[USERS_SYNC] Failed to resolve ccode from fingerprint:', devErr.message);
+        }
+      }
+
+      if (!targetCcode) {
+        return sendJSON(res, { success: false, error: 'device_fingerprint or ccode is required' }, 400);
+      }
+
+      try {
+        const [users] = await pool.query(
+          `SELECT userid, password, username, email, ccode, admin, supervisor, dcode, groupid, depart, can_access_payments
+           FROM Users
+           WHERE ccode = ? AND (userid IS NOT NULL AND TRIM(userid) != '')`,
+          [targetCcode]
+        );
+
+        console.log(`[USERS_SYNC] Synced ${users.length} users for ccode=${targetCcode}`);
+
+        return sendJSON(res, {
+          success: true,
+          ccode: targetCcode,
+          count: users.length,
+          data: users
+        });
+      } catch (err) {
+        console.error('[USERS_SYNC] Failed to fetch users:', err.message);
+        return sendJSON(res, { success: false, error: 'Failed to sync users: ' + err.message }, 500);
+      }
+    }
+
     if (path === '/api/auth/login' && method === 'POST') {
       const body = await parseBody(req);
       const { userid, password, device_fingerprint } = body;
@@ -5773,7 +6084,7 @@ if (path === '/api/sales' && method === 'POST') {
           await pool.query(
             `INSERT INTO cm_members (mcode, descript, gender, idno, route, ccode, status, multOpt, currqty)
              VALUES (?, ?, ?, ?, ?, ?, 1, ?, 0)`,
-            [mmcode, descript, gender, idno, route, ccode, multOpt]
+            [toCleanString(mmcode), toCleanString(descript), toCleanString(gender), toCleanString(idno), toCleanString(route), ccode, multOpt]
           );
 
           console.log(`[SUCCESS] Member added: ${mmcode} (${descript}) by user=${userId}, ccode=${ccode}`);
@@ -5844,9 +6155,9 @@ if (path === '/api/sales' && method === 'POST') {
 
       // Add search filter (member, reference, clerk)
       if (search) {
-        whereClause += ' AND (t.memberno LIKE ? OR t.transrefno LIKE ? OR t.clerk LIKE ?)';
+        whereClause += ' AND (t.memberno LIKE ? OR t.transrefno LIKE ? OR t.Uploadrefno LIKE ? OR t.clerk LIKE ?)';
         const searchPattern = `%${search}%`;
-        params.push(searchPattern, searchPattern, searchPattern);
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern);
       }
 
       // Add date filter

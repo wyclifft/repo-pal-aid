@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { formatWeight } from '@/utils/weightUtils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -7,6 +8,7 @@ import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSqua
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { resolveMemberName } from '@/utils/farmerUtils';
 import { toast } from 'sonner';
@@ -43,6 +45,8 @@ export interface PrintedReceipt {
   routeLabel?: string;
   periodLabel?: string;
   locationName?: string;
+  locationCode?: string;
+  productName?: string;
   // Cumulative weight for milk/coffee receipts
   cumulativeWeight?: number;
   cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
@@ -93,6 +97,7 @@ export const ReprintModal = ({
   const [viewingReceipt, setViewingReceipt] = useState<PrintedReceipt | null>(null);
   
   const { getFarmers, isReady } = useIndexedDB();
+  const { settings, showProductName } = useAppSettings();
   const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
 
   // Load all farmers for name resolution
@@ -171,6 +176,7 @@ export const ReprintModal = ({
             memberName: receipt.farmerName,
             memberId: receipt.farmerId,
             memberRoute: receipt.memberRoute,
+            routeLabel: receipt.routeLabel || routeLabel,
             uploadRefNo: receipt.uploadrefno || '',
             clerkName: receipt.clerkName || 'Unknown',
             items: receipt.items,
@@ -215,21 +221,26 @@ export const ReprintModal = ({
             companyName: companyName,
             farmerName: firstReceipt.farmer_name,
             farmerId: firstReceipt.farmer_id,
-            route: firstReceipt.route,
+            route: receipt.memberRoute || firstReceipt.route,
+            memberRoute: receipt.memberRoute || firstReceipt.route,
             routeLabel: receipt.routeLabel || routeLabel,
             session: firstReceipt.session_descript || firstReceipt.session,
             periodLabel: receipt.periodLabel || periodLabel,
+            productName: receipt.productName || firstReceipt.product_name,
             uploadRefNo: receipt.uploadrefno || firstReceipt.uploadrefno || firstReceipt.reference_no,
             collectorName: firstReceipt.clerk_name,
             deliveredBy: resolveMemberName(firstReceipt.delivered_by, allFarmers),
             collections,
             cumulativeFrequency: isSellProduce ? undefined : receipt.cumulativeWeight,
             cumulativeByProduct: isSellProduce ? undefined : receipt.cumulativeByProduct,
+            locationCode: receipt.locationCode,
             locationName: receipt.locationName || locationName || firstReceipt.route,
             collectionDate: collectionDateTime,
             reprintedAt: new Date(),
             receiptTitle: isSellProduce ? 'PURCHASE RECEIPT' : undefined,
             totalLabel: isSellProduce ? 'Total Weight [Kgs]' : undefined,
+            orgtype: settings.orgtype,
+            showProductName,
           });
 
           if (!result.success) {
@@ -335,12 +346,7 @@ export const ReprintModal = ({
         farmerId: collection.farmer_id.replace(/^#/, '').trim(),
       };
 
-      // Normalize session to AM/PM
-      let normalizedSession: 'AM' | 'PM' = 'AM';
-      const sessionVal = (collection.session || '').trim().toUpperCase();
-      if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON') || sessionVal.includes('EV') || sessionVal.includes('AF')) {
-        normalizedSession = 'PM';
-      }
+      const normalizedSession = String(collection.session || '').trim() || 'AM';
 
       const submitOnce = async (referenceNoToUse: string) => {
         console.log(`[SYNC] Submitting: ref=${referenceNoToUse}`);
@@ -640,7 +646,7 @@ export const ReprintModal = ({
           )}
 
           {/* Scrollable receipt list */}
-          <div className="flex-1 overflow-y-auto min-h-0 space-y-2 sm:space-y-3 -mx-1 px-1">
+          <div className="flex-1 overflow-y-auto min-h-0 space-y-2 sm:space-y-3 -mx-1 px-1 pb-32 sm:pb-8">
             {displayReceipts.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground text-sm">
                 {activeTab === 'search' && searchQuery ? 'No receipts match your search' : 'No recent receipts to display'}
@@ -691,7 +697,7 @@ export const ReprintModal = ({
                         </>
                       ) : (
                         <>
-                          <div className="font-bold text-base sm:text-lg">{(Math.floor(getTotalWeight(receipt.collections) * 10) / 10).toFixed(1)} Kg</div>
+                          <div className="font-bold text-base sm:text-lg">{formatWeight(getTotalWeight(receipt.collections))} Kg</div>
                           <div className="text-[10px] sm:text-xs text-muted-foreground">{receipt.collections.length} collections</div>
                         </>
                       )}
@@ -860,6 +866,7 @@ export const ReprintModal = ({
 
         receiptData.routeLabel = viewingReceipt.routeLabel || routeLabel;
         receiptData.periodLabel = viewingReceipt.periodLabel || periodLabel;
+        receiptData.locationCode = viewingReceipt.locationCode;
         receiptData.locationName = viewingReceipt.locationName || locationName;
         receiptData.reprintedAt = new Date();
 
@@ -882,10 +889,15 @@ export const ReprintModal = ({
             showCumulativeFrequency: !isSellProduce && viewingReceipt.cumulativeWeight !== undefined && viewingReceipt.cumulativeWeight > 0,
             routeLabel: viewingReceipt.routeLabel || routeLabel,
             periodLabel: viewingReceipt.periodLabel || periodLabel,
+            locationCode: viewingReceipt.locationCode,
             locationName: viewingReceipt.locationName || locationName,
+            memberRoute: viewingReceipt.memberRoute || viewingReceipt.collections[0]?.route,
+            productName: viewingReceipt.productName || viewingReceipt.collections[0]?.product_name,
             deliveredBy: resolveMemberName(viewingReceipt.collections[0]?.delivered_by, allFarmers),
             // Set reprintedAt to NOW for the reprint footer
             reprintedAt: new Date(),
+            orgtype: settings.orgtype,
+            showProductName,
           }
         );
 

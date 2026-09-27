@@ -71,21 +71,37 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, selectedMpr
       ? farmers.filter(f => !blacklistedFarmerIds.has(f.farmer_id.replace(/^#/, '').trim()))
       : farmers;
     
-    // Show suggestions immediately on focus, even with empty query
+    // Show suggestions immediately on focus, even with empty query (limited to 50 for instant rendering)
     if (!query) {
-      setSuggestions(availableFarmers.slice(0, 10));
+      setSuggestions(availableFarmers.slice(0, 50));
       return;
     }
 
-    const lowerQuery = query.toLowerCase();
+    const lowerQuery = query.toLowerCase().trim();
+    const numericQuery = query.replace(/\D/g, '');
+    const mprefixStr = selectedMprefix ? String(selectedMprefix).trim().toLowerCase() : '';
+
     const filtered = availableFarmers.filter((f) => {
-      const idMatch = String(f.farmer_id || '').toLowerCase().startsWith(lowerQuery);
+      const cleanId = String(f.farmer_id || '').replace(/^#/, '').toLowerCase();
+      const idMatch = cleanId.startsWith(lowerQuery);
+      const includesMatch = cleanId.includes(lowerQuery);
       const nameMatch = String(f.name || '').toLowerCase().includes(lowerQuery);
-      return idMatch || nameMatch;
+
+      // mprefix suffix match: e.g. typing "200" matches "915200" when mprefix is "915"
+      let mprefixSuffixMatch = false;
+      if (mprefixStr && cleanId.startsWith(mprefixStr) && numericQuery) {
+        const suffix = cleanId.slice(mprefixStr.length);
+        const suffixNumeric = suffix.replace(/\D/g, '');
+        if (suffixNumeric && parseInt(suffixNumeric, 10) === parseInt(numericQuery, 10)) {
+          mprefixSuffixMatch = true;
+        }
+      }
+
+      return idMatch || includesMatch || nameMatch || mprefixSuffixMatch;
     });
     
-    setSuggestions(filtered.slice(0, 10));
-  }, [blacklistedFarmerIds]);
+    setSuggestions(filtered.slice(0, 50));
+  }, [blacklistedFarmerIds, selectedMprefix]);
 
   useEffect(() => {
     searchFarmers(searchQuery, cachedFarmers);

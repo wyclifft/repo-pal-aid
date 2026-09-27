@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatWeight } from '@/utils/weightUtils';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
 import { LogOut, RefreshCcw, Scale, Receipt, ArrowRight } from 'lucide-react';
@@ -69,7 +70,7 @@ export function FarmerDashboard({ farmer, onLogout }: FarmerDashboardProps) {
                 <span className="text-xs font-semibold uppercase tracking-wider">{summary?.periodLabel || 'Period'} Total</span>
               </div>
               <div className="text-2xl font-bold text-gray-800">
-                {loading ? '--' : `${Number(summary?.totalWeight || 0).toFixed(1)}`} <span className="text-sm font-normal text-gray-500">KGs</span>
+                {loading ? '--' : `${formatWeight(Number(summary?.totalWeight || 0))}`} <span className="text-sm font-normal text-gray-500">KGs</span>
               </div>
             </CardContent>
           </Card>

@@ -26,6 +26,7 @@
  */
 
 import { useState, useMemo } from 'react';
+import { formatWeight } from '@/utils/weightUtils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, Download, X, Loader2 } from 'lucide-react';
 import { isPrinterConnected, printZReport } from '@/services/bluetooth';
@@ -91,12 +92,9 @@ export const DeviceZReportReceipt = ({
     if (!data?.transactions?.length) return [];
 
     if (isStoreReport) {
-      // Store Portal Report: Only sales/AI from Store portal (no milk_session_id)
+      // Store Portal Report: Only sales/AI (transtype 2 and 3)
       const storeOnly = data.transactions.filter(t => {
         const tt = Number((t as any).transtype) || 1;
-        const milkId = String((t as any).milk_session_id || '').trim();
-        // If it has a 10-character milk_session_id, it belongs to a Dairy Milk Session, not Store portal
-        if (milkId.length === 10) return false;
         return tt === 2 || tt === 3;
       });
       return filterTransactionsByPeriod(storeOnly, selectedPeriod, data.orgtype);
@@ -105,15 +103,7 @@ export const DeviceZReportReceipt = ({
     // Produce Session Report: Buy produce (1) and Sell produce (2)
     const produceOnly = data.transactions.filter(t => {
       const tt = Number((t as any).transtype) || 1;
-      const milkId = String((t as any).milk_session_id || '').trim();
-      if (tt === 1) return true;
-      // In Dairy (orgtype D), include transtype=2 (Sell Produce) if it belongs to a milk session.
-      // In Coffee (orgtype C), include transtype=2 (Sell Produce) unconditionally.
-      if (tt === 2) {
-        if (data.orgtype === 'C') return true;
-        if (data.orgtype === 'D' && milkId.length === 10) return true;
-      }
-      return false;
+      return tt === 1 || tt === 2;
     });
     return filterTransactionsByPeriod(produceOnly, selectedPeriod, data.orgtype);
   }, [data?.transactions, selectedPeriod, isStoreReport, data?.orgtype]);
@@ -214,10 +204,7 @@ export const DeviceZReportReceipt = ({
       }
     }
     if (selectedPeriod && selectedPeriod !== 'all' && selectedPeriod.length < 10) {
-      let code = selectedPeriod.toUpperCase();
-      if (['MO', 'MORNING', 'AM'].includes(code)) code = 'AM';
-      if (['AF', 'AFTERNOON', 'PM', 'EV', 'EVE', 'EVENING'].includes(code)) code = 'PM';
-      return code;
+      return selectedPeriod.toUpperCase();
     }
     return (data?.seasonName || 'AM').toUpperCase();
   }, [filteredTransactions, selectedPeriod, data?.seasonName, data?.isCoffee, data?.orgtype]);
@@ -399,7 +386,7 @@ export const DeviceZReportReceipt = ({
             // v2.10.75: render product header for every distinct product group,
             // including the first one (was only shown on transitions).
             const showItemSeparator = showProductDividers && (!prevTx || prevTx.product_code !== tx.product_code);
-            const qtyDisplay = (Math.floor((Number(tx.weight) || 0) * 10) / 10).toFixed(1);
+            const qtyDisplay = formatWeight(Number(tx.weight) || 0);
 
             return (
               <div key={tx.transrefno || index}>
@@ -438,11 +425,11 @@ export const DeviceZReportReceipt = ({
           <span className="tabular-nums">
             {showMoney ? (
               <>
-                {(Math.floor(group.totalWeight * 10) / 10).toFixed(1)} {subtotalUnitLabel}
+                {formatWeight(group.totalWeight)} {subtotalUnitLabel}
                 <span className="ml-3">KSh {group.totalAmount.toFixed(0)}</span>
               </>
             ) : (
-              <>{(Math.floor(group.totalWeight * 10) / 10).toFixed(1)} {weightUnit}</>
+              <>{formatWeight(group.totalWeight)} {weightUnit}</>
             )}
           </span>
         </div>
@@ -565,19 +552,19 @@ export const DeviceZReportReceipt = ({
                 {buyWeight > 0 && (
                   <div className="flex justify-between font-bold text-sm">
                     <span>GRAND TOTAL BUY</span>
-                    <span className="tabular-nums">{(Math.floor(buyWeight * 10) / 10).toFixed(1)} {weightUnit}</span>
+                    <span className="tabular-nums">{formatWeight(buyWeight)} {weightUnit}</span>
                   </div>
                 )}
                 {sellProduceWeight > 0 && (
                   <div className="flex justify-between font-bold text-sm">
                     <span>GRAND TOTAL SELL PRODUCE</span>
-                    <span className="tabular-nums">{(Math.floor(sellProduceWeight * 10) / 10).toFixed(1)} {weightUnit}</span>
+                    <span className="tabular-nums">{formatWeight(sellProduceWeight)} {weightUnit}</span>
                   </div>
                 )}
                 {storeItemsCount > 0 && (
                   <div className="flex justify-between font-bold text-sm">
                     <span>GRAND TOTAL STORE ITEMS</span>
-                    <span className="tabular-nums">{(Math.floor(storeItemsCount * 10) / 10).toFixed(1)} {itemsLabel}</span>
+                    <span className="tabular-nums">{formatWeight(storeItemsCount)} {itemsLabel}</span>
                   </div>
                 )}
                 {sellAiAmount > 0 && (

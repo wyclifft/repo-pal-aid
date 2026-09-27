@@ -9,12 +9,15 @@ interface DirectPrintOptions {
   periodLabel?: string;
   locationCode?: string;
   locationName?: string;
+  memberRoute?: string;
   cumulativeFrequency?: number;
   cumulativeByProduct?: Array<{ icode: string; product_name: string; weight: number }>;
   showCumulativeFrequency?: boolean;
   clerkName: string;
   productName?: string;
   deliveredBy?: string;
+  orgtype?: string;
+  showProductName?: boolean;
 }
 
 /**
@@ -59,6 +62,7 @@ export const printMilkReceiptDirect = async (
         farmerName: first.farmer_name,
         farmerId: first.farmer_id,
         route: first.route,
+        memberRoute: options.memberRoute || first.route,
         routeLabel: options.routeLabel,
         // Use session_descript for display if available, otherwise fall back to session code
         session: first.session_descript || first.session,
@@ -74,7 +78,9 @@ export const printMilkReceiptDirect = async (
         locationName: options.locationName,
         collectionDate: new Date(first.collection_date),
         receiptTitle: isSellProduce ? 'PURCHASE RECEIPT' : 'CUSTOMER DELIVERY RECEIPT',
-        totalLabel: 'Total Weight [Kgs]'
+        totalLabel: 'Total Weight [Kgs]',
+        orgtype: options.orgtype,
+        showProductName: options.showProductName
       });
 
       if (!result.success) {

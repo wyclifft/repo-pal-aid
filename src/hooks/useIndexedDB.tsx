@@ -12,7 +12,7 @@ import { plog } from '@/utils/persistentLogger';
 // for farmer_cumulative — we only drop the store if its keyPath isn't
 // already the v2.10.73 'cacheKey' shape.
 export const DB_NAME = 'milkCollectionDB';
-export const DB_VERSION = 16;
+export const DB_VERSION = 17;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -260,6 +260,27 @@ export const useIndexedDBStandalone = () => {
         try {
           const database = (event.target as IDBOpenDBRequest).result;
           
+          // Verify required stores exist
+          const requiredStores = [
+            'receipts', 'farmers', 'app_users', 'device_approvals',
+            'items', 'z_reports', 'periodic_reports', 'routes',
+            'sessions', 'device_config', 'farmer_cumulative', 'printed_receipts'
+          ];
+          const missingStores = requiredStores.filter(store => !database.objectStoreNames.contains(store));
+
+          if (missingStores.length > 0) {
+            console.error('[DB] SCHEMA MISMATCH: Missing required object stores:', missingStores);
+            setSchemaError(true);
+            database.close();
+            clearDatabase().then(() => {
+              console.log('[DB] Database cleared to recreate missing stores. Reinitializing...');
+              setTimeout(() => openDatabase(), 100);
+            }).catch(err => {
+              console.error('[DB] Failed to clear database:', err);
+            });
+            return;
+          }
+
           // Verify device_approvals store configuration
           if (database.objectStoreNames.contains('device_approvals')) {
             const tx = database.transaction('device_approvals', 'readonly');
@@ -358,29 +379,43 @@ export const useIndexedDBStandalone = () => {
   const getFarmers = useCallback((): Promise<Farmer[]> => {
     return new Promise((resolve, reject) => {
       if (!db) return reject('DB not ready');
-      const tx = db.transaction('farmers', 'readonly');
-      const store = tx.objectStore('farmers');
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      try {
+        const tx = db.transaction('farmers', 'readonly');
+        const store = tx.objectStore('farmers');
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      } catch (error) {
+        console.warn('Failed to get farmers from IndexedDB:', error);
+        resolve([]);
+      }
     });
   }, [db]);
 
   const saveUser = useCallback((user: AppUser) => {
     if (!db) return;
-    const tx = db.transaction('app_users', 'readwrite');
-    const store = tx.objectStore('app_users');
-    store.put(user);
+    try {
+      const tx = db.transaction('app_users', 'readwrite');
+      const store = tx.objectStore('app_users');
+      store.put(user);
+    } catch (error) {
+      console.warn('Failed to save app user to IndexedDB:', error);
+    }
   }, [db]);
 
   const getUser = useCallback((userId: string): Promise<AppUser | undefined> => {
     return new Promise((resolve, reject) => {
       if (!db) return reject('DB not ready');
-      const tx = db.transaction('app_users', 'readonly');
-      const store = tx.objectStore('app_users');
-      const request = store.get(userId);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      try {
+        const tx = db.transaction('app_users', 'readonly');
+        const store = tx.objectStore('app_users');
+        const request = store.get(userId);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      } catch (error) {
+        console.warn('Failed to get app user from IndexedDB:', error);
+        resolve(undefined);
+      }
     });
   }, [db]);
 
@@ -614,11 +649,16 @@ export const useIndexedDBStandalone = () => {
   const getDeviceApproval = useCallback((deviceFingerprint: string): Promise<{ device_fingerprint: string; backend_id: number | null; user_id: string; approved: boolean; last_synced: string } | undefined> => {
     return new Promise((resolve, reject) => {
       if (!db) return reject('DB not ready');
-      const tx = db.transaction('device_approvals', 'readonly');
-      const store = tx.objectStore('device_approvals');
-      const request = store.get(deviceFingerprint);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      try {
+        const tx = db.transaction('device_approvals', 'readonly');
+        const store = tx.objectStore('device_approvals');
+        const request = store.get(deviceFingerprint);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      } catch (error) {
+        console.warn('Failed to get device approval from IndexedDB:', error);
+        resolve(undefined);
+      }
     });
   }, [db]);
 
@@ -928,7 +968,18 @@ export const useIndexedDBStandalone = () => {
         const tx = db.transaction('routes', 'readonly');
         const store = tx.objectStore('routes');
         const request = store.getAll();
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => {
+          const result = request.result || [];
+          // Sort routes deterministically by descript (falling back to tcode)
+          const sorted = [...result].sort((a, b) => {
+            const descA = String(a?.descript || a?.tcode || '').trim();
+            const descB = String(b?.descript || b?.tcode || '').trim();
+            const comp = descA.localeCompare(descB, undefined, { numeric: true, sensitivity: 'base' });
+            if (comp !== 0) return comp;
+            return String(a?.tcode || '').trim().localeCompare(String(b?.tcode || '').trim(), undefined, { numeric: true, sensitivity: 'base' });
+          });
+          resolve(sorted);
+        };
         request.onerror = () => reject(request.error);
       } catch (error) {
         // Routes store may not exist in older DB versions
@@ -1284,7 +1335,7 @@ export const useIndexedDBStandalone = () => {
               && !options?.allowDecrease
               && isOnline
               && !!options?.verifySource
-              && HEAL_SOURCES.has(options.verifySource);
+              && HEAL_SOURCES.has(options.verifySource.split(':')[0]);
             let healedDecrease = false;
             if (decreaseAttempt && !options?.allowDecrease && !canHeal) {
               // Surface every blocked downward write so /debug shows why the

@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, useRef, useMemo } from 'react';
+import { formatWeight, roundWeight } from '@/utils/weightUtils';
 import { Scale, Loader2, RefreshCw, Package, Lock, Unlock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { Button } from '@/components/ui/button';
@@ -66,9 +67,9 @@ export const CoffeeWeightDisplay = ({
     onWeightChange: (w) => {
       console.log(`☕ CoffeeWeightDisplay onWeightChange callback: ${w} kg gross`);
       onGrossWeightChange(w);
-      // Calculate and propagate net weight using current tare
+      // Calculate and propagate net weight using current tare without truncating precision
       const netWeight = Math.max(0, w - localTareWeight);
-      onNetWeightChange(Math.floor(netWeight * 10) / 10);
+      onNetWeightChange(roundWeight(netWeight, 3));
     }, 
     onEntryTypeChange 
   });
@@ -85,14 +86,14 @@ export const CoffeeWeightDisplay = ({
   // Calculate net weight from gross (gross - sack tare)
   const netWeight = useMemo(() => {
     const net = Math.max(0, stableDisplayWeight - localTareWeight);
-    return Math.floor(net * 10) / 10;
+    return roundWeight(net, 3);
   }, [stableDisplayWeight, localTareWeight]);
 
   // Recalculate net weight when tare changes
   useEffect(() => {
     if (stableDisplayWeight > 0) {
       const newNet = Math.max(0, stableDisplayWeight - localTareWeight);
-      onNetWeightChange(Math.floor(newNet * 10) / 10);
+      onNetWeightChange(roundWeight(newNet, 3));
     }
   }, [localTareWeight, stableDisplayWeight, onNetWeightChange]);
 
@@ -144,14 +145,13 @@ export const CoffeeWeightDisplay = ({
     
     if (isStable) {
       const avg = recentReadings.reduce((a, b) => a + b, 0) / recentReadings.length;
-      // v2.12.61: Use consistent rounding that handles negative values
-      const roundedAvg = Math.round(avg * 10) / 10;
+      const roundedAvg = roundWeight(avg, 3);
       if (roundedAvg !== stableDisplayWeight) {
         setStableDisplayWeight(roundedAvg);
         lastDisplayUpdateRef.current = now;
       }
     } else if (timeSinceLastUpdate > DISPLAY_UPDATE_INTERVAL) {
-      setStableDisplayWeight(Math.round(incomingWeight * 10) / 10);
+      setStableDisplayWeight(roundWeight(incomingWeight, 3));
       lastDisplayUpdateRef.current = now;
     }
     
@@ -233,7 +233,7 @@ export const CoffeeWeightDisplay = ({
             {isConnecting 
               ? '...' 
               : displayGrossWeight !== 0
-                ? (Math.round(displayGrossWeight * 10) / 10).toFixed(1)
+                ? formatWeight(displayGrossWeight)
                 : scaleConnected 
                   ? '0.0'
                   : '--'
@@ -263,7 +263,7 @@ export const CoffeeWeightDisplay = ({
             <input
               type="number"
               inputMode="decimal"
-              step="0.1"
+              step="0.01"
               min="0"
               max="10"
               value={localTareWeight}
@@ -275,7 +275,7 @@ export const CoffeeWeightDisplay = ({
             />
           ) : (
             <span className="text-2xl sm:text-3xl font-black text-amber-700">
-              {(Math.floor(localTareWeight * 10) / 10).toFixed(1)}
+              {formatWeight(localTareWeight)}
             </span>
           )}
           
@@ -295,7 +295,7 @@ export const CoffeeWeightDisplay = ({
             netWeight > 0 ? 'text-green-700' : 'text-gray-400'
           }`}>
             {displayGrossWeight > 0 
-              ? (Math.floor(netWeight * 10) / 10).toFixed(1)
+              ? formatWeight(netWeight)
               : scaleConnected 
                 ? '0.0'
                 : '--'

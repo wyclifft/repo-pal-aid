@@ -15,12 +15,14 @@ import { CloseSessionConfirmDialog } from '@/components/CloseSessionConfirmDialo
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { APP_VERSION, APP_VERSION_CODE } from '@/constants/appVersion';
 import { generateMilkSessionId } from '@/utils/sessionMetadata';
+import { formatWeight } from '@/utils/weightUtils';
 import { useSync } from '@/contexts/SyncContext';
 import { useSessionClose } from '@/hooks/useSessionClose';
 import { useSessionExpiration } from '@/hooks/useSessionExpiration';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { useAuth } from '@/contexts/AuthContext';
-import { 
+import { useIndexedDB } from '@/hooks/useIndexedDB';
+import {
   quickReconnect, 
   quickReconnectPrinter, 
   getStoredDeviceInfo, 
@@ -63,6 +65,10 @@ interface DashboardProps {
   isOnline: boolean;
   pendingCount: number;
   pendingMilkCount?: number;
+  pendingMilkKgs?: number;
+  pendingMilkAmKgs?: number;
+  pendingMilkPmKgs?: number;
+  unsyncedMilkReceipts?: any[];
   pendingSalesCount?: number;
   // v2.10.60: count of multOpt=0 receipts the sync engine refused to upload (DUPLICATE_SESSION_DELIVERY)
   conflictedReceiptsCount?: number;
@@ -80,6 +86,10 @@ export const Dashboard = ({
   isOnline,
   pendingCount,
   pendingMilkCount = 0,
+  pendingMilkKgs = 0,
+  pendingMilkAmKgs = 0,
+  pendingMilkPmKgs = 0,
+  unsyncedMilkReceipts = [],
   pendingSalesCount = 0,
   conflictedReceiptsCount = 0,
   onStartCollection,
@@ -101,7 +111,159 @@ export const Dashboard = ({
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(() => {
     return initialDataRef.current?.route || null;
   });
-  
+
+  const { getUnsyncedReceipts, getUnsyncedSales, isReady: isDbReady } = useIndexedDB();
+  const [localUnsyncedReceipts, setLocalUnsyncedReceipts] = useState<any[]>([]);
+  const [localUnsyncedSalesCount, setLocalUnsyncedSalesCount] = useState<number>(0);
+
+  // Refresh unsynced receipts & sales directly from IndexedDB + Native SQLite
+  const refreshUnsyncedReceipts = useCallback(async () => {
+    try {
+      const idbReceipts = await getUnsyncedReceipts();
+      let nativeMilk: any[] = [];
+      try {
+        const { getUnsyncedFromLocalDB, isNativeStorageAvailable } = await import('@/services/offlineStorage');
+        if (isNativeStorageAvailable()) {
+          nativeMilk = await getUnsyncedFromLocalDB('milk_collection');
+        }
+      } catch {/* ignore native err */}
+
+      const idbRefs = new Set((idbReceipts || []).map((r: any) => String(r.reference_no || r.referenceNo || '').trim().toUpperCase()));
+      const missingNative = (nativeMilk || []).filter((r: any) => !idbRefs.has(String(r.referenceNo || r.reference_no || '').trim().toUpperCase()));
+
+      const combined = [...(idbReceipts || []), ...missingNative];
+      setLocalUnsyncedReceipts(combined);
+
+      // Fetch pending sales counts directly as well
+      try {
+        const idbSales = await getUnsyncedSales();
+        let nativeSalesCount = 0;
+        const { getUnsyncedFromLocalDB, isNativeStorageAvailable } = await import('@/services/offlineStorage');
+        if (isNativeStorageAvailable()) {
+          const storeSales = await getUnsyncedFromLocalDB('store_sale');
+          const aiSales = await getUnsyncedFromLocalDB('ai_sale');
+          const idbSaleRefs = new Set((idbSales || []).map((s: any) => String(s.transrefno || s.reference_no || s.referenceNo || '').trim().toUpperCase()));
+          nativeSalesCount = (storeSales || []).filter((s: any) => !idbSaleRefs.has(String(s.referenceNo || s.transrefno || '').trim().toUpperCase())).length +
+                             (aiSales || []).filter((s: any) => !idbSaleRefs.has(String(s.referenceNo || s.transrefno || '').trim().toUpperCase())).length;
+        }
+        setLocalUnsyncedSalesCount((idbSales || []).length + nativeSalesCount);
+      } catch {/* ignore sales err */}
+    } catch (err) {
+      console.warn('[DASHBOARD] Failed to refresh unsynced receipts:', err);
+    }
+  }, [getUnsyncedReceipts, getUnsyncedSales]);
+
+  // Sync state on mount, selectedRoute change, receiptSaved, syncComplete, and prop updates
+  useEffect(() => {
+    if (isDbReady) {
+      refreshUnsyncedReceipts();
+    }
+  }, [isDbReady, selectedRoute, refreshUnsyncedReceipts]);
+
+  useEffect(() => {
+    const handleRefresh = () => {
+      refreshUnsyncedReceipts();
+    };
+    window.addEventListener('receiptSaved', handleRefresh);
+    window.addEventListener('syncComplete', handleRefresh);
+    return () => {
+      window.removeEventListener('receiptSaved', handleRefresh);
+      window.removeEventListener('syncComplete', handleRefresh);
+    };
+  }, [refreshUnsyncedReceipts]);
+
+  // Effective unsynced list combining prop and direct local query (deduplicated by reference)
+  const effectiveUnsyncedList = useMemo(() => {
+    const map = new Map<string, any>();
+    const listA = unsyncedMilkReceipts || [];
+    const listB = localUnsyncedReceipts || [];
+
+    listA.forEach((r: any) => {
+      const key = String(r.reference_no || r.referenceNo || r.orderId || Math.random()).trim().toUpperCase();
+      if (key) map.set(key, r);
+    });
+    listB.forEach((r: any) => {
+      const key = String(r.reference_no || r.referenceNo || r.orderId || Math.random()).trim().toUpperCase();
+      if (key) map.set(key, r);
+    });
+
+    return Array.from(map.values());
+  }, [localUnsyncedReceipts, unsyncedMilkReceipts]);
+
+  // v2.12.89: Compute route-specific unsynced KGs grouped by official session.descript
+  const routeUnsyncedData = useMemo(() => {
+    if (!selectedRoute) {
+      return { totalKgs: 0, sessionBreakdown: [] as { name: string; kgs: number }[] };
+    }
+
+    const tcode = String(selectedRoute.tcode || '').trim().toUpperCase();
+    const descript = String(selectedRoute.descript || '').trim().toUpperCase();
+    const ccode = String(selectedRoute.ccode || '').trim().toUpperCase();
+    const centerCode = String((selectedRoute as any).center_code || '').trim().toUpperCase();
+    const code = String((selectedRoute as any).code || '').trim().toUpperCase();
+    const mprefix = String((selectedRoute as any).mprefix || '').trim().toUpperCase();
+
+    // Strip non-alphanumeric for raw comparison (e.g. "T008" vs "008" or "T-008")
+    const rawTcode = tcode.replace(/[^A-Z0-9]/g, '');
+    const rawDescript = descript.replace(/[^A-Z0-9]/g, '');
+    const rawCenter = centerCode.replace(/[^A-Z0-9]/g, '');
+    const rawCode = code.replace(/[^A-Z0-9]/g, '');
+
+    const totalsBySession: Record<string, number> = {};
+    let totalKgs = 0;
+
+    effectiveUnsyncedList.forEach((r: any) => {
+      if (r.type === 'sale') return;
+      const tt = Number(r.transtype || (r as any).transtype || 1);
+      if (tt !== 1) return; // Only Buy Produce (transtype = 1) contributes to route/session KGs
+
+      const rRoute = String(r.route || r.route_code || r.center_code || r.memberRoute || '').trim().toUpperCase();
+      const rawReceiptRoute = rRoute.replace(/[^A-Z0-9]/g, '');
+
+      // Check if receipt matches selected route
+      let matchesRoute = false;
+
+      if (!rRoute) {
+        // If receipt has no route tag recorded at all, include it as general pending
+        matchesRoute = true;
+      } else if (
+        (tcode && (rRoute === tcode || rRoute.includes(tcode) || tcode.includes(rRoute))) ||
+        (descript && (rRoute === descript || rRoute.includes(descript) || descript.includes(rRoute))) ||
+        (ccode && (rRoute === ccode || rRoute.includes(ccode) || ccode.includes(rRoute))) ||
+        (centerCode && (rRoute === centerCode || rRoute.includes(centerCode) || centerCode.includes(rRoute))) ||
+        (code && (rRoute === code || rRoute.includes(code) || code.includes(rRoute))) ||
+        (mprefix && (rRoute === mprefix || rRoute.includes(mprefix) || mprefix.includes(rRoute)))
+      ) {
+        matchesRoute = true;
+      } else if (
+        (rawTcode && (rawReceiptRoute === rawTcode || (rawTcode.length >= 2 && rawReceiptRoute.includes(rawTcode)))) ||
+        (rawDescript && (rawReceiptRoute === rawDescript || (rawDescript.length >= 3 && (rawReceiptRoute.includes(rawDescript) || rawDescript.includes(rawReceiptRoute))))) ||
+        (rawCenter && (rawReceiptRoute === rawCenter || (rawCenter.length >= 2 && rawReceiptRoute.includes(rawCenter)))) ||
+        (rawCode && (rawReceiptRoute === rawCode || (rawCode.length >= 2 && rawReceiptRoute.includes(rawCode))))
+      ) {
+        matchesRoute = true;
+      }
+
+      if (matchesRoute) {
+        const w = parseFloat(r.weight || r.liters || r.quantity || 0);
+        if (!isNaN(w) && w > 0) {
+          totalKgs += w;
+          // Use official session_descript or session field from receipt
+          const rawSession = String(r.session_descript || r.session || (r as any).session_name || 'Session').trim();
+          const sessionLabel = rawSession && rawSession !== '0' && rawSession !== 'undefined' ? rawSession : 'Session';
+          totalsBySession[sessionLabel] = (totalsBySession[sessionLabel] || 0) + w;
+        }
+      }
+    });
+
+    const sessionBreakdown = Object.entries(totalsBySession).map(([name, kgs]) => ({
+      name,
+      kgs,
+    }));
+
+    return { totalKgs, sessionBreakdown };
+  }, [selectedRoute, effectiveUnsyncedList]);
+
   const [selectedSession, setSelectedSession] = useState<Session | null>(() => {
     return initialDataRef.current?.session || null;
   });
@@ -263,6 +425,12 @@ export const Dashboard = ({
 
   const handleSessionChange = (session: Session | null) => {
     setSelectedSession(session);
+    if (session) {
+      const code = (session.Icode || (session as any).SCODE || session.descript || '').toString().trim();
+      if (code) {
+        localStorage.setItem('user_last_selected_session', code);
+      }
+    }
     // Reset expiration tracking when user selects a new session
     resetExpiration();
   };
@@ -390,6 +558,9 @@ export const Dashboard = ({
   };
 
 
+  const displayMilkCount = Math.max(effectiveUnsyncedList.length, pendingMilkCount);
+  const displaySalesCount = Math.max(localUnsyncedSalesCount, pendingSalesCount);
+
   return (
     <div className="min-h-screen flex flex-col bg-white dark:bg-background">
       {/* Member Sync Banner */}
@@ -509,13 +680,47 @@ export const Dashboard = ({
         <div className="text-center px-3 pb-0.5">
           <h2 className="text-white font-bold" style={{ fontSize: 'clamp(1rem, 4.5vw, 1.25rem)' }}>{userName}</h2>
           {sessionActive && selectedSession && selectedRoute ? (
-            <div className="mt-0.5">
+            <div className="mt-0.5 flex flex-col items-center gap-1">
               <div className="inline-flex items-center gap-1 bg-white/15 px-2.5 py-1 rounded-full flex-wrap justify-center">
                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
                 <span className="text-white font-medium" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.8rem)' }}>
                   Active {selectedSession.descript?.trim()} • {selectedRoute.descript?.trim()}
                 </span>
               </div>
+
+              {/* Unsynced Offline KGs Badge - route-filtered & official session.descript */}
+              {routeUnsyncedData.totalKgs > 0 && (
+                <div className="mt-1">
+                  {routeUnsyncedData.sessionBreakdown.length > 1 ? (
+                    <div className="inline-flex items-center gap-1.5 bg-amber-400 text-gray-950 px-3 py-1.5 rounded-full font-black shadow-md border-2 border-amber-200 tracking-wide text-xs sm:text-sm flex-wrap justify-center">
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping flex-shrink-0" />
+                      {routeUnsyncedData.sessionBreakdown.map((s, idx) => (
+                        <span key={s.name} className="flex items-center gap-1">
+                          {idx > 0 && <span className="text-gray-700 mr-1">•</span>}
+                          <span>{s.name}: {formatWeight(s.kgs)} KG</span>
+                        </span>
+                      ))}
+                      <span className="bg-gray-950 text-amber-300 px-2 py-0.5 rounded-full text-xs font-black ml-0.5">
+                        TOTAL: {formatWeight(routeUnsyncedData.totalKgs)} KGS
+                      </span>
+                    </div>
+                  ) : routeUnsyncedData.sessionBreakdown.length === 1 ? (
+                    <div className="inline-flex items-center gap-1.5 bg-amber-400 text-gray-950 px-3.5 py-1 rounded-full font-black shadow-md border-2 border-amber-200 tracking-wide">
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping flex-shrink-0" />
+                      <span style={{ fontSize: 'clamp(0.85rem, 3.2vw, 1.1rem)' }}>
+                        {routeUnsyncedData.sessionBreakdown[0].name}: {formatWeight(routeUnsyncedData.sessionBreakdown[0].kgs)} KGS (OFFLINE)
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 bg-amber-400 text-gray-950 px-3.5 py-1 rounded-full font-black shadow-md border-2 border-amber-200 tracking-wide">
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping flex-shrink-0" />
+                      <span style={{ fontSize: 'clamp(0.85rem, 3.2vw, 1.1rem)' }}>
+                        {formatWeight(routeUnsyncedData.totalKgs)} KGS (OFFLINE)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-white/80" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.8rem)' }}>Welcome back</p>
@@ -644,11 +849,11 @@ export const Dashboard = ({
           {/* Sync Totals - Moved here for visibility during work */}
           <div className="text-center py-1 flex items-center justify-center gap-3 flex-wrap mb-2">
             <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.65rem, 2.3vw, 0.75rem)' }}>
-              {produceLabel}: {pendingMilkCount}
+              {produceLabel}: {displayMilkCount}
             </span>
             <span className="text-gray-400">|</span>
             <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.65rem, 2.3vw, 0.75rem)' }}>
-              Store/AI: {pendingSalesCount}
+              Store/AI: {displaySalesCount}
             </span>
             {conflictedReceiptsCount > 0 && (
               <span

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { formatWeight } from '@/utils/weightUtils';
 import { type MilkCollection } from '@/lib/supabase';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSync } from '@/contexts/SyncContext';
@@ -85,7 +86,7 @@ export const ReceiptList = ({ refreshTrigger }: { refreshTrigger?: number }) => 
                 key={receipt.orderId}
                 className="p-3 bg-yellow-50 border-l-4 border-yellow-500 rounded text-sm"
               >
-                {receipt.farmer_id} - {(Math.floor(Number(receipt.weight || 0) * 10) / 10).toFixed(1)} Kg ⚠️
+                {receipt.farmer_id} - {formatWeight(Number(receipt.weight || 0))} Kg ⚠️
               </li>
             ))}
           </ul>

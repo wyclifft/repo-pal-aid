@@ -1,4 +1,5 @@
 import type { ZReportData, DeviceZReportData } from '@/services/mysqlApi';
+import { formatWeight } from '@/utils/weightUtils';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -37,8 +38,8 @@ export const printThermalZReport = (reportData: ZReportData, produceLabel?: stri
   const sessionSection = isCoffee ? '' : `
       <div class="section">
         <div class="bold">BY SESSION:</div>
-        <div>Morning: ${reportData.bySession.AM.farmers} Farmers (${(Math.floor(reportData.bySession.AM.liters * 10) / 10).toFixed(1)}${weightUnit})</div>
-        <div>Evening: ${reportData.bySession.PM.farmers} Farmers (${(Math.floor(reportData.bySession.PM.liters * 10) / 10).toFixed(1)}${weightUnit})</div>
+        <div>AM: ${reportData.bySession.AM.farmers} Farmers (${formatWeight(reportData.bySession.AM.liters)}${weightUnit})</div>
+        <div>PM: ${reportData.bySession.PM.farmers} Farmers (${formatWeight(reportData.bySession.PM.liters)}${weightUnit})</div>
       </div>
       <div class="line"></div>`;
 
@@ -81,21 +82,21 @@ export const printThermalZReport = (reportData: ZReportData, produceLabel?: stri
       <div class="section center bold">
         <div>Total Entries: ${reportData.totals.entries}</div>
         <div>Total Farmers: ${reportData.totals.farmers}</div>
-        <div>Total Kgs: ${(Math.floor(reportData.totals.liters * 10) / 10).toFixed(1)}</div>
+        <div>Total Kgs: ${formatWeight(reportData.totals.liters)}</div>
       </div>
       <div class="line"></div>
       ${sessionSection}
       <div class="section">
         <div class="bold">BY ${isCoffee ? 'CENTER' : 'ROUTE'}:</div>
         ${Object.entries(reportData.byRoute).map(([route, data]) => 
-          `<div>${route}: ${(Math.floor(data.total * 10) / 10).toFixed(1)}${weightUnit}</div>`
+          `<div>${route}: ${formatWeight(data.total)}${weightUnit}</div>`
         ).join('')}
       </div>
       <div class="line"></div>
       <div class="section">
         <div class="bold">BY COLLECTOR:</div>
         ${Object.entries(reportData.byCollector).map(([collector, data]) => 
-          `<div>${collector}: ${(Math.floor(data.liters * 10) / 10).toFixed(1)}${weightUnit}</div>`
+          `<div>${collector}: ${formatWeight(data.liters)}${weightUnit}</div>`
         ).join('')}
       </div>
       <div class="line"></div>
@@ -130,7 +131,7 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       lines.push('='.repeat(48));
       lines.push('SUMMARY');
       lines.push('='.repeat(48));
-      lines.push(`Total ${weightLabel}: ${(Math.floor(reportData.totals.liters * 10) / 10).toFixed(1)} ${weightUnit}`);
+      lines.push(`Total ${weightLabel}: ${formatWeight(reportData.totals.liters)} ${weightUnit}`);
       lines.push(`Total Farmers: ${reportData.totals.farmers}`);
       lines.push(`Total Entries: ${reportData.totals.entries}`);
       lines.push('');
@@ -138,8 +139,8 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       if (!isCoffee) {
         lines.push('BY SESSION');
         lines.push('='.repeat(48));
-        lines.push(`Morning (AM): ${reportData.bySession.AM.farmers} Farmers (${(Math.floor(reportData.bySession.AM.liters * 10) / 10).toFixed(1)} ${weightUnit})`);
-        lines.push(`Evening (PM): ${reportData.bySession.PM.farmers} Farmers (${(Math.floor(reportData.bySession.PM.liters * 10) / 10).toFixed(1)} ${weightUnit})`);
+        lines.push(`AM: ${reportData.bySession.AM.farmers} Farmers (${formatWeight(reportData.bySession.AM.liters)} ${weightUnit})`);
+        lines.push(`PM: ${reportData.bySession.PM.farmers} Farmers (${formatWeight(reportData.bySession.PM.liters)} ${weightUnit})`);
         lines.push('');
       }
 
@@ -153,9 +154,9 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
           ...(data.PM || []).map((c: any) => c.farmer_id)
         ]).size;
         if (isCoffee) {
-          lines.push(`${route}: ${totalFarmers} farmers, Total=${(Math.floor(data.total * 10) / 10).toFixed(1)} ${weightUnit}`);
+          lines.push(`${route}: ${totalFarmers} farmers, Total=${formatWeight(data.total)} ${weightUnit}`);
         } else {
-          lines.push(`${route}: AM=${amFarmers} farmers, PM=${pmFarmers} farmers, Total=${(Math.floor(data.total * 10) / 10).toFixed(1)} ${weightUnit}`);
+          lines.push(`${route}: AM=${amFarmers} farmers, PM=${pmFarmers} farmers, Total=${formatWeight(data.total)} ${weightUnit}`);
         }
       });
       lines.push('');
@@ -174,9 +175,9 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
             : 0
         );
         if (isCoffee) {
-          lines.push(`${collector}: ${data.farmers} farmers, ${(Math.floor(data.liters * 10) / 10).toFixed(1)} ${weightUnit}`);
+          lines.push(`${collector}: ${data.farmers} farmers, ${formatWeight(data.liters)} ${weightUnit}`);
         } else {
-          lines.push(`${collector}: ${data.farmers} farmers, ${sessionCount} session IDs, ${(Math.floor(data.liters * 10) / 10).toFixed(1)} ${weightUnit}`);
+          lines.push(`${collector}: ${data.farmers} farmers, ${sessionCount} session IDs, ${formatWeight(data.liters)} ${weightUnit}`);
         }
       });
 
@@ -430,7 +431,7 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
             const rawQty = Number(tx.weight || 0);
             groupQty += rawQty;
             const qtyFormatted = isProduceSection
-              ? (Math.floor(rawQty * 10) / 10).toFixed(1)
+              ? formatWeight(rawQty)
               : String(Math.max(0, Math.round(rawQty)));
 
             lines.push(
@@ -443,7 +444,7 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
           }
           if (isProduceSection) {
             sellProduceWeight += groupQty;
-            lines.push(`${g.label} TOTAL    ${(Math.floor(groupQty * 10) / 10).toFixed(1)} ${weightUnit}    KSh ${g.amount.toFixed(0)}`);
+            lines.push(`${g.label} TOTAL    ${formatWeight(groupQty)} ${weightUnit}    KSh ${g.amount.toFixed(0)}`);
           } else {
             const itemsLabel = groupQty === 1 ? 'item' : 'items';
             lines.push(`${g.label} TOTAL    ${Math.round(groupQty)} ${itemsLabel}    KSh ${g.amount.toFixed(0)}`);
@@ -458,11 +459,11 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
             lines.push(
               `${padL((tx.farmer_id || '').substring(0, 10), 10)} ` +
               `${padL((tx.refno || '').slice(-8), 8)} ` +
-              `${padR((Math.floor(tx.weight * 10) / 10).toFixed(1), 10)} ` +
+              `${padR(formatWeight(tx.weight), 10)} ` +
               `${padR((tx.time || '').substring(0, 8), 8)}`
             );
           }
-          lines.push(`${g.label} TOTAL    ${(Math.floor(g.weight * 10) / 10).toFixed(1)} ${weightUnit}`);
+          lines.push(`${g.label} TOTAL    ${formatWeight(g.weight)} ${weightUnit}`);
           buyWeight += g.weight;
         }
         sectionIdx++;
@@ -476,10 +477,10 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       lines.push('');
       lines.push('='.repeat(48));
       if (buyWeight > 0) {
-        lines.push(`TOTAL BUY                ${(Math.floor(buyWeight * 10) / 10).toFixed(1)} ${weightUnit}`);
+        lines.push(`TOTAL BUY                ${formatWeight(buyWeight)} ${weightUnit}`);
       }
       if (sellProduceWeight > 0) {
-        lines.push(`TOTAL SELL PRODUCE       ${(Math.floor(sellProduceWeight * 10) / 10).toFixed(1)} ${weightUnit}`);
+        lines.push(`TOTAL SELL PRODUCE       ${formatWeight(sellProduceWeight)} ${weightUnit}`);
       }
       if (storeItemsCount > 0) {
         const itemsLabel = storeItemsCount === 1 ? 'item' : 'items';

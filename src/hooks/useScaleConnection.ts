@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { roundWeight } from '@/utils/weightUtils';
 import { Capacitor } from '@capacitor/core';
 import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetooth-le';
 import { toast } from 'sonner';
@@ -195,6 +196,21 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     }
     
     if (requireStableReading && newWeight !== 0) {
+      // INSTANT FLICKER DETECTOR: If new weight deviates from last stable weight by even 0.01 kg,
+      // lock capture IMMEDIATELY.
+      const isFlickering = lastStableWeightRef.current !== null &&
+        Math.abs(newWeight - lastStableWeightRef.current) > 0.01;
+
+      if (isFlickering) {
+        console.log(`⚖️ Scale flicker/fluctuation detected: ${newWeight} kg (was ${lastStableWeightRef.current}) — INSTANT CAPTURE LOCK`);
+        lastStableWeightRef.current = null;
+        stableReadingsRef.current = [newWeight];
+        updateWaitingState(true);
+        setStableReadingProgress(33);
+        window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: false, weight: newWeight } }));
+        return;
+      }
+
       // Add to readings buffer
       stableReadingsRef.current.push(newWeight);
       
@@ -212,8 +228,8 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         const stableWeight = stableReadingsRef.current.slice(-STABLE_READING_COUNT)
           .reduce((a, b) => a + b, 0) / STABLE_READING_COUNT;
         
-        // v2.12.61: Use consistent rounding
-        const finalWeight = Math.round(stableWeight * 10) / 10;
+        // Preserve exact scale precision (up to 3 decimals)
+        const finalWeight = roundWeight(stableWeight, 3);
         
         // Only update and broadcast if it's the first stable reading OR weight changed significantly
         if (lastStableWeightRef.current === null || Math.abs(finalWeight - lastStableWeightRef.current) > 0.01) {
@@ -238,21 +254,15 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
           setStableReadingProgress(100);
         }
       } else {
-        // Readings are not stable - check if we were previously stable
-        const isSignificantlyDifferent = lastStableWeightRef.current === null ||
-          Math.abs(newWeight - lastStableWeightRef.current) > STABLE_READING_THRESHOLD;
-
-        if (isSignificantlyDifferent) {
-          if (!isWaiting) {
-            console.log(`⚖️ Weight fluctuating: ${newWeight} kg (last stable: ${lastStableWeightRef.current})`);
-            updateWaitingState(true);
-            // Reset buffer and last stable weight so we can re-evaluate
-            stableReadingsRef.current = [newWeight]; // Keep current as first new reading
-            lastStableWeightRef.current = null;
-            // Broadcast that we are now fluctuating
-            window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: false, weight: newWeight } }));
-          }
+        // Readings are not stable (scale is fluctuating or settling) — ALWAYS lock capture
+        console.log(`⚖️ Scale fluctuating: ${newWeight} kg — locking capture`);
+        updateWaitingState(true);
+        lastStableWeightRef.current = null;
+        if (stableReadingsRef.current.length > STABLE_READING_COUNT) {
+          stableReadingsRef.current = [newWeight];
         }
+        // ALWAYS broadcast unstable event to lock Capture button
+        window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: false, weight: newWeight } }));
       }
     } else {
       // No stable reading required OR weight is <= 0 - use weight directly
@@ -428,15 +438,6 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   const autoReconnect = useCallback(async () => {
     const storedDevice = getStoredDeviceInfo();
     if (!storedDevice || scaleConnected) return;
-
-    // v2.10.99: Never reconnect to the BLE half of a dual-mode scale
-    // (e.g. HC-04BLE). That port silently pairs but never streams weight.
-    // Clear it once so the manager stops retrying every 2-4 seconds.
-    if (isBleHalfOfDualModeScale(storedDevice.deviceName)) {
-      console.warn(`🚫 [v2.10.99] Skipping autoReconnect — "${storedDevice.deviceName}" is the BLE half of a dual-mode scale. Pair the SPP port via Settings → Classic BT.`);
-      clearStoredDevice();
-      return;
-    }
 
     // Ensure Bluetooth is enabled before attempting auto-reconnect
     // Note: We don't toast error here to avoid annoying the user on every mount,

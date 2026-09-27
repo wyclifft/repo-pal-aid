@@ -91,12 +91,13 @@ export const markNativeRecordSynced = async (
   }
   
   try {
-    console.log(`[STORAGE] Attempting to mark synced: ${referenceNo} (backendId=${backendId})`);
-    const result = await OfflineStorage.markAsSynced({ referenceNo, backendId });
+    const cleanRef = String(referenceNo || '').trim();
+    console.log(`[STORAGE] Attempting to mark synced: ${cleanRef} (backendId=${backendId})`);
+    const result = await OfflineStorage.markAsSynced({ referenceNo: cleanRef, backendId });
     if (result.success) {
-      console.log(`[STORAGE] RESPONSE: Mark synced SUCCESS for ${referenceNo}`);
+      console.log(`[STORAGE] RESPONSE: Mark synced SUCCESS for ${cleanRef}`);
     } else {
-      console.warn(`[STORAGE] RESPONSE: Mark synced FAILED for ${referenceNo}`);
+      console.warn(`[STORAGE] RESPONSE: Mark synced FAILED for ${cleanRef}`);
     }
     return result.success;
   } catch (e) {

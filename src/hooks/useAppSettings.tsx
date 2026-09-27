@@ -54,6 +54,8 @@ export interface AppSettings {
   capture_photo: number;
   // v2.12.72: Store specific print copies (DB: store_print_copies, default: 0 = fallback to printoptions)
   store_print_copies: number;
+  // Print product row on receipt: 1 = show product name (e.g. Raw Milk), 0 = hide product name row (DB: print_product, default: 1)
+  print_product: number;
 }
 
 // Default settings - rdesc is empty to force use of dynamic DB value
@@ -80,7 +82,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sacco_module_active: 0, // v2.12.18: Sacco module hidden by default
   cumulative_route_filter: 0, // v2.12.36: Default to all routes
   capture_photo: 1, // v2.12.42: Default to required
-  store_print_copies: 0 // v2.12.72: Default to fallback
+  store_print_copies: 0, // v2.12.72: Default to fallback
+  print_product: 1 // Default to 1 (show product name on receipt)
 };
 
 const SETTINGS_STORAGE_KEY = 'app_settings';
@@ -153,6 +156,8 @@ interface AppSettingsContextType {
   capturePhoto: boolean;
   // v2.12.72: Number of print copies for Store module (falls back to global printCopies if 0)
   storePrintCopies: number;
+  // Whether to show product name row on receipt (e.g. Product Raw Milk)
+  showProductName: boolean;
 }
 
 // React context
@@ -402,7 +407,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
             sacco_module_active: parseInt(String(deviceData.app_settings?.sacco_module_active ?? DEFAULT_SETTINGS.sacco_module_active), 10),
             cumulative_route_filter: parseInt(String(deviceData.app_settings?.cumulative_route_filter ?? DEFAULT_SETTINGS.cumulative_route_filter), 10),
             capture_photo: parseInt(String(deviceData.app_settings?.capture_photo ?? DEFAULT_SETTINGS.capture_photo), 10),
-            store_print_copies: parseInt(String(deviceData.app_settings?.store_print_copies ?? DEFAULT_SETTINGS.store_print_copies), 10)
+            store_print_copies: parseInt(String(deviceData.app_settings?.store_print_copies ?? DEFAULT_SETTINGS.store_print_copies), 10),
+            print_product: parseInt(String(deviceData.app_settings?.print_product ?? deviceData.app_settings?.printProduct ?? DEFAULT_SETTINGS.print_product), 10)
           };
           
           // Log settings changes for debugging
@@ -419,10 +425,14 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           setIsDeviceAuthorized(true);
           setIsPendingApproval(false);
           localStorage.setItem('device_authorized', 'true');
+          if (deviceData.ccode) {
+            localStorage.setItem('device_ccode', deviceData.ccode);
+          }
           setLastRefresh(Date.now());
           
-          // Dispatch event to notify other components of settings update
+          // Dispatch event to notify other components of settings update & device authorization
           window.dispatchEvent(new CustomEvent('psettingsUpdated', { detail: newSettings }));
+          window.dispatchEvent(new CustomEvent('deviceAuthorized', { detail: { ccode: deviceData.ccode } }));
         } else {
           // Response OK but no data - treat as unauthorized
           setIsDeviceAuthorized(false);
@@ -624,6 +634,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const capturePhoto = settings.capture_photo === 1;
   // v2.12.72: Store specific print copies (falls back to global printoptions if not set)
   const storePrintCopies = settings.store_print_copies > 0 ? settings.store_print_copies : printCopies;
+  // Whether to show product name row on receipt
+  const showProductName = settings.print_product !== 0;
 
   return {
     settings,
@@ -656,7 +668,8 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
     saccoModuleActive,
     useCumulativeRouteFilter,
     capturePhoto,
-    storePrintCopies
+    storePrintCopies,
+    showProductName
   };
 };
 

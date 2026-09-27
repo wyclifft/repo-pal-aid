@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { X, Search } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { Search } from 'lucide-react';
 import { type Farmer } from '@/lib/supabase';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { isFarmerInactive, showInactiveMemberToast } from '@/hooks/useFarmerResolution';
@@ -11,6 +11,9 @@ interface FarmerSearchModalProps {
   farmers: Farmer[];
 }
 
+const INITIAL_LIMIT = 50;
+const BATCH_SIZE = 50;
+
 export const FarmerSearchModal = ({
   isOpen,
   onClose,
@@ -18,32 +21,36 @@ export const FarmerSearchModal = ({
   farmers,
 }: FarmerSearchModalProps) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filteredFarmers, setFilteredFarmers] = useState<Farmer[]>([]);
+  const [displayLimit, setDisplayLimit] = useState(INITIAL_LIMIT);
   const inputRef = useRef<HTMLInputElement>(null);
   const wasOpenRef = useRef(false);
 
-  // Reset search and focus input only when modal transitions from closed to open
+  // Reset search, limit, and focus input immediately when modal transitions from closed to open
   useEffect(() => {
     if (isOpen && !wasOpenRef.current) {
       setSearchQuery('');
-      setFilteredFarmers(farmers.slice(0, 50));
-      setTimeout(() => inputRef.current?.focus(), 100);
+      setDisplayLimit(INITIAL_LIMIT);
+      setTimeout(() => inputRef.current?.focus(), 50);
     }
     wasOpenRef.current = isOpen;
   }, [isOpen]);
 
-  // Real-time search filter
+  // Reset limit when search query changes
   useEffect(() => {
+    setDisplayLimit(INITIAL_LIMIT);
+  }, [searchQuery]);
+
+  // Synchronous real-time search filter with useMemo for fast responses
+  const filteredFarmers = useMemo(() => {
     if (!searchQuery.trim()) {
-      setFilteredFarmers(farmers.slice(0, 50));
-      return;
+      return farmers;
     }
 
     const query = searchQuery.toLowerCase().trim();
     // Extract numeric portion if user entered numbers only
     const numericQuery = searchQuery.replace(/\D/g, '');
     
-    const filtered = farmers.filter((farmer) => {
+    return farmers.filter((farmer) => {
       const farmerId = String(farmer.farmer_id || '').toLowerCase();
       const farmerName = String(farmer.name || '').toLowerCase();
       
@@ -64,9 +71,21 @@ export const FarmerSearchModal = ({
       
       return false;
     });
-    
-    setFilteredFarmers(filtered.slice(0, 50));
   }, [searchQuery, farmers]);
+
+  // Render only top items to ensure immediate opening (<10ms)
+  const visibleFarmers = useMemo(() => {
+    return filteredFarmers.slice(0, displayLimit);
+  }, [filteredFarmers, displayLimit]);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop <= clientHeight + 200) {
+      if (displayLimit < filteredFarmers.length) {
+        setDisplayLimit((prev) => Math.min(prev + BATCH_SIZE, filteredFarmers.length));
+      }
+    }
+  };
 
   const handleSelect = (farmer: Farmer) => {
     if (isFarmerInactive(farmer)) {
@@ -102,14 +121,14 @@ export const FarmerSearchModal = ({
         </div>
         
         {/* Farmer List */}
-        <div className="flex-1 overflow-y-auto px-4 pb-4">
+        <div className="flex-1 overflow-y-auto px-4 pb-32 sm:pb-8 min-h-0" onScroll={handleScroll}>
           {filteredFarmers.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               No farmers found
             </div>
           ) : (
             <div className="space-y-1">
-              {filteredFarmers.map((farmer) => {
+              {visibleFarmers.map((farmer) => {
                 // Clean farmer_id for display (strip leading #)
                 const displayId = farmer.farmer_id.replace(/^#/, '').trim();
                 const inactive = isFarmerInactive(farmer);
@@ -141,6 +160,11 @@ export const FarmerSearchModal = ({
                   </div>
                 );
               })}
+              {filteredFarmers.length > visibleFarmers.length && (
+                <div className="text-center py-3 text-xs text-gray-500 font-medium">
+                  Showing {visibleFarmers.length} of {filteredFarmers.length} members — scroll to view more
+                </div>
+              )}
             </div>
           )}
         </div>

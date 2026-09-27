@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { 
+import { formatWeight, roundWeight } from '@/utils/weightUtils';
+import {
   type ScaleType, 
   type ConnectionType,
 } from '@/services/bluetooth';
@@ -94,10 +95,10 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
         const stableWeight = stableReadingsRef.current.slice(-STABLE_READING_COUNT)
           .reduce((a, b) => a + b, 0) / STABLE_READING_COUNT;
         
-        // v2.12.61: Consistent rounding
-        const finalWeight = Math.round(stableWeight * 10) / 10;
+        // Preserve exact scale precision
+        const finalWeight = roundWeight(stableWeight, 3);
         onWeightChange(finalWeight);
-        setManualWeight(finalWeight.toFixed(1));
+        setManualWeight(formatWeight(finalWeight));
         onEntryTypeChange('scale');
         setIsWaitingForStable(false);
         setStableReadingProgress(100);
@@ -116,9 +117,8 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
       }
     } else {
       // No stable reading required OR weight <= 0 - use weight directly (including negative)
-      // v2.12.61: Support negative display
       onWeightChange(newWeight);
-      setManualWeight(newWeight !== 0 ? (Math.round(newWeight * 10) / 10).toFixed(1) : '');
+      setManualWeight(newWeight !== 0 ? formatWeight(newWeight) : '');
       onEntryTypeChange('scale');
     }
   }, [requireStableReading, areReadingsStable, onWeightChange, onEntryTypeChange, isWaitingForStable]);
@@ -213,7 +213,7 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
         />
 
         <p className="text-3xl font-bold text-primary mb-4">
-          Weight: {(Math.round(weight * 10) / 10).toFixed(1)} Kg
+          Weight: {formatWeight(weight)} Kg
         </p>
         
         {isBluetoothAvailable && (

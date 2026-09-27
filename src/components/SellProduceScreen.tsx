@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { formatWeight, roundWeight } from '@/utils/weightUtils';
 import { CornerDownLeft, Search, X } from 'lucide-react';
 import { type Farmer, type MilkCollection } from '@/lib/supabase';
 import { type Route, type Session } from '@/services/mysqlApi';
@@ -173,8 +174,17 @@ export const SellProduceScreen = ({
     loadFarmers();
   }, [isReady, getFarmers, route?.tcode, route?.mprefix, useRouteFilter, isMemberMode]);
 
-  // Derive session type (AM/PM) from session time_from
+  // Derive session type (AM/PM) respecting explicit session SCODE/descript first
   const getSessionType = (): 'AM' | 'PM' => {
+    const rawCode = String(
+      (session as any)?.SCODE || (session as any)?.Icode || (session as any)?.descript || (session as any)?.session || ''
+    ).trim().toUpperCase();
+    if (rawCode === 'PM' || rawCode.includes('PM') || rawCode.includes('EVENING') || rawCode.includes('AFTERNOON')) {
+      return 'PM';
+    }
+    if (rawCode === 'AM' || rawCode.includes('AM') || rawCode.includes('MORNING')) {
+      return 'AM';
+    }
     const hour = session.time_from >= 100
       ? Math.floor(session.time_from / 100)
       : session.time_from;
@@ -195,13 +205,36 @@ export const SellProduceScreen = ({
     
     const numericInput = input.replace(/\D/g, '');
     const prefix = isMemberMode ? 'M' : 'D';
-    
+    const mprefixStr = route?.mprefix ? String(route.mprefix).trim() : '';
+
     // Search by exact farmer_id first
     const exactMatch = cachedFarmers.find(
-      f => f.farmer_id.toLowerCase() === input.toLowerCase()
+      f => f.farmer_id.toLowerCase() === input.toLowerCase() ||
+           f.farmer_id.replace(/^#/, '').toLowerCase() === input.toLowerCase()
     );
     if (exactMatch) return exactMatch;
-    
+
+    // Try mprefix prepended match and suffix matching (e.g. mprefix = "915", input = "200")
+    if (mprefixStr && numericInput) {
+      const prefixedId = `${mprefixStr}${numericInput}`;
+      const prefixedMatch = cachedFarmers.find(
+        f => f.farmer_id.toLowerCase() === prefixedId.toLowerCase() ||
+             f.farmer_id.replace(/^#/, '').toLowerCase() === prefixedId.toLowerCase()
+      );
+      if (prefixedMatch) return prefixedMatch;
+
+      const suffixMatch = cachedFarmers.find(f => {
+        const cleanFId = f.farmer_id.replace(/^#/, '').trim();
+        if (!cleanFId.startsWith(mprefixStr)) return false;
+        const suffix = cleanFId.slice(mprefixStr.length);
+        if (!suffix) return false;
+        const suffixNumeric = suffix.replace(/\D/g, '');
+        return suffix.toLowerCase() === input.trim().toLowerCase() ||
+               (Boolean(suffixNumeric) && parseInt(suffixNumeric, 10) === parseInt(numericInput, 10));
+      });
+      if (suffixMatch) return suffixMatch;
+    }
+
     // If pure numeric, resolve to padded format (e.g., 1 -> M00001 or D00001)
     if (numericInput && numericInput === input.trim()) {
       const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
@@ -318,14 +351,14 @@ export const SellProduceScreen = ({
   // Calculate total captured weight for current farmer
   const totalCapturedWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
 
-  // Filter suggestions for dropdown based on numeric input
+  // Filter suggestions for dropdown based on numeric input (limited to 50 for instant rendering)
   const filteredSuggestions = useMemo(() => {
-    if (!memberNo.trim()) return cachedFarmers.slice(0, 10);
+    if (!memberNo.trim()) return cachedFarmers.slice(0, 50);
     const query = memberNo.toLowerCase();
     return cachedFarmers.filter(f =>
       f.farmer_id.toLowerCase().includes(query) ||
       f.name.toLowerCase().includes(query)
-    ).slice(0, 10);
+    ).slice(0, 50);
   }, [memberNo, cachedFarmers]);
 
   return (
@@ -379,7 +412,7 @@ export const SellProduceScreen = ({
       )}
 
       {/* Main Content */}
-      <div className="flex-1 px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4 overflow-y-auto" style={{ paddingBottom: 'max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem))' }}>
+      <div className="flex-1 px-3 sm:px-4 py-3 sm:py-4 space-y-3 sm:space-y-4 overflow-y-auto pb-32 sm:pb-8">
         {/* Weight Display - Coffee mode shows Gross/Sack/Net, Dairy mode shows simple weight */}
         {isCoffee ? (
           <CoffeeWeightDisplay
@@ -430,9 +463,9 @@ export const SellProduceScreen = ({
                 // For coffee: manual entry is gross weight, calculate net using CURRENT tare (may be edited)
                 onGrossWeightChange?.(grossValue);
                 const netValue = Math.max(0, grossValue - currentTareWeight);
-                const truncatedNetValue = Math.floor(netValue * 10) / 10;
-                onNetWeightChange?.(truncatedNetValue);
-                onWeightChange?.(truncatedNetValue); // Main weight is net
+                const cleanNetValue = roundWeight(netValue, 3);
+                onNetWeightChange?.(cleanNetValue);
+                onWeightChange?.(cleanNetValue); // Main weight is net
                 onEntryTypeChange?.('manual');
               } else {
                 onManualWeightChange?.(grossValue);
@@ -543,7 +576,7 @@ export const SellProduceScreen = ({
               </p>
             </div>
             <span className="font-bold text-base sm:text-lg ml-2">
-              {totalCapturedWeight > 0 ? (Math.floor(totalCapturedWeight * 10) / 10).toFixed(1) : '0.0'}
+              {totalCapturedWeight > 0 ? formatWeight(totalCapturedWeight) : '0.0'}
             </span>
           </div>
           
@@ -555,7 +588,7 @@ export const SellProduceScreen = ({
           <div className="flex justify-between items-center">
             <span className="font-bold text-sm sm:text-base">WEIGHT TODAY</span>
             <span className="text-gray-600 text-sm sm:text-base">
-              {todayWeight > 0 ? (Math.floor(todayWeight * 10) / 10).toFixed(1) : '-'}
+              {todayWeight > 0 ? formatWeight(todayWeight) : '-'}
             </span>
           </div>
         </div>
@@ -641,11 +674,11 @@ export const SellProduceScreen = ({
                   {/* Coffee mode: show Gross/Sack/Net breakdown */}
                   {isCoffee && c.gross_weight !== undefined ? (
                     <div className="text-right text-xs">
-                      <div className="text-gray-500">G:{(Math.floor((c.gross_weight || 0) * 10) / 10).toFixed(1)} S:{(Math.floor((c.tare_weight || 0) * 10) / 10).toFixed(1)}</div>
-                      <div className="font-bold text-green-700">Net: {(Math.floor(c.weight * 10) / 10).toFixed(1)}</div>
+                      <div className="text-gray-500">G:{formatWeight(c.gross_weight)} S:{formatWeight(c.tare_weight)}</div>
+                      <div className="font-bold text-green-700">Net: {formatWeight(c.weight)}</div>
                     </div>
                   ) : (
-                    <span className="font-bold text-gray-900">{(Math.floor(c.weight * 10) / 10).toFixed(1)}</span>
+                    <span className="font-bold text-gray-900">{formatWeight(c.weight)}</span>
                   )}
                 </div>
               ))}

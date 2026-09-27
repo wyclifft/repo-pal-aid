@@ -1,5 +1,16 @@
 // Shared app version constant — update here and in android/app/build.gradle
-// v2.12.82: MILK SESSION ID SANITATION & PM SESSION (0) Z-REPORT FIX.
+// v2.12.92: LITERAL SESSION DISPLAY & AGGREGATE Z-REPORT PERIOD SELECTION.
+//   Strictly preserved exact session labels (AM, PM, Morning, Afternoon, Evening) everywhere without forcing overrides.
+//   Updated Z-Report summary table, thermal print, thermal preview, and PDF exports to use exact session codes/names.
+//   Enhanced Z-Report Period Selector to offer All AM Z and All PM Z aggregate choices alongside specific 10-digit session IDs.
+//   Updated backend /api/sessions/by-device and /api/z-report/device to return AM/PM session fallbacks and support AM/PM period filters.
+//
+//
+// v2.12.90: SERVER SYNC FOR ALL CAPTURED MILK TRANSACTIONS (MULTOPT = 0).
+//   Removed DUPLICATE_SESSION_DELIVERY (409) rejection on backend (/api/milk-collection)
+//   and client pre-sync guards so all milk collections captured and given physical paper receipts
+//   sync successfully to the server without being rejected or held back.
+//
 //   Sanitized store/AI sale backend inserts to save body/item milk_session_id or '' instead of literal 0.
 //   Updated Z-Report backend distinct session query and frontend session resolution to strictly require
 //   valid 10-character milk_session_id strings, preventing legacy or fallback '0' entries from rendering
@@ -1318,12 +1329,37 @@
 //   resolution so Z-reports show descriptive season names (e.g. MAIN CROP) instead of raw codes (S0002).
 //   Sync: Integrated native SQLite store_sale and ai_sale records into global background sync for all orgtypes.
 //
-export const APP_VERSION = '2.12.83';
-export const APP_VERSION_CODE = 232;
+// v2.12.85: MULTI-USER OFFLINE AUTH & AUTOMATIC USERS SYNC.
+//   Multi-User Offline Login: Automatically syncs and caches credentials/roles for all company users locally.
+//   Offline Security: Allows any user belonging to the company to log in offline with their own credentials.
+//   Data Tagging: Explicitly records userId / user_id across offline milk collections, store sales, and AI sales.
+//
+// v2.12.86: DAIRY SESSION AM/PM RESOLUTION FIX.
+//   Respect explicit SCODE / Icode / descript (AM/PM) from active session metadata.
+//   Prevents PM sessions with time_from < 12 (e.g. 11:00 AM) from being falsely
+//   recomputed as 'AM' during milk collection capture and server sync.
+//
+// v2.12.87: END-TO-END SESSION RESOLUTION & ALIAS MAPPING FIX.
+//   Preserves exact selected session names (e.g. "Morning", "Afternoon", "Evening") from APK.
+//   Server automatically maps generic AM/PM aliases to company DB session records without forced time overrides.
+//
+// v2.12.88: OVERLAPPING SESSION PREFERENCE & OFFLINE CAPTURE FIX.
+//   Preserves exact chosen session during offline capture (no 'AM' reduction).
+//   Remembers user's selected session and prevents auto-switching on session close.
+//
+// v2.12.89: KEYBOARD OCCLUSION & UNIFIED OFFLINE KGS HEADER DISPLAY FIX.
+//   Android Manifest: Added windowSoftInputMode="adjustResize" to MainActivity.
+//   Dialog Layouts: Updated DialogContent positioning (top-2 on mobile) and scroll padding (pb-32/pb-28)
+//   across RouteSelector, Store Item/Member search, FarmerSearchModal, AddMemberModal, ReprintModal,
+//   and Buy/Sell forms so soft keyboard never hides bottom list items or inputs.
+//   Dashboard Header: Prominent, bold AM/PM session breakdown & total offline KGs badge.
+//
+export const APP_VERSION = '2.12.92';
+export const APP_VERSION_CODE = 242;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'zreport-session-orgc-sync-fix';
+export const APP_FIX_TAG = 'literal-session-display';
 
 
 

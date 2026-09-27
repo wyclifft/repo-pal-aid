@@ -46,6 +46,10 @@ export const useDataSync = () => {
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingMilkCount, setPendingMilkCount] = useState(0);
+  const [pendingMilkKgs, setPendingMilkKgs] = useState(0);
+  const [pendingMilkAmKgs, setPendingMilkAmKgs] = useState(0);
+  const [pendingMilkPmKgs, setPendingMilkPmKgs] = useState(0);
+  const [unsyncedMilkReceipts, setUnsyncedMilkReceipts] = useState<any[]>([]);
   const [pendingSalesCount, setPendingSalesCount] = useState(0);
   // v2.10.60: count of receipts the sync engine has refused to upload
   // because of DUPLICATE_SESSION_DELIVERY (multOpt=0). These rows are
@@ -60,6 +64,7 @@ export const useDataSync = () => {
   const periodicSyncRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncInProgressRef = useRef(false); // Extra guard against concurrent syncs
   const lastPendingUpdateRef = useRef<number>(0); // v2.12.39: Debounce for updatePendingCount
+  const hasRunInitialSyncRef = useRef<string | null>(null); // Guard against infinite initial sync loops
 
   const { 
     saveFarmers, 
@@ -84,7 +89,7 @@ export const useDataSync = () => {
   } = useIndexedDB();
 
   const { acquireLock, releaseLock, registerOnlineHandler } = useSyncManager();
-  const { refreshSettings, useCumulativeRouteFilter } = useAppSettings();
+  const { refreshSettings, useCumulativeRouteFilter, isDeviceAuthorized, settings } = useAppSettings();
 
   /**
    * v2.12.36: Effective route code for cumulative calculations based on settings.
@@ -114,8 +119,8 @@ export const useDataSync = () => {
     while (retryCount < MAX_RETRIES) {
       batchResult = await mysqlApi.farmerFrequency.getMonthlyFrequencyBatch(fingerprint, effectiveRoute, season);
       if ((batchResult?.pending || batchResult?.data?.pending) && isBlocking) {
-        console.log(`[SYNC] Batch pending, retrying in 3s... (${retryCount + 1}/${MAX_RETRIES})`);
-        await new Promise(r => setTimeout(r, 3000));
+        console.log(`[SYNC] Batch pending, retrying in 1s... (${retryCount + 1}/${MAX_RETRIES})`);
+        await new Promise(r => setTimeout(r, 1000));
         retryCount++;
         continue;
       }
@@ -201,72 +206,9 @@ export const useDataSync = () => {
 
     let normalizedSession: string = 'AM';
     try {
-      // v2.10.51: Coffee orgs → send SCODE as session value (NEVER AM/PM).
-      const orgIsCoffee = (() => {
-        try {
-          const s = JSON.parse(localStorage.getItem('app_settings') || '{}');
-          return s?.orgtype === 'C';
-        } catch { return false; }
-      })();
+      normalizedSession = String(receipt.session || receipt.season_code || '').trim() || 'AM';
 
-      if (orgIsCoffee) {
-        normalizedSession = String(receipt.season_code || receipt.session || '').trim();
-      } else {
-        const sessionVal = String(receipt.session || '').trim().toUpperCase();
-        normalizedSession = (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) ? 'PM' : 'AM';
-      }
 
-      // Client-side FINAL GUARD for multOpt=0 during background sync
-      if (receipt.multOpt === 0) {
-        const cd = new Date(receipt.collection_date);
-        const receiptDate = `${cd.getFullYear()}-${String(cd.getMonth() + 1).padStart(2, '0')}-${String(cd.getDate()).padStart(2, '0')}`;
-        try {
-          const cleanFarmerId = String(receipt.farmer_id || '').replace(/^#/, '').trim();
-          const existing = await mysqlApi.milkCollection.getByFarmerSessionDate(
-            cleanFarmerId,
-            normalizedSession,
-            receiptDate,
-            receiptDate,
-            deviceFingerprint
-          );
-
-          if (existing) {
-            const existingUploadRef = (existing as any)?.uploadrefno;
-            const incomingUploadRef = (receipt as any)?.uploadrefno;
-
-            if (
-              incomingUploadRef &&
-              existingUploadRef &&
-              String(incomingUploadRef) === String(existingUploadRef)
-            ) {
-              console.log(`[SYNC] multOpt=0: uploadrefno matches (${incomingUploadRef}); proceeding: ${receipt.reference_no}`);
-            } else {
-              console.warn(`[SYNC] DUPLICATE_SESSION_DELIVERY (frontend guard): farmer=${cleanFarmerId} session=${normalizedSession} date=${receiptDate}; Keeping local row: ${receipt.reference_no}`);
-              if (useNativeStorage) {
-                await markNativeRecordFailed(
-                  receipt.reference_no,
-                  `DUPLICATE_SESSION_DELIVERY: server already has uploadrefno=${existingUploadRef}`
-                );
-              }
-              const existingDevice = (existing as any)?.deviceserial || (existing as any)?.clerk_name || 'Other Device';
-              const existingRoute = (existing as any)?.route || receipt.route || '';
-              recordConflict(
-                cleanFarmerId,
-                normalizedSession,
-                receiptDate,
-                receipt.reference_no,
-                String(existingUploadRef || ''),
-                existingDevice,
-                existingRoute,
-                receipt.orderId
-              );
-              return { success: false, conflict: true };
-            }
-          }
-        } catch (checkErr) {
-          console.warn('[SYNC] Duplicate check failed, proceeding with sync:', checkErr);
-        }
-      }
 
       const result = await mysqlApi.milkCollection.create({
         reference_no: receipt.reference_no,
@@ -807,10 +749,34 @@ export const useDataSync = () => {
 
     try {
       const unsynced = await getUnsyncedReceipts();
-      // Filter out non-receipt entries and sales (sales counted separately)
+      // Filter out non-receipt entries, sales, and Sell Produce (sales/sell counted separately)
       const receiptsOnly = unsynced.filter((r: any) => {
         if (r.type === 'sale') return false;
+        const tt = Number(r.transtype || (r as any).transtype || 1);
+        if (tt !== 1) return false; // Only Buy Produce (transtype = 1) contributes to milk/produce KGs
         return true;
+      });
+
+      // Calculate total unsynced weight from IndexedDB receipts (overall and by session)
+      let totalMilkKgs = 0;
+      let amMilkKgs = 0;
+      let pmMilkKgs = 0;
+
+      const classifySession = (r: any): 'AM' | 'PM' | 'OTHER' => {
+        const s = String(r.session || r.session_descript || '').trim().toUpperCase();
+        if (s === 'AM' || s.includes('AM') || s.includes('MORNING')) return 'AM';
+        if (s === 'PM' || s.includes('PM') || s.includes('AFTERNOON') || s.includes('EVENING')) return 'PM';
+        return 'OTHER';
+      };
+
+      receiptsOnly.forEach((r: any) => {
+        const w = parseFloat(r.weight || r.liters || r.quantity || 0);
+        if (!isNaN(w) && w > 0) {
+          totalMilkKgs += w;
+          const st = classifySession(r);
+          if (st === 'AM') amMilkKgs += w;
+          else if (st === 'PM') pmMilkKgs += w;
+        }
       });
       
       // Also count pending store/AI sales
@@ -831,9 +797,22 @@ export const useDataSync = () => {
           const idbRefs = new Set(receiptsOnly.map(r => (r.reference_no || '').trim().toUpperCase()));
           const idbSaleRefs = new Set(unsyncedSales.map(r => (r.transrefno || r.reference_no || '').trim().toUpperCase()));
 
-          nativeMilkCount = nativeMilk.filter(r => !idbRefs.has((r.referenceNo || '').trim().toUpperCase())).length;
+          const missingNativeMilk = nativeMilk.filter(r => !idbRefs.has((r.referenceNo || '').trim().toUpperCase()));
+          nativeMilkCount = missingNativeMilk.length;
           nativeSalesCount = nativeSales.filter(r => !idbSaleRefs.has((r.referenceNo || '').trim().toUpperCase())).length +
                              nativeAI.filter(r => !idbSaleRefs.has((r.referenceNo || '').trim().toUpperCase())).length;
+
+          missingNativeMilk.forEach((r: any) => {
+            const tt = Number(r.transtype || (r as any).transtype || 1);
+            if (tt !== 1) return; // Only Buy Produce (transtype = 1)
+            const w = parseFloat(r.weight || r.liters || r.quantity || 0);
+            if (!isNaN(w) && w > 0) {
+              totalMilkKgs += w;
+              const st = classifySession(r);
+              if (st === 'AM') amMilkKgs += w;
+              else if (st === 'PM') pmMilkKgs += w;
+            }
+          });
 
           if (nativeMilkCount > 0 || nativeSalesCount > 0) {
             console.log(`[STORAGE] Discrepancy found: Native has ${nativeMilkCount} milk and ${nativeSalesCount} sales NOT in IndexedDB`);
@@ -844,16 +823,25 @@ export const useDataSync = () => {
       }
 
       if (mountedRef.current) {
+        const allMilkReceipts = [...receiptsOnly, ...missingNativeMilk];
         const pendingMilkTotal = receiptsOnly.length + nativeMilkCount;
         const totalPending = pendingMilkTotal + salesCount + nativeSalesCount;
-        console.log(`[SYNC] Pending Count Update: total=${totalPending} (milk=${pendingMilkTotal}, sales=${salesCount + nativeSalesCount})`);
+        console.log(`[SYNC] Pending Count Update: total=${totalPending} (milk=${pendingMilkTotal}, kgs=${totalMilkKgs} [AM=${amMilkKgs}, PM=${pmMilkKgs}], sales=${salesCount + nativeSalesCount})`);
 
         setPendingCount(totalPending);
         setPendingMilkCount(pendingMilkTotal);
+        setPendingMilkKgs(totalMilkKgs);
+        setPendingMilkAmKgs(amMilkKgs);
+        setPendingMilkPmKgs(pmMilkKgs);
+        setUnsyncedMilkReceipts(allMilkReceipts);
         setPendingSalesCount(salesCount + nativeSalesCount);
 
         if (pendingMilkTotal === 0) {
           setConflictedReceiptsCount(0);
+          setPendingMilkKgs(0);
+          setPendingMilkAmKgs(0);
+          setPendingMilkPmKgs(0);
+          setUnsyncedMilkReceipts([]);
         }
 
         // AUTO-SYNC TRIGGER: If we found pending records and we're online and not already syncing
@@ -877,6 +865,25 @@ export const useDataSync = () => {
 
   const syncAllData = useCallback(async (silent = false, forceBlocking = false) => {
     console.log('[SYNC] syncAllData start. Silent:', silent, 'Blocking:', forceBlocking);
+
+    // Throttle silent background syncs if synced recently (< 15 seconds ago) unless forceBlocking
+    const lastSyncTimeStr = localStorage.getItem('lastSyncTime');
+    const lastSyncAge = lastSyncTimeStr ? Date.now() - Number(lastSyncTimeStr) : Infinity;
+    if (silent && !forceBlocking && lastSyncAge < 15000) {
+      console.log(`[SYNC] Background sync throttled (${Math.round(lastSyncAge / 1000)}s since last sync)`);
+      return true;
+    }
+
+    // CRITICAL GUARD: Do NOT sync if device is explicitly not authorized
+    const deviceCcode = (settings?.ccode || localStorage.getItem('device_ccode') || localStorage.getItem('app_settings_ccode') || '').trim();
+    if (isDeviceAuthorized === false) {
+      console.log(`[SYNC] Device is not authorized yet (isAuth=${isDeviceAuthorized}, ccode=${deviceCcode}). Aborting sync.`);
+      if (!silent) {
+        toast.error('Device is not authorized for sync yet. Please contact your administrator.');
+      }
+      return false;
+    }
+
     // Use global lock to prevent concurrent syncs
     if (!acquireLock()) {
       console.log('[SYNC] Could not acquire lock, sync already in progress');
@@ -895,6 +902,7 @@ export const useDataSync = () => {
     if (!isReady) {
       console.log('[SYNC] IndexedDB not ready in syncAllData');
       releaseLock();
+      if (!silent) toast.info('Database is initializing, please try again in a moment');
       return false;
     }
 
@@ -945,108 +953,96 @@ export const useDataSync = () => {
       } catch (err) {
         console.warn('[SYNC] Settings refresh failed, falling back to event:', err);
         window.dispatchEvent(new Event('refreshPsettings'));
-        await new Promise(r => setTimeout(r, 800));
       }
-      if (forceBlocking) setSyncProgress(35);
+      if (forceBlocking) setSyncProgress(30);
 
-      // 2. Fetch and cache routes
-      if (forceBlocking) setSyncStatus('Updating Routes...');
-      try {
-        console.log('[SYNC] Fetching routes');
-        const routesResponse = await mysqlApi.routes.getByDevice(deviceFingerprint);
-        console.log('[SYNC] Routes response:', routesResponse.success, 'Count:', routesResponse.data?.length);
-        if (routesResponse.success && routesResponse.data && routesResponse.data.length > 0) {
-          await saveRoutes(routesResponse.data);
-          syncedCount++;
-          console.log(`[SUCCESS] Synced ${routesResponse.data.length} routes`);
-        }
-      } catch (err) {
-        console.warn('Routes sync skipped:', err);
-      }
-      if (forceBlocking) setSyncProgress(45);
-
-      // 3. Fetch and cache sessions
-      if (forceBlocking) setSyncStatus('Updating Sessions...');
-      let allSessions: any[] = [];
-      try {
-        console.log('[SYNC] Fetching sessions');
-        const sessionsResponse = await mysqlApi.sessions.getByDevice(deviceFingerprint);
-        console.log('[SYNC] Sessions response:', sessionsResponse.success, 'Count:', sessionsResponse.data?.length);
-        if (sessionsResponse.success && sessionsResponse.data && sessionsResponse.data.length > 0) {
-          allSessions = sessionsResponse.data;
-          await saveSessions(sessionsResponse.data);
-          syncedCount++;
-          console.log(`[SUCCESS] Synced ${sessionsResponse.data.length} sessions`);
-        }
-      } catch (err) {
-        console.warn('Sessions sync skipped:', err);
-      }
-      if (forceBlocking) setSyncProgress(55);
-
-      // 4. Fetch and cache ALL farmers (Data Phase)
+      // 2, 3, 4, 5. PARALLEL CORE DOWNLOAD PHASE (Routes, Sessions, Farmers, Catalogue Items)
       if (forceBlocking) {
-        setSyncStatus('Downloading Farmers...');
-        setSyncSubLabel('Farmers');
+        setSyncStatus('Downloading Full Data...');
+        setSyncSubLabel('Routes, Farmers & Catalogue');
       }
 
+      let allSessions: any[] = [];
+      let activeRoutes: any[] = [];
+
       try {
-        console.log('[SYNC] Fetching farmers');
-        const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
-        console.log('[SYNC] Farmers response:', response.success, 'Count:', response.data?.length);
-        if (response.success && response.data && response.data.length > 0) {
-          await saveFarmers(response.data);
-          if (forceBlocking) setSyncSubCount(response.data.length);
+        console.log('[SYNC] Starting parallel core downloads...');
+        const [routesRes, sessionsRes, farmersRes, itemsRes, usersRes] = await Promise.allSettled([
+          mysqlApi.routes.getByDevice(deviceFingerprint),
+          mysqlApi.sessions.getByDevice(deviceFingerprint),
+          mysqlApi.farmers.getByDevice(deviceFingerprint),
+          mysqlApi.items.getAll(deviceFingerprint, undefined, true),
+          mysqlApi.auth.syncCompanyUsers(deviceFingerprint)
+        ]);
+
+        if (routesRes.status === 'fulfilled' && routesRes.value.success && routesRes.value.data?.length) {
+          const sortedRoutes = [...routesRes.value.data].sort((a, b) => {
+            const descA = String(a?.descript || a?.tcode || '').trim();
+            const descB = String(b?.descript || b?.tcode || '').trim();
+            const comp = descA.localeCompare(descB, undefined, { numeric: true, sensitivity: 'base' });
+            if (comp !== 0) return comp;
+            return String(a?.tcode || '').trim().localeCompare(String(b?.tcode || '').trim(), undefined, { numeric: true, sensitivity: 'base' });
+          });
+          activeRoutes = sortedRoutes;
+          await saveRoutes(sortedRoutes);
           syncedCount++;
-          console.log(`[SUCCESS] Synced ALL ${response.data.length} farmers`);
-        } else if (response.message?.includes('not authorized')) {
+          console.log(`[SUCCESS] Synced ${sortedRoutes.length} routes`);
+        }
+
+        if (sessionsRes.status === 'fulfilled' && sessionsRes.value.success && sessionsRes.value.data?.length) {
+          allSessions = sessionsRes.value.data;
+          await saveSessions(sessionsRes.value.data);
+          syncedCount++;
+          console.log(`[SUCCESS] Synced ${sessionsRes.value.data.length} sessions`);
+        }
+
+        if (farmersRes.status === 'fulfilled' && farmersRes.value.success && farmersRes.value.data?.length) {
+          await saveFarmers(farmersRes.value.data);
+          if (forceBlocking) setSyncSubCount(farmersRes.value.data.length);
+          syncedCount++;
+          console.log(`[SUCCESS] Synced ALL ${farmersRes.value.data.length} farmers`);
+        } else if (farmersRes.status === 'fulfilled' && farmersRes.value.message?.includes('not authorized')) {
           hasAuthError = true;
           console.warn('[SYNC] Device not authorized for farmers');
         }
-      } catch (err) {
-        console.warn('Farmers sync skipped:', err);
-      }
-      if (forceBlocking) setSyncProgress(75);
 
-      // v2.12.38: For background sync, clear the visible "Syncing" state now.
-      // The exhaustive maintenance phase will continue under the global lock,
-      // but the UI will be interactive.
+        if (itemsRes.status === 'fulfilled' && itemsRes.value.success && itemsRes.value.data?.length) {
+          await saveItems(itemsRes.value.data);
+          syncedCount++;
+          console.log(`[SUCCESS] Synced ${itemsRes.value.data.length} catalogue items`);
+        }
+
+        if (usersRes.status === 'fulfilled' && usersRes.value.success && usersRes.value.data?.length) {
+          const { cacheCompanyUsers } = await import('@/utils/companyUsersCache');
+          await cacheCompanyUsers(usersRes.value.data);
+          syncedCount++;
+          console.log(`[SUCCESS] Synced ${usersRes.value.data.length} company users`);
+        }
+      } catch (err) {
+        console.warn('[SYNC] Parallel core download error:', err);
+      }
+
+      if (forceBlocking) setSyncProgress(65);
+
       if (!forceBlocking && mountedRef.current) {
         setIsSyncing(false);
       }
 
-      // 4b. Fetch Multi-Season & Multi-Route Farmer Cumulatives (Exhaustive Phase)
+      // 4b. FULL EXHAUSTIVE CUMULATIVE SYNC (NO PARTIAL SYNCS — ALL SEASONS & ALL ROUTES)
       try {
         if (forceBlocking) {
-          setSyncStatus('Exhaustive Sync...');
-          setSyncSubLabel('Initializing...');
+          setSyncStatus('Exhaustive Full Sync...');
+          setSyncSubLabel('All Centers & Seasons');
         }
 
-        // v2.12.31: Resolve active scode from storage to guide the background sync filter
-        const activeScode = (() => {
-          try {
-            const raw = localStorage.getItem('active_session_data');
-            if (raw) return JSON.parse(raw)?.session?.SCODE;
-          } catch {}
-          return undefined;
-        })();
+        const seasonsToSync = allSessions.length > 0 ? allSessions : [null];
 
-        // v2.12.21: Iterate through ALL sessions/seasons and optionally ALL routes
-        // to populate the cache with strictly scoped data buckets.
-        const seasonsToSync = allSessions.length > 0 ? allSessions : [null]; // fallback if no sessions fetched
-
-        // Fetch current routes for center-specific sync
-        const activeRoutes = (await mysqlApi.routes.getByDevice(deviceFingerprint)).data || [];
-        console.log(`[SYNC] Starting exhaustive sync for ${seasonsToSync.length} seasons and ${activeRoutes.length} routes`);
+        console.log(`[SYNC] Full sync executing for ALL ${seasonsToSync.length} seasons and ALL ${activeRoutes.length} routes`);
 
         for (let sIdx = 0; sIdx < seasonsToSync.length; sIdx++) {
           const seasonToSync = seasonsToSync[sIdx];
           const seasonCode = seasonToSync?.SCODE || seasonToSync?.scode || undefined;
           const seasonName = seasonToSync?.descript || 'Current';
-
-          // v2.12.26: Skip secondary seasons/sessions during non-blocking background sync
-          // to keep the frontend responsive and backend pool free.
-          const isCurrentSeason = !seasonCode || activeScode === seasonCode;
-          if (!forceBlocking && !isCurrentSeason) continue;
 
           console.log(`[SYNC] [SEASON ${sIdx + 1}/${seasonsToSync.length}] Syncing: ${seasonName} (code=${seasonCode})`);
 
@@ -1057,35 +1053,33 @@ export const useDataSync = () => {
 
           // 1. Sync CCode-wide (Global) batch for this season
           const globalCount = await fetchAndSaveCumulativeBatch(deviceFingerprint, undefined, seasonCode, forceBlocking);
-          console.log(`[SYNC] [SEASON ${sIdx + 1}] Global sync done: ${globalCount} farmers`);
           if (forceBlocking && globalCount > 0) setSyncSubCount(globalCount);
 
-          // 2. Sync Scoped batches for each active route in this season
-          // v2.12.28: BACKGROUND sync only does 1 center to save server pool.
-          // MANUAL sync (forceBlocking) does ALL centers for historical accuracy.
-          const routesToProcess = forceBlocking ? activeRoutes : activeRoutes.slice(0, 1);
-          console.log(`[SYNC] [SEASON ${sIdx + 1}] Processing ${routesToProcess.length}/${activeRoutes.length} routes`);
+          // 2. HIGH-SPEED CONCURRENT ROUTE SYNC: Process all routes in parallel chunks of 4 (only if route filtering enabled)
+          if (useCumulativeRouteFilter && activeRoutes.length > 0) {
+            const PARALLEL_ROUTE_CHUNK_SIZE = 4;
+            for (let rIdx = 0; rIdx < activeRoutes.length; rIdx += PARALLEL_ROUTE_CHUNK_SIZE) {
+              const chunk = activeRoutes.slice(rIdx, rIdx + PARALLEL_ROUTE_CHUNK_SIZE);
 
-          for (let rIdx = 0; rIdx < routesToProcess.length; rIdx++) {
-            const route = routesToProcess[rIdx];
-            console.log(`[SYNC] [SEASON ${sIdx + 1}] [ROUTE ${rIdx + 1}/${routesToProcess.length}] ${route.tcode}`);
+              if (forceBlocking) {
+                const currentRouteNames = chunk.map(r => r.tcode).join(', ');
+                setSyncSubLabel(`Centers: ${currentRouteNames}`);
+                setSyncProgress(65 + (sIdx / seasonsToSync.length * 25) + (rIdx / activeRoutes.length * 25 / seasonsToSync.length));
+              }
 
-            if (forceBlocking) {
-              setSyncSubLabel(`Center: ${route.tcode}`);
-              setSyncProgress(75 + (sIdx / seasonsToSync.length * 15) + (rIdx / routesToProcess.length * 15 / seasonsToSync.length));
+              const results = await Promise.all(
+                chunk.map(route => fetchAndSaveCumulativeBatch(deviceFingerprint, route.tcode, seasonCode, forceBlocking))
+              );
+
+              const totalChunkSynced = results.reduce((a, b) => a + b, 0);
+              if (forceBlocking && totalChunkSynced > 0) setSyncSubCount(totalChunkSynced);
             }
-
-            const scopedCount = await fetchAndSaveCumulativeBatch(deviceFingerprint, route.tcode, seasonCode, forceBlocking);
-            if (forceBlocking && scopedCount > 0) setSyncSubCount(scopedCount);
-
-            // v2.12.28: Heavy inter-route pacing for background runs
-            await new Promise(r => setTimeout(r, forceBlocking ? 600 : 3000));
           }
         }
       } catch (err) {
         console.warn('Exhaustive cumulative sync skipped/failed:', err);
       }
-      if (forceBlocking) setSyncProgress(90);
+      if (forceBlocking) setSyncProgress(92);
 
       // 5. Fetch and cache items
       if (forceBlocking) setSyncStatus('Updating Catalogue...');
@@ -1128,11 +1122,11 @@ export const useDataSync = () => {
           await new Promise(r => setTimeout(r, 1000));
         }
 
-        if (!silent && !forceBlocking) {
+        if (!silent) {
           if (hasAuthError && syncedCount === 0) {
-            toast.warning('Device not authorized');
-          } else if (syncedCount > 0) {
-            toast.success('Data synced');
+            toast.warning('Device not authorized for full data sync');
+          } else {
+            toast.success('Data sync complete!');
           }
         }
       }
@@ -1155,68 +1149,96 @@ export const useDataSync = () => {
     }
   }, [isReady, acquireLock, releaseLock, saveFarmers, saveItems, saveZReport, savePeriodicReport, saveRoutes, saveSessions, syncOfflineReceipts, updatePendingCount, getUnsyncedSales, deleteSale, getAllUnsyncedRecords, deleteReceipt, updateFarmerCumulative]);
 
-  // Initial sync on mount - trigger blocking sync only on first launch after login
+  // Lightweight sync for pending offline transactions (receipts and sales) only.
+  // Prevents running heavy overall sync (farmers, items, monthly frequency batches) on internet reconnect or background timers.
+  const syncPendingTransactionsOnly = useCallback(async () => {
+    if (!navigator.onLine || !isReady || !isAuthenticated || isDeviceAuthorized === false) return;
+    try {
+      console.log('[SYNC] Syncing pending transactions only (reconnect/background trigger)');
+      await syncOfflineReceipts();
+      const unsyncedSales = await getUnsyncedSales();
+      if (unsyncedSales.length > 0) {
+        const { syncSalesFromDB } = await import('@/utils/salesSyncEngine');
+        await syncSalesFromDB(getUnsyncedSales, deleteSale);
+      }
+      await updatePendingCount(true);
+    } catch (err) {
+      console.warn('[SYNC] Pending transactions sync error:', err);
+    }
+  }, [isReady, isAuthenticated, isDeviceAuthorized, syncOfflineReceipts, getUnsyncedSales, deleteSale, getAllUnsyncedRecords, deleteReceipt, updatePendingCount]);
+
+  // Initial sync on mount or upon device authorization
   useEffect(() => {
-    console.log('[SYNC] Initial sync effect running. Auth:', isAuthenticated, 'Ready:', isReady);
-    if (!navigator.onLine || !isReady || !isAuthenticated) {
-      console.log('[SYNC] Initial sync skipped. Online:', navigator.onLine, 'Ready:', isReady, 'Auth:', isAuthenticated);
+    const deviceCcode = (settings?.ccode || localStorage.getItem('device_ccode') || localStorage.getItem('app_settings_ccode') || '').trim();
+    console.log('[SYNC] Initial sync effect running. Auth:', isAuthenticated, 'DeviceAuth:', isDeviceAuthorized, 'cCode:', deviceCcode, 'Ready:', isReady);
+
+    if (!navigator.onLine || !isReady || !isAuthenticated || isDeviceAuthorized === false) {
+      console.log('[SYNC] Initial sync skipped. Online:', navigator.onLine, 'Ready:', isReady, 'Auth:', isAuthenticated, 'DeviceAuth:', isDeviceAuthorized, 'cCode:', deviceCcode);
       return;
     }
     
-    // Check if full sync has ever completed
-    const fullSyncCompleted = localStorage.getItem('full_sync_completed') === 'true';
-    console.log('[SYNC] Full sync completed status:', fullSyncCompleted);
+    // Check if full sync has ever completed for THIS ccode
+    const syncKey = `full_sync_completed_${deviceCcode || 'default'}`;
+    const fullSyncCompleted = localStorage.getItem(syncKey) === 'true' || localStorage.getItem('full_sync_completed') === 'true';
+    console.log('[SYNC] Full sync completed status for', deviceCcode, ':', fullSyncCompleted);
+
+    const lastSyncTimeStr = localStorage.getItem('lastSyncTime');
+    const lastSyncAge = lastSyncTimeStr ? Date.now() - Number(lastSyncTimeStr) : Infinity;
 
     if (!fullSyncCompleted && mountedRef.current) {
-      console.log('[SYNC] First launch detected (logged in), triggering blocking full sync');
-      syncAllData(true, true).then((success) => {
+      if (hasRunInitialSyncRef.current === `blocking_${deviceCcode}`) return;
+      hasRunInitialSyncRef.current = `blocking_${deviceCcode}`;
+
+      console.log('[SYNC] First launch after authorization detected for', deviceCcode, '— triggering BLOCKING full sync!');
+      // Non-silent (false) so operator sees progress status modal ("Downloading Farmers...", etc.)
+      syncAllData(false, true).then((success) => {
         console.log('[SYNC] Blocking sync result:', success);
         if (success) {
+          localStorage.setItem(syncKey, 'true');
           localStorage.setItem('full_sync_completed', 'true');
           localStorage.setItem('lastSyncTime', Date.now().toString());
         }
       });
     } else if (mountedRef.current) {
-      console.log('[SYNC] Subsequent launch, triggering background sync');
+      if (hasRunInitialSyncRef.current === `bg_${deviceCcode}` || lastSyncAge < 3 * 60 * 1000) {
+        console.log(`[SYNC] Skipping duplicate background sync for ${deviceCcode} (last sync age: ${Math.round(lastSyncAge / 1000)}s)`);
+        return;
+      }
+      hasRunInitialSyncRef.current = `bg_${deviceCcode}`;
+
+      console.log('[SYNC] Subsequent launch for authorized device', deviceCcode, '— triggering full background sync');
       syncAllData(true, false).then(() => {
         localStorage.setItem('lastSyncTime', Date.now().toString());
       });
     }
-  }, [isReady, syncAllData, isAuthenticated]);
+  }, [isReady, syncAllData, isAuthenticated, isDeviceAuthorized, settings?.ccode]);
 
   // Register centralized online handler
   // In offline-first mode (online=1), auto-sync is disabled - user must manually trigger
   useEffect(() => {
-    // Skip auto-sync on reconnect in offline-first mode
-    if (offlineFirstMode) {
-      console.log('[OFFLINE] Offline-first mode: auto-sync on reconnect disabled');
+    if (offlineFirstMode || isDeviceAuthorized === false) {
+      console.log('[OFFLINE] Auto-sync on reconnect disabled (offlineFirstMode or unapproved device)');
       return;
     }
     
     const unregister = registerOnlineHandler(() => {
-      if (mountedRef.current && isReady && isAuthenticated) {
-        console.log('[ONLINE] Online handler triggered (background mode)');
-        syncAllData(false, false); // Don't show member banner on auto-reconnect
+      if (mountedRef.current && isReady && isAuthenticated && isDeviceAuthorized !== false) {
+        console.log('[ONLINE] Online handler triggered — executing full background sync');
+        syncAllData(true, false);
       }
     });
 
     return unregister;
-  }, [isReady, registerOnlineHandler, syncAllData, offlineFirstMode]);
+  }, [isReady, registerOnlineHandler, syncAllData, offlineFirstMode, isDeviceAuthorized, isAuthenticated, settings?.ccode]);
 
   // Periodic sync every 5 minutes (only in background sync mode, online=0)
   useEffect(() => {
-    if (!isReady) return;
-    
-    // Skip periodic sync in offline-first mode
-    if (offlineFirstMode) {
-      console.log('[OFFLINE] Offline-first mode: periodic sync disabled');
-      return;
-    }
+    if (!isReady || offlineFirstMode || isDeviceAuthorized === false) return;
 
     periodicSyncRef.current = setInterval(() => {
-      if (navigator.onLine && mountedRef.current && isAuthenticated) {
-        console.log('[SYNC] Periodic sync (background mode)');
-        syncAllData(true, false); // Don't show member banner on periodic sync
+      if (navigator.onLine && mountedRef.current && isAuthenticated && isDeviceAuthorized !== false) {
+        console.log('[SYNC] Periodic background sync running full sync');
+        syncAllData(true, false);
       }
     }, 5 * 60 * 1000);
 
@@ -1225,37 +1247,58 @@ export const useDataSync = () => {
         clearInterval(periodicSyncRef.current);
       }
     };
-  }, [isReady, offlineFirstMode]); // Only depend on isReady and offlineFirstMode
+  }, [isReady, offlineFirstMode, isDeviceAuthorized, isAuthenticated, syncAllData, settings?.ccode]);
 
-  // Update pending count on mount and when receipts are saved
+  // Update pending count on mount and when receipts are saved or device is authorized
   useEffect(() => {
     if (isReady) updatePendingCount(true);
 
     // Listen for receipt/sale save events to refresh counts immediately
     const handleReceiptSaved = () => {
       console.log('[SYNC] receiptSaved event — refreshing pending counts');
-      updatePendingCount();
+      updatePendingCount(true);
     };
 
-    // v2.12.36: Auto-sync event listener to break circular dependency
+    // Auto-sync event listener for full background sync
     const handleAutoSyncTrigger = (e: any) => {
-      if (navigator.onLine && isAuthenticated && !isSyncing && !offlineFirstMode) {
+      if (navigator.onLine && isAuthenticated && isDeviceAuthorized !== false && !isSyncing && !offlineFirstMode) {
         const source = e.detail?.source || 'unknown';
-        console.log(`[SYNC] Auto-sync event received (source=${source}) — executing syncAllData`);
+        console.log(`[SYNC] Auto-sync event received (source=${source}) — executing full background sync`);
         syncAllData(true, false);
+      }
+    };
+
+    // Trigger full sync when device gets newly authorized
+    const handleDeviceAuthorized = () => {
+      const deviceCcode = (settings?.ccode || localStorage.getItem('device_ccode') || localStorage.getItem('app_settings_ccode') || '').trim();
+      console.log(`[SYNC] deviceAuthorized event received for ccode=${deviceCcode}`);
+      if (navigator.onLine && isAuthenticated) {
+        const syncKey = `full_sync_completed_${deviceCcode || 'default'}`;
+        const completed = localStorage.getItem(syncKey) === 'true';
+        if (!completed) {
+          console.log(`[SYNC] Triggering initial blocking sync following authorization for ${deviceCcode}`);
+          syncAllData(false, true).then((success) => {
+            if (success) {
+              localStorage.setItem(syncKey, 'true');
+              localStorage.setItem('full_sync_completed', 'true');
+            }
+          });
+        }
       }
     };
 
     window.addEventListener('receiptSaved', handleReceiptSaved);
     window.addEventListener('syncComplete', handleReceiptSaved);
     window.addEventListener('triggerAutoSync', handleAutoSyncTrigger as EventListener);
+    window.addEventListener('deviceAuthorized', handleDeviceAuthorized as EventListener);
 
     return () => {
       window.removeEventListener('receiptSaved', handleReceiptSaved);
       window.removeEventListener('syncComplete', handleReceiptSaved);
       window.removeEventListener('triggerAutoSync', handleAutoSyncTrigger as EventListener);
+      window.removeEventListener('deviceAuthorized', handleDeviceAuthorized as EventListener);
     };
-  }, [isReady, updatePendingCount, syncAllData, isAuthenticated, offlineFirstMode]);
+  }, [isReady, updatePendingCount, syncAllData, isAuthenticated, isDeviceAuthorized, offlineFirstMode, isSyncing, settings?.ccode]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1277,6 +1320,10 @@ export const useDataSync = () => {
     lastSyncTime,
     pendingCount,
     pendingMilkCount,
+    pendingMilkKgs,
+    pendingMilkAmKgs,
+    pendingMilkPmKgs,
+    unsyncedMilkReceipts,
     pendingSalesCount,
     // v2.10.60: count of multOpt=0 receipts kept locally because the server
     // already has a delivery for that farmer/session/date (DUPLICATE_SESSION_DELIVERY).

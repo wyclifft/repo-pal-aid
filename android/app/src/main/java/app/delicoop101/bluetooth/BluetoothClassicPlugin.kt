@@ -18,6 +18,8 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import java.io.IOException
 import java.io.InputStream
@@ -72,6 +74,7 @@ class BluetoothClassicPlugin : Plugin() {
         "scale" to RoleConnection(),
         "printer" to RoleConnection()
     )
+    private val pluginConnectMutex = Mutex()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun load() {
@@ -248,6 +251,16 @@ class BluetoothClassicPlugin : Plugin() {
 
         scope.launch {
             try {
+                // Cancel discovery before connecting to prevent RFCOMM socket drop/instability
+                try {
+                    if (adapter.isDiscovering) {
+                        adapter.cancelDiscovery()
+                        Log.d(TAG, "[BT][$role] Canceled active Bluetooth discovery before socket connect")
+                    }
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "[BT][$role] Could not cancel discovery: ${e.message}")
+                }
+
                 // Disconnect only this role. Scale and printer must not evict each other.
                 disconnectRole(role, notify = false)
 
@@ -255,13 +268,7 @@ class BluetoothClassicPlugin : Plugin() {
 
                 Log.d(TAG, "[BT][$role] Connecting (${if (insecure) "insecure" else "secure"}) to ${device.name} ($address)")
 
-                val socket = if (insecure) {
-                    device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
-                } else {
-                    device.createRfcommSocketToServiceRecord(SPP_UUID)
-                }
-                
-                socket.connect()
+                val socket = connectSocketWithFallback(device, insecure)
 
                 val connection = connections.getOrPut(role) { RoleConnection() }
                 connection.socket = socket
@@ -352,6 +359,49 @@ class BluetoothClassicPlugin : Plugin() {
         disconnectRole("scale", notify = true)
         disconnectRole("printer", notify = true)
         Log.d(TAG, "[BT] Disconnected (internal, all roles)")
+    }
+
+    private suspend fun connectSocketWithFallback(device: BluetoothDevice, insecure: Boolean): BluetoothSocket = pluginConnectMutex.withLock {
+        delay(200)
+
+        val first = if (insecure) {
+            device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
+        } else {
+            device.createRfcommSocketToServiceRecord(SPP_UUID)
+        }
+
+        return try {
+            first.connect()
+            first
+        } catch (firstError: IOException) {
+            try { first.close() } catch (_: IOException) {}
+
+            Log.w(TAG, "[BT] Secure connect failed (${firstError.message}), trying insecure fallback...")
+            val fallback = try {
+                device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
+            } catch (e: Throwable) { null }
+
+            if (fallback != null) {
+                try {
+                    fallback.connect()
+                    return@withLock fallback
+                } catch (fallbackError: IOException) {
+                    try { fallback.close() } catch (_: IOException) {}
+                    Log.w(TAG, "[BT] Insecure connect failed (${fallbackError.message}), trying reflection port 1 fallback...")
+                }
+            }
+
+            // Fallback: Reflection createRfcommSocket(1) for RFCOMM channel 1 direct socket
+            try {
+                val m = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                val reflectionSocket = m.invoke(device, 1) as BluetoothSocket
+                reflectionSocket.connect()
+                reflectionSocket
+            } catch (reflectionError: Throwable) {
+                Log.e(TAG, "[BT] Reflection fallback failed: ${reflectionError.message}")
+                throw firstError
+            }
+        }
     }
 
 

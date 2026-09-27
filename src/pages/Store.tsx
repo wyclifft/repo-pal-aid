@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { formatWeight } from '@/utils/weightUtils';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type Item, type Sale, type Farmer, type CreditType, type BatchSaleRequest, type Session } from '@/services/mysqlApi';
@@ -46,7 +47,7 @@ interface ParsedCredit {
 const Store = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
-  const { settings: psettings, capturePhoto, storePrintCopies } = useAppSettings();
+  const { settings: psettings, capturePhoto, storePrintCopies, offlineFirstMode } = useAppSettings();
   const [items, setItems] = useState<Item[]>([]);
   const [hasRoutes, setHasRoutes] = useState<boolean | null>(null);
   const [storeEnabled, setStoreEnabled] = useState<boolean | null>(null);
@@ -481,6 +482,9 @@ const Store = () => {
     const prefix = isMemberMode ? 'M' : 'D';
     const oppositeLabel = isMemberMode ? 'Debtors' : 'Members';
 
+    const activeRoute = resolveDashboardActiveRoute();
+    const mprefixStr = activeRoute?.mprefix ? String(activeRoute.mprefix).trim() : '';
+
     const matchesActivePrefix = (f: Farmer) =>
       f.farmer_id.toUpperCase().startsWith(prefix);
 
@@ -496,9 +500,33 @@ const Store = () => {
     }
 
     const exactMatch = farmers.find(
-      f => f.farmer_id.toLowerCase() === input.toLowerCase() && matchesActivePrefix(f)
+      f => (f.farmer_id.toLowerCase() === input.toLowerCase() ||
+            f.farmer_id.replace(/^#/, '').toLowerCase() === input.toLowerCase()) &&
+           matchesActivePrefix(f)
     );
     if (exactMatch) return exactMatch;
+
+    if (mprefixStr && numericInput) {
+      const prefixedId = `${mprefixStr}${numericInput}`;
+      const prefixedMatch = farmers.find(
+        f => (f.farmer_id.toLowerCase() === prefixedId.toLowerCase() ||
+              f.farmer_id.replace(/^#/, '').toLowerCase() === prefixedId.toLowerCase()) &&
+             matchesActivePrefix(f)
+      );
+      if (prefixedMatch) return prefixedMatch;
+
+      const suffixMatch = farmers.find(f => {
+        if (!matchesActivePrefix(f)) return false;
+        const cleanFId = f.farmer_id.replace(/^#/, '').trim();
+        if (!cleanFId.startsWith(mprefixStr)) return false;
+        const suffix = cleanFId.slice(mprefixStr.length);
+        if (!suffix) return false;
+        const suffixNumeric = suffix.replace(/\D/g, '');
+        return suffix.toLowerCase() === input.trim().toLowerCase() ||
+               (Boolean(suffixNumeric) && parseInt(suffixNumeric, 10) === parseInt(numericInput, 10));
+      });
+      if (suffixMatch) return suffixMatch;
+    }
 
     if (numericInput && numericInput === input.trim()) {
       const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
@@ -595,14 +623,14 @@ const Store = () => {
   // Filter items for search
   useEffect(() => {
     if (!itemSearchQuery.trim()) {
-      setFilteredItems(items.slice(0, 50));
+      setFilteredItems(items);
       return;
     }
     const query = itemSearchQuery.toLowerCase();
     const filtered = items.filter(item =>
       item.descript.toLowerCase().includes(query) ||
       item.icode.toLowerCase().includes(query)
-    ).slice(0, 50);
+    );
     setFilteredItems(filtered);
   }, [itemSearchQuery, items]);
 
@@ -777,6 +805,12 @@ const Store = () => {
         });
       }
 
+      // Local creation date and time for auditing and offline sync
+      const now = new Date();
+      const pad2 = (n: number) => String(n).padStart(2, '0');
+      const currentTransdate = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+      const currentTranstime = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+
       // Read Dashboard-selected route tcode from localStorage
       const dashboardSession = JSON.parse(localStorage.getItem('active_session_data') || localStorage.getItem('delicoop_session_data') || '{}');
       const selectedRouteTcode = dashboardSession?.route?.tcode || '';
@@ -796,6 +830,8 @@ const Store = () => {
         user_id: userId, // Login user_id for DB userId column
         sold_by: clerkName, // Display name for DB clerk column
         device_fingerprint: deviceFingerprint,
+        transdate: currentTransdate,
+        transtime: currentTranstime,
         items: batchItems,
         season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
         session_label: sessionMeta.backend_session, // → DB: session column. Coffee=SCODE, Dairy=descript
@@ -803,38 +839,9 @@ const Store = () => {
         // Photo excluded - will upload in background after transaction
       };
 
-      if (navigator.onLine) {
-        // Online: submit transaction first, queue photo for background upload
-        const result = await mysqlApi.sales.createBatch(batchRequest);
-        if (!result.success) {
-          throw new Error(result.error || 'Batch sale failed');
-        }
-        console.log(`✅ Batch sale complete: ${batchItems.length} items, uploadrefno=${refs.uploadrefno}`);
+      const photoBase64 = photoToUse ? await blobToBase64(photoToUse.blob) : null;
 
-        // Mark member as served today on this device tagging location and clerk/device
-        const storeLoc = selectedRouteTcode || selectedFarmer.route || routeName || localStorage.getItem('device_company_name') || 'Store';
-        const storeDev = localStorage.getItem('devcode') || clerkName || 'POS Device';
-        markMemberAsServed(
-          selectedFarmer.farmer_id,
-          storeLoc,
-          storeDev
-        );
-
-        // v2.12.30: Clear items from native storage if they were there
-        for (const item of batchItems) {
-          markNativeRecordSynced(item.transrefno).catch(() => {});
-        }
-
-        // Queue photo for background upload - doesn't block transaction
-        if (photoToUse) {
-          queuePhotoUpload(refs.uploadrefno, photoToUse.blob);
-          console.log(`📷 Photo queued for background upload: ${refs.uploadrefno}`);
-        }
-      } else {
-        // Offline: convert photo to base64 for storage (will sync later)
-        const photoBase64 = photoToUse ? await blobToBase64(photoToUse.blob) : null;
-        
-        // Save each item individually for later sync
+      const saveOfflineItems = async () => {
         for (const item of batchItems) {
           const sale: Sale = {
             transrefno: item.transrefno,
@@ -842,36 +849,58 @@ const Store = () => {
             transtype: 2,
             farmer_id: selectedFarmer.farmer_id,
             farmer_name: selectedFarmer.name,
-            route: selectedRouteTcode || selectedFarmer.route || '', // Use Dashboard-selected tcode as primary route
-            route_tcode: selectedRouteTcode, // Dashboard-selected fm_tanks.tcode
+            route: selectedRouteTcode || selectedFarmer.route || '',
+            route_tcode: selectedRouteTcode,
             item_code: item.item_code,
             item_name: item.item_name,
             quantity: item.quantity,
             price: item.price,
-            user_id: userId, // Login user_id for DB userId column
-            sold_by: clerkName, // Display name for DB clerk column
+            user_id: userId,
+            sold_by: clerkName,
+            transdate: currentTransdate,
+            transtime: currentTranstime,
             device_fingerprint: deviceFingerprint,
-            photo: photoBase64, // Include photo for offline sync (if exists)
-            season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
-            session_label: sessionMeta.backend_session, // → DB: session. Coffee=SCODE, Dairy=descript (v2.10.51)
-            // delivered_by not used in Store transactions
+            photo: photoBase64,
+            season: sessionMeta.season,
+            session_label: sessionMeta.backend_session,
           };
           await saveSale(sale);
-          // Dual-write to native SQLite (fire-and-forget backup)
-          saveToLocalDB(item.transrefno, 'store_sale', sale).catch(() => {});
+          saveToLocalDB(item.transrefno, 'store_sale', sale, userId, deviceFingerprint).catch(() => {});
         }
         console.log(`💾 Saved ${batchItems.length} items offline for sync`);
-
-        // Mark member as served today on this device tagging location and clerk/device
         const storeLoc = selectedRouteTcode || selectedFarmer.route || routeName || localStorage.getItem('device_company_name') || 'Store';
         const storeDev = localStorage.getItem('devcode') || clerkName || 'POS Device';
-        markMemberAsServed(
-          selectedFarmer.farmer_id,
-          storeLoc,
-          storeDev
-        );
-
+        markMemberAsServed(selectedFarmer.farmer_id, storeLoc, storeDev);
         window.dispatchEvent(new Event('receiptSaved'));
+      };
+
+      if (navigator.onLine && !offlineFirstMode) {
+        try {
+          const result = await mysqlApi.sales.createBatch(batchRequest);
+          if (result.success) {
+            console.log(`✅ Batch sale complete: ${batchItems.length} items, uploadrefno=${refs.uploadrefno}`);
+            const storeLoc = selectedRouteTcode || selectedFarmer.route || routeName || localStorage.getItem('device_company_name') || 'Store';
+            const storeDev = localStorage.getItem('devcode') || clerkName || 'POS Device';
+            markMemberAsServed(selectedFarmer.farmer_id, storeLoc, storeDev);
+
+            for (const item of batchItems) {
+              markNativeRecordSynced(item.transrefno).catch(() => {});
+            }
+
+            if (photoToUse) {
+              queuePhotoUpload(refs.uploadrefno, photoToUse.blob);
+              console.log(`📷 Photo queued for background upload: ${refs.uploadrefno}`);
+            }
+          } else {
+            console.warn('[Store] Online submission returned error, falling back to offline save with stable references:', result.error);
+            await saveOfflineItems();
+          }
+        } catch (onlineErr) {
+          console.warn('[Store] Online submission network exception, saving offline with stable references:', onlineErr);
+          await saveOfflineItems();
+        }
+      } else {
+        await saveOfflineItems();
       }
 
       // Create receipt data using unified helper
@@ -942,16 +971,64 @@ const Store = () => {
   // (no transactions yet) appear in the Debtors picker. Credit balance is
   // still shown in the selected-member card / "View More" dialog when present.
   const [farmerSearchQuery, setFarmerSearchQuery] = useState('');
+  const [farmerDisplayLimit, setFarmerDisplayLimit] = useState(50);
+  const [itemDisplayLimit, setItemDisplayLimit] = useState(50);
+
+  useEffect(() => {
+    if (showFarmerSearch) setFarmerDisplayLimit(50);
+  }, [showFarmerSearch]);
+
+  useEffect(() => {
+    setFarmerDisplayLimit(50);
+  }, [farmerSearchQuery]);
+
+  useEffect(() => {
+    if (showItemSearch) setItemDisplayLimit(50);
+  }, [showItemSearch]);
+
+  useEffect(() => {
+    setItemDisplayLimit(50);
+  }, [itemSearchQuery]);
+
   const prefix = isMemberMode ? 'M' : 'D';
-  const prefixFilteredFarmers = farmers.filter(f =>
-    f.farmer_id.toUpperCase().startsWith(prefix)
-  );
-  const filteredFarmers = farmerSearchQuery.trim()
-    ? prefixFilteredFarmers.filter(f =>
-        f.farmer_id.toLowerCase().includes(farmerSearchQuery.toLowerCase()) ||
-        f.name.toLowerCase().includes(farmerSearchQuery.toLowerCase())
-      ).slice(0, 50)
-    : prefixFilteredFarmers.slice(0, 50);
+  const prefixFilteredFarmers = useMemo(() => {
+    return farmers.filter(f => f.farmer_id.toUpperCase().startsWith(prefix));
+  }, [farmers, prefix]);
+
+  const filteredFarmers = useMemo(() => {
+    if (!farmerSearchQuery.trim()) return prefixFilteredFarmers;
+    const query = farmerSearchQuery.toLowerCase();
+    return prefixFilteredFarmers.filter(f =>
+      f.farmer_id.toLowerCase().includes(query) ||
+      f.name.toLowerCase().includes(query)
+    );
+  }, [prefixFilteredFarmers, farmerSearchQuery]);
+
+  const visibleFarmers = useMemo(() => {
+    return filteredFarmers.slice(0, farmerDisplayLimit);
+  }, [filteredFarmers, farmerDisplayLimit]);
+
+  const visibleItems = useMemo(() => {
+    return filteredItems.slice(0, itemDisplayLimit);
+  }, [filteredItems, itemDisplayLimit]);
+
+  const handleFarmerScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop <= clientHeight + 200) {
+      if (farmerDisplayLimit < filteredFarmers.length) {
+        setFarmerDisplayLimit((prev) => Math.min(prev + 50, filteredFarmers.length));
+      }
+    }
+  };
+
+  const handleItemScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop <= clientHeight + 200) {
+      if (itemDisplayLimit < filteredItems.length) {
+        setItemDisplayLimit((prev) => Math.min(prev + 50, filteredItems.length));
+      }
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#26A69A]">
@@ -1054,7 +1131,7 @@ const Store = () => {
               <div className="font-medium">{selectedFarmer?.farmer_id || '-'}</div>
               <div className="flex flex-col items-end">
                 <div className="text-sm text-gray-600 flex items-center gap-1">
-                  {cumulativeLoading ? '...' : (cumulativeWeight !== null ? `${cumulativeWeight.toFixed(1)}kg` : '-kg')}
+                  {cumulativeLoading ? '...' : (cumulativeWeight !== null ? `${formatWeight(cumulativeWeight)}kg` : '-kg')}
                   <Popover>
                     <PopoverTrigger asChild>
                       <button className="p-1 hover:bg-gray-100 rounded-full transition-colors">
@@ -1202,8 +1279,8 @@ const Store = () => {
               className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3 shrink-0"
               autoFocus
             />
-            <div className="flex-1 overflow-y-auto space-y-2 min-h-0 pb-4">
-              {filteredFarmers.map((farmer, i) => (
+            <div className="flex-1 overflow-y-auto space-y-2 min-h-0 pb-32 sm:pb-8" onScroll={handleFarmerScroll}>
+              {visibleFarmers.map((farmer, i) => (
                 <button
                   key={farmer.farmer_id}
                   onClick={() => {
@@ -1221,6 +1298,11 @@ const Store = () => {
                   </div>
                 </button>
               ))}
+              {filteredFarmers.length > visibleFarmers.length && (
+                <div className="text-center py-2 text-xs text-gray-500 font-medium">
+                  Showing {visibleFarmers.length} of {filteredFarmers.length} members — scroll to view more
+                </div>
+              )}
             </div>
           </div>
         </DialogContent>
@@ -1245,8 +1327,8 @@ const Store = () => {
               autoFocus
             />
           </div>
-          <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2 min-h-0">
-            {filteredItems.map((item, i) => (
+          <div className="flex-1 overflow-y-auto px-4 pb-32 sm:pb-8 space-y-2 min-h-0" onScroll={handleItemScroll}>
+            {visibleItems.map((item, i) => (
               <button
                 key={item.ID}
                 onClick={() => handleAddItem(item)}
@@ -1262,6 +1344,11 @@ const Store = () => {
                 <div className="font-medium">{item.sprice.toFixed(1)}</div>
               </button>
             ))}
+            {filteredItems.length > visibleItems.length && (
+              <div className="text-center py-2 text-xs text-gray-500 font-medium">
+                Showing {visibleItems.length} of {filteredItems.length} items — scroll to view more
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

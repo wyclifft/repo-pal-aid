@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { formatWeight, roundWeight } from '@/utils/weightUtils';
 import { useNavigate } from 'react-router-dom';
 import { MoreVertical, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -260,7 +261,7 @@ const Index = () => {
   } | null>(null);
 
   // Data sync hook for background syncing
-  const { isSyncing, pendingCount, pendingMilkCount, pendingSalesCount, conflictedReceiptsCount, syncAllData } = useSync();
+  const { isSyncing, pendingCount, pendingMilkCount, pendingMilkKgs, pendingMilkAmKgs, pendingMilkPmKgs, unsyncedMilkReceipts, pendingSalesCount, conflictedReceiptsCount, syncAllData } = useSync();
   
   // App-wide settings from psettings
   const { 
@@ -281,6 +282,7 @@ const Index = () => {
     sackTareWeight,
     allowSackEdit,
     settings,
+    showProductName,
     companyName, // Use the reactive companyName from useAppSettings
     useCumulativeRouteFilter
   } = useAppSettings();
@@ -1409,7 +1411,7 @@ const Index = () => {
 
     // For coffee mode: weight = net, also store gross/tare/net
     // For dairy mode: weight = total weight (no tare deduction)
-    const captureWeight = Math.floor(Number(weight) * 10) / 10;
+    const captureWeight = roundWeight(Number(weight), 3);
 
     // Validate single farmer for consecutive captures
     if (capturedCollections.length > 0) {
@@ -1463,20 +1465,26 @@ const Index = () => {
       return;
     }
 
-    // Derive AM/PM from the active session's time_from (hour-based) for dairy.
-    // For coffee mode, the BACKEND `session` column must carry SCODE (NOT descript,
-    // NEVER AM/PM). The descript is only kept for receipts/UI via session_descript.
-    const timeFrom = typeof activeSession.time_from === 'number' 
-      ? activeSession.time_from 
-      : parseInt(String(activeSession.time_from), 10);
+    // Preserve exact session code/description from activeSession for both Dairy & Coffee
+    const exactSessionName = String(
+      (activeSession as any)?.Icode || activeSession?.SCODE || activeSession?.descript || ''
+    ).trim();
 
-    // v2.12.41: Correct HHMM normalization for session derivation
-    const hour = timeFrom >= 100 ? Math.floor(timeFrom / 100) : timeFrom;
-    const amPmSession: 'AM' | 'PM' = (hour >= 12) ? 'PM' : 'AM';
-    // v2.10.51: coffee → SCODE (DB session col); dairy → AM/PM
-    const currentSessionType = isCoffee
-      ? (activeSession.SCODE || activeSession.descript || amPmSession)
-      : amPmSession;
+    let amPmSession: 'AM' | 'PM';
+    const rawUpper = exactSessionName.toUpperCase();
+    if (rawUpper === 'PM' || rawUpper.includes('PM') || rawUpper.includes('EVENING') || rawUpper.includes('AFTERNOON')) {
+      amPmSession = 'PM';
+    } else if (rawUpper === 'AM' || rawUpper.includes('AM') || rawUpper.includes('MORNING')) {
+      amPmSession = 'AM';
+    } else {
+      const timeFrom = typeof activeSession?.time_from === 'number'
+        ? activeSession.time_from
+        : parseInt(String(activeSession?.time_from), 10);
+      const hour = timeFrom >= 100 ? Math.floor(timeFrom / 100) : timeFrom;
+      amPmSession = (!isNaN(hour) && hour >= 12) ? 'PM' : 'AM';
+    }
+
+    const currentSessionType = exactSessionName || amPmSession;
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
     // ========== multOpt=0 CAPTURE BEHAVIOR ==========
@@ -1541,7 +1549,7 @@ const Index = () => {
       uploadrefno: uploadRefNo, // Type-specific ID for approval workflow
       farmer_id: cleanFarmerId,
       farmer_name: farmerName.trim(),
-      route: selectedRouteCode.trim(), // Use fm_tanks.tcode, not farmer.route
+      route: (selectedRouteCode || routeName || selectedFarmer?.route || '').trim(), // Prefer active collection center/route selected on Dashboard
       session: currentSessionType, // Use already-computed session
       session_descript: activeSession?.descript || currentSessionType, // Full session description for display
       weight: captureWeight, // Net weight for coffee, total for dairy
@@ -1567,7 +1575,7 @@ const Index = () => {
       delivered_by: selectedDeliverer ? selectedDeliverer.farmer_id : (deliveredBy || 'owner'),
       // Coffee sack weighing - gross/tare/net (orgtype C only)
       ...(isCoffee && {
-        gross_weight: Math.floor(Number(grossWeight) * 10) / 10,
+        gross_weight: roundWeight(Number(grossWeight), 3),
         tare_weight: tareWeight,
         net_weight: captureWeight, // Same as weight for coffee
       }),
@@ -1690,6 +1698,7 @@ const Index = () => {
       previousCumulativeTotal: cumulativeFrequency?.total ?? 0, // For race condition guard
       justSubmittedWeight: capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0), // Weight being submitted
       submittedRefs: capturedCollections.map((c) => c.reference_no).filter(Boolean) as string[], // v2.10.107: exclude from unsynced bucket
+      memberRoute: (selectedFarmer?.route || capturedCollections[0]?.route || '').trim(), // Member's registered route from cm_members.route
       // Pass full ID - Name string to printing for Group members
       deliveredBy: selectedDeliverer
         ? `${selectedDeliverer.farmer_id} - ${selectedDeliverer.name}`
@@ -1704,19 +1713,7 @@ const Index = () => {
         try {
           console.log(`📤 Submitting online: ${capture.reference_no} (${capture.weight} Kg)`);
 
-          // v2.10.51: For dairy, normalize to AM/PM. For coffee, send SCODE
-          // (capture.session already holds SCODE for coffee — see capture path).
-          let sessionToSend: string;
-          if (isCoffee) {
-            sessionToSend = (capture.season_code || capture.session || '').toString().trim();
-          } else {
-            let normalizedSession: 'AM' | 'PM' = 'AM';
-            const sessionVal = (capture.session || '').trim().toUpperCase();
-            if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON')) {
-              normalizedSession = 'PM';
-            }
-            sessionToSend = normalizedSession;
-          }
+          const sessionToSend = String(capture.session || capture.season_code || '').trim() || 'AM';
 
           // NOTE: We intentionally do NOT check the database here for duplicates.
           // All multOpt=0 validation was done in pre-submit validation BEFORE the loop.
@@ -1783,33 +1780,8 @@ const Index = () => {
               ).catch(() => {});
             }
           } else {
-            // Check if it's a duplicate session delivery error
-            if (result.error === 'DUPLICATE_SESSION_DELIVERY') {
-              console.warn(`⚠️ Member already delivered in ${capture.session} session`);
-              const routeTag = result.existing_route || capture.route;
-              const deviceTag = result.existing_device || 'Other Device';
-              const simpleMsg = result.message || `Member ${capture.farmer_name || capture.farmer_id} has delivered this session (Route: ${routeTag}, Device: ${deviceTag}).`;
-
-              toast.error(simpleMsg, { duration: 6000 });
-
-              setSyncConflict({
-                farmerId: capture.farmer_id.replace(/^#/, '').trim(),
-                farmerName: capture.farmer_name,
-                session: capture.session,
-                date: new Date(capture.collection_date).toISOString().split('T')[0],
-                route: routeTag,
-                device: deviceTag,
-                localRef: referenceNo,
-              });
-
-              // Do NOT clear captures and do NOT blacklist here.
-              // We hard-stop so we don't accidentally mark this farmer as submitted
-              // when the server is rejecting inserts.
-              hardStopped = true;
-              break;
-            }
             // API returned failure, save locally for retry with confirmation
-            console.warn('[SYNC] Submit returned failure, saving locally');
+            console.warn('[SYNC] Submit returned failure, saving locally for sync retry');
             try {
               const saveResult = await saveReceipt({...capture, reference_no: referenceNo});
               if (saveResult?.success) {
@@ -1817,7 +1789,7 @@ const Index = () => {
                 offlineCount++;
                 window.dispatchEvent(new Event('receiptSaved'));
                 // Dual-write to native SQLite (fire-and-forget backup)
-                saveToLocalDB(referenceNo, 'milk_collection', capture).catch(() => {});
+                saveToLocalDB(referenceNo, 'milk_collection', capture, currentUser?.user_id, deviceFingerprint).catch(() => {});
               } else {
                 console.error(`[ERROR] Failed to save for retry: ${referenceNo}`);
                 toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
@@ -1828,30 +1800,6 @@ const Index = () => {
             }
           }
         } catch (err: unknown) {
-          // Check if the error response contains duplicate session info
-          const errorData = (err as { data?: { error?: string; message?: string; existing_reference?: string; existing_device?: string; existing_route?: string } })?.data;
-          if (errorData?.error === 'DUPLICATE_SESSION_DELIVERY') {
-            console.warn(`[SYNC] Member already delivered in ${capture.session} session`);
-            const routeTag = errorData.existing_route || capture.route;
-            const deviceTag = errorData.existing_device || 'Other Device';
-            const simpleMsg = errorData.message || `Member ${capture.farmer_name || capture.farmer_id} has delivered this session (Route: ${routeTag}, Device: ${deviceTag}).`;
-
-            toast.error(simpleMsg, { duration: 6000 });
-
-            setSyncConflict({
-              farmerId: capture.farmer_id.replace(/^#/, '').trim(),
-              farmerName: capture.farmer_name,
-              session: capture.session,
-              date: new Date(capture.collection_date).toISOString().split('T')[0],
-              route: routeTag,
-              device: deviceTag,
-              localRef: referenceNo,
-            });
-
-            // Do NOT clear captures and do NOT blacklist here.
-            hardStopped = true;
-            break;
-          }
           console.error('[ERROR] Submit exception, saving locally:', err);
           // Network error or other failure - save to IndexedDB for later sync with confirmation
           try {
@@ -1861,7 +1809,7 @@ const Index = () => {
               offlineCount++;
               window.dispatchEvent(new Event('receiptSaved'));
               // Dual-write to native SQLite (fire-and-forget backup)
-              saveToLocalDB(capture.reference_no, 'milk_collection', capture).catch(() => {});
+              saveToLocalDB(capture.reference_no, 'milk_collection', capture, currentUser?.user_id, deviceFingerprint).catch(() => {});
             } else {
               console.error(`[ERROR] Failed offline save: ${capture.reference_no}`);
               toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
@@ -1880,7 +1828,7 @@ const Index = () => {
             offlineCount++;
             window.dispatchEvent(new Event('receiptSaved'));
             // Dual-write to native SQLite (fire-and-forget backup)
-            saveToLocalDB(capture.reference_no, 'milk_collection', capture).catch(() => {});
+            saveToLocalDB(capture.reference_no, 'milk_collection', capture, currentUser?.user_id, deviceFingerprint).catch(() => {});
           } else {
             console.error(`[ERROR] Offline save failed: ${capture.reference_no}`);
             toast.error(`Failed to save ${capture.farmer_name}'s collection - please retry`);
@@ -1904,7 +1852,10 @@ const Index = () => {
         addMilkReceipt(printData.collections, undefined, undefined, {
           routeLabel: printData.routeLabel,
           periodLabel: printData.periodLabel,
-          locationName: printData.locationName
+          locationCode: printData.locationCode,
+          locationName: printData.locationName,
+          productName: printData.productName,
+          memberRoute: printData.memberRoute
         }).catch(() => {});
         console.log('[REPRINT] Milk receipt preserved despite server duplicate-session rejection');
       } catch {
@@ -1927,7 +1878,10 @@ const Index = () => {
         addMilkReceipt(printData.collections, undefined, undefined, {
           routeLabel: printData.routeLabel,
           periodLabel: printData.periodLabel,
-          locationName: printData.locationName
+          locationCode: printData.locationCode,
+          locationName: printData.locationName,
+          productName: printData.productName,
+          memberRoute: printData.memberRoute
         }).catch(() => {});
         console.log('[REPRINT] Milk receipt preserved despite all local saves failing');
       } catch {
@@ -2166,7 +2120,10 @@ const Index = () => {
         addMilkReceipt(printData.collections, computedCumulative?.total, computedCumulative?.byProduct, {
           routeLabel: printData.routeLabel,
           periodLabel: printData.periodLabel,
-          locationName: printData.locationName
+          locationCode: printData.locationCode,
+          locationName: printData.locationName,
+          productName: printData.productName,
+          memberRoute: printData.memberRoute
         }).catch(() => {});
         window.dispatchEvent(new CustomEvent('syncComplete'));
         return;
@@ -2393,14 +2350,20 @@ const Index = () => {
           showCumulativeFrequency: printData.shouldShowCumulativeForFarmer,
           clerkName: printData.clerkName,
           productName: printData.productName,
+          memberRoute: printData.memberRoute,
           deliveredBy: printData.deliveredBy,
+          orgtype: settings.orgtype,
+          showProductName,
         }).catch(err => console.warn('Background print failed:', err));
         
         // Save receipt for reprinting WITH the correct cumulative value
         addMilkReceipt(printData.collections, cumulativeForPrint?.total, cumulativeForPrint?.byProduct, {
           routeLabel: printData.routeLabel,
           periodLabel: printData.periodLabel,
-          locationName: printData.locationName
+          locationCode: printData.locationCode,
+          locationName: printData.locationName,
+          productName: printData.productName,
+          memberRoute: printData.memberRoute
         }).catch(() => {});
       })();
     } else {
@@ -2511,10 +2474,19 @@ const Index = () => {
     showCollection
   });
 
-  // Authorization check happens in background - don't block the UI
-  // Only block if we've confirmed the device is NOT authorized (not during loading)
-  if (isDeviceAuthorized === false && !settingsLoading) {
-    console.log('[INDEX] Device NOT authorized, showing blocking screen');
+  // 1. While authorization status is actively loading and not yet confirmed:
+  if (settingsLoading && isDeviceAuthorized === null) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+        <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
+        <p className="text-sm text-muted-foreground font-medium">Verifying device authorization...</p>
+      </div>
+    );
+  }
+
+  // 2. Block access if device is NOT authorized or is pending admin approval:
+  if (isDeviceAuthorized === false || isPendingApproval) {
+    console.log('[INDEX] Device NOT authorized or pending approval, showing blocking screen');
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-card rounded-lg shadow-lg p-8 text-center border border-amber-500/30">
@@ -2645,6 +2617,10 @@ const Index = () => {
           isOnline={navigator.onLine}
           pendingCount={pendingCount}
           pendingMilkCount={pendingMilkCount}
+          pendingMilkKgs={pendingMilkKgs}
+          pendingMilkAmKgs={pendingMilkAmKgs}
+          pendingMilkPmKgs={pendingMilkPmKgs}
+          unsyncedMilkReceipts={unsyncedMilkReceipts}
           pendingSalesCount={pendingSalesCount}
           conflictedReceiptsCount={conflictedReceiptsCount}
           onStartCollection={handleStartCollection}

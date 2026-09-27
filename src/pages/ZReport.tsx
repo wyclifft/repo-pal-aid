@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { formatWeight } from '@/utils/weightUtils';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { mysqlApi, type ZReportData, type DeviceZReportData } from '@/services/mysqlApi';
@@ -282,16 +283,16 @@ const ZReport = () => {
     }
   }, [autoPrint, reportData, loading]);
 
-  // v2.10.97: Inspect device report transactions to decide which Z report types apply.
-  // transtype 1 = produce (Coffee/Milk), 2 = SELL, 3 = AI → both 2 & 3 are "store".
+  // Inspect device report transactions to decide which Z report types apply.
+  // transtype 1 = Buy produce, 2 = Sell produce, 3 = AI
   const detectAvailableTypes = useCallback((): { hasProduce: boolean; hasStore: boolean } => {
     const txs = deviceReportData?.transactions || [];
     let hasProduce = false;
     let hasStore = false;
     for (const t of txs) {
       const tt = Number(t.transtype) || 1;
-      if (tt === 1) hasProduce = true;
-      else if (tt === 2 || tt === 3) hasStore = true;
+      if (tt === 1 || tt === 2) hasProduce = true;
+      if (tt === 2 || tt === 3) hasStore = true;
       if (hasProduce && hasStore) break;
     }
     return { hasProduce, hasStore };
@@ -546,28 +547,28 @@ const ZReport = () => {
             <div className="thermal-section">
               <div className="thermal-line">Total Entries: {reportData.totals.entries}</div>
               <div className="thermal-line">Total Farmers: {reportData.totals.farmers}</div>
-              <div className="thermal-line">Total {weightLabel}: {(Math.floor(reportData.totals.liters * 10) / 10).toFixed(1)}</div>
+              <div className="thermal-line">Total {weightLabel}: {formatWeight(reportData.totals.liters)}</div>
             </div>
             <div className="thermal-divider">--------------------------------</div>
             {!isCoffee && (
               <div className="thermal-section">
                 <div className="thermal-line thermal-bold">BY SESSION:</div>
-                <div className="thermal-line">Morning: {reportData.bySession.AM.farmers} Farmers ({(Math.floor(reportData.bySession.AM.liters * 10) / 10).toFixed(1)}{weightUnit})</div>
-                <div className="thermal-line">Evening: {reportData.bySession.PM.farmers} Farmers ({(Math.floor(reportData.bySession.PM.liters * 10) / 10).toFixed(1)}{weightUnit})</div>
+                <div className="thermal-line">AM: {reportData.bySession.AM.farmers} Farmers ({formatWeight(reportData.bySession.AM.liters)}{weightUnit})</div>
+                <div className="thermal-line">PM: {reportData.bySession.PM.farmers} Farmers ({formatWeight(reportData.bySession.PM.liters)}{weightUnit})</div>
               </div>
             )}
             {!isCoffee && <div className="thermal-divider">--------------------------------</div>}
             <div className="thermal-section">
               <div className="thermal-line thermal-bold">BY {routeLabel.toUpperCase()}:</div>
               {Object.entries(reportData.byRoute).map(([route, data]) => (
-                <div key={route} className="thermal-line">{route}: {(Math.floor(data.total * 10) / 10).toFixed(1)}{weightUnit}</div>
+                <div key={route} className="thermal-line">{route}: {formatWeight(data.total)}{weightUnit}</div>
               ))}
             </div>
             <div className="thermal-divider">--------------------------------</div>
             <div className="thermal-section">
               <div className="thermal-line thermal-bold">BY COLLECTOR:</div>
               {Object.entries(reportData.byCollector).map(([collector, data]) => (
-                <div key={collector} className="thermal-line">{collector}: {(Math.floor(data.liters * 10) / 10).toFixed(1)}{weightUnit}</div>
+                <div key={collector} className="thermal-line">{collector}: {formatWeight(data.liters)}{weightUnit}</div>
               ))}
             </div>
             <div className="thermal-divider">--------------------------------</div>
@@ -615,7 +616,7 @@ const ZReport = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="text-3xl font-bold text-[#667eea]">
-                    {(Math.floor(reportData.totals.liters * 10) / 10).toFixed(1)} {weightUnit}
+                    {formatWeight(reportData.totals.liters)} {weightUnit}
                   </div>
                 </CardContent>
               </Card>
@@ -660,14 +661,14 @@ const ZReport = () => {
                     </TableHeader>
                     <TableBody>
                       <TableRow>
-                        <TableCell className="font-medium">Morning (AM)</TableCell>
+                        <TableCell className="font-medium">AM</TableCell>
                         <TableCell className="text-right">{reportData.bySession.AM.farmers}</TableCell>
-                        <TableCell className="text-right">{(Math.floor(reportData.bySession.AM.liters * 10) / 10).toFixed(1)} {weightUnit}</TableCell>
+                        <TableCell className="text-right">{formatWeight(reportData.bySession.AM.liters)} {weightUnit}</TableCell>
                       </TableRow>
                       <TableRow>
-                        <TableCell className="font-medium">Evening (PM)</TableCell>
+                        <TableCell className="font-medium">PM</TableCell>
                         <TableCell className="text-right">{reportData.bySession.PM.farmers}</TableCell>
-                        <TableCell className="text-right">{(Math.floor(reportData.bySession.PM.liters * 10) / 10).toFixed(1)} {weightUnit}</TableCell>
+                        <TableCell className="text-right">{formatWeight(reportData.bySession.PM.liters)} {weightUnit}</TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>
@@ -705,7 +706,7 @@ const ZReport = () => {
                           {!isCoffee && <TableCell className="text-right">{amFarmers}</TableCell>}
                           {!isCoffee && <TableCell className="text-right">{pmFarmers}</TableCell>}
                           {isCoffee && <TableCell className="text-right">{totalFarmers}</TableCell>}
-                          <TableCell className="text-right">{(Math.floor(data.total * 10) / 10).toFixed(1)} {weightUnit}</TableCell>
+                          <TableCell className="text-right">{formatWeight(data.total)} {weightUnit}</TableCell>
                         </TableRow>
                       );
                     })}
@@ -746,7 +747,7 @@ const ZReport = () => {
                           <TableCell className="font-medium">{collector}</TableCell>
                           <TableCell className="text-right">{data.farmers}</TableCell>
                           {!isCoffee && <TableCell className="text-right">{sessionIdsCount}</TableCell>}
-                          <TableCell className="text-right">{(Math.floor(data.liters * 10) / 10).toFixed(1)} {weightUnit}</TableCell>
+                          <TableCell className="text-right">{formatWeight(data.liters)} {weightUnit}</TableCell>
                         </TableRow>
                       );
                     })}

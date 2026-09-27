@@ -24,7 +24,7 @@ interface SyncRecordDao {
     @Query("SELECT * FROM sync_records WHERE id = :id")
     suspend fun getById(id: Long): SyncRecord?
     
-    @Query("SELECT * FROM sync_records WHERE reference_no = :referenceNo")
+    @Query("SELECT * FROM sync_records WHERE UPPER(TRIM(reference_no)) = UPPER(TRIM(:referenceNo)) ORDER BY id DESC LIMIT 1")
     suspend fun getByReferenceNo(referenceNo: String): SyncRecord?
     
     @Query("SELECT * FROM sync_records WHERE is_synced = 0 ORDER BY created_at ASC")
@@ -40,10 +40,16 @@ interface SyncRecordDao {
     suspend fun getRecent(limit: Int = 50): List<SyncRecord>
     
     @Query("UPDATE sync_records SET is_synced = 1, synced_at = :syncedAt, backend_id = :backendId WHERE id = :id")
-    suspend fun markSynced(id: Long, syncedAt: Long = System.currentTimeMillis(), backendId: Long? = null)
+    suspend fun markSynced(id: Long, syncedAt: Long = System.currentTimeMillis(), backendId: Long? = null): Int
+
+    @Query("UPDATE sync_records SET is_synced = 1, synced_at = :syncedAt, backend_id = :backendId WHERE UPPER(TRIM(reference_no)) = UPPER(TRIM(:referenceNo))")
+    suspend fun markSyncedByReference(referenceNo: String, syncedAt: Long = System.currentTimeMillis(), backendId: Long? = null): Int
     
     @Query("UPDATE sync_records SET sync_attempts = sync_attempts + 1, last_error = :error, updated_at = :updatedAt WHERE id = :id")
-    suspend fun markSyncFailed(id: Long, error: String, updatedAt: Long = System.currentTimeMillis())
+    suspend fun markSyncFailed(id: Long, error: String, updatedAt: Long = System.currentTimeMillis()): Int
+
+    @Query("UPDATE sync_records SET sync_attempts = sync_attempts + 1, last_error = :error, updated_at = :updatedAt WHERE UPPER(TRIM(reference_no)) = UPPER(TRIM(:referenceNo))")
+    suspend fun markSyncFailedByReference(referenceNo: String, error: String, updatedAt: Long = System.currentTimeMillis()): Int
     
     @Query("DELETE FROM sync_records WHERE is_synced = 1 AND synced_at < :olderThan")
     suspend fun deleteSyncedOlderThan(olderThan: Long): Int

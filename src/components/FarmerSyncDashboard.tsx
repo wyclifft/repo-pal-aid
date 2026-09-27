@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { formatWeight } from '@/utils/weightUtils';
 import { Capacitor } from '@capacitor/core';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
@@ -864,9 +865,9 @@ export const FarmerSyncDashboard = () => {
                 <div className="text-right shrink-0 ml-2">
                   {entry.isCached ? (
                     <div>
-                      <p className="font-semibold">{(Math.floor(entry.cumulativeTotal * 10) / 10).toFixed(1)} kg</p>
+                      <p className="font-semibold">{formatWeight(entry.cumulativeTotal)} kg</p>
                       {entry.localCount > 0 && (
-                        <p className="text-xs text-primary">+{(Math.floor(entry.localCount * 10) / 10).toFixed(1)} local</p>
+                        <p className="text-xs text-primary">+{formatWeight(entry.localCount)} local</p>
                       )}
                     </div>
                   ) : (

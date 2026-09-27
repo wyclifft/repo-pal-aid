@@ -14,6 +14,7 @@ interface UseFarmerResolutionProps {
    * preserve existing Sell/Buy behavior.
    */
   enforcePrefix?: boolean;
+  mprefix?: string; // Member prefix from fm_tanks for route filtering
 }
 
 interface UseFarmerResolutionReturn {
@@ -46,6 +47,7 @@ export const useFarmerResolution = ({
   isMemberMode = true,
   blacklistedFarmerIds,
   enforcePrefix = false,
+  mprefix,
 }: UseFarmerResolutionProps): UseFarmerResolutionReturn => {
   // Filter farmers based on prefix and blacklist
   const availableFarmers = blacklistedFarmerIds && blacklistedFarmerIds.size > 0
@@ -59,6 +61,7 @@ export const useFarmerResolution = ({
     const prefix = isMemberMode ? 'M' : 'D';
     const oppositePrefix = isMemberMode ? 'D' : 'M';
     const oppositeLabel = isMemberMode ? 'Debtors' : 'Members';
+    const mprefixStr = mprefix ? String(mprefix).trim() : '';
 
     const matchesActivePrefix = (f: Farmer) =>
       f.farmer_id.toUpperCase().startsWith(prefix);
@@ -79,11 +82,35 @@ export const useFarmerResolution = ({
 
     // 1. Exact match by farmer_id
     let match = availableFarmers.find(
-      f => f.farmer_id.toLowerCase() === input.toLowerCase() &&
+      f => (f.farmer_id.toLowerCase() === input.toLowerCase() ||
+            f.farmer_id.replace(/^#/, '').toLowerCase() === input.toLowerCase()) &&
            (!enforcePrefix || matchesActivePrefix(f))
     ) || null;
 
-    // 2. If pure numeric, resolve to padded format (e.g., 1 -> M00001)
+    // 2. Try mprefix prepended match and suffix matching (e.g., mprefix = "915", input = "200" -> "915200" or suffix "200")
+    if (!match && mprefixStr && numericInput) {
+      const prefixedId = `${mprefixStr}${numericInput}`;
+      match = availableFarmers.find(
+        f => (f.farmer_id.toLowerCase() === prefixedId.toLowerCase() ||
+              f.farmer_id.replace(/^#/, '').toLowerCase() === prefixedId.toLowerCase()) &&
+             (!enforcePrefix || matchesActivePrefix(f))
+      ) || null;
+
+      if (!match) {
+        match = availableFarmers.find(f => {
+          if (enforcePrefix && !matchesActivePrefix(f)) return false;
+          const cleanFId = f.farmer_id.replace(/^#/, '').trim();
+          if (!cleanFId.startsWith(mprefixStr)) return false;
+          const suffix = cleanFId.slice(mprefixStr.length);
+          if (!suffix) return false;
+          const suffixNumeric = suffix.replace(/\D/g, '');
+          return suffix.toLowerCase() === input.trim().toLowerCase() ||
+                 (Boolean(suffixNumeric) && parseInt(suffixNumeric, 10) === parseInt(numericInput, 10));
+        }) || null;
+      }
+    }
+
+    // 3. If pure numeric, resolve to padded format (e.g., 1 -> M00001)
     if (!match && numericInput && numericInput === input.trim()) {
       const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
       match = availableFarmers.find(
@@ -91,7 +118,7 @@ export const useFarmerResolution = ({
              (!enforcePrefix || matchesActivePrefix(f))
       ) || null;
 
-      // 3. Try matching by numeric portion only
+      // 4. Try matching by numeric portion only
       if (!match) {
         match = availableFarmers.find(f => {
           if (enforcePrefix && !matchesActivePrefix(f)) return false;
@@ -105,12 +132,17 @@ export const useFarmerResolution = ({
       return match;
     }
 
-    // 4. Check if farmer is in the blacklist
+    // 5. Check if farmer is in the blacklist
     if (blacklistedFarmerIds) {
-      const blacklisted = farmers.find(
-        f => f.farmer_id.toLowerCase() === input.toLowerCase() ||
-             f.farmer_id.replace(/\D/g, '') === numericInput
-      );
+      const blacklisted = farmers.find(f => {
+        const cleanId = f.farmer_id.replace(/^#/, '').trim();
+        if (cleanId.toLowerCase() === input.toLowerCase()) return true;
+        if (mprefixStr && cleanId.startsWith(mprefixStr)) {
+          const suffix = cleanId.slice(mprefixStr.length).replace(/\D/g, '');
+          if (suffix && parseInt(suffix, 10) === parseInt(numericInput, 10)) return true;
+        }
+        return f.farmer_id.replace(/\D/g, '') === numericInput;
+      });
       if (blacklisted && blacklistedFarmerIds.has(blacklisted.farmer_id.replace(/^#/, '').trim())) {
         toast.error(`${blacklisted.name} has already delivered this session`);
         return null;
@@ -118,7 +150,7 @@ export const useFarmerResolution = ({
     }
 
     return null;
-  }, [availableFarmers, farmers, isMemberMode, blacklistedFarmerIds, enforcePrefix]);
+  }, [availableFarmers, farmers, isMemberMode, blacklistedFarmerIds, enforcePrefix, mprefix]);
 
   const resolveAndSelect = useCallback((
     input: string,

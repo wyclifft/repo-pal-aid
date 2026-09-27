@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useState, useRef } from 'react';
+import { formatWeight, roundWeight } from '@/utils/weightUtils';
 import { Scale, Loader2, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { Button } from '@/components/ui/button';
@@ -106,15 +107,14 @@ export const LiveWeightDisplay = ({
     if (isStable) {
       // Lock to average of stable readings
       const avg = recentReadings.reduce((a, b) => a + b, 0) / recentReadings.length;
-      // v2.12.61: Use consistent rounding that handles negative values
-      const roundedAvg = Math.round(avg * 10) / 10;
+      const roundedAvg = roundWeight(avg, 3);
       if (roundedAvg !== stableDisplayWeight) {
         setStableDisplayWeight(roundedAvg);
         lastDisplayUpdateRef.current = now;
       }
     } else if (timeSinceLastUpdate > DISPLAY_UPDATE_INTERVAL) {
       // Not stable but throttle rapid updates
-      setStableDisplayWeight(Math.round(incomingWeight * 10) / 10);
+      setStableDisplayWeight(roundWeight(incomingWeight, 3));
       lastDisplayUpdateRef.current = now;
     }
     
@@ -192,7 +192,7 @@ export const LiveWeightDisplay = ({
             {isConnecting 
               ? '...' 
               : displayWeight !== 0
-                ? (Math.round(displayWeight * 10) / 10).toFixed(1)
+                ? formatWeight(displayWeight)
                 : scaleConnected 
                   ? '0.0'
                   : '--'

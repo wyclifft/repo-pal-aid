@@ -57,8 +57,15 @@ export const useSessionBlacklist = (
   const [isLoading, setIsLoading] = useState(false);
   const { getRecentReceipts } = useIndexedDB();
 
-  // Derive session from activeSession's time_from if provided, otherwise use current time
+  // Derive session from activeSeasonCode or activeSession's time_from if provided
   const getSessionType = useCallback((): 'AM' | 'PM' => {
+    const rawCode = String(activeSeasonCode || '').trim().toUpperCase();
+    if (rawCode === 'PM' || rawCode.includes('PM') || rawCode.includes('EVENING') || rawCode.includes('AFTERNOON')) {
+      return 'PM';
+    }
+    if (rawCode === 'AM' || rawCode.includes('AM') || rawCode.includes('MORNING')) {
+      return 'AM';
+    }
     if (activeSessionTimeFrom !== undefined) {
       // Some backends store session time_from as HHMM (e.g., 600, 1400) while others store hour (e.g., 6, 14).
       // Normalize to an hour before deciding AM/PM to avoid false PM classification.
@@ -68,7 +75,7 @@ export const useSessionBlacklist = (
       return hour >= 12 ? 'PM' : 'AM';
     }
     return getCurrentSessionType();
-  }, [activeSessionTimeFrom]);
+  }, [activeSessionTimeFrom, activeSeasonCode]);
 
   // Build blacklist from IndexedDB (unsynced submissions) and online API (synced submissions)
   // NOTE: We do NOT check capturedCollections - blacklisting only applies AFTER successful submission

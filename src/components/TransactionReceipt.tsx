@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { formatWeight } from '@/utils/weightUtils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, X, RefreshCw, Check, AlertTriangle } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
@@ -57,6 +58,8 @@ export interface ReceiptData {
   periodLabel?: string;
   printCopies?: number;
   reprintedAt?: Date;
+  orgtype?: string;
+  showProductName?: boolean;
   // Sync support - for re-syncing failed transactions
   userId?: string;
   productCode?: string;
@@ -157,7 +160,9 @@ export const TransactionReceipt = ({
     userId,
     productCode,
     seasonCode,
-    entryType
+    entryType,
+    orgtype,
+    showProductName = true
   } = data;
 
   // Stable sync key per row - uses index since we track by position
@@ -266,12 +271,7 @@ export const TransactionReceipt = ({
         farmerId: memberId.replace(/^#/, '').trim(),
       };
 
-      // Normalize session to AM/PM
-      let normalizedSession: 'AM' | 'PM' = 'AM';
-      const sessionVal = (session || '').trim().toUpperCase();
-      if (sessionVal === 'PM' || sessionVal.includes('PM') || sessionVal.includes('EVENING') || sessionVal.includes('AFTERNOON') || sessionVal.includes('EV') || sessionVal.includes('AF')) {
-        normalizedSession = 'PM';
-      }
+      const normalizedSession = String(session || '').trim() || 'AM';
 
       const submitOnce = async (referenceNoToUse: string) => {
         console.log(`[SYNC] Submitting: ref=${referenceNoToUse} (row=${syncKey})`);
@@ -460,7 +460,9 @@ export const TransactionReceipt = ({
           collectionDate: transactionDate,
           reprintedAt: reprintedAt,
           receiptTitle: getReceiptTitle(data),
-          totalLabel: getTotalLabel(data)
+          totalLabel: getTotalLabel(data),
+          orgtype,
+          showProductName
         });
       }
 
@@ -486,10 +488,11 @@ export const TransactionReceipt = ({
   };
 
   const isSellProduce = transtype === 2 && data.isMilkFormat;
+  const isDairy = (orgtype || 'D').trim().toUpperCase() === 'D';
 
   // Calculate display total
   const displayTotal = (transtype === 1 || isSellProduce)
-    ? (Math.floor((totalWeight || 0) * 10) / 10).toFixed(1)
+    ? formatWeight(totalWeight || 0)
     : totalAmount?.toFixed(2);
 
   return (
@@ -529,7 +532,7 @@ export const TransactionReceipt = ({
           {/* Items/Collections List */}
           <div className="border-t border-b border-dashed py-2 space-y-1">
             {/* Product name for milk/coffee (transtype 1 or Sell Produce) */}
-            {(transtype === 1 || isSellProduce) && productName && (
+            {(transtype === 1 || isSellProduce) && productName && showProductName && (
               <div className="flex justify-between text-xs mb-1 pb-1 border-b border-dashed">
                 <span className="text-muted-foreground">Product</span>
                 <span className="font-medium">{productName}</span>
@@ -541,13 +544,14 @@ export const TransactionReceipt = ({
               // Produce format (Buy Portal & Sell Produce Portal)
               items.map((item, index) => {
                 const syncKey = getItemSyncKey(index);
-                const refNo = getItemActualReference(item, index) || `(no ref #${index + 1})`;
+                const rawRef = getItemActualReference(item, index) || `(no ref #${index + 1})`;
+                const refNo = rawRef.replace(/-\d+$/, '');
                 const hasMissingRef = !item.reference_no;
 
                 return (
                   <div key={syncKey} className="flex items-center justify-between text-xs gap-2">
                     <span className={`flex-1 ${hasMissingRef ? 'text-destructive' : ''}`}>{index + 1}: {refNo}</span>
-                    <span className="font-medium">{(Math.floor((item.weight || 0) * 10) / 10).toFixed(1)}</span>
+                    <span className="font-medium">{formatWeight(item.weight || 0)}</span>
                   </div>
                 );
               })
@@ -560,7 +564,7 @@ export const TransactionReceipt = ({
                     {/* For Store (transtype 2) - show item name, qty, amount */}
                     {transtype === 2 && (
                       <div className="flex justify-between text-xs">
-                        <span>{item.item_name} x{(Math.floor(Number(item.quantity || 0) * 10) / 10).toFixed(1)}</span>
+                        <span>{item.item_name} x{formatWeight(Number(item.quantity || 0))}</span>
                         <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
                       </div>
                     )}
@@ -569,7 +573,7 @@ export const TransactionReceipt = ({
                     {transtype === 3 && (
                       <>
                         <div className="flex justify-between text-xs">
-                          <span>{item.item_name} x{(Math.floor(Number(item.quantity || 0) * 10) / 10).toFixed(1)}</span>
+                          <span>{item.item_name} x{formatWeight(Number(item.quantity || 0))}</span>
                           <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
                         </div>
                         {item.cowDetails && (
@@ -614,8 +618,8 @@ export const TransactionReceipt = ({
           <div className="space-y-0.5 text-xs">
             {showCumulativeFrequency && !isSellProduce && cumulativeFrequency !== undefined && (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Cumulative</span>
-                <span className="font-medium">{(Math.floor(cumulativeFrequency * 10) / 10).toFixed(1)}</span>
+                <span className="text-muted-foreground">Cumulative{isDairy ? ':' : ''}</span>
+                <span className="font-medium">{formatWeight(cumulativeFrequency)}</span>
               </div>
             )}
             {showCumulativeFrequency && !isSellProduce && cumulativeByProduct && cumulativeByProduct.length > 1 && (
@@ -623,7 +627,7 @@ export const TransactionReceipt = ({
                 {cumulativeByProduct.map((prod) => (
                   <div key={prod.icode} className="flex justify-between text-[10px]">
                     <span className="text-muted-foreground">{prod.product_name || prod.icode}</span>
-                    <span>{(Math.floor(prod.weight * 10) / 10).toFixed(1)}</span>
+                    <span>{formatWeight(prod.weight)}</span>
                   </div>
                 ))}
               </div>
@@ -642,7 +646,7 @@ export const TransactionReceipt = ({
             )}
             {memberRoute && (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Member Region</span>
+                <span className="text-muted-foreground">{routeLabel && routeLabel !== 'Route' ? routeLabel : 'Member Route'}</span>
                 <span className="font-medium">{memberRoute}</span>
               </div>
             )}
@@ -756,8 +760,11 @@ export const createMilkReceiptData = (
     periodLabel?: string;
     locationCode?: string;
     locationName?: string;
+    memberRoute?: string;
     deliveredBy?: string;
     reprintedAt?: Date;
+    orgtype?: string;
+    showProductName?: boolean;
   }
 ): ReceiptData | null => {
   if (receipts.length === 0) return null;
@@ -772,7 +779,7 @@ export const createMilkReceiptData = (
     companyName,
     memberId: first.farmer_id,
     memberName: first.farmer_name,
-    memberRoute: first.route,
+    memberRoute: options?.memberRoute || first.route,
     clerkName: first.clerk_name,
     deliveredBy: options?.deliveredBy || first.delivered_by || undefined,
     transactionDate: new Date(first.collection_date),
@@ -804,7 +811,8 @@ export const createStoreReceiptData = (
   memberInfo: { id: string; name: string; route?: string },
   transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string; deliveredBy?: string },
   companyName: string,
-  transactionDate?: Date
+  transactionDate?: Date,
+  extraOptions?: { orgtype?: string; showProductName?: boolean; reprintedAt?: Date }
 ): ReceiptData => {
   return {
     transtype: 2,
@@ -826,7 +834,8 @@ export const createStoreReceiptData = (
       lineTotal: c.lineTotal
     })),
     totalAmount: cartItems.reduce((sum, c) => sum + c.lineTotal, 0),
-    isMilkFormat: false
+    isMilkFormat: false,
+    ...extraOptions
   };
 };
 
@@ -841,7 +850,8 @@ export const createAIReceiptData = (
   memberInfo: { id: string; name: string; route?: string },
   transactionInfo: { transrefno: string; uploadrefno?: string; clerkName: string; deliveredBy?: string },
   companyName: string,
-  transactionDate?: Date
+  transactionDate?: Date,
+  extraOptions?: { orgtype?: string; showProductName?: boolean; reprintedAt?: Date }
 ): ReceiptData => {
   return {
     transtype: 3,
@@ -864,6 +874,7 @@ export const createAIReceiptData = (
       cowDetails: c.cowDetails
     })),
     totalAmount: cartItems.reduce((sum, c) => sum + c.lineTotal, 0),
-    isMilkFormat: false
+    isMilkFormat: false,
+    ...extraOptions
   };
 };

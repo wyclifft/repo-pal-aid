@@ -47,10 +47,18 @@ const buildOptions = (sessions: SessionOptionInput[]): BuiltOption[] => {
   const seen = new Set<string>();
   const list: BuiltOption[] = [];
 
+  let hasAM = false;
+  let hasPM = false;
+
   (sessions || []).forEach((s) => {
     const milkId = String(s?.milk_session_id || '').trim();
     const code = String(s?.SCODE || '').trim();
     const descript = String(s?.descript || '').trim();
+
+    const dUpper = descript.toUpperCase();
+    const cUpper = code.toUpperCase();
+    if (dUpper.includes('MORNING') || dUpper.includes('AM') || cUpper === 'AM' || cUpper === 'MO') hasAM = true;
+    if (dUpper.includes('AFTERNOON') || dUpper.includes('EVENING') || dUpper.includes('PM') || cUpper === 'PM' || cUpper === 'AF' || cUpper === 'EV') hasPM = true;
 
     if (milkId && milkId !== '0' && milkId.length === 10) {
       if (seen.has(milkId)) return;
@@ -79,6 +87,27 @@ const buildOptions = (sessions: SessionOptionInput[]): BuiltOption[] => {
       icon: pickIcon(descript || code),
     });
   });
+
+  // Always offer aggregate AM and PM options if AM/PM sessions exist and aren't already added
+  if (hasAM && !seen.has('AM')) {
+    seen.add('AM');
+    list.push({
+      value: 'AM',
+      label: 'All AM Z',
+      description: 'All AM sessions combined',
+      icon: <Sun className="h-5 w-5 text-yellow-600" />,
+    });
+  }
+
+  if (hasPM && !seen.has('PM')) {
+    seen.add('PM');
+    list.push({
+      value: 'PM',
+      label: 'All PM Z',
+      description: 'All PM sessions combined',
+      icon: <Sunset className="h-5 w-5 text-orange-600" />,
+    });
+  }
 
   // Always append the combined option
   list.push({
@@ -206,30 +235,21 @@ export const filterTransactionsByPeriod = <T extends { session?: string; season_
   const target = String(period).trim().toUpperCase();
   if (!target) return transactions;
 
-  // 10-digit milk_session_id filtering takes absolute priority
-  if (target.length === 10) {
-    return transactions.filter(tx => {
-      const milkId = String(tx.milk_session_id || '').trim().toUpperCase();
-      return milkId === target;
-    });
-  }
-
   return transactions.filter(tx => {
     const milkId = String(tx.milk_session_id || '').trim().toUpperCase();
-    if (milkId && milkId === target) return true;
+    const can = String(tx.season_code || '').trim().toUpperCase();
+    const sess = String(tx.session || '').trim().toUpperCase();
+
+    if (milkId === target || can === target || sess === target) return true;
 
     if (orgtype === 'D') {
       let sessionTarget = target;
       if (['MO', 'MORNING', 'AM'].includes(target)) sessionTarget = 'AM';
       else if (['AF', 'AFTERNOON', 'PM', 'EV', 'EVE', 'EVENING'].includes(target)) sessionTarget = 'PM';
 
-      const sess = String(tx.session || '').trim().toUpperCase();
-      const can = String(tx.season_code || '').trim().toUpperCase();
-      return sess === sessionTarget || can === sessionTarget;
+      if (sess === sessionTarget || can === sessionTarget) return true;
     }
 
-    const can = String(tx.season_code || '').trim().toUpperCase();
-    const sess = String(tx.session || '').trim().toUpperCase();
     return can === target || sess === target;
   });
 };

@@ -12,6 +12,8 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -47,6 +49,7 @@ class BluetoothClassicJsBridge(
         "printer" to RoleConnection()
     )
 
+    private val connectMutex = Mutex()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private fun adapter(): BluetoothAdapter? = try {
@@ -233,7 +236,9 @@ class BluetoothClassicJsBridge(
         disconnectRole("printer", notify = true)
     }
 
-    private fun connectSocket(device: BluetoothDevice, insecureRequested: Boolean): BluetoothSocket {
+    private suspend fun connectSocket(device: BluetoothDevice, insecureRequested: Boolean): BluetoothSocket = connectMutex.withLock {
+        delay(200)
+
         val first = if (insecureRequested) {
             device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
         } else {
@@ -245,12 +250,32 @@ class BluetoothClassicJsBridge(
             first
         } catch (firstError: IOException) {
             try { first.close() } catch (_: IOException) {}
-            if (insecureRequested) throw firstError
 
-            Log.w(TAG, "[BT][JS] Secure connect failed, trying insecure fallback: ${firstError.message}")
-            val fallback = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
-            fallback.connect()
-            fallback
+            Log.w(TAG, "[BT][JS] Secure connect failed (${firstError.message}), trying insecure fallback...")
+            val fallback = try {
+                device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
+            } catch (e: Throwable) { null }
+
+            if (fallback != null) {
+                try {
+                    fallback.connect()
+                    return@withLock fallback
+                } catch (fallbackError: IOException) {
+                    try { fallback.close() } catch (_: IOException) {}
+                    Log.w(TAG, "[BT][JS] Insecure connect failed (${fallbackError.message}), trying reflection port 1 fallback...")
+                }
+            }
+
+            // Fallback: Reflection createRfcommSocket(1) for direct RFCOMM channel 1
+            try {
+                val m = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                val reflectionSocket = m.invoke(device, 1) as BluetoothSocket
+                reflectionSocket.connect()
+                reflectionSocket
+            } catch (reflectionError: Throwable) {
+                Log.e(TAG, "[BT][JS] Reflection fallback failed: ${reflectionError.message}")
+                throw firstError
+            }
         }
     }
 

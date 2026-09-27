@@ -175,7 +175,8 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
         const cached = await getRoutes();
         const opts: RouteOption[] = (cached || [])
           .filter((r: any) => r && r.tcode)
-          .map((r: any) => ({ tcode: String(r.tcode).trim(), descript: String(r.descript || r.tcode).trim() }));
+          .map((r: any) => ({ tcode: String(r.tcode).trim(), descript: String(r.descript || r.tcode).trim() }))
+          .sort((a, b) => a.descript.localeCompare(b.descript, undefined, { numeric: true, sensitivity: 'base' }));
         setRoutes(opts);
       } catch (err) {
         console.warn('[AddMember] failed to load routes:', err);
@@ -274,7 +275,7 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto pb-32 sm:pb-8">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UserPlus className="h-5 w-5" />
