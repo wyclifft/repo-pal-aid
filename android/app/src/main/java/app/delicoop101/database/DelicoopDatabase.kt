@@ -482,7 +482,7 @@ abstract class DelicoopDatabase : RoomDatabase() {
             val purgedGrp = transactionGroupDao().deleteOlderThan60Days()
             
             val cutOffTimestamp = System.currentTimeMillis() - (days * 86400000L)
-            val purgedLogs = appLogDao().deleteOlderThan(cutOffTimestamp)
+            val purgedLogs = appLogDao().deleteOldLogs(cutOffTimestamp)
 
             Log.d(TAG, "[DB] Pruning 60-day old data completed: $purgedTx transactions, $purgedGrp groups, $purgedLogs logs purged")
 

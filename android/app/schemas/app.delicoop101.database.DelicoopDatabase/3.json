@@ -1,0 +1,1618 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "6fe3cde69fc71a0beaa11562de78a752",
+    "entities": [
+      {
+        "tableName": "sync_records",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `reference_no` TEXT NOT NULL, `record_type` TEXT NOT NULL, `payload` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, `is_synced` INTEGER NOT NULL, `synced_at` INTEGER, `sync_attempts` INTEGER NOT NULL, `last_error` TEXT, `backend_id` INTEGER, `user_id` TEXT, `device_fingerprint` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "referenceNo",
+            "columnName": "reference_no",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordType",
+            "columnName": "record_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isSynced",
+            "columnName": "is_synced",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "syncedAt",
+            "columnName": "synced_at",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "syncAttempts",
+            "columnName": "sync_attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "last_error",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "backendId",
+            "columnName": "backend_id",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "user_id",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "deviceFingerprint",
+            "columnName": "device_fingerprint",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_sync_records_is_synced",
+            "unique": false,
+            "columnNames": [
+              "is_synced"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sync_records_is_synced` ON `${TABLE_NAME}` (`is_synced`)"
+          },
+          {
+            "name": "index_sync_records_record_type",
+            "unique": false,
+            "columnNames": [
+              "record_type"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sync_records_record_type` ON `${TABLE_NAME}` (`record_type`)"
+          },
+          {
+            "name": "index_sync_records_created_at",
+            "unique": false,
+            "columnNames": [
+              "created_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sync_records_created_at` ON `${TABLE_NAME}` (`created_at`)"
+          },
+          {
+            "name": "index_sync_records_reference_no",
+            "unique": true,
+            "columnNames": [
+              "reference_no"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_sync_records_reference_no` ON `${TABLE_NAME}` (`reference_no`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "app_logs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `level` TEXT NOT NULL, `tag` TEXT NOT NULL, `message` TEXT NOT NULL, `extra_data` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "level",
+            "columnName": "level",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tag",
+            "columnName": "tag",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "message",
+            "columnName": "message",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "extraData",
+            "columnName": "extra_data",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_app_logs_timestamp",
+            "unique": false,
+            "columnNames": [
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_app_logs_timestamp` ON `${TABLE_NAME}` (`timestamp`)"
+          },
+          {
+            "name": "index_app_logs_level",
+            "unique": false,
+            "columnNames": [
+              "level"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_app_logs_level` ON `${TABLE_NAME}` (`level`)"
+          },
+          {
+            "name": "index_app_logs_tag",
+            "unique": false,
+            "columnNames": [
+              "tag"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_app_logs_tag` ON `${TABLE_NAME}` (`tag`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "em_transaction",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `transrefno` TEXT NOT NULL, `userId` TEXT NOT NULL, `clerk` TEXT NOT NULL, `deviceserial` TEXT NOT NULL, `memberno` TEXT NOT NULL, `route` TEXT NOT NULL, `weight` REAL NOT NULL, `session` TEXT NOT NULL, `transdate` TEXT NOT NULL, `transtime` TEXT NOT NULL, `CAN` TEXT NOT NULL, `Transtype` TEXT NOT NULL, `Uploadrefno` TEXT NOT NULL, `processed` INTEGER NOT NULL, `uploaded` INTEGER NOT NULL, `ccode` TEXT NOT NULL, `ivat` REAL NOT NULL, `iprice` REAL NOT NULL, `amount` REAL NOT NULL, `icode` TEXT NOT NULL, `cowname` TEXT NOT NULL, `cowbreed` TEXT NOT NULL, `noofcalfs` INTEGER NOT NULL, `aibreed` TEXT NOT NULL, `milk_session_id` TEXT NOT NULL, `time` INTEGER NOT NULL, `c_route` TEXT NOT NULL, `capType` INTEGER NOT NULL, `onlineMode` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transrefno",
+            "columnName": "transrefno",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clerk",
+            "columnName": "clerk",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceserial",
+            "columnName": "deviceserial",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memberno",
+            "columnName": "memberno",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "route",
+            "columnName": "route",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "weight",
+            "columnName": "weight",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "session",
+            "columnName": "session",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transdate",
+            "columnName": "transdate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transtime",
+            "columnName": "transtime",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "CAN",
+            "columnName": "CAN",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Transtype",
+            "columnName": "Transtype",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "Uploadrefno",
+            "columnName": "Uploadrefno",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "processed",
+            "columnName": "processed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uploaded",
+            "columnName": "uploaded",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ivat",
+            "columnName": "ivat",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "iprice",
+            "columnName": "iprice",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "icode",
+            "columnName": "icode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cowname",
+            "columnName": "cowname",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cowbreed",
+            "columnName": "cowbreed",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "noofcalfs",
+            "columnName": "noofcalfs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "aibreed",
+            "columnName": "aibreed",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "milkSessionId",
+            "columnName": "milk_session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "time",
+            "columnName": "time",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cRoute",
+            "columnName": "c_route",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "capType",
+            "columnName": "capType",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "onlineMode",
+            "columnName": "onlineMode",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "cm_members",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `descript` TEXT NOT NULL, `mcode` TEXT NOT NULL, `idno` TEXT NOT NULL, `route` TEXT NOT NULL, `status` INTEGER NOT NULL, `mstatus` TEXT NOT NULL, `clientFetch` TEXT, `clientFetch1` TEXT, `ccode` TEXT NOT NULL, `crbal` TEXT NOT NULL, `prvqty` REAL NOT NULL, `currqty` REAL NOT NULL, `multOpt` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "descript",
+            "columnName": "descript",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mcode",
+            "columnName": "mcode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "idno",
+            "columnName": "idno",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "route",
+            "columnName": "route",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mstatus",
+            "columnName": "mstatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientFetch",
+            "columnName": "clientFetch",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "clientFetch1",
+            "columnName": "clientFetch1",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "crbal",
+            "columnName": "crbal",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "prvqty",
+            "columnName": "prvqty",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currqty",
+            "columnName": "currqty",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "multOpt",
+            "columnName": "multOpt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "fm_items",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `icode` TEXT NOT NULL, `descript` TEXT NOT NULL, `sprice` REAL NOT NULL, `mprice` REAL NOT NULL, `stockbal` REAL NOT NULL, `ccode` TEXT NOT NULL, `coreUpload` INTEGER NOT NULL, `clientFetch` INTEGER NOT NULL, `clientFetch1` INTEGER NOT NULL, `invtype` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "icode",
+            "columnName": "icode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "descript",
+            "columnName": "descript",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sprice",
+            "columnName": "sprice",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mprice",
+            "columnName": "mprice",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stockbal",
+            "columnName": "stockbal",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coreUpload",
+            "columnName": "coreUpload",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientFetch",
+            "columnName": "clientFetch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientFetch1",
+            "columnName": "clientFetch1",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "invtype",
+            "columnName": "invtype",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "Users",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `userid` TEXT NOT NULL, `username` TEXT NOT NULL, `password` TEXT NOT NULL, `groupid` TEXT NOT NULL, `supervisor` INTEGER NOT NULL, `astatus` INTEGER NOT NULL, `c_password` TEXT NOT NULL, `coreUpload` INTEGER NOT NULL, `clientFetch` INTEGER NOT NULL, `email` TEXT NOT NULL, `ccode` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userid",
+            "columnName": "userid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "username",
+            "columnName": "username",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "password",
+            "columnName": "password",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groupid",
+            "columnName": "groupid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "supervisor",
+            "columnName": "supervisor",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "astatus",
+            "columnName": "astatus",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cPassword",
+            "columnName": "c_password",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coreUpload",
+            "columnName": "coreUpload",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientFetch",
+            "columnName": "clientFetch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "email",
+            "columnName": "email",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "transaction_group",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `username` TEXT NOT NULL, `session_ref` TEXT NOT NULL, `session` TEXT NOT NULL, `session_string` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `date_created` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "username",
+            "columnName": "username",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionRef",
+            "columnName": "session_ref",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "session",
+            "columnName": "session",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionString",
+            "columnName": "session_string",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dateCreated",
+            "columnName": "date_created",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "cart",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `icode` TEXT NOT NULL, `iname` TEXT NOT NULL, `userId` TEXT NOT NULL, `clerk` TEXT NOT NULL, `route` TEXT NOT NULL, `deviceSerial` TEXT NOT NULL, `memberno` TEXT NOT NULL, `quantity` TEXT NOT NULL, `price` REAL NOT NULL, `session` TEXT NOT NULL, `transdate` TEXT NOT NULL, `transtime` TEXT NOT NULL, `ccode` TEXT NOT NULL, `ivat` REAL NOT NULL, `iprice` REAL NOT NULL, `amount` REAL NOT NULL, `cowname` TEXT NOT NULL, `cowbreed` TEXT NOT NULL, `noofcalfs` TEXT NOT NULL, `aibreed` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "icode",
+            "columnName": "icode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "iname",
+            "columnName": "iname",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clerk",
+            "columnName": "clerk",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "route",
+            "columnName": "route",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceSerial",
+            "columnName": "deviceSerial",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memberno",
+            "columnName": "memberno",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quantity",
+            "columnName": "quantity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "price",
+            "columnName": "price",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "session",
+            "columnName": "session",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transdate",
+            "columnName": "transdate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transtime",
+            "columnName": "transtime",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ivat",
+            "columnName": "ivat",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "iprice",
+            "columnName": "iprice",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cowname",
+            "columnName": "cowname",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cowbreed",
+            "columnName": "cowbreed",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "noofcalfs",
+            "columnName": "noofcalfs",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "aibreed",
+            "columnName": "aibreed",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "cm_credits",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `crcode` TEXT NOT NULL, `descript` TEXT NOT NULL, `ccode` TEXT NOT NULL, `coreUpload` TEXT NOT NULL, `clientFetch` TEXT NOT NULL, `clientFetch1` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "crcode",
+            "columnName": "crcode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "descript",
+            "columnName": "descript",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coreUpload",
+            "columnName": "coreUpload",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientFetch",
+            "columnName": "clientFetch",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientFetch1",
+            "columnName": "clientFetch1",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "device",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `ccode` TEXT NOT NULL, `devcode` TEXT NOT NULL, `uniquedevcode` TEXT NOT NULL, `milkid` INTEGER NOT NULL, `storeid` INTEGER NOT NULL, `aiid` INTEGER NOT NULL, `trnid` INTEGER NOT NULL, `transdate` TEXT NOT NULL, `companyName` TEXT NOT NULL, `caddress` TEXT NOT NULL, `tel` TEXT NOT NULL, `email` TEXT NOT NULL, `cno` TEXT NOT NULL, `chkRoute` INTEGER NOT NULL, `stableOpt` INTEGER NOT NULL, `sessPrint` INTEGER NOT NULL, `autoW` INTEGER NOT NULL, `zeroOpt` INTEGER NOT NULL, `printcumm` INTEGER NOT NULL, `registrationStatus` TEXT NOT NULL, `scaleMac` TEXT NOT NULL, `printerMac` TEXT NOT NULL, `printerName` TEXT NOT NULL, `serviceUUID` TEXT NOT NULL, `useInternalBLT` INTEGER NOT NULL, `syncZReport` INTEGER NOT NULL, `lastZReport` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "devcode",
+            "columnName": "devcode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uniquedevcode",
+            "columnName": "uniquedevcode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "milkid",
+            "columnName": "milkid",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "storeid",
+            "columnName": "storeid",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "aiid",
+            "columnName": "aiid",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "trnid",
+            "columnName": "trnid",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transdate",
+            "columnName": "transdate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "companyName",
+            "columnName": "companyName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "caddress",
+            "columnName": "caddress",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tel",
+            "columnName": "tel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "email",
+            "columnName": "email",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cno",
+            "columnName": "cno",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chkRoute",
+            "columnName": "chkRoute",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stableOpt",
+            "columnName": "stableOpt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessPrint",
+            "columnName": "sessPrint",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoW",
+            "columnName": "autoW",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zeroOpt",
+            "columnName": "zeroOpt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "printcumm",
+            "columnName": "printcumm",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "registrationStatus",
+            "columnName": "registrationStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scaleMac",
+            "columnName": "scaleMac",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "printerMac",
+            "columnName": "printerMac",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "printerName",
+            "columnName": "printerName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serviceUUID",
+            "columnName": "serviceUUID",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "useInternalBLT",
+            "columnName": "useInternalBLT",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "syncZReport",
+            "columnName": "syncZReport",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastZReport",
+            "columnName": "lastZReport",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "rtinit",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `fnname` TEXT NOT NULL, `fntag` INTEGER NOT NULL, `fnTerms` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fnname",
+            "columnName": "fnname",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fntag",
+            "columnName": "fntag",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fnTerms",
+            "columnName": "fnTerms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "fm_tanks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tcode` TEXT NOT NULL, `descript` TEXT NOT NULL, `icode` TEXT NOT NULL, `idesc` TEXT NOT NULL, `depart` TEXT NOT NULL, `ccode` TEXT NOT NULL, `cname` TEXT NOT NULL, `caddress` TEXT NOT NULL, `tel` TEXT NOT NULL, `email` TEXT NOT NULL, `printOptions` TEXT NOT NULL, `clientFetch` INTEGER, `mprefix` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tcode",
+            "columnName": "tcode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "descript",
+            "columnName": "descript",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "icode",
+            "columnName": "icode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "idesc",
+            "columnName": "idesc",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "depart",
+            "columnName": "depart",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cname",
+            "columnName": "cname",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "caddress",
+            "columnName": "caddress",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tel",
+            "columnName": "tel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "email",
+            "columnName": "email",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "printOptions",
+            "columnName": "printOptions",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientFetch",
+            "columnName": "clientFetch",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "mprefix",
+            "columnName": "mprefix",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "session",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `username` TEXT NOT NULL, `user` TEXT NOT NULL, `userId` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `logoutAt` INTEGER NOT NULL, `scaleMac` TEXT NOT NULL, `printerMac` TEXT NOT NULL, `printerName` TEXT NOT NULL, `serviceUUID` TEXT NOT NULL, `useInternalBLT` INTEGER NOT NULL, `syncZReport` INTEGER NOT NULL, `lastZReport` INTEGER NOT NULL, `supervisor` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "username",
+            "columnName": "username",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "user",
+            "columnName": "user",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "logoutAt",
+            "columnName": "logoutAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scaleMac",
+            "columnName": "scaleMac",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "printerMac",
+            "columnName": "printerMac",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "printerName",
+            "columnName": "printerName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serviceUUID",
+            "columnName": "serviceUUID",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "useInternalBLT",
+            "columnName": "useInternalBLT",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "syncZReport",
+            "columnName": "syncZReport",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastZReport",
+            "columnName": "lastZReport",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "supervisor",
+            "columnName": "supervisor",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "milk_session",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `session_date` TEXT NOT NULL, `username` TEXT NOT NULL, `user_id` TEXT NOT NULL, `route` TEXT NOT NULL, `route_name` TEXT NOT NULL, `session` TEXT NOT NULL, `milk_can` TEXT NOT NULL, `milk_ref` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionDate",
+            "columnName": "session_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "username",
+            "columnName": "username",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "user_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "route",
+            "columnName": "route",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routeName",
+            "columnName": "route_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "session",
+            "columnName": "session",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "milkCan",
+            "columnName": "milk_can",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "milkRef",
+            "columnName": "milk_ref",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "sess",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `ccode` TEXT NOT NULL, `descript` TEXT NOT NULL, `time_from` INTEGER NOT NULL, `time_to` INTEGER NOT NULL, `icode` TEXT NOT NULL DEFAULT '')",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "descript",
+            "columnName": "descript",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeFrom",
+            "columnName": "time_from",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeTo",
+            "columnName": "time_to",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "icode",
+            "columnName": "icode",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "ai_transaction",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `deviceCode` TEXT NOT NULL, `memberNumber` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceCode",
+            "columnName": "deviceCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memberNumber",
+            "columnName": "memberNumber",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "milk_transaction",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `deviceCode` TEXT NOT NULL, `memberNumber` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceCode",
+            "columnName": "deviceCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memberNumber",
+            "columnName": "memberNumber",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "store_transaction",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `deviceCode` TEXT NOT NULL, `memberNumber` TEXT NOT NULL, `transactionType` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deviceCode",
+            "columnName": "deviceCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memberNumber",
+            "columnName": "memberNumber",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transactionType",
+            "columnName": "transactionType",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "Seasons",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `ccode` TEXT NOT NULL, `scode` TEXT NOT NULL, `descript` TEXT NOT NULL, `date_from` TEXT NOT NULL, `date_to` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ccode",
+            "columnName": "ccode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scode",
+            "columnName": "scode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "descript",
+            "columnName": "descript",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dateFrom",
+            "columnName": "date_from",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dateTo",
+            "columnName": "date_to",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6fe3cde69fc71a0beaa11562de78a752')"
+    ]
+  }
+}
