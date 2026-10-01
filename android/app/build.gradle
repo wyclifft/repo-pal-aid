@@ -23,8 +23,12 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 242
-        versionName "2.12.92"
+        versionCode 248
+        versionName "2.12.98"
+        
+        ndk {
+            abiFilters "armeabi-v7a"
+        }
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -69,11 +73,11 @@ android {
         }
     }
 
-    // v2.12.13: Enable 16KB page alignment support for Android 15/16.
-    // This requires uncompressed native libs to be page-aligned in the APK.
+    // v2.12.13: Ensure legacy packaging is enabled so 4KB-aligned native libs (like SQLCipher & POS C++ libs)
+    // are extracted to disk on installation, enabling dlopen to succeed on Android 14+ without crashing.
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            useLegacyPackaging = true
         }
     }
 
@@ -122,8 +126,7 @@ dependencies {
     implementation "androidx.room:room-ktx:$room_version"
     kapt "androidx.room:room-compiler:$room_version"
     
-    // SQLCipher for encryption
-    implementation "net.zetetic:android-database-sqlcipher:$sqlcipher_version"
+    // SQLite support
     implementation "androidx.sqlite:sqlite-ktx:2.4.0"
     
     // WorkManager for background sync

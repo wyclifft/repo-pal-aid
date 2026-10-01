@@ -66,6 +66,7 @@
     <!-- v2.11.23: Camera for native photo capture on Android 7 -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
     <!-- Bluetooth feature declarations -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />

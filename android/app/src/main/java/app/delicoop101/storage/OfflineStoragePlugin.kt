@@ -9,6 +9,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import app.delicoop101.database.DelicoopDatabase
 import app.delicoop101.database.SyncRecord
 import app.delicoop101.database.DatabaseLogger
+import app.delicoop101.database.DatabaseBackupManager
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -77,6 +78,11 @@ class OfflineStoragePlugin : Plugin() {
                 val id = db.syncRecordDao().insert(record)
                 Log.d(TAG, "[SAVE] Record saved: $referenceNo (id=$id, type=$recordType)")
                 DatabaseLogger.info(TAG, "Record saved to encrypted DB", "ref=$referenceNo, type=$recordType, id=$id")
+
+                // Asynchronously trigger backup to external storage
+                scope.launch {
+                    DatabaseBackupManager.backupDatabase(context)
+                }
 
                 withContext(Dispatchers.Main) {
                     val result = JSObject()
@@ -317,6 +323,107 @@ class OfflineStoragePlugin : Plugin() {
                 Log.e(TAG, "[TRIGGER] Trigger sync failed: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     call.reject("Failed to trigger sync: ${e.message}")
+                }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun pruneOldRecords(call: PluginCall) {
+        val days = call.getInt("days") ?: 60
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                db.pruneOldTransactions(days)
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("success", true)
+                    result.put("daysPruned", days)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[PRUNE] Prune failed: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    call.reject("Failed to prune old records: ${e.message}")
+                }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun setDeviceCode(call: PluginCall) {
+        val devCode = call.getString("devCode") ?: call.getString("devcode")
+        if (devCode.isNullOrBlank()) {
+            call.reject("devCode is required")
+            return
+        }
+        try {
+            DelicoopDatabase.setDeviceCode(context, devCode)
+            val dbName = DelicoopDatabase.getDatabaseName(context)
+            val result = JSObject()
+            result.put("success", true)
+            result.put("deviceCode", DelicoopDatabase.getDeviceCode(context))
+            result.put("databaseName", dbName)
+            call.resolve(result)
+        } catch (e: Exception) {
+            call.reject("Failed to set device code: ${e.message}")
+        }
+    }
+
+    @PluginMethod
+    fun getDatabaseInfo(call: PluginCall) {
+        try {
+            val devCode = DelicoopDatabase.getDeviceCode(context)
+            val dbName = DelicoopDatabase.getDatabaseName(context)
+            val result = JSObject()
+            result.put("deviceCode", devCode)
+            result.put("databaseName", dbName)
+            result.put("encrypted", false)
+            result.put("journalMode", "TRUNCATE")
+            result.put("singleFile", true)
+            call.resolve(result)
+        } catch (e: Exception) {
+            call.reject("Failed to get database info: ${e.message}")
+        }
+    }
+
+    @PluginMethod
+    fun backupDatabase(call: PluginCall) {
+        scope.launch {
+            try {
+                val success = DatabaseBackupManager.backupDatabase(context)
+                val backupFile = DatabaseBackupManager.getBackupFile(context)
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("success", success)
+                    result.put("backupPath", backupFile.absolutePath)
+                    result.put("sizeBytes", if (backupFile.exists()) backupFile.length() else 0L)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[BACKUP] Backup failed: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    call.reject("Failed to backup database: ${e.message}")
+                }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun restoreDatabase(call: PluginCall) {
+        scope.launch {
+            try {
+                val restored = DatabaseBackupManager.restoreIfNeeded(context)
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("success", true)
+                    result.put("restored", restored)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[RESTORE] Restore failed: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    call.reject("Failed to restore database: ${e.message}")
                 }
             }
         }

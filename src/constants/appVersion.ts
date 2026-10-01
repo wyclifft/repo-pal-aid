@@ -1,4 +1,21 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.98: SCALE DATABASE PARITY, DYNAMIC NAMING & AUTO-BACKUP / RESTORE.
+//   - Aligned Room DB schema with scale database (rt_scale_AH04.db) with 19 full entities & DAOs.
+//   - Implemented dynamic database naming delicoop101_database_{devcode} (e.g. delicoop101_database_AH04).
+//   - Converted database to plain unencrypted single-file mode (JournalMode.TRUNCATE).
+//   - Implemented automated 60-day transaction data retention and VACUUM pruning.
+//   - Added DatabaseBackupManager with automatic external storage backup and auto-restore surviving Clear Data & APK uninstalls.
+//
+// v2.12.97: CRANE SCALE NET WEIGHT PRIORITIZATION & MULTI-FIELD PARSING FIX.
+//   - Fixed digital scale Gross vs. Net weight discrepancy (e.g. scale screen displaying Net 2.6 kg while app displayed Gross 6.0 kg).
+//   - Expanded Net weight regex matching to recognize all scale Net tokens (NW, N.W., NW:, N:, NT, NET, WN, W.N., NET WEIGHT).
+//   - Added active Net weight stream tracking to suppress standalone Gross weight frames (GS, GW, GROSS, G.W., WW) from overwriting Net weight readings when the scale is tared.
+//   - Added serial stream line-buffering to correctly assemble and parse multi-line or split serial Bluetooth frames.
+//
+// v2.12.96: SCALE PARSING & NON-ROUNDING WEIGHT TRUNCATION FIX.
+//   - Fixed Bluetooth LE and Classic scale parsing edge cases where 0.6 kg scale reading was misparsed as 6.0 kg due to integer fallback thresholds and comma decimal separators.
+//   - Enforced strict truncation for weights (e.g. 2.677 -> 2.6) without rounding up or down.
+//
 // v2.12.92: LITERAL SESSION DISPLAY & AGGREGATE Z-REPORT PERIOD SELECTION.
 //   Strictly preserved exact session labels (AM, PM, Morning, Afternoon, Evening) everywhere without forcing overrides.
 //   Updated Z-Report summary table, thermal print, thermal preview, and PDF exports to use exact session codes/names.
@@ -1354,12 +1371,17 @@
 //   and Buy/Sell forms so soft keyboard never hides bottom list items or inputs.
 //   Dashboard Header: Prominent, bold AM/PM session breakdown & total offline KGs badge.
 //
-export const APP_VERSION = '2.12.92';
-export const APP_VERSION_CODE = 242;
+// v2.12.95: RESTORED NATIVE SELECTORS WITH DAYNIGHT HIGH-CONTRAST TEXT.
+//   - Restored SessionSelector and ProductSelector to standard native HTML <select> dropdowns.
+//   - Added DayNight resources (values/colors.xml and values-night/colors.xml) so native Android spinner popups use crisp dark text on white in Light Mode, and crisp white text on dark navy in Dark Mode.
+//   - Updated global CSS select option styles so HTML options render with bold, high-contrast text in all themes.
+//
+export const APP_VERSION = '2.12.98';
+export const APP_VERSION_CODE = 248;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'literal-session-display';
+export const APP_FIX_TAG = 'scale-db-parity-auto-backup';
 
 
 
