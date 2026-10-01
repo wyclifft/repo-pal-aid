@@ -89,9 +89,10 @@ Updated the milk collection system to save receipts to the existing `transaction
 ## Database Notes
 
 The `transactions` table includes many fields for future expansion:
-- CAN, Uploadrefno, ccode, icode: Empty strings (reserved for future use)
-- ivat, iprice, amount: Set to 0 (can be populated later)
-- cowname, cowbreed, noofcalfs, aibreed, milk_session_id, c_route: NULL (not used for milk collection)
+- CAN, Uploadrefno, ccode, icode: Populated during collections and sales
+- ivat, iprice, amount: Set to transaction values
+- c_route: Populated with farmer's registered route from `cm_members.route` across Milk Collection, Store Sales, and AI transactions.
+- cowname, cowbreed, noofcalfs, bullcode, bullname, nextheat: Populated for AI transactions (Transtype = 3)
 
 ## Backward Compatibility
 

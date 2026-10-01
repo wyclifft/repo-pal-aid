@@ -34,7 +34,7 @@ function isDeviceRefColumnError(error: string | undefined): boolean {
 async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {},
-  timeoutMs = 15000 // 15 second default timeout
+  timeoutMs = 15000 // default timeout, will be adjusted dynamically
 ): Promise<ApiResponse<T>> {
   // Check if offline before attempting fetch
   if (!navigator.onLine) {
@@ -43,6 +43,16 @@ async function apiRequest<T>(
       success: false,
       error: 'No internet connection. Operating in offline mode.',
     };
+  }
+
+  // Detect slow internet and aggressively reduce timeout to ensure fast fallback
+  const connection = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+  if (connection && (connection.effectiveType === '2g' || connection.effectiveType === 'slow-2g' || connection.rtt > 1500)) {
+    console.warn(`[NETWORK] Slow connection detected (${connection.effectiveType}, ${connection.rtt}ms RTT). Reducing timeout to 3000ms.`);
+    timeoutMs = Math.min(timeoutMs, 3000);
+  } else {
+    // Globally reduce default timeout to 5000ms for snappier offline fallback even on generic connections
+    timeoutMs = Math.min(timeoutMs, 5000);
   }
 
   // Create abort controller for timeout
@@ -342,7 +352,8 @@ export interface MilkCollection {
   uploadrefno?: string;       // → DB: Uploadrefno - Formatted reference (devcode + milkId)
   farmer_id: string;          // → DB: memberno
   farmer_name: string;        // → Not stored, derived from cm_members
-  route: string;              // → DB: route
+  route: string;              // → DB: route (Dashboard selected collection center/route)
+  memberRoute?: string;       // → DB: c_route (Farmer's registered route from cm_members)
   devcode?: string;           // Device code that performed the collection
   session: string;            // → DB: session - AM/PM for dairy, season name for coffee
   session_descript?: string;  // v2.10.50: full session descript - backend fallback when SCODE missing

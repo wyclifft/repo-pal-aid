@@ -786,6 +786,7 @@ export const useDataSync = () => {
       // v2.12.30: Include native storage records in the count to surface discrepancies
       let nativeMilkCount = 0;
       let nativeSalesCount = 0;
+      let missingNativeMilk: any[] = [];
       if (isNativeStorageAvailable()) {
         try {
           const { getUnsyncedFromLocalDB } = await import('@/services/offlineStorage');
@@ -797,7 +798,7 @@ export const useDataSync = () => {
           const idbRefs = new Set(receiptsOnly.map(r => (r.reference_no || '').trim().toUpperCase()));
           const idbSaleRefs = new Set(unsyncedSales.map(r => (r.transrefno || r.reference_no || '').trim().toUpperCase()));
 
-          const missingNativeMilk = nativeMilk.filter(r => !idbRefs.has((r.referenceNo || '').trim().toUpperCase()));
+          missingNativeMilk = nativeMilk.filter(r => !idbRefs.has((r.referenceNo || '').trim().toUpperCase()));
           nativeMilkCount = missingNativeMilk.length;
           nativeSalesCount = nativeSales.filter(r => !idbSaleRefs.has((r.referenceNo || '').trim().toUpperCase())).length +
                              nativeAI.filter(r => !idbSaleRefs.has((r.referenceNo || '').trim().toUpperCase())).length;
@@ -875,7 +876,8 @@ export const useDataSync = () => {
     }
 
     // CRITICAL GUARD: Do NOT sync if device is explicitly not authorized
-    const deviceCcode = (settings?.ccode || localStorage.getItem('device_ccode') || localStorage.getItem('app_settings_ccode') || '').trim();
+    const rawCcode = (settings?.ccode || localStorage.getItem('device_ccode') || localStorage.getItem('app_settings_ccode') || '').trim();
+    const deviceCcode = (rawCcode && rawCcode !== '000' && rawCcode !== '0') ? rawCcode : '';
     if (isDeviceAuthorized === false) {
       console.log(`[SYNC] Device is not authorized yet (isAuth=${isDeviceAuthorized}, ccode=${deviceCcode}). Aborting sync.`);
       if (!silent) {
@@ -1169,7 +1171,8 @@ export const useDataSync = () => {
 
   // Initial sync on mount or upon device authorization
   useEffect(() => {
-    const deviceCcode = (settings?.ccode || localStorage.getItem('device_ccode') || localStorage.getItem('app_settings_ccode') || '').trim();
+    const rawCcode = (settings?.ccode || localStorage.getItem('device_ccode') || localStorage.getItem('app_settings_ccode') || '').trim();
+    const deviceCcode = (rawCcode && rawCcode !== '000' && rawCcode !== '0') ? rawCcode : '';
     console.log('[SYNC] Initial sync effect running. Auth:', isAuthenticated, 'DeviceAuth:', isDeviceAuthorized, 'cCode:', deviceCcode, 'Ready:', isReady);
 
     if (!navigator.onLine || !isReady || !isAuthenticated || isDeviceAuthorized === false) {
@@ -1253,10 +1256,14 @@ export const useDataSync = () => {
   useEffect(() => {
     if (isReady) updatePendingCount(true);
 
-    // Listen for receipt/sale save events to refresh counts immediately
+    // Listen for receipt/sale save events to refresh counts with a 3000ms debounce (prevents SQLite lock contention during printing)
+    let saveTimeout: any = null;
     const handleReceiptSaved = () => {
-      console.log('[SYNC] receiptSaved event — refreshing pending counts');
-      updatePendingCount(true);
+      console.log('[SYNC] receiptSaved event received — debouncing pending count refresh');
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        updatePendingCount(true);
+      }, 3000);
     };
 
     // Auto-sync event listener for full background sync
@@ -1270,7 +1277,8 @@ export const useDataSync = () => {
 
     // Trigger full sync when device gets newly authorized
     const handleDeviceAuthorized = () => {
-      const deviceCcode = (settings?.ccode || localStorage.getItem('device_ccode') || localStorage.getItem('app_settings_ccode') || '').trim();
+      const rawCcode = (settings?.ccode || localStorage.getItem('device_ccode') || localStorage.getItem('app_settings_ccode') || '').trim();
+      const deviceCcode = (rawCcode && rawCcode !== '000' && rawCcode !== '0') ? rawCcode : '';
       console.log(`[SYNC] deviceAuthorized event received for ccode=${deviceCcode}`);
       if (navigator.onLine && isAuthenticated) {
         const syncKey = `full_sync_completed_${deviceCcode || 'default'}`;

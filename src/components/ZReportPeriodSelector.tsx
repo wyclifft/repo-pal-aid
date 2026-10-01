@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
-import { Printer, Sun, Sunset, Moon, Calendar, Clock } from 'lucide-react';
+import { Printer, Sun, Sunset, Moon, Calendar, Clock, Loader2 } from 'lucide-react';
 
 // Period is now the session SCODE (matches transactions.CAN). 'all' is the
 // reserved combined option that includes every session.
@@ -47,18 +47,10 @@ const buildOptions = (sessions: SessionOptionInput[]): BuiltOption[] => {
   const seen = new Set<string>();
   const list: BuiltOption[] = [];
 
-  let hasAM = false;
-  let hasPM = false;
-
   (sessions || []).forEach((s) => {
     const milkId = String(s?.milk_session_id || '').trim();
     const code = String(s?.SCODE || '').trim();
     const descript = String(s?.descript || '').trim();
-
-    const dUpper = descript.toUpperCase();
-    const cUpper = code.toUpperCase();
-    if (dUpper.includes('MORNING') || dUpper.includes('AM') || cUpper === 'AM' || cUpper === 'MO') hasAM = true;
-    if (dUpper.includes('AFTERNOON') || dUpper.includes('EVENING') || dUpper.includes('PM') || cUpper === 'PM' || cUpper === 'AF' || cUpper === 'EV') hasPM = true;
 
     if (milkId && milkId !== '0' && milkId.length === 10) {
       if (seen.has(milkId)) return;
@@ -88,27 +80,6 @@ const buildOptions = (sessions: SessionOptionInput[]): BuiltOption[] => {
     });
   });
 
-  // Always offer aggregate AM and PM options if AM/PM sessions exist and aren't already added
-  if (hasAM && !seen.has('AM')) {
-    seen.add('AM');
-    list.push({
-      value: 'AM',
-      label: 'All AM Z',
-      description: 'All AM sessions combined',
-      icon: <Sun className="h-5 w-5 text-yellow-600" />,
-    });
-  }
-
-  if (hasPM && !seen.has('PM')) {
-    seen.add('PM');
-    list.push({
-      value: 'PM',
-      label: 'All PM Z',
-      description: 'All PM sessions combined',
-      icon: <Sunset className="h-5 w-5 text-orange-600" />,
-    });
-  }
-
   // Always append the combined option
   list.push({
     value: 'all',
@@ -136,6 +107,7 @@ export const ZReportPeriodSelector = ({
 }: ZReportPeriodSelectorProps) => {
   const options = useMemo(() => buildOptions(sessions), [sessions]);
   const [selectedPeriod, setSelectedPeriod] = useState<ZReportPeriod>('all');
+  const [loadingValue, setLoadingValue] = useState<string | null>(null);
 
   // If the cached sessions list changes while the dialog is open, make sure
   // the selected value is still valid.
@@ -145,16 +117,23 @@ export const ZReportPeriodSelector = ({
     }
   }, [options, selectedPeriod]);
 
-  const handleConfirm = () => {
-    const selected = options.find(o => o.value === selectedPeriod) || options[options.length - 1];
-    onSelect(selected.value, selected.label);
-    onClose();
-  };
+  useEffect(() => {
+    if (!open) {
+      setLoadingValue(null);
+    }
+  }, [open]);
 
   const handleSelectOption = (option: BuiltOption) => {
     setSelectedPeriod(option.value);
+    setLoadingValue(option.value);
     onSelect(option.value, option.label);
-    onClose();
+  };
+
+  const handleConfirm = () => {
+    const opt = options.find(o => o.value === selectedPeriod);
+    if (opt) {
+      handleSelectOption(opt);
+    }
   };
 
   return (
@@ -188,13 +167,19 @@ export const ZReportPeriodSelector = ({
                 onClick={() => handleSelectOption(option)}
               >
                 <RadioGroupItem value={option.value} id={`zperiod-${option.value}`} />
-                <div className="flex-shrink-0">{option.icon}</div>
+                <div className="flex-shrink-0">
+                  {loadingValue === option.value ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  ) : (
+                    option.icon
+                  )}
+                </div>
                 <Label
                   htmlFor={`zperiod-${option.value}`}
                   className="flex-1 cursor-pointer"
                 >
-                  <div className="font-medium">{option.label}</div>
-                  <div className="text-xs text-muted-foreground">
+                  <div className="font-semibold text-foreground dark:text-slate-100 text-sm">{option.label}</div>
+                  <div className="text-xs text-muted-foreground dark:text-slate-400">
                     {option.description}
                   </div>
                 </Label>
@@ -264,7 +249,7 @@ export const getPeriodDisplayLabel = (
 ): string => {
   if (!period || period === 'all') return 'All Z';
   const target = String(period).trim().toUpperCase();
-  const match = sessions.find(s => String(s?.SCODE || '').trim().toUpperCase() === target);
+  const match = (sessions || []).find(s => String(s?.SCODE || '').trim().toUpperCase() === target);
   if (match?.descript) return `${match.descript} Z`;
   return `${period} Z`;
 };

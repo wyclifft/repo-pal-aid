@@ -1,5 +1,6 @@
-import { useState, memo } from 'react';
-import { Mail, Eye, EyeOff } from 'lucide-react';
+import { useState, useEffect, memo } from 'react';
+import { Mail, Eye, EyeOff, Copy, Smartphone } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 import { type AppUser } from '@/lib/supabase';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -7,6 +8,7 @@ import { toast } from 'sonner';
 import { generateDeviceFingerprint, getStoredDeviceId, setStoredDeviceId, getDeviceName, collectHardwareBundle, type DeviceHardwareBundle } from '@/utils/deviceFingerprint';
 import { storeDeviceConfig, syncOfflineCounter } from '@/utils/referenceGenerator';
 import { hashPassword, hashesEqual } from '@/utils/passwordHash';
+import { requestBluetoothPermission } from '@/utils/permissionRequests';
 import loginBg from '@/assets/login-bg.jpg';
 
 interface LoginProps {
@@ -18,9 +20,20 @@ export const Login = memo(({ onLogin }: LoginProps) => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [deviceStatus, setDeviceStatus] = useState<'pending' | 'approved' | null>(null);
+  const [deviceStatus, setDeviceStatus] = useState<'pending' | 'approved' | null>(() => {
+    const cached = localStorage.getItem('device_authorized');
+    return cached === 'true' ? 'approved' : null;
+  });
   const [currentDeviceId, setCurrentDeviceId] = useState<string>('');
+  const [displayFingerprint, setDisplayFingerprint] = useState<string>(() => getStoredDeviceId() || '');
   const { isReady, saveUser, getUser, saveDeviceApproval, getDeviceApproval } = useIndexedDB();
+
+  // Load device fingerprint immediately on mount so it displays above the User ID field
+  useEffect(() => {
+    generateDeviceFingerprint().then((fp) => {
+      if (fp) setDisplayFingerprint(fp);
+    }).catch(() => {});
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,6 +64,146 @@ export const Login = memo(({ onLogin }: LoginProps) => {
     // Check cached device approval (fire and forget - don't block)
     const cachedApprovalPromise = getDeviceApproval(deviceFingerprint).catch(() => null);
     
+    const performOfflineLogin = async () => {
+      console.log('[OFFLINE] Offline login attempt for user:', userId);
+
+      const { getCachedUsersMap, CACHED_USERS_MAP_KEY } = await import('@/utils/companyUsersCache');
+      const usersMap = getCachedUsersMap();
+      const normInputUserId = userId.toLowerCase().trim();
+      let cachedCreds = usersMap[normInputUserId];
+
+      if (!cachedCreds) {
+        // Fallback search: numeric unpadded match or trim match
+        const unpadded = normInputUserId.replace(/^0+/, '');
+        const matchedKey = Object.keys(usersMap).find(k => {
+          const cleanK = k.toLowerCase().trim();
+          return cleanK === normInputUserId || (unpadded && cleanK.replace(/^0+/, '') === unpadded);
+        });
+        if (matchedKey) {
+          cachedCreds = usersMap[matchedKey];
+        }
+      }
+
+      if (!cachedCreds) {
+        console.log('[OFFLINE] No cached credentials found for user:', userId);
+        toast.error('No offline credentials found for this user. First login or sync must be done online.');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        console.log('[OFFLINE] Found cached credentials for user:', cachedCreds.user_id);
+
+        const cleanInputPassword = (password || '').toString().trim();
+        let passwordMatch = false;
+
+        // 1. Check SHA-256 hash match (exact, lowercase, uppercase to account for MySQL case-insensitive collation)
+        if (cachedCreds.passwordHash) {
+          const inputHash = await hashPassword(cachedCreds.user_id, cleanInputPassword);
+          passwordMatch = hashesEqual(inputHash, cachedCreds.passwordHash);
+
+          if (!passwordMatch && cleanInputPassword) {
+            const inputHashLower = await hashPassword(cachedCreds.user_id, cleanInputPassword.toLowerCase());
+            passwordMatch = hashesEqual(inputHashLower, cachedCreds.passwordHash);
+          }
+
+          if (!passwordMatch && cleanInputPassword) {
+            const inputHashUpper = await hashPassword(cachedCreds.user_id, cleanInputPassword.toUpperCase());
+            passwordMatch = hashesEqual(inputHashUpper, cachedCreds.passwordHash);
+          }
+        }
+
+        // 2. Fallback to plaintext string match (case-insensitive)
+        if (!passwordMatch && cachedCreds.password) {
+          const cleanCachedPassword = cachedCreds.password.toString().trim();
+          passwordMatch = (
+            cleanCachedPassword === cleanInputPassword ||
+            cleanCachedPassword.toLowerCase() === cleanInputPassword.toLowerCase()
+          );
+          if (passwordMatch) {
+            const upgradedHash = await hashPassword(cachedCreds.user_id, cleanInputPassword);
+            if (upgradedHash) {
+              cachedCreds.passwordHash = upgradedHash;
+              cachedCreds.password = cleanInputPassword;
+              usersMap[normInputUserId] = cachedCreds;
+              localStorage.setItem(CACHED_USERS_MAP_KEY || 'cachedUsersMap', JSON.stringify(usersMap));
+              console.log('[OFFLINE] Upgraded credential cache to hashed form for:', cachedCreds.user_id);
+            }
+          }
+        }
+
+        if (!passwordMatch) {
+          console.log('[OFFLINE] Credential mismatch for user:', userId);
+          toast.error('Invalid credentials (offline)');
+          setLoading(false);
+          return;
+        }
+
+        // Recreate user object from cached credentials (includes all fields for full offline support)
+        const user: AppUser = {
+          user_id: cachedCreds.user_id,
+          role: cachedCreds.role || (cachedCreds.admin ? 'admin' : 'user'),
+          username: cachedCreds.username || cachedCreds.user_id,
+          email: cachedCreds.email || '',
+          ccode: cachedCreds.ccode || '',
+          admin: Boolean(cachedCreds.admin),
+          supervisor: typeof cachedCreds.supervisor === 'number' ? cachedCreds.supervisor : 0,
+          dcode: cachedCreds.dcode || '',
+          groupid: cachedCreds.groupid || '',
+          depart: cachedCreds.depart || '',
+          can_access_payments: Boolean(cachedCreds.can_access_payments),
+          company_analysis: cachedCreds.company_analysis !== undefined ? Boolean(cachedCreds.company_analysis) : true
+        };
+
+        console.log('👤 Offline login - Cached user data:', {
+          user_id: user.user_id,
+          admin: user.admin,
+          supervisor: user.supervisor,
+          role: user.role
+        });
+
+        // For offline login, try to get cached device approval
+        let cachedApproval = null;
+        try {
+          if (isReady) {
+            cachedApproval = await getDeviceApproval(deviceFingerprint);
+          }
+        } catch (dbError) {
+          console.warn('IndexedDB not available for offline login, using localStorage fallback');
+        }
+
+        if (cachedApproval && !cachedApproval.approved) {
+          setDeviceStatus('pending');
+          setCurrentDeviceId(deviceFingerprint);
+          toast.error('Device pending approval. Connect to internet to check status.');
+          setLoading(false);
+          return;
+        }
+
+        // Save approval to localStorage for offline access
+        localStorage.setItem('device_approved', 'true');
+        localStorage.setItem('device_user_id', user.user_id);
+
+        console.log('✅ Offline login success for user:', user.user_id);
+        setDeviceStatus('approved');
+
+        // Prompt for Android Bluetooth connectivity permissions on login if not yet granted
+        if (Capacitor.isNativePlatform()) {
+          requestBluetoothPermission().catch((err) => {
+            console.warn('[BT][PERMS] Bluetooth permission request on offline login error:', err);
+          });
+        }
+
+        onLogin(user, true);
+        toast.success('Offline login successful');
+        setLoading(false);
+      } catch (err) {
+        console.error('Offline login error:', err);
+        toast.error('Offline login failed. Please try again.');
+        setLoading(false);
+      }
+    };
+
     if (navigator.onLine) {
       try {
         // v2.10.109 — STABLE DEVICE IDENTITY (reinstall recovery).
@@ -109,6 +262,16 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         ]);
 
         if (!authResponse.success || !authResponse.data) {
+          // If it's a network issue or timeout, aggressively fallback to offline mode
+          if (authResponse.error?.includes('timed out') ||
+              authResponse.error?.toLowerCase().includes('network') ||
+              authResponse.error?.toLowerCase().includes('fetch')) {
+            console.warn('[LOGIN] Network error/timeout during online login. Falling back to offline mode.');
+            toast.warning('Slow network detected. Falling back to offline mode for fast operation.');
+            await performOfflineLogin();
+            return;
+          }
+
           toast.error(authResponse.error || 'Invalid credentials');
           setLoading(false);
           return;
@@ -125,7 +288,9 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         // fingerprint is supplied, but we double-check on the client so the rejection
         // is immediate and the offline credential cache is never written.
         const userCcode = (userData?.ccode || '').toString().trim().toUpperCase();
-        const deviceCcode = (resolvedDeviceData?.ccode || '').toString().trim().toUpperCase();
+        const rawDeviceCcode = (resolvedDeviceData?.ccode || '').toString().trim().toUpperCase();
+        const deviceCcode = (rawDeviceCcode && rawDeviceCcode !== '000' && rawDeviceCcode !== '0') ? rawDeviceCcode : null;
+
         if (userCcode && deviceCcode && userCcode !== deviceCcode) {
           console.warn('[AUTH][CCODE] Mismatch — user:', userCcode, 'device:', deviceCcode);
           toast.error('Access denied. Your account is restricted to your assigned company.');
@@ -283,6 +448,14 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         });
         
         saveUser(userWithPassword);
+
+        // Prompt for Android Bluetooth connectivity permissions on login if not yet granted
+        if (Capacitor.isNativePlatform()) {
+          requestBluetoothPermission().catch((err) => {
+            console.warn('[BT][PERMS] Bluetooth permission request on login error:', err);
+          });
+        }
+
         onLogin(userWithPassword, false, password); // Pass password to cache credentials
 
         // Sync all company users in background for offline use
@@ -305,110 +478,17 @@ export const Login = memo(({ onLogin }: LoginProps) => {
   console.error(err);
   console.error("=================================");
 
+  // Detect network error and fallback to offline mode
+  if (err?.message?.includes('fetch') || err?.message?.toLowerCase().includes('network') || err?.name === 'TypeError') {
+    console.warn('[LOGIN] Network error exception during online login. Falling back to offline mode.');
+    toast.warning('Network error detected. Falling back to offline mode.');
+    await performOfflineLogin();
+    return;
+  }
+
   toast.error("Login failed. Check credentials.");
 }    } else {
-      console.log('[OFFLINE] Offline login attempt for user:', userId);
-      
-      const { getCachedUsersMap } = await import('@/utils/companyUsersCache');
-      const usersMap = getCachedUsersMap();
-      const normInputUserId = userId.toLowerCase().trim();
-      const cachedCreds = usersMap[normInputUserId];
-      
-      if (!cachedCreds) {
-        console.log('[OFFLINE] No cached credentials found for user:', userId);
-        toast.error('No offline credentials found for this user. First login or sync must be done online.');
-        setLoading(false);
-        return;
-      }
-      
-      try {
-        console.log('[OFFLINE] Found cached credentials for user:', cachedCreds.user_id);
-
-        const cleanInputPassword = (password || '').toString().trim();
-        let passwordMatch = false;
-
-        // 1. Check SHA-256 hash match
-        if (cachedCreds.passwordHash) {
-          const inputHash = await hashPassword(cachedCreds.user_id, cleanInputPassword);
-          passwordMatch = hashesEqual(inputHash, cachedCreds.passwordHash);
-        }
-
-        // 2. Fallback to plaintext string match
-        if (!passwordMatch && cachedCreds.password) {
-          const cleanCachedPassword = cachedCreds.password.toString().trim();
-          passwordMatch = cleanCachedPassword === cleanInputPassword;
-          if (passwordMatch) {
-            const upgradedHash = await hashPassword(cachedCreds.user_id, cleanInputPassword);
-            if (upgradedHash) {
-              cachedCreds.passwordHash = upgradedHash;
-              usersMap[normInputUserId] = cachedCreds;
-              localStorage.setItem('cachedUsersMap', JSON.stringify(usersMap));
-              console.log('[OFFLINE] Upgraded plaintext credential cache to hashed form for:', cachedCreds.user_id);
-            }
-          }
-        }
-
-        if (!passwordMatch) {
-          console.log('[OFFLINE] Credential mismatch for user:', userId);
-          toast.error('Invalid credentials (offline)');
-          setLoading(false);
-          return;
-        }
-
-        // Recreate user object from cached credentials (includes all fields for full offline support)
-        const user: AppUser = {
-          user_id: cachedCreds.user_id,
-          role: cachedCreds.role || (cachedCreds.admin ? 'admin' : 'user'),
-          username: cachedCreds.username || cachedCreds.user_id,
-          email: cachedCreds.email || '',
-          ccode: cachedCreds.ccode || '',
-          admin: Boolean(cachedCreds.admin),
-          supervisor: typeof cachedCreds.supervisor === 'number' ? cachedCreds.supervisor : 0,
-          dcode: cachedCreds.dcode || '',
-          groupid: cachedCreds.groupid || '',
-          depart: cachedCreds.depart || '',
-          can_access_payments: Boolean(cachedCreds.can_access_payments)
-        };
-        
-        console.log('👤 Offline login - Cached user data:', {
-          user_id: user.user_id,
-          admin: user.admin,
-          supervisor: user.supervisor,
-          role: user.role
-        });
-
-        // For offline login, try to get cached device approval
-        let cachedApproval = null;
-        try {
-          if (isReady) {
-            cachedApproval = await getDeviceApproval(deviceFingerprint);
-          }
-        } catch (dbError) {
-          console.warn('IndexedDB not available for offline login, using localStorage fallback');
-        }
-
-        if (cachedApproval && !cachedApproval.approved) {
-          setDeviceStatus('pending');
-          setCurrentDeviceId(deviceFingerprint);
-          toast.error('Device pending approval. Connect to internet to check status.');
-          setLoading(false);
-          return;
-        }
-
-        // Save approval to localStorage for offline access
-        localStorage.setItem('device_approved', 'true');
-        localStorage.setItem('device_user_id', user.user_id);
-
-        console.log('✅ Offline login success for user:', user.user_id);
-        setDeviceStatus('approved');
-        onLogin(user, true);
-        toast.success('Offline login successful');
-        setLoading(false);
-      } catch (err) {
-        console.error('Offline login error:', err);
-        toast.error('Offline login failed. Please try again.');
-        setLoading(false);
-      }
+      await performOfflineLogin();
     }
 
     setLoading(false);
@@ -433,17 +513,17 @@ export const Login = memo(({ onLogin }: LoginProps) => {
       {/* Main Content */}
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-4 overflow-hidden">
         {deviceStatus === 'pending' && (
-          <div className="mb-4 p-4 bg-yellow-50 border-2 border-yellow-400 rounded-lg max-w-sm w-full">
-            <div className="flex items-start gap-3">
-              <span className="text-2xl">⏳</span>
+          <div className="mb-3 p-3 bg-yellow-50 border-2 border-yellow-400 rounded-lg max-w-sm w-full">
+            <div className="flex items-start gap-2.5">
+              <span className="text-xl">⏳</span>
               <div className="flex-1 min-w-0">
-                <h3 className="font-semibold text-yellow-800 mb-1 text-sm">Device Pending Approval</h3>
-                <p className="text-xs text-yellow-700 mb-2">
+                <h3 className="font-semibold text-yellow-800 mb-0.5 text-xs">Device Pending Approval</h3>
+                <p className="text-[11px] text-yellow-700 mb-1.5">
                   Your device is waiting for administrator approval.
                 </p>
                 <div className="bg-white p-2 rounded border border-yellow-300">
-                  <p className="text-xs font-mono text-gray-600 break-all">
-                    <strong>Device:</strong> {currentDeviceId.substring(0, 30)}...
+                  <p className="text-[10px] font-mono text-gray-800 break-all select-all">
+                    <strong>Device ID:</strong> {currentDeviceId || displayFingerprint}
                   </p>
                 </div>
               </div>
@@ -452,12 +532,43 @@ export const Login = memo(({ onLogin }: LoginProps) => {
         )}
 
         {deviceStatus === 'approved' && (
-          <div className="mb-3 p-3 bg-green-50 border border-green-400 rounded-lg text-center max-w-sm w-full">
-            <span className="text-green-700 font-semibold text-sm">✓ Device Approved</span>
+          <div className="mb-3 p-2.5 bg-green-50 border border-green-400 rounded-lg text-center max-w-sm w-full">
+            <span className="text-green-700 font-semibold text-xs">✓ Device Approved</span>
           </div>
         )}
         
-        <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
+        <form onSubmit={handleLogin} className="w-full max-w-sm space-y-3">
+          {/* Device Fingerprint Card directly on top of User ID field — ONLY rendered BEFORE device authorization */}
+          {deviceStatus !== 'approved' && (
+            <div className="bg-white/95 border border-purple-200 rounded-lg p-2.5 shadow-sm text-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 font-semibold text-purple-900 text-xs">
+                  <Smartphone className="h-3.5 w-3.5 text-[#7B68A6]" />
+                  Device Fingerprint
+                </span>
+                {(displayFingerprint || currentDeviceId) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const textToCopy = currentDeviceId || displayFingerprint;
+                      if (textToCopy) {
+                        navigator.clipboard.writeText(textToCopy);
+                        toast.success('Fingerprint copied to clipboard');
+                      }
+                    }}
+                    className="flex items-center gap-1 text-[11px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 px-2 py-0.5 rounded border border-purple-200 transition-colors"
+                  >
+                    <Copy className="h-3 w-3" />
+                    Copy
+                  </button>
+                )}
+              </div>
+              <div className="font-mono text-[11px] font-bold text-gray-800 break-all bg-purple-50/70 p-1.5 rounded border border-purple-100 select-all">
+                {displayFingerprint || currentDeviceId || 'Loading device fingerprint...'}
+              </div>
+            </div>
+          )}
+
           {/* User ID Field */}
           <div className="relative">
             <input
@@ -468,7 +579,7 @@ export const Login = memo(({ onLogin }: LoginProps) => {
               placeholder="User ID"
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
-              className="w-full px-4 py-4 pr-12 bg-white/90 border border-gray-300 rounded-md focus:outline-none focus:border-[#7B68A6] text-base min-h-[56px]"
+              className="w-full px-4 py-3.5 pr-12 bg-white/90 border border-gray-300 rounded-md focus:outline-none focus:border-[#7B68A6] text-base min-h-[52px]"
             />
             <Mail className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
           </div>

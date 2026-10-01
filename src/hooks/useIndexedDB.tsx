@@ -475,25 +475,42 @@ export const useIndexedDBStandalone = () => {
       try {
         const tx = db.transaction('receipts', 'readonly');
         const store = tx.objectStore('receipts');
-        const request = store.getAll();
-        request.onsuccess = () => {
-          // Filter out synced receipts, special storage entries, and invalid records
-          const unsynced = (request.result || []).filter((r: any) => {
-            // Skip special storage entries
+
+        const processResults = (records: any[]) => {
+          return (records || []).filter((r: any) => {
             if (r.orderId === 'PRINTED_RECEIPTS') return false;
-            // Only include unsynced receipts
             if (r.synced) return false;
-            // Skip sale records (synced via different path)
             if (r.type === 'sale') return false;
-            // Must have required sync fields to be considered pending
             if (!r.reference_no || !r.farmer_id || !r.weight) return false;
             return true;
           });
-          resolve(unsynced);
+        };
+
+        if (store.indexNames.contains('synced')) {
+          try {
+            const index = store.index('synced');
+            const request = index.getAll(IDBKeyRange.only(false));
+            request.onsuccess = () => {
+              resolve(processResults(request.result));
+            };
+            request.onerror = () => {
+              const fallbackReq = store.getAll();
+              fallbackReq.onsuccess = () => resolve(processResults(fallbackReq.result));
+              fallbackReq.onerror = () => resolve([]);
+            };
+            return;
+          } catch {
+            // Fallthrough to store.getAll() if index access throws
+          }
+        }
+
+        const request = store.getAll();
+        request.onsuccess = () => {
+          resolve(processResults(request.result));
         };
         request.onerror = () => {
           console.error('Error getting unsynced receipts:', request.error);
-          resolve([]); // Return empty on error instead of rejecting
+          resolve([]);
         };
         tx.onerror = () => {
           console.error('Transaction error getting unsynced receipts:', tx.error);

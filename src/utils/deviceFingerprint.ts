@@ -15,6 +15,8 @@ import { Capacitor } from '@capacitor/core';
 import { Device } from '@capacitor/device';
 
 const DEVICE_ID_KEY = 'device_id';
+let cachedFingerprintMemory: string | null = null;
+let hasLoggedDeviceDetails = false;
 
 export interface DeviceHardwareBundle {
   ssaid?: string;                // Android SSAID — stable across reinstall (same signing key)
@@ -109,34 +111,93 @@ const sha256Hex = async (input: string): Promise<string> => {
 };
 
 /**
- * Generate a unique device fingerprint.
- *
- * v2.10.112: On native, derive deterministically from SSAID
- * (fp = sha256("ssaid:" + ssaid)) so reinstall/clear-data yields the SAME
- * fingerprint and the server immediately finds the original approved row via
- * /api/devices/fingerprint/:fp — no duplicate pending rows, no recovery dance.
- *
- * Priority:
- *   1) Stored device_id in localStorage  — back-compat; already-approved
- *      devices keep their existing fingerprint (no orphaned approved rows).
- *   2) Native + SSAID available          — deterministic SHA-256 over SSAID.
- *   3) Entropy fallback                  — original web/legacy behavior.
+ * Log full untruncated device fingerprint & hardware info for easy ADB/Logcat inspection.
  */
-export const generateDeviceFingerprint = async (): Promise<string> => {
-  const isNative = Capacitor.isNativePlatform();
-  const platform = Capacitor.getPlatform();
-
-  // 1) Existing stored fingerprint — never overwrite. Protects production
-  //    devices already approved under the legacy entropy hash.
+export const logFullDeviceDetails = async (fp: string) => {
   try {
-    const storedId = localStorage.getItem(DEVICE_ID_KEY);
-    if (storedId && storedId.length >= 32) {
-      console.log('📱 Using stored device fingerprint:', storedId.substring(0, 16) + '...');
-      return storedId;
+    const isNative = Capacitor.isNativePlatform();
+    const platform = Capacitor.getPlatform();
+    let ssaid = 'N/A';
+    let model = 'N/A';
+    let manufacturer = 'N/A';
+    let osVersion = 'N/A';
+
+    if (isNative) {
+      try {
+        const id = await Device.getId();
+        if (id?.identifier) ssaid = String(id.identifier);
+      } catch (e) { /* ignore */ }
+
+      try {
+        const info = await Device.getInfo();
+        if (info?.model) model = String(info.model);
+        if (info?.manufacturer) manufacturer = String(info.manufacturer);
+        if (info?.osVersion) osVersion = String(info.osVersion);
+      } catch (e) { /* ignore */ }
+    }
+
+    console.info(
+      `\n================================================================\n` +
+      `📱 [DEVICE IDENTIFICATION & FINGERPRINT]\n` +
+      `FULL FINGERPRINT    : ${fp}\n` +
+      `SSAID               : ${ssaid}\n` +
+      `DEVICE MODEL        : ${model}\n` +
+      `MANUFACTURER        : ${manufacturer}\n` +
+      `OS VERSION          : ${osVersion}\n` +
+      `PLATFORM            : ${platform} (Native: ${isNative})\n` +
+      `================================================================`
+    );
+  } catch (e) {
+    console.info('📱 [DEVICE FINGERPRINT]:', fp);
+  }
+};
+
+export const getStoredDeviceId = (): string | null => {
+  if (cachedFingerprintMemory && cachedFingerprintMemory.length >= 32) {
+    return cachedFingerprintMemory;
+  }
+  try {
+    const stored = localStorage.getItem(DEVICE_ID_KEY);
+    if (stored && stored.length >= 32) {
+      cachedFingerprintMemory = stored;
+      return stored;
     }
   } catch (e) {
-    console.warn('📱 localStorage read failed:', e);
+    console.warn('localStorage read failed:', e);
   }
+  return null;
+};
+
+export const setStoredDeviceId = (deviceId: string): void => {
+  if (!deviceId) return;
+  cachedFingerprintMemory = deviceId;
+  try {
+    localStorage.setItem(DEVICE_ID_KEY, deviceId);
+  } catch (e) {
+    console.warn('localStorage write failed:', e);
+  }
+};
+
+/**
+ * Generate a unique device fingerprint.
+ *
+ * Priority:
+ *   1) In-memory cached fingerprint or localStorage  — instant response.
+ *   2) Native + SSAID available                      — deterministic SHA-256 over SSAID.
+ *   3) Entropy fallback                              — original web/legacy behavior.
+ */
+export const generateDeviceFingerprint = async (): Promise<string> => {
+  const existing = getStoredDeviceId();
+  if (existing) {
+    if (!hasLoggedDeviceDetails) {
+      hasLoggedDeviceDetails = true;
+      logFullDeviceDetails(existing).catch(() => {});
+    }
+    return existing;
+  }
+
+  const isNative = Capacitor.isNativePlatform();
+  const platform = Capacitor.getPlatform();
 
   // 2) Native: derive from SSAID. Stable across reinstall/clear-data when the
   //    APK signing key + user profile are the same.
@@ -146,11 +207,10 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
       const ssaid = id?.identifier ? String(id.identifier) : '';
       if (ssaid) {
         const fp = await sha256Hex('ssaid:' + ssaid);
-        try {
-          localStorage.setItem(DEVICE_ID_KEY, fp);
-          console.log('🔑 [Native] SSAID-derived fingerprint:', fp.substring(0, 16) + '...');
-        } catch (e) {
-          console.warn('[FP] Failed to persist SSAID fingerprint:', e);
+        setStoredDeviceId(fp);
+        if (!hasLoggedDeviceDetails) {
+          hasLoggedDeviceDetails = true;
+          logFullDeviceDetails(fp).catch(() => {});
         }
         return fp;
       }
@@ -190,9 +250,7 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
     canvasFingerprint: canvasData,
     isNative: isNative,
     nativePlatform: platform,
-    // Add random component for truly unique ID
     randomSeed: Math.random().toString(36).substring(2, 15) + Date.now().toString(36),
-    // Native-specific: add extra entropy
     timestamp: Date.now(),
     colorDepth: screen.colorDepth,
     pixelRatio: window.devicePixelRatio || 1,
@@ -219,22 +277,11 @@ export const generateDeviceFingerprint = async (): Promise<string> => {
     console.log('🔐 Used fallback hash for fingerprint');
   }
   
-  // Store immediately for consistency - with retry for native platforms
-  try {
-    localStorage.setItem(DEVICE_ID_KEY, hashHex);
-    console.log('🔑 Generated and stored new device fingerprint:', hashHex.substring(0, 16) + '...');
-    
-    // Verify storage on native platforms
-    if (isNative) {
-      const verified = localStorage.getItem(DEVICE_ID_KEY);
-      if (verified !== hashHex) {
-        console.warn('⚠️ localStorage verification failed - fingerprint may not persist');
-      } else {
-        console.log('✅ [Native] Fingerprint storage verified');
-      }
-    }
-  } catch (e) {
-    console.error('❌ Failed to store fingerprint:', e);
+  // Store immediately for consistency
+  setStoredDeviceId(hashHex);
+  if (!hasLoggedDeviceDetails) {
+    hasLoggedDeviceDetails = true;
+    logFullDeviceDetails(hashHex).catch(() => {});
   }
   
   return hashHex;
@@ -357,10 +404,3 @@ export const getDeviceInfo = () => {
   };
 };
 
-export const getStoredDeviceId = (): string | null => {
-  return localStorage.getItem('device_id');
-};
-
-export const setStoredDeviceId = (deviceId: string): void => {
-  localStorage.setItem('device_id', deviceId);
-};

@@ -270,24 +270,21 @@ const AIPage = () => {
     }
     
     const entries = selectedFarmer.crbal.split(',').filter(Boolean);
-    const memberCcode = selectedFarmer.ccode || '';
-    
+
     return entries
       .map(entry => {
         const [code, amountStr] = entry.trim().split('#');
+        const codeClean = code?.trim() || '';
         const amount = parseFloat(amountStr) || 0;
-        const creditType = creditTypes.find(ct => ct.crcode?.trim() === code?.trim());
+        const creditType = creditTypes.find(ct => ct.crcode?.trim().toUpperCase() === codeClean.toUpperCase());
         return {
-          code: code?.trim() || '',
+          code: codeClean,
           amount,
           description: creditType?.descript || ''
         };
       })
-      .filter(credit => {
-        if (!memberCcode) return true;
-        return credit.code === memberCcode || creditTypes.some(ct => ct.crcode === credit.code);
-      });
-  }, [selectedFarmer?.crbal, selectedFarmer?.ccode, creditTypes]);
+      .filter(credit => credit.code !== '' && !isNaN(credit.amount));
+  }, [selectedFarmer?.crbal, creditTypes]);
 
   // Calculate total credit balance from parsed entries
   const totalCreditBalance = useMemo(() => {
@@ -604,7 +601,7 @@ const AIPage = () => {
           transtype: 3, // AI transaction type
           farmer_id: selectedFarmer.farmer_id,
           farmer_name: selectedFarmer.name,
-          route: selectedFarmer.route || '', // Farmer's route for backward compat
+          route: selectedRouteTcode || routeName || '', // Active collection route / center selected on Dashboard
           route_tcode: selectedRouteTcode, // Dashboard-selected fm_tanks.tcode
           item_code: cartItem.item.icode,
           item_name: cartItem.item.descript,

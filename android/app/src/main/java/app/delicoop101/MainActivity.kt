@@ -53,6 +53,8 @@ class MainActivity : BridgeActivity() {
         registerPlugin(BluetoothClassicPlugin::class.java)
         Log.d(TAG, "[INIT] Registering native OfflineStorage plugin")
         registerPlugin(OfflineStoragePlugin::class.java)
+        Log.d(TAG, "[INIT] Registering native PosApi plugin")
+        registerPlugin(app.delicoop101.posapi.PosApiPlugin::class.java)
         // v2.11.21: BluetoothLe is auto-registered by Capacitor via
         // capacitor.plugins.json — a second manual registerPlugin() call
         // corrupts the bridge plugin map on WebView 51 and caused
@@ -80,7 +82,22 @@ class MainActivity : BridgeActivity() {
 
         bridge?.webView?.let { webView -> installDirectJsBridges(webView) }
 
-        
+        // Prominently log device hardware identity for easy ADB / Logcat inspection
+        try {
+            val ssaid = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: "UNKNOWN"
+            val model = android.os.Build.MODEL ?: "UNKNOWN"
+            val manufacturer = android.os.Build.MANUFACTURER ?: "UNKNOWN"
+            val release = android.os.Build.VERSION.RELEASE ?: "UNKNOWN"
+            Log.i("DEVICE_FINGERPRINT", "================================================================")
+            Log.i("DEVICE_FINGERPRINT", "📱 [NATIVE DEVICE IDENTIFIER]")
+            Log.i("DEVICE_FINGERPRINT", "SSAID               : $ssaid")
+            Log.i("DEVICE_FINGERPRINT", "DEVICE MODEL        : $manufacturer $model")
+            Log.i("DEVICE_FINGERPRINT", "ANDROID VERSION     : $release")
+            Log.i("DEVICE_FINGERPRINT", "================================================================")
+        } catch (e: Throwable) {
+            Log.w("DEVICE_FINGERPRINT", "Could not read native device identity: ${e.message}")
+        }
+
         // Initialize encrypted database on a background thread.
         // getInstance() now forces the DB file open eagerly (not lazily),
         // so the database is guaranteed ready before any DAO calls.
@@ -135,9 +152,14 @@ class MainActivity : BridgeActivity() {
     }
 
     private fun disableChromiumMultiProcess() {
-        // Force Chromium WebView to run in single-process mode on legacy Android 7 (Nougat) ROMs
+        // Force Chromium WebView to run in single-process mode ONLY on legacy Android 7 (Nougat) ROMs
         // where SandboxedProcessService0 lacks android:externalService="true", preventing
         // BIND_EXTERNAL_SERVICE SecurityExceptions and SIGABRT crashes in ChildProcessLauncher.
+        if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.N_MR1) {
+            // Android 8.0+ handles WebView process isolation natively; skip legacy reflection
+            return
+        }
+
         val webViewPackages = listOf("com.android.webview", "com.google.android.webview", "com.android.chrome")
         val possibleCommandLineClasses = listOf(
             "org.chromium.base.CommandLine",

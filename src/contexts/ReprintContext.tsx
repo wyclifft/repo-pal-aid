@@ -125,7 +125,7 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
     if (collections.length === 0) return false;
 
     // Check for duplicate
-    const existingReceipt = printedReceipts.find(r =>
+    const existingReceipt = (printedReceipts || []).find(r =>
       r.farmerId === collections[0].farmer_id &&
       r.type === 'milk' &&
       r.collections.length === collections.length &&
@@ -175,7 +175,7 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
     // receipts from Recent Receipts after a counter rollback that produced a
     // repeat uploadrefno; this guard now only blocks the EXACT same batch.
     const identity = buildStoreAIIdentity(data.uploadrefno, data.items, data.itemRefs);
-    const existingReceipt = printedReceipts.find(r =>
+    const existingReceipt = (printedReceipts || []).find(r =>
       matchesStoreAIIdentity(r, identity, 'store', data.uploadrefno, data.items)
     );
 
@@ -222,7 +222,7 @@ export const ReprintProvider = ({ children }: ReprintProviderProps) => {
   const addAIReceipt = useCallback(async (data: StoreAIReceiptInput): Promise<boolean> => {
     // v2.10.66: see addStoreReceipt — same identity rule for AI batches.
     const identity = buildStoreAIIdentity(data.uploadrefno, data.items, data.itemRefs);
-    const existingReceipt = printedReceipts.find(r =>
+    const existingReceipt = (printedReceipts || []).find(r =>
       matchesStoreAIIdentity(r, identity, 'ai', data.uploadrefno, data.items)
     );
 

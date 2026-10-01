@@ -55,7 +55,7 @@ export const useSessionBlacklist = (
   const [blacklistedFarmerIds, setBlacklistedFarmerIds] = useState<Set<string>>(new Set());
   const [blacklistedFarmerDetails, setBlacklistedFarmerDetails] = useState<Map<string, BlacklistDetail>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
-  const { getRecentReceipts } = useIndexedDB();
+  const { getRecentReceipts, getFarmers } = useIndexedDB();
 
   // Derive session from activeSeasonCode or activeSession's time_from if provided
   const getSessionType = useCallback((): 'AM' | 'PM' => {
@@ -77,18 +77,12 @@ export const useSessionBlacklist = (
     return getCurrentSessionType();
   }, [activeSessionTimeFrom, activeSeasonCode]);
 
-  // Build blacklist from IndexedDB (unsynced submissions) and online API (synced submissions)
+  // Build blacklist from IndexedDB (unsynced/synced submissions) and online API (synced submissions)
   // NOTE: We do NOT check capturedCollections - blacklisting only applies AFTER successful submission
   const refreshBlacklist = useCallback(async (
     _capturedCollections: MilkCollection[], // Ignored - kept for backwards compatibility
-    farmersWithMultOptZero: Set<string>
+    farmersWithMultOptZero?: Set<string>
   ) => {
-    if (farmersWithMultOptZero.size === 0) {
-      setBlacklistedFarmerIds(new Set());
-      setBlacklistedFarmerDetails(new Map());
-      return;
-    }
-
     setIsLoading(true);
     const blacklist = new Set<string>();
     const detailsMap = new Map<string, BlacklistDetail>();
@@ -99,6 +93,21 @@ export const useSessionBlacklist = (
     // v2.10.63: surface the coffee-org SCODE-missing bug instead of failing silently.
     if (coffee && !seasonCode) {
       console.warn('[WARN] Coffee org with empty seasonCode — using date-only fallback for duplicate blacklist');
+    }
+
+    // Build complete set of farmers with multOpt=0 (from passed set + IndexedDB farmers cache)
+    const multOptZeroSet = new Set<string>(farmersWithMultOptZero || []);
+    try {
+      const cachedFarmers = await getFarmers();
+      if (cachedFarmers && cachedFarmers.length > 0) {
+        cachedFarmers.forEach((f: any) => {
+          if (f.multOpt === 0) {
+            multOptZeroSet.add(String(f.farmer_id || '').replace(/^#/, '').trim());
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('Could not load cached farmers for blacklist:', e);
     }
 
     try {
@@ -127,12 +136,15 @@ export const useSessionBlacklist = (
           } else {
             // Dairy: AM/PM. Tolerate legacy stamps like 'AM SESSION', 'MORNING', etc.
             const rSession = String(r.session || '').trim().toUpperCase();
-            sessionMatches = rSession === sessionType || rSession.includes(sessionType);
+            sessionMatches = rSession === sessionType ||
+              rSession.includes(sessionType) ||
+              (sessionType === 'AM' && (rSession.includes('MORNING') || rSession === '1')) ||
+              (sessionType === 'PM' && (rSession.includes('EVENING') || rSession.includes('AFTERNOON') || rSession === '2'));
           }
 
           if (sessionMatches) {
             // v2.12.41: Trust multOpt on the record itself if cache is missing/stale
-            if (r.multOpt === 0 || farmersWithMultOptZero.has(cleanId)) {
+            if (r.multOpt === 0 || multOptZeroSet.has(cleanId)) {
               blacklist.add(cleanId);
               detailsMap.set(cleanId, {
                 route: r.route,
@@ -147,14 +159,13 @@ export const useSessionBlacklist = (
       }
 
       // 2. Check online API if connected (synced submissions)
-      // v2.12.40: Use bulk fetch instead of per-farmer loop for better performance
+      // v2.12.40: Use bulk fetch for today's collections across devices
       if (navigator.onLine) {
         try {
           const deviceFingerprint = await generateDeviceFingerprint();
-          const apiSession = coffee ? (seasonCode || sessionType) : sessionType;
 
+          // Fetch today's collections for this device/company without rigid session SQL filtering
           const recentCollections = await mysqlApi.milkCollection.getAll({
-            session: apiSession,
             dateFrom: today,
             dateTo: today,
             uniquedevcode: deviceFingerprint
@@ -162,13 +173,32 @@ export const useSessionBlacklist = (
 
           recentCollections.forEach(c => {
             const fId = String(c.farmer_id || '').replace(/^#/, '').trim();
-            if (farmersWithMultOptZero.has(fId)) {
-              blacklist.add(fId);
-              detailsMap.set(fId, {
-                route: c.route,
-                devcode: c.devcode || 'Device',
-                reference_no: c.reference_no,
-              });
+
+            let sessionMatches = false;
+            if (coffee) {
+              const cCode = String((c as any).season_code || c.session || '').trim();
+              if (seasonCode) {
+                sessionMatches = cCode === seasonCode;
+              } else {
+                sessionMatches = true;
+              }
+            } else {
+              const cSession = String(c.session || '').trim().toUpperCase();
+              sessionMatches = cSession === sessionType ||
+                cSession.includes(sessionType) ||
+                (sessionType === 'AM' && (cSession.includes('MORNING') || cSession === '1')) ||
+                (sessionType === 'PM' && (cSession.includes('EVENING') || cSession.includes('AFTERNOON') || cSession === '2'));
+            }
+
+            if (sessionMatches) {
+              if (c.multOpt === 0 || multOptZeroSet.has(fId)) {
+                blacklist.add(fId);
+                detailsMap.set(fId, {
+                  route: c.route,
+                  devcode: c.devcode || 'Device',
+                  reference_no: c.reference_no,
+                });
+              }
             }
           });
         } catch (e) {
@@ -184,7 +214,7 @@ export const useSessionBlacklist = (
     } finally {
       setIsLoading(false);
     }
-  }, [getSessionType, getRecentReceipts, activeSeasonCode]);
+  }, [getSessionType, getRecentReceipts, getFarmers, activeSeasonCode]);
 
   // Add a farmer to the blacklist (called after successful submission, not capture)
   const addToBlacklist = useCallback((farmerId: string, details?: BlacklistDetail) => {

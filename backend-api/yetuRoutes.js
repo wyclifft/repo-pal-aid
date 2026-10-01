@@ -67,7 +67,7 @@ const resolveSaccoAccess = async (pool, { deviceFingerprint, userid, requestedAc
     return { ok: false, status: 401, error: 'Device not authorized' };
   }
   const ccode = String(deviceRows[0].ccode || '').trim();
-  if (!ccode) return { ok: false, status: 403, error: 'Device company not configured' };
+  if (!ccode || ccode === '000' || ccode === '0') return { ok: false, status: 403, error: 'Device company not configured' };
 
   // v2.12.7 — psettings is keyed by `cno`.
   // v2.12.18: Sacco Portal enabled via psettings.sacco_module_active = 1.

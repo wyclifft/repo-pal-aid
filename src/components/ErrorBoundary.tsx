@@ -26,6 +26,10 @@ export class ErrorBoundary extends Component<Props, State> {
     window.location.reload();
   };
 
+  private handleReset = () => {
+    this.setState({ hasError: false, error: undefined });
+  };
+
   public render() {
     if (this.state.hasError) {
       return (
@@ -41,24 +45,33 @@ export class ErrorBoundary extends Component<Props, State> {
                 Something went wrong
               </h1>
               <p className="text-gray-600 mb-6">
-                The app encountered an unexpected error. Please try reloading the page.
+                The app encountered an unexpected error. Please try reloading or clicking Try Again.
               </p>
             </div>
             
-            <button
-              onClick={this.handleReload}
-              className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg font-semibold hover:from-purple-700 hover:to-blue-700 transition-all"
-            >
-              Reload App
-            </button>
+            <div className="space-y-3">
+              <button
+                onClick={this.handleReset}
+                className="w-full py-3 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 transition-all"
+              >
+                Try Again
+              </button>
+              <button
+                onClick={this.handleReload}
+                className="w-full py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg font-semibold hover:from-purple-700 hover:to-blue-700 transition-all"
+              >
+                Reload App
+              </button>
+            </div>
             
             {this.state.error && (
-              <details className="mt-4 text-left">
-                <summary className="cursor-pointer text-sm text-gray-500 hover:text-gray-700">
+              <details className="mt-4 text-left" open>
+                <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900">
                   Technical Details
                 </summary>
-                <pre className="mt-2 p-3 bg-gray-50 rounded text-xs overflow-auto max-h-40">
+                <pre className="mt-2 p-3 bg-red-50 text-red-800 border border-red-200 rounded text-xs overflow-auto max-h-40 whitespace-pre-wrap">
                   {this.state.error.toString()}
+                  {this.state.error.stack ? `\n\n${this.state.error.stack}` : ''}
                 </pre>
               </details>
             )}

@@ -283,7 +283,7 @@ export const TransactionReceipt = ({
           uploadrefno: uploadrefno || referenceNoToUse,
           farmer_id: expected.farmerId,
           farmer_name: memberName.trim(),
-          route: (memberRoute || '').trim(),
+          route: (item.route || locationCode || '').trim(),
           session: normalizedSession,
           weight: item.weight || 0,
           user_id: userId,
@@ -444,7 +444,8 @@ export const TransactionReceipt = ({
           companyName,
           farmerName: memberName,
           farmerId: memberId,
-          route: memberRoute || '',
+          route: locationCode || items[0]?.route || '',
+          memberRoute: memberRoute || '',
           routeLabel,
           session: session || '',
           periodLabel,
@@ -480,7 +481,7 @@ export const TransactionReceipt = ({
       }
       
       if (copy < printCopies - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
     }
     
@@ -779,7 +780,8 @@ export const createMilkReceiptData = (
     companyName,
     memberId: first.farmer_id,
     memberName: first.farmer_name,
-    memberRoute: options?.memberRoute || first.route,
+    memberRoute: options?.memberRoute || (first as any).memberRoute,
+    locationCode: options?.locationCode || first.route,
     clerkName: first.clerk_name,
     deliveredBy: options?.deliveredBy || first.delivered_by || undefined,
     transactionDate: new Date(first.collection_date),

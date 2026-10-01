@@ -37,7 +37,18 @@ export interface AppUser {
   add_members?: boolean;
   // v2.11.1: permission flag controlling Payments module visibility (user.can_access_payments)
   can_access_payments?: boolean;
+  // v2.12.65: permission flag controlling Z-Report Company Analysis overview
+  company_analysis?: boolean;
 }
+
+/**
+ * Helper to determine if a user is allowed to view Company Analysis on Z-Report.
+ * Defaults to true so existing users and older app builds continue uninterrupted.
+ */
+export const isCompanyAnalysisAllowed = (user?: AppUser | null): boolean => {
+  if (!user) return true;
+  return user.company_analysis !== false;
+};
 
 /**
  * Helper to determine capture mode from supervisor value
@@ -81,7 +92,8 @@ export interface MilkCollection {
   uploadrefno?: string;       // → DB: Uploadrefno - Formatted reference (devcode + milkId)
   farmer_id: string;          // → DB: memberno
   farmer_name: string;        // Display only, not stored directly
-  route: string;              // → DB: route
+  route: string;              // → DB: route (Dashboard selected collection center/route)
+  memberRoute?: string;       // → DB: c_route (Farmer's registered route from cm_members)
   devcode?: string;           // Device code that performed the collection
   // → DB: session column
   // Dairy (orgtype D): "AM" | "PM"

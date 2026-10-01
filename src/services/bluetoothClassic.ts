@@ -14,7 +14,7 @@
  */
 
 import { Capacitor, registerPlugin, PluginListenerHandle } from '@capacitor/core';
-import { broadcastScaleWeightUpdate, broadcastScaleConnectionChange } from './bluetooth';
+import { broadcastScaleWeightUpdate, broadcastScaleConnectionChange, parseScaleWeightText } from './bluetooth';
 
 // ============================================================================
 // NATIVE PLUGIN INTERFACE - Capacitor 7 Compatible
@@ -511,11 +511,13 @@ export const getAllPairedDevices = async (): Promise<ClassicBluetoothDevice[]> =
 
 /**
  * Parse weight data from raw serial data
- * Supports multiple formats used by DR/BTM series scales
- * Enhanced with detailed raw data logging
+ * Supports multiple formats used by DR/BTM/Crane series scales
+ * Enhanced with detailed raw data logging and Net/Gross weight prioritization
  */
 export const parseSerialWeightData = (data: string): number | null => {
-  // Log raw hex bytes for debugging
+  if (!data) return null;
+  // Normalize comma decimal separator to dot
+  data = data.replace(',', '.');
   const hexBytes = Array.from(data).map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ');
   console.log(`📊 Raw Classic BT data: "${data}" (${data.length} chars)`);
   console.log(`📊 Raw hex bytes: [${hexBytes}]`);
@@ -525,86 +527,19 @@ export const parseSerialWeightData = (data: string): number | null => {
   console.log(`📊 Cleaned data: "${cleanData}"`);
 
   // v2.10.68: Belt-and-braces noise guard — real scale frames always carry either
-  // a decimal point or an explicit unit token (kg/g/lb/oz). Printer ACK/status
-  // bytes (e.g. \x06, \x10, short numeric flags) never do, so reject them up
-  // front instead of letting the permissive integer-grams strategy below match.
+  // a decimal point, an explicit unit token (kg/g/lb/oz), or a weight tag (NT/NW/GS/GW).
   const hasDecimal = /\d\.\d/.test(cleanData);
   const hasUnit = /\b(kg|g|lb|oz)\b/i.test(cleanData);
-  if (!hasDecimal && !hasUnit) {
-    // Allow only the explicit "all zeros" sentinel through; everything else is noise.
+  const hasWeightToken = /(?:NT|NET|NW|N\.W\.|GS|GW|GROSS|G\.W\.|\bN\b|\bG\b)/i.test(cleanData);
+
+  if (!hasDecimal && !hasUnit && !hasWeightToken) {
     if (!/^[+\-]?0+$/.test(cleanData)) {
-      console.log(`⚠️ Ignoring noise frame (no decimal, no unit): "${cleanData}"`);
+      console.log(`⚠️ Ignoring noise frame (no decimal, no unit, no token): "${cleanData}"`);
       return null;
     }
   }
-  
-  // v2.12.75: Allow parsing negative values for display (e.g. tared scale with container removed)
-  // We no longer return 0 for negative matches.
-  const negativeMatch = cleanData.match(/-\s*(\d+\.?\d*)/);
-  if (negativeMatch) {
-    const weight = -parseFloat(negativeMatch[1]);
-    if (weight >= -50 && weight < 1000) {
-      console.log(`✅ Parsed negative weight: ${weight.toFixed(3)} kg`);
-      return weight;
-    }
-  }
-  
-  // Check for zero first
-  const zeroMatch = cleanData.match(/^\s*\+?\s*0+\.?0*\s*(kg|g|lb|oz)?\s*$/i);
-  if (zeroMatch) {
-    console.log(`✅ Parsed weight (zero): 0 kg`);
-    return 0;
-  }
-  
-  // Strategy 1: Standard weight format like "ST,GS,+  12.345kg" or "12.345 kg"
-  const standardMatch = cleanData.match(/([+-]?)\s*(\d+\.?\d*)\s*(kg|g|lb|oz)?/i);
-  if (standardMatch) {
-    const isNegative = standardMatch[1] === '-';
-    let weight = parseFloat(standardMatch[2]);
-    const unit = standardMatch[3]?.toLowerCase();
-    
-    if (unit === 'g') weight = weight / 1000;
-    else if (unit === 'lb') weight = weight * 0.453592;
-    else if (unit === 'oz') weight = weight * 0.0283495;
-    
-    if (isNegative) weight = -weight;
 
-    if (weight >= -50 && weight < 1000) {
-      console.log(`✅ Parsed weight (standard): ${weight.toFixed(3)} kg`);
-      return weight;
-    }
-  }
-  
-  // Strategy 2: Just decimal number
-  const decimalMatch = cleanData.match(/([+-]?)\s*(\d+\.\d{1,4})/);
-  if (decimalMatch) {
-    const isNeg = decimalMatch[1] === '-';
-    let weight = parseFloat(decimalMatch[2]);
-    if (isNeg) weight = -weight;
-    if (weight >= -50 && weight < 500) {
-      console.log(`✅ Parsed weight (decimal): ${weight.toFixed(3)} kg`);
-      return weight;
-    }
-  }
-  
-  // Strategy 3: Integer representing grams
-  // v2.12.77: Support negative integer grams
-  const isNegativeInt = cleanData.includes('-');
-  const intMatch = cleanData.replace(/[^0-9]/g, '');
-  if (intMatch.length >= 3) {
-    const intValue = parseInt(intMatch);
-    if (intValue >= 0 && intValue < 500000) {
-      let weight = intValue / 1000;
-      if (isNegativeInt) weight = -weight;
-      if (weight >= -50) {
-        console.log(`✅ Parsed weight (grams): ${weight.toFixed(3)} kg`);
-        return weight;
-      }
-    }
-  }
-  
-  console.log(`⚠️ Could not parse weight from: "${cleanData}"`);
-  return null;
+  return parseScaleWeightText(cleanData);
 };
 
 // ============================================================================
@@ -637,36 +572,55 @@ export const connectClassicScale = async (
       return { success: false, error: 'Failed to connect to device' };
     }
 
-    // Set up data listener - uses global broadcast as primary, callback as secondary
+    // Set up data listener - uses line buffering for multi-field streaming scales
+    let serialBuffer = '';
     dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (event: any) => {
       if (event.role && event.role !== 'scale') {
         return;
       }
-      // v2.10.68: Drop inbound bytes when our scale role is not active.
-      // The native plugin shares ONE RFCOMM socket across scale & printer roles,
-      // and the dataReceived event has no device-address tag. Without this guard,
-      // printer ACK/status bytes (emitted while only a printer is connected) get
-      // misparsed as a "weight" by parseSerialWeightData, fire scaleWeightUpdate,
-      // and flip the scale indicator green even though no scale is paired.
       if (!classicScale.isConnected || !classicScale.address) {
         return;
       }
-      // Native plugin sends { data: "..." }, handle both .data and .value for compatibility
       const rawData = event.data ?? event.value ?? '';
       console.log(`📡 Classic BT dataReceived event keys: ${Object.keys(event).join(', ')}, raw: "${rawData}"`);
-      const weight = parseSerialWeightData(rawData);
-      if (weight !== null) {
-        // Always broadcast globally - this is the app-level persistent mechanism
-        broadcastScaleWeightUpdate(weight, 'Classic-SPP');
-        
-        // Try calling the callback, but wrap in try-catch in case it's stale
-        // (e.g., component that passed the callback has unmounted)
-        try {
-          onWeightUpdate(weight);
-        } catch (callbackError) {
-          // Stale callback - this is expected when navigating away from Settings
-          // Global broadcast already handled the update
-          console.log('📡 Classic BT: Callback stale (component unmounted), global broadcast sent');
+
+      // Accumulate serial stream buffer
+      serialBuffer += rawData;
+      if (serialBuffer.length > 1024) {
+        serialBuffer = serialBuffer.slice(-512);
+      }
+
+      // If buffer contains newlines (\r\n, \r, or \n), process complete lines
+      if (/[\r\n]/.test(serialBuffer)) {
+        const lines = serialBuffer.split(/[\r\n]+/);
+        // Keep trailing incomplete line segment in buffer
+        if (!/[\r\n]$/.test(rawData)) {
+          serialBuffer = lines.pop() || '';
+        } else {
+          serialBuffer = '';
+        }
+
+        for (const line of lines) {
+          const cleanLine = line.trim();
+          if (!cleanLine) continue;
+          const weight = parseSerialWeightData(cleanLine);
+          if (weight !== null) {
+            broadcastScaleWeightUpdate(weight, 'Classic-SPP');
+            try {
+              onWeightUpdate(weight);
+            } catch (callbackError) {
+              console.log('📡 Classic BT: Callback stale (component unmounted), global broadcast sent');
+            }
+          }
+        }
+      } else if (serialBuffer.length >= 8) {
+        // Fallback for scales that stream continuous string blocks without newlines
+        const weight = parseSerialWeightData(serialBuffer);
+        if (weight !== null) {
+          broadcastScaleWeightUpdate(weight, 'Classic-SPP');
+          try {
+            onWeightUpdate(weight);
+          } catch (callbackError) {}
         }
       }
     });
@@ -837,13 +791,6 @@ export const quickReconnectClassicScale = async (
   const storedDevice = getStoredClassicDevice();
   if (!storedDevice) {
     return { success: false, error: 'No stored Classic device' };
-  }
-
-  // Check if device is still valid (within 24 hours)
-  const hoursSinceLastConnect = (Date.now() - storedDevice.timestamp) / (1000 * 60 * 60);
-  if (hoursSinceLastConnect > 24) {
-    clearStoredClassicDevice();
-    return { success: false, error: 'Stored device expired' };
   }
 
   return connectClassicScale(storedDevice, onWeightUpdate);
@@ -1047,6 +994,7 @@ export const connectInternalPrinter = async (): Promise<{ success: boolean; erro
       internal: true,
       timestamp: Date.now(),
     }));
+    localStorage.removeItem('lastConnectedPrinter');
     window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true, type: 'classic', internal: true } }));
     console.log('✅ Connected to CS10 internal printer bridge');
     return { success: true, status };
@@ -1072,13 +1020,13 @@ export const printToInternalPrinter = async (content: string): Promise<{ success
     // — still enough to clear the print head/tear bar, no large void.
     const lines = (content || '').split('\n');
     while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
-    lines.push('', '');
+    lines.push('', '', '', '');
     await PosApi.printReceipt({
       lines,
       fontHeight: 32,
       fontWidth: 24,
       lineSpace: 2,
-      feedDots: 90,
+      feedDots: 180,
     });
 
     console.log('✅ CS10 internal printer print completed (PosApi)');
@@ -1175,6 +1123,7 @@ export const connectClassicPrinter = async (
       ...device,
       timestamp: Date.now(),
     }));
+    localStorage.removeItem('lastConnectedPrinter');
 
     // Broadcast connection change
     window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true, type: 'classic' } }));
@@ -1259,13 +1208,6 @@ export const quickReconnectClassicPrinter = async (): Promise<{ success: boolean
     return { success: false, error: 'No stored Classic printer' };
   }
 
-  // Check if device is still valid (within 24 hours)
-  const hoursSinceLastConnect = (Date.now() - storedDevice.timestamp) / (1000 * 60 * 60);
-  if (hoursSinceLastConnect > 24) {
-    localStorage.removeItem(CLASSIC_PRINTER_KEY);
-    return { success: false, error: 'Stored printer expired' };
-  }
-
   if ((storedDevice as any).internal || storedDevice.address === INTERNAL_PRINTER_ADDRESS) {
     return connectInternalPrinter();
   }
@@ -1308,20 +1250,17 @@ export const printToClassicPrinter = async (content: string): Promise<{ success:
     ESC + '@' +           // Initialize printer
     ESC + 'a\x00' +       // Left alignment
     content +
-    '\n\n' +              // v2.11.33: trimmed tail feed (was 5 lines)
+    '\n\n\n\n' +          // Increased tail feed to prevent cutting off bottom info
     GS + 'V\x00';         // Cut paper
 
   const sendPrintData = async () => {
-    const chunkSize = 200;
+    const chunkSize = 512;
     for (let i = 0; i < printData.length; i += chunkSize) {
       const chunk = printData.slice(i, i + chunkSize);
       if (BluetoothClassic.writePrinter) {
         await BluetoothClassic.writePrinter({ data: chunk });
       } else {
         await BluetoothClassic.write({ data: chunk, role: 'printer' });
-      }
-      if (i + chunkSize < printData.length) {
-        await new Promise(resolve => setTimeout(resolve, 50));
       }
     }
   };
@@ -1440,6 +1379,7 @@ export const connectDirectToAddress = async (
       ...device,
       timestamp: Date.now(),
     }));
+    localStorage.removeItem('lastConnectedPrinter');
 
     // Broadcast connection change
     window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected: true, type: 'classic' } }));

@@ -86,10 +86,10 @@ class BluetoothClassicJsBridge(
 
     @JavascriptInterface
     fun getPairedDevices(): String = safeJson {
-        if (!hasBluetoothPermissions()) throw IllegalStateException("Bluetooth permissions not granted")
-
-        val adapter = adapter() ?: throw IllegalStateException("Bluetooth adapter unavailable")
-        if (!adapter.isEnabled) throw IllegalStateException("Bluetooth is disabled")
+        val adapter = adapter()
+        if (!hasBluetoothPermissions() || adapter == null || !adapter.isEnabled) {
+            return@safeJson JSONObject().put("devices", JSONArray()).put("fallback", true)
+        }
 
         val devicesArray = JSONArray()
         adapter.bondedDevices?.forEach { device ->

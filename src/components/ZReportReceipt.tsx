@@ -41,7 +41,9 @@ export const ZReportReceipt = ({
   
   if (!data) return null;
 
-  const formattedDate = new Date(data.date).toLocaleDateString('en-CA');
+  const formattedDate = data?.date && !isNaN(new Date(data.date).getTime())
+    ? new Date(data.date).toLocaleDateString('en-CA')
+    : new Date().toLocaleDateString('en-CA');
   // Use 24-hour format for time (no AM/PM)
   const formattedTime = new Date().toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
@@ -87,24 +89,25 @@ export const ZReportReceipt = ({
         receipt += sep + '\n';
         
         // By Session (for dairy only)
-        if (!isCoffee) {
+        if (!isCoffee && data.bySession) {
           receipt += `BY ${periodLabel.toUpperCase()}\n`;
-          receipt += formatLine('AM', `${data.bySession.AM.farmers} Farmers (${formatWeight(data.bySession.AM.liters)}${weightUnit})`, W) + '\n';
-          receipt += formatLine('PM', `${data.bySession.PM.farmers} Farmers (${formatWeight(data.bySession.PM.liters)}${weightUnit})`, W) + '\n';
+          Object.entries(data.bySession).forEach(([sessName, sessData]) => {
+            receipt += formatLine(sessName, `${sessData.farmers} Farmers (${formatWeight(sessData.liters)}${weightUnit})`, W) + '\n';
+          });
           receipt += sep + '\n';
         }
         
         // By Route
         receipt += `BY ${routeLabel.toUpperCase()}\n`;
-        Object.entries(data.byRoute).forEach(([route, routeData]) => {
-          receipt += formatLine(route.substring(0, 20), `${formatWeight(routeData.total)}${weightUnit}`, W) + '\n';
+        Object.entries(data.byRoute || {}).forEach(([route, routeData]) => {
+          receipt += formatLine(String(route || 'OTHER').substring(0, 20), `${formatWeight(routeData?.total || 0)}${weightUnit}`, W) + '\n';
         });
         receipt += sep + '\n';
         
         // By Collector
         receipt += 'BY COLLECTOR\n';
-        Object.entries(data.byCollector).forEach(([collector, collectorData]) => {
-          receipt += formatLine(collector.substring(0, 20), `${formatWeight(collectorData.liters)}${weightUnit}`, W) + '\n';
+        Object.entries(data.byCollector || {}).forEach(([collector, collectorData]) => {
+          receipt += formatLine(String(collector || 'UNKNOWN').substring(0, 20), `${formatWeight(collectorData?.liters || 0)}${weightUnit}`, W) + '\n';
         });
         receipt += sep + '\n';
         
@@ -203,21 +206,17 @@ export const ZReportReceipt = ({
           </div>
 
           {/* By Session - Only for dairy (non-coffee) */}
-            {!isCoffee && (
+          {!isCoffee && data.bySession && (
             <div className="border-b border-dashed pb-2 space-y-1">
               <div className="text-xs font-bold">BY {periodLabel.toUpperCase()}</div>
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">AM</span>
-                <span className="font-medium">
-                  {data.bySession.AM.farmers} Farmers ({formatWeight(data.bySession.AM.liters)}{weightUnit})
-                </span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">PM</span>
-                <span className="font-medium">
-                  {data.bySession.PM.farmers} Farmers ({formatWeight(data.bySession.PM.liters)}{weightUnit})
-                </span>
-              </div>
+              {Object.entries(data.bySession).map(([sessName, sessData]) => (
+                <div key={sessName} className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">{sessName}</span>
+                  <span className="font-medium">
+                    {sessData.farmers} Farmers ({formatWeight(sessData.liters)}{weightUnit})
+                  </span>
+                </div>
+              ))}
             </div>
           )}
 

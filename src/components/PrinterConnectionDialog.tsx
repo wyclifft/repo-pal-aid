@@ -248,14 +248,14 @@ export const PrinterConnectionDialog = ({
                     <button
                       key={device.address}
                       onClick={function() { handleClassicConnect(device); }}
-                      className={"w-full text-left p-3 border rounded-md transition-colors " +
-                        (selectedDevice?.address === device.address ? "border-primary bg-primary/5 " : "border-gray-200 ") +
-                        (isInternalPosPrinter(device.name || '') ? "bg-green-50/50 border-green-200 " : "")
+                      className={"w-full text-left p-3 border rounded-md transition-colors bg-card text-card-foreground " +
+                        (selectedDevice?.address === device.address ? "border-primary bg-primary/20 " : "border-border hover:bg-accent ") +
+                        (isInternalPosPrinter(device.name || '') ? "bg-green-500/10 border-green-500/50 " : "")
                       }
                     >
                       <div className="flex justify-between items-center">
                         <div>
-                          <div className="font-bold text-sm flex items-center gap-1">
+                          <div className="font-bold text-sm text-foreground flex items-center gap-1">
                             {device.name || device.resolvedName}
                             {isInternalPosPrinter(device.name || '') ? (
                               <span className="text-[10px] bg-green-500 text-white px-1.5 py-0.5 rounded-full font-normal">Internal</span>
@@ -263,9 +263,9 @@ export const PrinterConnectionDialog = ({
                               <CheckCircle2 className="h-3 w-3 text-green-500" />
                             )}
                           </div>
-                          <div className="text-[10px] text-gray-400">{device.address}</div>
+                          <div className="text-[10px] text-muted-foreground font-mono">{device.address}</div>
                         </div>
-                        {selectedDevice?.address === device.address && isConnecting && <RefreshCw className="h-4 w-4 animate-spin" />}
+                        {selectedDevice?.address === device.address && isConnecting && <RefreshCw className="h-4 w-4 animate-spin text-primary" />}
                       </div>
                     </button>
                   );

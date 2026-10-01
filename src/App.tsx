@@ -116,10 +116,10 @@ const SaccoPortal = lazy(() => import("./modules/sacco/SaccoPortal"));
 
 // Loading skeleton component
 const PageLoader = () => (
-  <div className="h-full flex items-center justify-center bg-background">
+  <div className="h-full min-h-screen flex items-center justify-center bg-[#0F172A] text-white">
     <div className="flex flex-col items-center gap-4">
-      <div className="w-10 h-10 border-3 border-primary/30 border-t-primary rounded-full animate-spin" />
-      <span className="text-sm text-muted-foreground">Loading...</span>
+      <div className="w-10 h-10 border-3 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+      <span className="text-sm text-slate-400 font-medium">Loading...</span>
     </div>
   </div>
 );
@@ -140,11 +140,14 @@ const PageWrapper = ({ children }: { children: React.ReactNode }) => {
 };
 
 // Wrapper component to use hooks inside context providers
+import { Login } from "@/components/Login";
 import { FarmerLoginScreen } from "@/components/farmer/FarmerLoginScreen";
 import { FarmerDashboard } from "@/components/farmer/FarmerDashboard";
+import { useAuth } from "@/contexts/AuthContext";
 
 const AppContent = () => {
   const mountedRef = useRef(true);
+  const { currentUser, isAuthenticated, login } = useAuth();
 
   // v2.12.0 — Sacco installs run as a dedicated member portal: every route
   // resolves to the Sacco portal and all other modules stay unreachable.
@@ -207,6 +210,18 @@ const AppContent = () => {
     return () => window.removeEventListener('backgroundSync', handleBackgroundSync);
   }, []);
 
+  // Fast-path: render Login screen IMMEDIATELY if unauthenticated
+  // This bypasses lazy-loading Index.tsx and all 30+ dashboard sub-modules, showing Login instantly on app start
+  if (!isAuthenticated) {
+    if (settings?.orgtype === 'I') {
+      if (farmerSession) {
+        return <FarmerDashboard farmer={farmerSession} onLogout={handleFarmerLogout} />;
+      }
+      return <FarmerLoginScreen onLogin={handleFarmerLogin} />;
+    }
+    return <Login onLogin={(user, isOffline, password) => login(user, isOffline, password)} />;
+  }
+
   return (
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <SyncOverlay
@@ -219,21 +234,23 @@ const AppContent = () => {
       <ServiceWorkerUpdateBanner />
       <BackendStatusBanner />
       {/* OfflineIndicator now rendered inside Dashboard for proper layout positioning */}
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />
-          <Route path="/z-report" element={<PageWrapper><ZReport /></PageWrapper>} />
-          <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
-          <Route path="/ai" element={<PageWrapper><AIPage /></PageWrapper>} />
-          <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
-          <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
-          <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
-          <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
-          <Route path="/payments" element={<PageWrapper><PaymentsScreen /></PageWrapper>} />
-          <Route path="/sacco" element={<PageWrapper><SaccoPortal /></PageWrapper>} />
-          <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
-        </Routes>
-      </Suspense>
+      <ErrorBoundary>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route path="/" element={<PageWrapper><Index /></PageWrapper>} />
+            <Route path="/z-report" element={<PageWrapper><ZReport /></PageWrapper>} />
+            <Route path="/store" element={<PageWrapper><Store /></PageWrapper>} />
+            <Route path="/ai" element={<PageWrapper><AIPage /></PageWrapper>} />
+            <Route path="/periodic-report" element={<PageWrapper><PeriodicReport /></PageWrapper>} />
+            <Route path="/settings" element={<PageWrapper><Settings /></PageWrapper>} />
+            <Route path="/data-management" element={<PageWrapper><Index /></PageWrapper>} />
+            <Route path="/debug" element={<PageWrapper><DebugConsole /></PageWrapper>} />
+            <Route path="/payments" element={<PageWrapper><PaymentsScreen /></PageWrapper>} />
+            <Route path="/sacco" element={<PageWrapper><SaccoPortal /></PageWrapper>} />
+            <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
     </HashRouter>
   );
 };

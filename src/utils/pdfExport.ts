@@ -35,11 +35,12 @@ export const printThermalZReport = (reportData: ZReportData, produceLabel?: stri
   const { isCoffee, weightUnit } = orgSettings;
 
   // Build session section only for dairy
-  const sessionSection = isCoffee ? '' : `
+  const sessionSection = isCoffee || !reportData.bySession ? '' : `
       <div class="section">
         <div class="bold">BY SESSION:</div>
-        <div>AM: ${reportData.bySession.AM.farmers} Farmers (${formatWeight(reportData.bySession.AM.liters)}${weightUnit})</div>
-        <div>PM: ${reportData.bySession.PM.farmers} Farmers (${formatWeight(reportData.bySession.PM.liters)}${weightUnit})</div>
+        ${Object.entries(reportData.bySession).map(([sessName, sessData]) => `
+          <div>${sessName}: ${sessData?.farmers ?? 0} Farmers (${formatWeight(sessData?.liters ?? 0)}${weightUnit})</div>
+        `).join('')}
       </div>
       <div class="line"></div>`;
 
@@ -136,11 +137,12 @@ export const generateZReportPDF = (reportData: ZReportData, produceLabel?: strin
       lines.push(`Total Entries: ${reportData.totals.entries}`);
       lines.push('');
 
-      if (!isCoffee) {
+      if (!isCoffee && reportData.bySession) {
         lines.push('BY SESSION');
         lines.push('='.repeat(48));
-        lines.push(`AM: ${reportData.bySession.AM.farmers} Farmers (${formatWeight(reportData.bySession.AM.liters)} ${weightUnit})`);
-        lines.push(`PM: ${reportData.bySession.PM.farmers} Farmers (${formatWeight(reportData.bySession.PM.liters)} ${weightUnit})`);
+        Object.entries(reportData.bySession).forEach(([sessName, sessData]) => {
+          lines.push(`${sessName}: ${sessData?.farmers ?? 0} Farmers (${formatWeight(sessData?.liters ?? 0)} ${weightUnit})`);
+        });
         lines.push('');
       }
 
@@ -404,9 +406,16 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
 
       // Helper to determine produce vs store merchandise
       const isProduceTx = (tx: any) => {
-        const code = String(tx.product_code || '').trim().toUpperCase();
-        const milkId = String(tx.milk_session_id || '').trim();
-        return code === 'S0001' || (tx.transtype || 1) === 1 || milkId.length === 10 || ((tx.transtype || 1) === 2 && reportData.orgtype === 'C');
+        if (!tx) return false;
+        const tt = Number(tx.transtype || tx.Transtype) || 1;
+        if (tt === 1) return true;
+        if (tt === 3) return false;
+        if (tt === 2) {
+          const code = String(tx.product_code || tx.icode || '').trim().toUpperCase();
+          const milkId = String(tx.milk_session_id || '').trim();
+          return code === 'S0001' || milkId.length === 10 || reportData.orgtype === 'C' || reportData.isCoffee === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true;
+        }
+        return false;
       };
 
       let buyWeight = 0;

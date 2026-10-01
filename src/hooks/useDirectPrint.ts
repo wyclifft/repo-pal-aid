@@ -95,9 +95,9 @@ export const printMilkReceiptDirect = async (
         printSucceeded = true;
       }
 
-      // Reduced delay between copies (300ms instead of 500ms)
+      // Delay between copies (2500ms gives time to tear/cut first receipt)
       if (copy < printCopies - 1) {
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise(resolve => setTimeout(resolve, 2500));
       }
     } catch (err) {
       console.warn(`Print copy ${copy + 1} error:`, err);

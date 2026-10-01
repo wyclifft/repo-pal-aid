@@ -631,7 +631,8 @@ export const FarmerSyncDashboard = () => {
     ? Math.round((progressInfo.current / progressInfo.total) * 100)
     : 0;
 
-  const deviceCcode = localStorage.getItem('device_ccode') || '';
+  const rawCcode = localStorage.getItem('device_ccode') || '';
+  const deviceCcode = (rawCcode && rawCcode !== '000' && rawCcode !== '0') ? rawCcode : '';
   const selectionChip = [
     activeRoute ? `Route: ${activeRoute}` : '',
     activeIcode ? `Product: ${activeIcode}` : '',

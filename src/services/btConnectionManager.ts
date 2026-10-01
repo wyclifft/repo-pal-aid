@@ -158,24 +158,39 @@ interface SavedDevice {
 
 function getSavedDevice(role: BtRole): SavedDevice | null {
   if (role === "scale") {
-    // Prefer stored Classic SPP scale device if present
     const cls = getStoredClassicDevice();
+    const ble = getStoredDeviceInfo();
+    if (cls && ble) {
+      const clsTime = (cls as any).timestamp || 0;
+      const bleTime = ble.timestamp || 0;
+      if (clsTime > bleTime) {
+        return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
+      } else {
+        return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: ble.connectionType === "classic-spp" ? "classic" : "ble" };
+      }
+    }
     if (cls) {
       return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
     }
-    // Otherwise use stored BLE scale device
-    const ble = getStoredDeviceInfo();
     if (ble) {
       return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: ble.connectionType === "classic-spp" ? "classic" : "ble" };
     }
     return null;
   }
-  // printer
-  // v2.11.14: prefer Classic (SPP) first — matches scale behaviour and works
-  // on WebView 51 / Android 7 devices where BLE printing is unreliable.
+
+  // printer: Compare timestamps if both exist so the most recent selection (BLE vs Classic) is used
   const cls = getStoredClassicPrinter();
-  if (cls) return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
   const ble = getStoredPrinterInfo();
+  if (cls && ble) {
+    const clsTime = (cls as any).timestamp || 0;
+    const bleTime = ble.timestamp || 0;
+    if (clsTime > bleTime) {
+      return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
+    } else {
+      return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: "ble" };
+    }
+  }
+  if (cls) return { deviceId: cls.address, deviceName: cls.name, type: "classic" };
   if (ble) return { deviceId: ble.deviceId, deviceName: ble.deviceName, type: "ble" };
   return null;
 }
@@ -515,10 +530,54 @@ export function installAutoReconnect() {
   }, 1500);
 }
 
+async function forceReconnect(role: BtRole): Promise<{ success: boolean; error?: string }> {
+  state[role].forgotten = false;
+  state[role].pausedForGesture = false;
+  state[role].attempt = 0;
+  if (state[role].retryTimer) {
+    clearTimeout(state[role].retryTimer);
+    state[role].retryTimer = null;
+  }
+  state[role].inFlight = null;
+
+  let saved = getSavedDevice(role);
+
+  if (!saved && role === 'printer' && Capacitor.isNativePlatform()) {
+    try {
+      const paired = await getPairedPrinters();
+      const internal = paired.find(d => isInternalPosPrinter(d.name));
+      if (internal) {
+        btlog("info", "printer", `forceReconnect auto-discovery: found internal POS printer "${internal.name}" (${internal.address})`);
+        saved = { deviceId: internal.address, deviceName: internal.name, type: "classic" };
+      }
+    } catch (e) {
+      btlog("warn", "printer", "auto-discovery failed", e);
+    }
+  }
+
+  if (!saved) {
+    return { success: false, error: `No previously connected ${role} found` };
+  }
+
+  try {
+    await ensureConnected(role);
+    const connected = isLowLevelConnected(role) || state[role].status === "connected";
+    if (connected) {
+      return { success: true };
+    } else {
+      return { success: false, error: state[role].lastError || `${role} connection failed` };
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { success: false, error: msg };
+  }
+}
+
 // ─── public api ────────────────────────────────────────────────────────────────
 
 export const bt = {
   ensureConnected,
+  forceReconnect,
   getStatus(role: BtRole): BtStatus {
     return state[role].status;
   },

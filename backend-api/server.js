@@ -101,6 +101,20 @@ const norm = (v) => (v ? String(v).trim().toUpperCase() : '');
 const normL = (v) => (v ? String(v).trim().toLowerCase() : '');
 
 /**
+ * Normalize ccode values.
+ * Returns NULL if ccode is '000', '0', empty, or null/undefined, ensuring
+ * placeholder DB defaults ('000') are never treated as valid company codes.
+ */
+const normalizeCcode = (rawCcode) => {
+  if (!rawCcode) return null;
+  const str = String(rawCcode).trim();
+  if (!str || str === '000' || str === '0' || str.toUpperCase() === 'NULL' || str.toUpperCase() === 'UNDEFINED') {
+    return null;
+  }
+  return str;
+};
+
+/**
  * v2.12.17: SECURE DEVICE BINDING HELPER.
  * Verifies that the supplied userId is authorized to use this device.
  * Multi-user update: Allows any user belonging to an authorized device.
@@ -2108,24 +2122,41 @@ const server = http.createServer(async (req, res) => {
           }, 400);
         }
 
-        const routeCode = (body.route || '').trim();
-        if (routeCode) {
-          const [routeRows] = await conn.query(
-            'SELECT IFNULL(clientFetch, 1) as clientFetch FROM fm_tanks WHERE tcode = ? AND ccode = ?',
-            [routeCode, ccode]
-          );
+        // Strict route validation: route must be provided and must strictly exist in fm_tanks for this company.
+        // NO FALLBACKS: transactions.route must be precisely the route selected by the user.
+        const candidateRoute = (body.route_tcode || body.route || '').trim();
+        if (!candidateRoute) {
+          console.log('❌ Missing route in milk collection request for company', ccode);
+          return sendJSON(res, {
+            success: false,
+            error: 'ROUTE_REQUIRED',
+            message: 'A selected route is required.'
+          }, 400);
+        }
 
-          if (routeRows.length > 0) {
-            const clientFetch = routeRows[0].clientFetch;
-            if (clientFetch !== 1) {
-              console.log(`❌ clientFetch enforcement: Buy/Sell disabled for route ${routeCode} (clientFetch=${clientFetch})`);
-              return sendJSON(res, {
-                success: false,
-                error: 'ROUTE_BUY_SELL_DISABLED',
-                message: 'Buy/Sell operations are not allowed for this route. Please use Store instead.'
-              }, 403);
-            }
-          }
+        const [routeRows] = await conn.query(
+          'SELECT tcode, IFNULL(clientFetch, 1) as clientFetch FROM fm_tanks WHERE ccode = ? AND (tcode = ? OR descript = ?) LIMIT 1',
+          [ccode, candidateRoute, candidateRoute]
+        );
+
+        if (routeRows.length === 0) {
+          console.log(`❌ Invalid route: "${candidateRoute}" not found in fm_tanks for company ${ccode}`);
+          return sendJSON(res, {
+            success: false,
+            error: 'INVALID_ROUTE',
+            message: `Route "${candidateRoute}" is not valid for this company.`
+          }, 400);
+        }
+
+        const finalRoute = routeRows[0].tcode.toString().trim();
+        const clientFetch = routeRows[0].clientFetch;
+        if (clientFetch !== 1) {
+          console.log(`❌ clientFetch enforcement: Buy/Sell disabled for route ${finalRoute} (clientFetch=${clientFetch})`);
+          return sendJSON(res, {
+            success: false,
+            error: 'ROUTE_BUY_SELL_DISABLED',
+            message: 'Buy/Sell operations are not allowed for this route. Please use Store instead.'
+          }, 403);
         }
 
         const collectionDate = new Date(body.collection_date);
@@ -2152,6 +2183,7 @@ const server = http.createServer(async (req, res) => {
 
         let normalizedSession = rawSession.toUpperCase();
         let seasonCAN = body.season_code || '';
+        let memberRoute = '';
 
         if (orgtype === 'C') {
           const scode = (body.season_code || '').toString().trim();
@@ -2184,7 +2216,7 @@ const server = http.createServer(async (req, res) => {
           console.log('📦 Sell Portal transaction (transtype=2) - skipping multOpt validation');
         } else {
           const [memberRows] = await conn.query(
-            'SELECT multOpt FROM cm_members WHERE mcode = ? AND ccode = ?',
+            'SELECT multOpt, route FROM cm_members WHERE mcode = ? AND ccode = ?',
             [cleanFarmerId, ccode]
           );
 
@@ -2192,7 +2224,11 @@ const server = http.createServer(async (req, res) => {
             ? parseInt(memberRows[0].multOpt)
             : 1;
 
-          console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}`);
+          if (memberRows.length > 0) {
+            memberRoute = (memberRows[0].route || '').trim();
+          }
+
+          console.log(`👤 Member ${cleanFarmerId} multOpt: ${multOpt}, memberRoute: ${memberRoute}`);
 
           const overrideMultOpt = body.override_multopt === true || body.override_multopt === 1 || body.override_multopt === '1';
 
@@ -2253,10 +2289,10 @@ const server = http.createServer(async (req, res) => {
 
             const [result] = await conn.query(
               `INSERT INTO transactions
-                (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session,
+                (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, c_route, weight, session,
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice,
                  amount, icode, CAN, time, capType, entry_type, deliveredby, milk_session_id)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?, ?)`,
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?, ?)`,
               [
                 toCleanString(attemptTransrefno),
                 finalUploadRef,
@@ -2264,7 +2300,8 @@ const server = http.createServer(async (req, res) => {
                 toCleanString(clerk),
                 toCleanString(deviceserial),
                 toCleanString(cleanFarmerId),
-                toCleanString(body.route),
+                toCleanString(finalRoute),
+                toCleanString(memberRoute),
                 toNumOrZero(body.weight),
                 toCleanString(normalizedSession),
                 transdate,
@@ -2699,9 +2736,9 @@ const server = http.createServer(async (req, res) => {
         return sendJSON(res, { success: false, error: 'uniquedevcode is required' }, 400);
       }
 
-      // Get device's company code
+      // Get device's company code, devcode, and bound userId
       const [deviceRows] = await pool.query(
-        'SELECT ccode FROM devSettings WHERE uniquedevcode = ? AND authorized = 1',
+        'SELECT ccode, devcode, userId FROM devSettings WHERE uniquedevcode = ? AND authorized = 1',
         [uniquedevcode]
       );
 
@@ -2713,45 +2750,138 @@ const server = http.createServer(async (req, res) => {
       }
 
       const nCcode = norm(deviceRows[0].ccode);
+      const devcode = (deviceRows[0].devcode || '').trim();
+      const boundUserId = (deviceRows[0].userId || '').trim();
 
-      // Fetch all collections for the specified date and company
-      // DB columns → Frontend fields mapping
-      const [collections] = await pool.query(
-        `SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, t.route, t.weight, t.session,
-                t.transdate as collection_date, t.clerk as clerk_name, t.icode as product_code, t.entry_type,
-                t.milk_session_id, t.CAN as season_code,
-                r.descript as route_name
-         FROM transactions t
-         LEFT JOIN fm_tanks r ON TRIM(t.route) = TRIM(r.tcode) AND t.ccode = r.ccode
-         WHERE t.transdate = ? AND t.Transtype = 1 AND t.ccode = ?
-         ORDER BY t.session, t.route, t.memberno`,
-        [date, nCcode]
-      );
+      // Check if user has company_analysis = 0 (restricted mode)
+      const requestedUserId = (parsedUrl.query.userid || parsedUrl.query.user_id || boundUserId || '').toString().trim();
+      let isRestricted = false;
+
+      if (requestedUserId) {
+        try {
+          const [userRows] = await pool.query(
+            `SELECT IFNULL(company_analysis, 1) AS company_analysis
+             FROM Users
+             WHERE (TRIM(userid) = TRIM(?) OR CAST(userid AS CHAR) = ?) AND ccode = ? LIMIT 1`,
+            [requestedUserId, requestedUserId, nCcode]
+          );
+          if (userRows.length > 0 && Number(userRows[0].company_analysis) === 0) {
+            isRestricted = true;
+          }
+        } catch (uErr) {
+          console.warn('[Z-REPORT] Error checking user company_analysis permission:', uErr?.message);
+        }
+      }
+
+      let zReportQuery = `
+        SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, t.route, t.weight, t.session,
+               t.transdate as collection_date, t.clerk as clerk_name, t.icode as product_code, t.entry_type,
+               t.milk_session_id, t.CAN as season_code,
+               IFNULL(TRIM(r.descript), IFNULL(NULLIF(TRIM(t.route_name), ''), TRIM(t.route))) as route_name
+        FROM transactions t
+        LEFT JOIN fm_tanks r ON (TRIM(t.route) = TRIM(r.tcode) OR TRIM(t.route) = TRIM(r.descript)) AND t.ccode = r.ccode
+        WHERE t.transdate = ? AND t.Transtype = 1 AND t.ccode = ?
+      `;
+      const zReportQueryParams = [date, nCcode];
+
+      if (isRestricted) {
+        if (devcode && devcode !== uniquedevcode) {
+          zReportQuery += ` AND (t.deviceserial = ? OR t.deviceserial = ?)`;
+          zReportQueryParams.push(uniquedevcode, devcode);
+        } else {
+          zReportQuery += ` AND t.deviceserial = ?`;
+          zReportQueryParams.push(uniquedevcode);
+        }
+      }
+
+      zReportQuery += ` ORDER BY t.session, t.route, t.memberno`;
+
+      const [collections] = await pool.query(zReportQuery, zReportQueryParams);
 
       // Calculate totals
       const totalLiters = collections.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0);
       const totalFarmers = new Set(collections.map(c => c.farmer_id)).size;
       const totalEntries = collections.length;
 
-      // Group by route (defensive: normalize unexpected session values)
+      // Helper to map session aliases to AM/PM for backward compatibility with older APKs
+      const mapSessionKey = (k) => {
+        const u = (k || '').toUpperCase().trim();
+        if (['AM', 'MO', 'MORNING', '1'].includes(u)) return 'AM';
+        if (['PM', 'AF', 'AFTERNOON', 'EV', 'EVENING', 'EVE', 'NIGHT', '2'].includes(u)) return 'PM';
+        return k || 'AM';
+      };
+
+      // Group by route - map session aliases to AM/PM so older APKs can count AM/PM farmers accurately
       const byRoute = collections.reduce((acc, c) => {
         const routeKey = (c.route_name || c.route || 'Unknown').trim();
-        const sessionKey = c.session === 'PM' ? 'PM' : 'AM';
+        const rawSess = (c.session || c.season_code || 'AM').trim();
+        const mappedSess = mapSessionKey(rawSess);
 
         if (!acc[routeKey]) {
-          acc[routeKey] = { AM: [], PM: [], total: 0 };
+          acc[routeKey] = { total: 0, AM: [], PM: [] };
         }
 
-        acc[routeKey][sessionKey].push(c);
+        if (!acc[routeKey][mappedSess]) {
+          acc[routeKey][mappedSess] = [];
+        }
+        acc[routeKey][mappedSess].push(c);
+
+        if (mappedSess !== rawSess && rawSess) {
+          if (!acc[routeKey][rawSess]) {
+            acc[routeKey][rawSess] = [];
+          }
+          acc[routeKey][rawSess].push(c);
+        }
+
         acc[routeKey].total += parseFloat(c.weight || 0);
         return acc;
       }, {});
 
-      // Group by session
-      const bySession = {
-        AM: collections.filter(c => c.session === 'AM'),
-        PM: collections.filter(c => c.session === 'PM')
+      // Group by session - map aliases to AM/PM for backward compatibility
+      const sessionFarmerSets = {
+        AM: new Set(),
+        PM: new Set()
       };
+
+      const bySession = {
+        AM: { entries: 0, farmers: 0, liters: 0 },
+        PM: { entries: 0, farmers: 0, liters: 0 }
+      };
+
+      collections.forEach(c => {
+        const rawSess = (c.session || c.season_code || 'AM').trim();
+        const mappedKey = mapSessionKey(rawSess);
+        const w = parseFloat(c.weight || 0);
+
+        if (!bySession[mappedKey]) {
+          bySession[mappedKey] = { entries: 0, farmers: 0, liters: 0 };
+        }
+        if (!sessionFarmerSets[mappedKey]) {
+          sessionFarmerSets[mappedKey] = new Set();
+        }
+
+        bySession[mappedKey].entries++;
+        bySession[mappedKey].liters = Math.floor((bySession[mappedKey].liters + w) * 10) / 10;
+        sessionFarmerSets[mappedKey].add(c.farmer_id);
+
+        if (mappedKey !== rawSess && rawSess) {
+          if (!bySession[rawSess]) {
+            bySession[rawSess] = { entries: 0, farmers: 0, liters: 0 };
+          }
+          if (!sessionFarmerSets[rawSess]) {
+            sessionFarmerSets[rawSess] = new Set();
+          }
+          bySession[rawSess].entries++;
+          bySession[rawSess].liters = Math.floor((bySession[rawSess].liters + w) * 10) / 10;
+          sessionFarmerSets[rawSess].add(c.farmer_id);
+        }
+      });
+
+      Object.keys(bySession).forEach(k => {
+        if (sessionFarmerSets[k]) {
+          bySession[k].farmers = sessionFarmerSets[k].size;
+        }
+      });
 
       // Group by collector
       const byCollector = collections.reduce((acc, c) => {
@@ -2785,18 +2915,7 @@ const server = http.createServer(async (req, res) => {
             entries: totalEntries
           },
           byRoute,
-          bySession: {
-            AM: {
-              entries: bySession.AM.length,
-              farmers: new Set(bySession.AM.map(c => c.farmer_id)).size,
-              liters: Math.floor(bySession.AM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0) * 10) / 10
-            },
-            PM: {
-              entries: bySession.PM.length,
-              farmers: new Set(bySession.PM.map(c => c.farmer_id)).size,
-              liters: Math.floor(bySession.PM.reduce((sum, c) => sum + parseFloat(c.weight || 0), 0) * 10) / 10
-            }
-          },
+          bySession,
           byCollector,
           collections
         }
@@ -2842,6 +2961,7 @@ const server = http.createServer(async (req, res) => {
 
       // Get the device's unique identifier (deviceserial) from the fingerprint
       const deviceSerial = uniquedevcode;
+      const cleanDevcode = (devcode || '').trim();
 
       const periodCANCodes = {
         morning: ['MO', 'AM', 'MORNING'],
@@ -2853,6 +2973,14 @@ const server = http.createServer(async (req, res) => {
         pm: ['AF', 'PM', 'AFTERNOON', 'EV', 'EVE', 'EVENING', 'NIGHT']
       };
 
+      let deviceSerialCondition = `t.deviceserial = ?`;
+      const queryParams = [norm(ccode), norm(ccode), date, deviceSerial];
+      if (cleanDevcode && cleanDevcode !== deviceSerial) {
+        deviceSerialCondition = `(t.deviceserial = ? OR t.deviceserial = ?)`;
+        queryParams.push(cleanDevcode);
+      }
+      queryParams.push(norm(ccode));
+
       let query = `
         SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id,
                t.route, t.weight, t.session, t.transdate as collection_date,
@@ -2860,13 +2988,12 @@ const server = http.createServer(async (req, res) => {
                t.entry_type, t.CAN as season_code, t.milk_session_id, t.Transtype as transtype,
                t.iprice, t.amount,
                i.descript as product_name,
-               TRIM(r.descript) as route_name
+               IFNULL(TRIM(r.descript), IFNULL(NULLIF(TRIM(t.route_name), ''), TRIM(t.route))) as route_name
         FROM transactions t
         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
-        LEFT JOIN fm_tanks r ON t.route = r.tcode AND r.ccode = ?
-        WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND t.deviceserial = ? AND t.ccode = ?
+        LEFT JOIN fm_tanks r ON (TRIM(t.route) = TRIM(r.tcode) OR TRIM(t.route) = TRIM(r.descript)) AND r.ccode = ?
+        WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND ${deviceSerialCondition} AND t.ccode = ?
       `;
-      const queryParams = [norm(ccode), norm(ccode), date, deviceSerial, norm(ccode)];
 
       // Add milk_session_id filter if explicitly requested
       if (milkSessionIdFilter && milkSessionIdFilter !== 'all' && milkSessionIdFilter !== '0' && milkSessionIdFilter.length === 10) {
@@ -2886,19 +3013,29 @@ const server = http.createServer(async (req, res) => {
 
       const [collections] = await pool.query(query, queryParams);
 
+      let sessionDeviceCondition = `t.deviceserial = ?`;
+      const sessionQueryParams = [date, deviceSerial];
+      if (cleanDevcode && cleanDevcode !== deviceSerial) {
+        sessionDeviceCondition = `(t.deviceserial = ? OR t.deviceserial = ?)`;
+        sessionQueryParams.push(cleanDevcode);
+      }
+      sessionQueryParams.push(norm(ccode));
+
       // Extract distinct milk_session_id records for this device & date for session prompt options
       const [distinctSessionRows] = await pool.query(
-        `SELECT DISTINCT t.milk_session_id, t.session, t.CAN as season_code, COUNT(*) as count
+        `SELECT t.milk_session_id, t.session, t.CAN as season_code, COUNT(*) as count, COUNT(DISTINCT t.memberno) as farmers, SUM(t.weight) as weight
          FROM transactions t
-         WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND t.deviceserial = ? AND t.ccode = ? AND t.milk_session_id IS NOT NULL AND TRIM(t.milk_session_id) != '' AND TRIM(t.milk_session_id) != '0' AND CHAR_LENGTH(TRIM(t.milk_session_id)) = 10
+         WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND ${sessionDeviceCondition} AND t.ccode = ? AND t.milk_session_id IS NOT NULL AND TRIM(t.milk_session_id) != '' AND TRIM(t.milk_session_id) != '0' AND CHAR_LENGTH(TRIM(t.milk_session_id)) = 10
          GROUP BY t.milk_session_id, t.session, t.CAN`,
-        [date, deviceSerial, norm(ccode)]
+        sessionQueryParams
       );
       const sessionsList = distinctSessionRows.map(s => ({
         milk_session_id: (s.milk_session_id || '').trim(),
         session: s.session || 'AM',
         season_code: s.season_code || '',
-        count: s.count
+        count: s.count,
+        farmers: parseFloat(s.farmers || 0),
+        weight: parseFloat(s.weight || 0)
       }));
 
       // Get season/session name for header
@@ -3281,21 +3418,38 @@ if (path === '/api/sales' && method === 'POST') {
           }
         }
 
+        const cleanFarmerId = (body.farmer_id || '').replace(/^#/, '').trim();
+        let memberRoute = '';
+        if (cleanFarmerId && ccode) {
+          try {
+            const [memberRows] = await conn.query(
+              'SELECT route FROM cm_members WHERE mcode = ? AND ccode = ? LIMIT 1',
+              [cleanFarmerId, ccode]
+            );
+            if (memberRows.length > 0 && memberRows[0].route) {
+              memberRoute = (memberRows[0].route || '').trim();
+            }
+          } catch (e) {
+            console.warn('[/api/sales] Member route lookup failed:', e?.message);
+          }
+        }
+
         await conn.query(
           `INSERT INTO transactions 
-            (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+            (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, c_route, weight, session,
              transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
              amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
              cowname, cowbreed, noofcalfs, bullcode, bullname, nextheat)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             toCleanString(transrefno),
             toCleanString(uploadrefno),
             toCleanString(body.user_id || body.sold_by),
             toCleanString(body.sold_by),
             toCleanString(body.device_fingerprint),
-            toCleanString(body.farmer_id),
+            toCleanString(cleanFarmerId || body.farmer_id),
             toCleanString(storeRoute),
+            toCleanString(memberRoute),
             toNumOrZero(body.quantity),
             toCleanString(salesSessionVal),
             transdate,
@@ -3536,7 +3690,23 @@ if (path === '/api/sales' && method === 'POST') {
             } else if (batchSessionVal.includes('AM') || batchSessionVal.includes('MORNING')) {
               batchSessionVal = 'AM';
             }
-            batchSeasonVal = batchSessionVal;
+            batchSeasonVal = batchSeasonVal;
+          }
+        }
+
+        const cleanFarmerId = (body.farmer_id || '').replace(/^#/, '').trim();
+        let memberRoute = '';
+        if (cleanFarmerId && ccode) {
+          try {
+            const [memberRows] = await conn.query(
+              'SELECT route FROM cm_members WHERE mcode = ? AND ccode = ? LIMIT 1',
+              [cleanFarmerId, ccode]
+            );
+            if (memberRows.length > 0 && memberRows[0].route) {
+              memberRoute = (memberRows[0].route || '').trim();
+            }
+          } catch (e) {
+            console.warn('[/api/sales/batch] Member route lookup failed:', e?.message);
           }
         }
 
@@ -3557,19 +3727,20 @@ if (path === '/api/sales' && method === 'POST') {
           try {
             await conn.query(
               `INSERT INTO transactions 
-                (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, weight, session, 
+                (transrefno, Uploadrefno, userId, clerk, deviceserial, memberno, route, c_route, weight, session,
                  transdate, transtime, Transtype, processed, uploaded, ccode, ivat, iprice, 
                  amount, icode, CAN, time, capType, milk_session_id, photo_filename, photo_directory,
                  cowname, cowbreed, noofcalfs, bullcode, bullname, nextheat)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 toCleanString(transrefno),
                 toCleanString(uploadrefno),
                 toCleanString(body.user_id || body.sold_by),
                 toCleanString(body.sold_by),
                 toCleanString(body.device_fingerprint),
-                toCleanString(body.farmer_id),
+                toCleanString(cleanFarmerId || body.farmer_id),
                 toCleanString(storeRoute),
+                toCleanString(memberRoute),
                 toNumOrZero(item.quantity),
                 toCleanString(batchSessionVal),
                 itemTransdate, itemTranstime,
@@ -4034,11 +4205,14 @@ if (path === '/api/sales' && method === 'POST') {
           [recoveredFingerprint]
         );
 
+        const cleanCcode = normalizeCcode((devRows.length > 0 && devRows[0].ccode) ? devRows[0].ccode : matchedRow.ccode);
+        const cleanDevcode = (devRows.length > 0 && devRows[0].devcode && devRows[0].devcode !== '000') ? devRows[0].devcode : null;
+
         const deviceData = {
           ...matchedRow,
           authorized: devRows.length > 0 ? devRows[0].authorized : (matchedRow.approved ? 1 : 0),
-          ccode: (devRows.length > 0 && devRows[0].ccode) ? devRows[0].ccode : (matchedRow.ccode || null),
-          devcode: devRows.length > 0 ? devRows[0].devcode : null,
+          ccode: cleanCcode,
+          devcode: cleanDevcode,
           trnid: devRows.length > 0 ? (devRows[0].trnid || 0) : 0,
           milkid: devRows.length > 0 ? (devRows[0].milkid || 0) : 0,
           storeid: devRows.length > 0 ? (devRows[0].storeid || 0) : 0,
@@ -4109,12 +4283,15 @@ if (path === '/api/sales' && method === 'POST') {
         return sendJSON(res, { success: false, error: 'Device not found' }, 404);
       }
       
+      const cleanCcode = normalizeCcode(devRows.length > 0 && devRows[0].ccode ? devRows[0].ccode : (approvedRows[0]?.ccode || null));
+      const cleanDevcode = (devRows.length > 0 && devRows[0].devcode && devRows[0].devcode !== '000') ? devRows[0].devcode : null;
+
       // Combine data from both tables
       const deviceData = {
         ...(approvedRows.length > 0 ? approvedRows[0] : {}),
         authorized: devRows.length > 0 ? devRows[0].authorized : 0,
-        ccode: devRows.length > 0 && devRows[0].ccode ? devRows[0].ccode : (approvedRows[0]?.ccode || null),
-        devcode: devRows.length > 0 ? devRows[0].devcode : null,
+        ccode: cleanCcode,
+        devcode: cleanDevcode,
         trnid: devRows.length > 0 ? devRows[0].trnid : 0,
         milkid: devRows.length > 0 ? (devRows[0].milkid || 0) : 0,
         storeid: devRows.length > 0 ? (devRows[0].storeid || 0) : 0,
@@ -4488,8 +4665,8 @@ if (path === '/api/sales' && method === 'POST') {
           'SELECT ccode, devcode, trnid FROM devSettings WHERE uniquedevcode = ?',
           [body.device_fingerprint]
         );
-        const ccode = devRows.length > 0 ? devRows[0].ccode : null;
-        const devcode = devRows.length > 0 ? devRows[0].devcode : null;
+        const ccode = normalizeCcode(devRows.length > 0 ? devRows[0].ccode : body.ccode);
+        const devcode = (devRows.length > 0 && devRows[0].devcode !== '000') ? devRows[0].devcode : null;
         const trnid = devRows.length > 0 ? devRows[0].trnid : 0;
 
         // If device not in devSettings, create a minimal record.
@@ -5535,7 +5712,7 @@ if (path === '/api/sales' && method === 'POST') {
 
       try {
         const [users] = await pool.query(
-          `SELECT userid, password, username, email, ccode, admin, supervisor, dcode, groupid, depart, can_access_payments
+          `SELECT userid, password, username, email, ccode, admin, supervisor, dcode, groupid, depart, can_access_payments, IFNULL(company_analysis, 1) AS company_analysis
            FROM Users
            WHERE ccode = ? AND (userid IS NOT NULL AND TRIM(userid) != '')`,
           [targetCcode]
@@ -5837,6 +6014,8 @@ if (path === '/api/sales' && method === 'POST') {
           add_members: toBool(user.add_members),
           // v2.11.1: expose Payments permission from real MySQL table `Users`
           can_access_payments: toBool(user.can_access_payments),
+          // v2.12.65: expose company_analysis permission for Z-Report overview control (defaults to true)
+          company_analysis: user.company_analysis !== undefined ? toBool(user.company_analysis) : true,
           is_farmer: isFarmer
         }
       }, 200, origin, req.headers);

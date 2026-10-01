@@ -31,6 +31,8 @@ import {
   isPrinterConnected,
   type ScaleType 
 } from '@/services/bluetooth';
+import { isClassicScaleConnected, isClassicPrinterConnected } from '@/services/bluetoothClassic';
+import { bt } from '@/services/btConnectionManager';
 import { toast } from 'sonner';
 
 // Session persistence keys
@@ -528,31 +530,28 @@ export const Dashboard = ({
 
   const handleReconnect = async () => {
     setIsReconnecting(true);
-    let scaleSuccess = false;
-    let printerSuccess = false;
 
-    const storedScale = getStoredDeviceInfo();
-    if (storedScale) {
-      const scaleResult = await quickReconnect(storedScale.deviceId, (weight: number, type: ScaleType) => {
-        console.log(`Scale weight: ${weight} kg (${type})`);
-      });
-      scaleSuccess = scaleResult.success;
-      setScaleConnected(scaleResult.success);
-    }
+    const [scaleRes, printerRes] = await Promise.all([
+      bt.forceReconnect('scale'),
+      bt.forceReconnect('printer'),
+    ]);
 
-    const storedPrinter = getStoredPrinterInfo();
-    if (storedPrinter) {
-      const printerResult = await quickReconnectPrinter(storedPrinter.deviceId);
-      printerSuccess = printerResult.success;
-      setPrinterConnected(printerResult.success);
-      if (printerResult.success) {
-        toast.success(`Printer connected: ${storedPrinter.deviceName}`);
-      } else {
-        toast.error(`Printer reconnect failed: ${printerResult.error}`);
-      }
+    if (scaleRes.success) {
+      const scaleName = bt.getDeviceName('scale') || 'Scale';
+      toast.success(`Scale connected: ${scaleName}`);
     } else {
-      toast.info('No previously connected printer found');
+      toast.error(`Scale reconnect: ${scaleRes.error || 'Failed to connect'}`);
     }
+
+    if (printerRes.success) {
+      const printerName = bt.getDeviceName('printer') || 'Printer';
+      toast.success(`Printer connected: ${printerName}`);
+    } else {
+      toast.error(`Printer reconnect: ${printerRes.error || 'Failed to connect'}`);
+    }
+
+    setScaleConnected(isScaleConnected() || isClassicScaleConnected());
+    setPrinterConnected(isPrinterConnected() || isClassicPrinterConnected());
 
     setIsReconnecting(false);
   };

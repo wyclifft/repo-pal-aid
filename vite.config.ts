@@ -15,6 +15,15 @@ export default defineConfig(({ mode }) => ({
     port: 8080,
   },
   plugins: [
+    {
+      name: 'build-progress-logger',
+      buildStart() { console.log('▶ [BUILD-LOGGER] buildStart'); },
+      transform(code, id) {
+        if (id.includes('main.tsx')) console.log('▶ [BUILD-LOGGER] Transforming main.tsx');
+      },
+      generateBundle() { console.log('▶ [BUILD-LOGGER] generateBundle'); },
+      closeBundle() { console.log('▶ [BUILD-LOGGER] closeBundle'); },
+    },
     react(),
     legacy({
       targets: ["chrome >= 51", "Android >= 5.0"],

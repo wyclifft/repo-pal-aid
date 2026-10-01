@@ -3,7 +3,8 @@ import { mysqlApi, Item } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { useAppSettings } from '@/hooks/useAppSettings';
-import { Loader2, Package } from 'lucide-react';
+import { Loader2, Package, ChevronDown, Check } from 'lucide-react';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 
 interface ProductSelectorProps {
   selectedProduct: Item | null;
@@ -29,6 +30,7 @@ export const ProductSelector = ({
   onProductsLoaded
 }: ProductSelectorProps) => {
   const [products, setProducts] = useState<Item[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const { getItems, isReady } = useIndexedDB();
@@ -164,16 +166,16 @@ export const ProductSelector = ({
         <select
           value={selectedProduct?.icode || ''}
           onChange={handleChange}
-          /* v2.12.6: never disabled just because a background refresh is in
-             flight — only when the parent disables it or there is nothing yet. */
           disabled={disabled || products.length === 0}
-          className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:border-[#667eea] appearance-none bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 ${
-            selectedProduct ? 'border-green-500 bg-green-50 dark:bg-green-950/20' : 'border-gray-300 dark:border-gray-700'
+          className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:border-[#667eea] appearance-none font-semibold text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 ${
+            selectedProduct ? 'border-green-500 bg-green-50 dark:bg-green-950/20 text-green-950 dark:text-green-100 font-semibold' : 'border-gray-300 dark:border-gray-700'
           } ${disabled ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
         >
-          <option value="">-- Select a {produceLabel.toLowerCase()} type --</option>
+          <option value="" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 font-semibold py-2">
+            -- Select a {produceLabel.toLowerCase()} type --
+          </option>
           {products.map((product) => (
-            <option key={product.icode} value={product.icode} className="dark:bg-gray-900">
+            <option key={product.icode} value={product.icode} className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 font-semibold py-2">
               {product.descript} ({product.icode})
             </option>
           ))}

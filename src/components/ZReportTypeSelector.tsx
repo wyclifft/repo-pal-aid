@@ -97,8 +97,8 @@ export const ZReportTypeSelector = ({
                 <RadioGroupItem value={opt.value} id={`zrt-${opt.value}`} />
                 <div className="flex-shrink-0">{opt.icon}</div>
                 <Label htmlFor={`zrt-${opt.value}`} className="flex-1 cursor-pointer">
-                  <div className="font-medium">{opt.label}</div>
-                  <div className="text-xs text-muted-foreground">{opt.description}</div>
+                  <div className="font-semibold text-foreground dark:text-slate-100 text-sm">{opt.label}</div>
+                  <div className="text-xs text-muted-foreground dark:text-slate-400">{opt.description}</div>
                 </Label>
               </div>
             ))}

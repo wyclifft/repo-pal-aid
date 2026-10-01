@@ -80,7 +80,8 @@ export const AddMemberModal = ({ open, onClose, onMemberAdded }: AddMemberModalP
   const [lastSuccessMessage, setLastSuccessMessage] = useState<string | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const ccode = (typeof window !== 'undefined' && localStorage.getItem('device_ccode')) || '';
+  const rawCcode = (typeof window !== 'undefined' && localStorage.getItem('device_ccode')) || '';
+  const ccode = (rawCcode && rawCcode !== '000' && rawCcode !== '0') ? rawCcode : '';
 
   // Helper: clear the inline success banner (and any pending auto-clear timer)
   const clearSuccessBanner = () => {

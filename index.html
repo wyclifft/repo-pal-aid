@@ -4,28 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="color-scheme" content="light" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#0F172A" />
     <title>Milk Collection App</title>
     <style>
-      /* v2.11.14 WebView 51 first-paint: force LIGHT theme + white bg.
-         The .dark class must NEVER apply on legacy WebViews — the dashboard
-         was rendering navy on CS10 because of an inherited prefers-color-
-         scheme:dark propagation. This overrides both :root and .dark. */
-      html { color-scheme: light !important; background: #ffffff; }
+      /* Force dark navy theme background on first paint to eliminate white flashes. */
+      html { color-scheme: light !important; background: #0F172A; }
       html.dark { color-scheme: light !important; }
       html, body, #root {
         margin: 0;
         padding: 0;
         height: 100%;
-        background: #ffffff;
-        color: #0b1220;
+        background: #0F172A;
+        color: #ffffff;
         overflow: hidden;
         position: fixed;
         width: 100%;
         top: 0;
         left: 0;
       }
-      #root:empty { display: block; background: #ffffff; }
+      #root:empty { display: block; background: #0F172A; }
+      @keyframes deli-spin { to { transform: rotate(360deg); } }
     </style>
 
   </head>
@@ -38,7 +36,13 @@
         renderRequested: false
       };
     </script>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-loader" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background-color:#0F172A;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;user-select:none;">
+        <div style="font-size:28px;font-weight:700;letter-spacing:-0.5px;color:#ffffff;margin-bottom:6px;">Deli<span style="color:#22c55e;">Coop</span></div>
+        <div style="font-size:13px;color:#94a3b8;margin-bottom:24px;font-weight:500;">Initializing System...</div>
+        <div style="width:32px;height:32px;border:3px solid rgba(255,255,255,0.15);border-top-color:#22c55e;border-radius:50%;animation:deli-spin 0.8s linear infinite;"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

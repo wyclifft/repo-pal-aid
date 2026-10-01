@@ -25,7 +25,7 @@
  * DEVICE CODE    [devcode]
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { formatWeight } from '@/utils/weightUtils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, Download, X, Loader2 } from 'lucide-react';
@@ -34,6 +34,7 @@ import { toast } from 'sonner';
 import { generateDeviceZReportPDF } from '@/utils/pdfExport';
 import type { DeviceZReportData, DeviceZReportTransaction } from '@/services/mysqlApi';
 import { filterTransactionsByPeriod, type ZReportPeriod, getPeriodDisplayLabel } from './ZReportPeriodSelector';
+import { useIndexedDB } from '@/hooks/useIndexedDB';
 
 interface DeviceZReportReceiptProps {
   data: DeviceZReportData | null;
@@ -79,34 +80,86 @@ export const DeviceZReportReceipt = ({
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const isStoreReport = reportType === 'store';
-  
+
+  const { isReady, getRoutes } = useIndexedDB();
+  const [cachedRouteMap, setCachedRouteMap] = useState<Map<string, string>>(new Map());
+
+  // Load cached routes from IndexedDB to map route codes to descriptions
+  useEffect(() => {
+    let active = true;
+    const loadRoutes = async () => {
+      try {
+        if (!getRoutes) return;
+        const routesList = await getRoutes();
+        if (active && Array.isArray(routesList) && routesList.length > 0) {
+          const map = new Map<string, string>();
+          routesList.forEach((r: any) => {
+            const code = String(r.tcode || r.code || '').trim();
+            const name = String(r.descript || r.name || '').trim();
+            if (code && name) {
+              map.set(code, name);
+              map.set(code.toUpperCase(), name);
+              map.set(code.toLowerCase(), name);
+            }
+            if (name) {
+              map.set(name, name);
+              map.set(name.toUpperCase(), name);
+            }
+          });
+          setCachedRouteMap(map);
+        }
+      } catch (err) {
+        console.warn('[Z-REPORT] Failed to load cached routes:', err);
+      }
+    };
+    if (isReady && open) {
+      loadRoutes();
+    }
+    return () => { active = false; };
+  }, [isReady, getRoutes, open]);
+
   // Get the display label for the period (Store reports ignore period entirely)
   const periodDisplayLabel = isStoreReport
     ? 'Store Z'
     : (periodLabelProp || getPeriodDisplayLabel(selectedPeriod));
   
+  // Helper to determine if a transaction represents produce (weight in KGS/LITERS) vs store merchandise (items)
+  const isProduceTx = (tx: { product_code?: string; milk_session_id?: string; transtype?: number; recordType?: string; type?: string; isMilkFormat?: boolean }) => {
+    if (!tx) return false;
+    const tt = Number(tx.transtype) || 1;
+    if (tt === 1) return true;
+    if (tt === 3) return false;
+    if (tt === 2) {
+      const code = (tx.product_code || '').trim().toUpperCase();
+      const milkId = String(tx.milk_session_id || '').trim();
+      return code === 'S0001' || milkId.length === 10 || data?.orgtype === 'C' || data?.isCoffee === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true;
+    }
+    return false;
+  };
+
   // Filter transactions by report type first, then by selected period.
-  // Store report → only transtype 2 (SELL) and 3 (AI), and skip the session/period filter.
-  // Produce report → only transtype 1, with normal period filtering preserved.
+  // Store report → only store merchandise sales (transtype 2 without produce code) and AI (transtype 3).
+  // Produce report → only produce buy (1) and produce sell (2), with normal period filtering preserved.
   const filteredTransactions = useMemo(() => {
     if (!data?.transactions?.length) return [];
 
     if (isStoreReport) {
-      // Store Portal Report: Only sales/AI (transtype 2 and 3)
+      // Store Z Report: Only store merchandise sales and AI services
       const storeOnly = data.transactions.filter(t => {
         const tt = Number((t as any).transtype) || 1;
-        return tt === 2 || tt === 3;
+        if (tt === 3) return true;
+        if (tt === 2) {
+          return !isProduceTx(t);
+        }
+        return false;
       });
       return filterTransactionsByPeriod(storeOnly, selectedPeriod, data.orgtype);
     }
 
-    // Produce Session Report: Buy produce (1) and Sell produce (2)
-    const produceOnly = data.transactions.filter(t => {
-      const tt = Number((t as any).transtype) || 1;
-      return tt === 1 || tt === 2;
-    });
+    // Produce Z Report: Buy produce (1) and Sell produce (2)
+    const produceOnly = data.transactions.filter(t => isProduceTx(t));
     return filterTransactionsByPeriod(produceOnly, selectedPeriod, data.orgtype);
-  }, [data?.transactions, selectedPeriod, isStoreReport, data?.orgtype]);
+  }, [data?.transactions, selectedPeriod, isStoreReport, data?.orgtype, data?.isCoffee]);
   
   // Group filtered transactions by Store (Route) and then by Type (1=Buy, 2=Sell, 3=AI)
   const storeGroups = useMemo<StoreGroup[]>(() => {
@@ -115,18 +168,36 @@ export const DeviceZReportReceipt = ({
     const storeMap = new Map<string, StoreGroup>();
     
     for (const tx of filteredTransactions) {
-      const route = tx.route || 'OTHER';
-      const routeNameLabel = tx.route_name || route;
+      const rawRoute = String(tx.route || '').trim();
+      const rawRouteName = String(tx.route_name || '').trim();
 
-      if (!storeMap.has(route)) {
-        storeMap.set(route, {
-          route,
+      // Resolve human-readable route description
+      let routeNameLabel = '';
+      if (rawRouteName && rawRouteName !== rawRoute && rawRouteName.toUpperCase() !== 'OTHER') {
+        routeNameLabel = rawRouteName;
+      } else if (rawRoute && cachedRouteMap.has(rawRoute)) {
+        routeNameLabel = cachedRouteMap.get(rawRoute)!;
+      } else if (rawRoute && cachedRouteMap.has(rawRoute.toUpperCase())) {
+        routeNameLabel = cachedRouteMap.get(rawRoute.toUpperCase())!;
+      } else if (activeRouteCode && (rawRoute === activeRouteCode || !rawRoute) && routeName && routeName !== 'Route' && routeName !== 'Center') {
+        routeNameLabel = routeName;
+      } else if (routeName && routeName !== 'Route' && routeName !== 'Center' && (rawRoute === 'OTHER' || !rawRoute)) {
+        routeNameLabel = routeName;
+      } else {
+        routeNameLabel = rawRouteName || rawRoute || routeName || 'OTHER';
+      }
+
+      const storeKey = rawRoute || routeNameLabel || 'OTHER';
+
+      if (!storeMap.has(storeKey)) {
+        storeMap.set(storeKey, {
+          route: storeKey,
           routeName: routeNameLabel,
           typeGroups: []
         });
       }
 
-      const storeGroup = storeMap.get(route)!;
+      const storeGroup = storeMap.get(storeKey)!;
       const transtype = tx.transtype || 1;
       const typeLabel = tx.transTypeLabel || (transtype === 2 ? 'SELL' : transtype === 3 ? 'AI' : 'BUY');
       
@@ -164,7 +235,7 @@ export const DeviceZReportReceipt = ({
     });
 
     return sortedStores;
-  }, [filteredTransactions, activeRouteCode]);
+  }, [filteredTransactions, activeRouteCode, cachedRouteMap, routeName]);
   
   // Calculate filtered totals
   const filteredTotals = useMemo(() => {
@@ -212,11 +283,17 @@ export const DeviceZReportReceipt = ({
   if (!data) return null;
 
   // Format date as DD/MM/YYYY
-  const formattedDate = new Date(data.date).toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric'
-  });
+  const formattedDate = data?.date && !isNaN(new Date(data.date).getTime())
+    ? new Date(data.date).toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      })
+    : new Date().toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
   
   // Format print time as DD/MM/YYYY - HH:MM (24-hour format, no AM/PM)
   const now = new Date();
@@ -328,13 +405,6 @@ export const DeviceZReportReceipt = ({
   // Get last 5 digits of reference number
   const getShortRef = (refno: string) => (refno || '').slice(-6);
 
-  // Helper to determine if a transaction represents produce (weight in KGS/LITERS) vs store merchandise (items)
-  const isProduceTx = (tx: { product_code?: string; milk_session_id?: string; transtype?: number }) => {
-    const code = (tx.product_code || '').trim().toUpperCase();
-    const milkId = String(tx.milk_session_id || '').trim();
-    return code === 'S0001' || tx.transtype === 1 || milkId.length === 10 || (tx.transtype === 2 && data?.orgtype === 'C');
-  };
-
   // Render transactions for a type group.
   const renderTypeSection = (group: TypeGroup, isFirst: boolean) => {
     const showMoney = group.transtype !== 1;
@@ -412,7 +482,16 @@ export const DeviceZReportReceipt = ({
                   {showMoney && (
                     <span className="text-right tabular-nums">{Number(tx.amount || 0).toFixed(0)}</span>
                   )}
-                  <span className="text-right tabular-nums">{tx.time.substring(0, 5)}</span>
+                  <span className="text-right tabular-nums">
+                    {(() => {
+                      const t = tx.time || tx.created_at;
+                      if (!t) return '--:--';
+                      const str = String(t);
+                      if (str.includes('T')) return str.split('T')[1].substring(0, 5);
+                      if (str.includes(' ')) return str.split(' ')[1].substring(0, 5);
+                      return str.substring(0, 5);
+                    })()}
+                  </span>
                 </div>
               </div>
             );
@@ -450,12 +529,13 @@ export const DeviceZReportReceipt = ({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg font-mono text-sm max-h-[90vh] overflow-y-auto">
-        <DialogHeader className="pb-0">
+      <DialogContent className="max-w-lg font-mono text-sm max-h-[90vh] flex flex-col p-4 sm:p-6 overflow-hidden">
+        <DialogHeader className="pb-0 flex-shrink-0">
           <DialogTitle className="sr-only">Device Z Report</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-2">
+        {/* Scrollable Receipt Preview Body */}
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-2 pr-1">
           {/* Company Name - Header (centered, intentional) */}
           <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base uppercase tracking-wide">{data.companyName}</h3>
@@ -501,9 +581,8 @@ export const DeviceZReportReceipt = ({
             )}
           </div>
 
-
           {/* Store Groups */}
-          <div className="max-h-80 overflow-y-auto pr-1">
+          <div className="space-y-2">
             {storeGroups.length > 0 ? (
               storeGroups.map((storeGroup, sIdx) => (
                 <div key={storeGroup.route} className={sIdx > 0 ? 'mt-6 pt-4 border-t-2 border-dashed' : ''}>
@@ -600,12 +679,12 @@ export const DeviceZReportReceipt = ({
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex gap-2 pt-2">
+        {/* Action Buttons - Fixed Sticky Footer */}
+        <div className="flex-shrink-0 pt-3 border-t bg-background sticky bottom-0 z-20 flex gap-2">
           <button
             onClick={handlePrint}
             disabled={isPrinting}
-            className="flex-1 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+            className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-md font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {isPrinting ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -617,17 +696,20 @@ export const DeviceZReportReceipt = ({
           <button
             onClick={handleDownloadPDF}
             disabled={isDownloading}
-            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:bg-secondary/80 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+            className="px-4 py-2.5 bg-secondary text-secondary-foreground rounded-md font-medium hover:bg-secondary/80 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+            title="Download PDF"
           >
             {isDownloading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Download className="h-4 w-4" />
             )}
+            <span>PDF</span>
           </button>
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-muted text-muted-foreground rounded-md font-medium hover:bg-muted/80 transition-colors"
+            className="px-4 py-2.5 bg-muted text-muted-foreground rounded-md font-medium hover:bg-muted/80 transition-colors flex items-center justify-center"
+            title="Close"
           >
             <X className="h-4 w-4" />
           </button>

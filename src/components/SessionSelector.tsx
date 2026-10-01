@@ -3,7 +3,8 @@ import { mysqlApi, type Session, type SessionsResponse } from '@/services/mysqlA
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useOfflineStatus } from '@/hooks/useOfflineStatus';
-import { Clock, AlertCircle, CheckCircle, Calendar } from 'lucide-react';
+import { Clock, AlertCircle, CheckCircle, Calendar, ChevronDown, Check } from 'lucide-react';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 
 interface SessionSelectorProps {
   selectedSession: string;
@@ -20,6 +21,7 @@ export const SessionSelector = ({
 }: SessionSelectorProps) => {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -491,9 +493,8 @@ export const SessionSelector = ({
         onChange={(e) => {
           const selected = sessions.find(s => s.descript === e.target.value);
           if (selected) {
-            // Check if selected session is selectable (past or active, not future)
             if (!isSessionSelectable(selected)) {
-              return; // Prevent selection of future sessions
+              return;
             }
             const code = (selected.Icode || (selected as any).SCODE || selected.descript || '').toString().trim();
             if (code) {
@@ -503,21 +504,23 @@ export const SessionSelector = ({
           }
         }}
         disabled={disabled}
-        className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:border-[#667eea] bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 ${
-          activeSession 
-            ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/10'
-            : 'border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/10'
-        } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        className={`w-full px-3 py-2.5 border rounded-lg focus:outline-none focus:border-[#667eea] font-semibold text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 ${
+          activeSession
+            ? 'border-green-500 dark:border-green-700 bg-green-50 dark:bg-green-950/30 text-green-950 dark:text-green-100 font-semibold'
+            : 'border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/20 text-slate-900 dark:text-slate-100'
+        } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
       >
-        <option value="">Select {periodLabel.toLowerCase()}...</option>
+        <option value="" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 font-semibold py-2">
+          Select {periodLabel.toLowerCase()}...
+        </option>
         {sessions.map((session) => {
           const selectable = isSessionSelectable(session);
           return (
-            <option 
-              key={session.id ? `season-${session.id}` : session.descript} 
+            <option
+              key={session.id ? `season-${session.id}` : session.descript}
               value={session.descript}
               disabled={!selectable}
-              className="dark:bg-gray-900"
+              className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 font-semibold disabled:text-gray-400 dark:disabled:text-slate-500 py-2"
             >
               {session.descript} ({formatTime(session.time_from)} - {formatTime(session.time_to)})
               {session.datefrom && session.dateto && ` [${formatDate(session.datefrom)} - ${formatDate(session.dateto)}]`}
@@ -526,7 +529,7 @@ export const SessionSelector = ({
           );
         })}
       </select>
-      
+
       {/* Session Status Indicator */}
       <div className="mt-1">
         {activeSession ? (

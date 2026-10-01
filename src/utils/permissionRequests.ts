@@ -95,9 +95,18 @@ export const requestBluetoothPermission = async (): Promise<boolean> => {
   }
 
   try {
-    const granted = await requestClassicBluetoothPermissions();
-    if (!granted) {
-      toast.error('Bluetooth permission required to connect to scale');
+    const classicGranted = await requestClassicBluetoothPermissions();
+
+    // Also attempt BLE permission request
+    try {
+      const { BluetoothLe } = await import('@capacitor-community/bluetooth-le');
+      if (BluetoothLe && typeof BluetoothLe.requestPermissions === 'function') {
+        await BluetoothLe.requestPermissions().catch(() => {});
+      }
+    } catch { /* ignore if BLE plugin not loaded */ }
+
+    if (!classicGranted) {
+      toast.warning('Bluetooth permission is required for scale and printer connectivity');
       return false;
     }
     return true;

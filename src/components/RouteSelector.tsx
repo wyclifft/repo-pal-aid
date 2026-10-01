@@ -86,13 +86,10 @@ export const RouteSelector = ({ selectedRoute, onRouteChange, disabled }: RouteS
     return () => window.removeEventListener('online', handleOnline);
   }, [loadRoutes]);
 
-  // Focus search input when modal opens
+  // Reset search query when modal opens (without auto-focusing to prevent keyboard popup)
   useEffect(() => {
     if (isOpen) {
       setSearchQuery('');
-      setTimeout(() => {
-        searchInputRef.current?.focus();
-      }, 100);
     }
   }, [isOpen]);
 

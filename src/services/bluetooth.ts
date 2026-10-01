@@ -272,6 +272,8 @@ const savePrinterInfo = (deviceId: string, deviceName: string) => {
     timestamp: Date.now(),
   };
   localStorage.setItem(PRINTER_STORAGE_KEY, JSON.stringify(info));
+  // Clear classic printer record so BLE takes priority when connected via BLE
+  localStorage.removeItem('lastClassicBluetoothPrinter');
 };
 
 export const getStoredPrinterInfo = (): StoredPrinterInfo | null => {
@@ -286,6 +288,7 @@ export const getStoredPrinterInfo = (): StoredPrinterInfo | null => {
 
 export const clearStoredPrinter = () => {
   localStorage.removeItem(PRINTER_STORAGE_KEY);
+  localStorage.removeItem('lastClassicBluetoothPrinter');
 };
 
 const SERVICE_UUID_HC05 = numberToUUID(0xffe0);
@@ -356,106 +359,183 @@ const TUYA_CHARACTERISTIC_PATTERNS = [
   '2b12',
 ];
 
-// Parse weight data from DR Series scales (DR 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150)
-const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null => {
-  // DR Series scales typically send data in one of these formats:
-  console.log(`📊 DR Parser input - text: "${text}", bytes: [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
-  
-  // PRIORITY 1: ASCII text formats - most reliable
-  // Format: "ST,GS,+  12.345kg" or "  12.345 kg" or just "12.345"
-  
-  // v2.12.75: Allow parsing negative values for display (e.g. tared scale with container removed)
-  // We no longer return 0 for negative matches.
-  // v2.12.76: Fixed regex to allow unlimited leading zeros (scale sends many).
-  const negativeMatch = text.match(/-\s*(\d+\.?\d*)/);
-  if (negativeMatch) {
-    const weight = -parseFloat(negativeMatch[1]);
-    if (weight >= -50 && weight <= 200) {
-      console.log(`✅ DR Series parsed negative: ${weight} kg`);
-      return weight;
-    }
-  }
-  
-  // First try to find a proper decimal weight with decimal point (positive only)
-  // v2.12.76: Fixed regex to allow unlimited leading zeros.
-  const decimalMatch = text.match(/\+?\s*(\d+\.\d+)/);
-  if (decimalMatch) {
-    const weight = parseFloat(decimalMatch[1]);
-    // Sanity check: realistic weight range (0.1 to 200 kg for dairy)
-    if (weight >= 0.1 && weight <= 200) {
-      console.log(`✅ DR Series parsed decimal: ${weight} kg`);
-      return weight;
-    }
-    // Return 0 for values below 0.1 (essentially zero/empty)
-    if (weight >= 0 && weight < 0.1) {
-      console.log(`📊 DR Series: Near-zero weight (${weight}), returning 0`);
-      return 0;
-    }
-  }
-  
-  // Format with unit suffix - check for sign
-  const unitMatch = text.match(/([+-]?)\s*(\d+\.?\d*)\s*(kg|KG|Kg)/);
-  if (unitMatch) {
-    const isNegative = unitMatch[1] === '-';
-    let weight = parseFloat(unitMatch[2]);
+// Net weight timestamp tracker to prioritize Net weight over Gross weight in streaming scales
+let lastNetWeightTimestamp = 0;
+
+export const resetNetWeightTracker = () => {
+  lastNetWeightTimestamp = 0;
+};
+
+// Comprehensive Net Weight Regex
+// Matches: NT, NET, NW, N.W., NET., NT., NW., WN, W.N., NET WEIGHT, NET-WT, N:, N=, etc.
+const NET_WEIGHT_REGEX = /(?:NT|NET|NW|N\.W\.|NET\.|NT\.|NW\.|WN|W\.N\.|NET\s*WEIGHT|NET-WT|\bN\b)\s*[:=,-]?\s*([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)?/i;
+
+// Comprehensive Gross Weight Regex
+// Matches: GS, GW, GROSS, G.W., WW, GROSS WEIGHT, GROSS-WT, G:, G=, etc.
+const GROSS_WEIGHT_REGEX = /(?:GS|GW|GROSS|G\.W\.|WW|GROSS\s*WEIGHT|GROSS-WT|\bG\b)\s*[:=,-]?\s*([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)?/i;
+
+/**
+ * Parses scale text data for weight, strictly prioritizing Net weight over Gross weight.
+ * Handles single-line multi-field outputs (e.g. "GS 6.0kg NT 2.6kg", "GW: 6.0kg NW: 2.6kg")
+ * and multi-line alternating frames (Line 1: "ST,GS,+0006.00kg", Line 2: "ST,NT,+0002.60kg").
+ */
+export const parseScaleWeightText = (text: string): number | null => {
+  if (!text) return null;
+  text = text.replace(',', '.');
+
+  // PRIORITY 0: Check for explicit Net weight in multi-field or single-field frames
+  const netMatch = text.match(NET_WEIGHT_REGEX);
+  if (netMatch) {
+    const isNegative = netMatch[1] === '-';
+    let weight = parseFloat(netMatch[2]);
+    const unit = netMatch[3]?.toLowerCase();
+    if (unit === 'g') weight = weight / 1000;
+    else if (unit === 'lb') weight = weight * 0.453592;
+    else if (unit === 'oz') weight = weight * 0.0283495;
     if (isNegative) weight = -weight;
 
-    if (weight >= -50 && weight <= 200) {
-      console.log(`✅ DR Series parsed with unit: ${weight} kg`);
+    if (!isNaN(weight) && weight >= -50 && weight < 1000) {
+      lastNetWeightTimestamp = Date.now();
+      console.log(`✅ Parsed Net weight: ${weight} kg (from "${text.trim()}")`);
       return weight;
     }
-    if (weight >= 0 && weight < 0.1) {
-      return 0;
+  }
+
+  // Check if text is an explicit Gross weight frame
+  const hasGrossToken = GROSS_WEIGHT_REGEX.test(text);
+  const isNetActiveRecently = (Date.now() - lastNetWeightTimestamp) < 5000;
+
+  // If frame has an explicit Gross Weight marker and Net Weight stream was active recently,
+  // ignore this Gross Weight frame so it doesn't overwrite the Net Weight reading.
+  if (hasGrossToken && isNetActiveRecently) {
+    console.log(`⚠️ Suppressing Gross Weight frame ("${text.trim()}") because active Net Weight stream is active`);
+    return null;
+  }
+
+  // PRIORITY 1: Explicit Gross weight when no active Net weight exists
+  if (hasGrossToken) {
+    const grossMatch = text.match(GROSS_WEIGHT_REGEX);
+    if (grossMatch) {
+      const isNegative = grossMatch[1] === '-';
+      let weight = parseFloat(grossMatch[2]);
+      const unit = grossMatch[3]?.toLowerCase();
+      if (unit === 'g') weight = weight / 1000;
+      else if (unit === 'lb') weight = weight * 0.453592;
+      else if (unit === 'oz') weight = weight * 0.0283495;
+      if (isNegative) weight = -weight;
+
+      if (!isNaN(weight) && weight >= -50 && weight < 1000) {
+        console.log(`✅ Parsed Gross weight (no active Net weight): ${weight} kg`);
+        return weight;
+      }
     }
   }
-  
-  // Grams format (e.g., "12345g" or "12345 g")
+
+  // PRIORITY 2: Negative weight format (e.g. "-  0002.60kg" or "-2.6kg")
+  const negativeMatch = text.match(/-\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)?/i);
+  if (negativeMatch) {
+    let weight = -parseFloat(negativeMatch[1]);
+    const unit = negativeMatch[2]?.toLowerCase();
+    if (unit === 'g') weight = weight / 1000;
+    else if (unit === 'lb') weight = weight * 0.453592;
+    else if (unit === 'oz') weight = weight * 0.0283495;
+
+    if (!isNaN(weight) && weight >= -50 && weight < 1000) {
+      console.log(`✅ Parsed negative weight: ${weight} kg`);
+      return weight;
+    }
+  }
+
+  // PRIORITY 3: Zero weight format ("0 kg", "+0000.00", "0.00")
+  const zeroMatch = text.match(/^\s*\+?\s*0+\.?0*\s*(kg|g|lb|oz)?\s*$/i);
+  if (zeroMatch) {
+    console.log(`✅ Parsed weight (zero): 0 kg`);
+    return 0;
+  }
+
+  // PRIORITY 4: Standard decimal weight format with unit ("12.345 kg", "+  0002.60kg")
+  const standardMatch = text.match(/([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)/i);
+  if (standardMatch) {
+    const isNegative = standardMatch[1] === '-';
+    let weight = parseFloat(standardMatch[2]);
+    const unit = standardMatch[3]?.toLowerCase();
+    if (unit === 'g') weight = weight / 1000;
+    else if (unit === 'lb') weight = weight * 0.453592;
+    else if (unit === 'oz') weight = weight * 0.0283495;
+    if (isNegative) weight = -weight;
+
+    if (!isNaN(weight) && weight >= -50 && weight < 1000) {
+      if (weight >= 0 && weight < 0.1) return 0;
+      console.log(`✅ Parsed weight (standard with unit): ${weight} kg`);
+      return weight;
+    }
+  }
+
+  // Decimal number match ("2.60", "+0002.60")
+  const decimalMatch = text.match(/([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)/);
+  if (decimalMatch) {
+    const isNeg = decimalMatch[1] === '-';
+    let weight = parseFloat(decimalMatch[2]);
+    if (isNeg) weight = -weight;
+
+    if (!isNaN(weight) && weight >= -50 && weight < 1000) {
+      if (weight >= 0 && weight < 0.1) return 0;
+      console.log(`✅ Parsed weight (decimal): ${weight} kg`);
+      return weight;
+    }
+  }
+
+  // Grams / Integer match ("12345g" or clean integer)
   const gramsMatch = text.match(/(\d{3,6})\s*(g|G)\b/);
   if (gramsMatch) {
-    const weight = parseInt(gramsMatch[1]) / 1000;
-    if (weight >= 0.1 && weight <= 200) {
-      console.log(`✅ DR Series parsed grams: ${weight} kg`);
+    const weight = parseInt(gramsMatch[1], 10) / 1000;
+    if (!isNaN(weight) && weight >= 0.1 && weight < 1000) {
+      console.log(`✅ Parsed weight (grams): ${weight} kg`);
       return weight;
     }
   }
-  
+
+  return null;
+};
+
+// Parse weight data from DR Series scales (DR 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150)
+const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null => {
+  console.log(`📊 DR Parser input - text: "${text}", bytes: [${Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
+
+  // Try text parsing first
+  const parsedText = parseScaleWeightText(text);
+  if (parsedText !== null) {
+    return parsedText;
+  }
+
   // PRIORITY 2: Structured binary formats with known headers
   // Only parse binary if text parsing completely failed AND we have recognizable structure
-  
-  // Check for known scale data header patterns (0x02 STX, 0x53 'S', etc.)
   if (rawBytes.length >= 8 && (rawBytes[0] === 0x02 || rawBytes[0] === 0x53)) {
-    // Common format: [STX][Status][Sign][Weight 4 bytes][Unit][ETX]
-    // Weight as BCD or ASCII digits in bytes 3-6
     const isBCD = rawBytes.slice(3, 7).every(b => (b & 0xF0) <= 0x90 && (b & 0x0F) <= 0x09);
     if (isBCD) {
-      // Decode BCD: each nibble is a digit
       let bcdValue = 0;
       for (let i = 3; i < 7; i++) {
         bcdValue = bcdValue * 100 + ((rawBytes[i] >> 4) * 10) + (rawBytes[i] & 0x0F);
       }
-      const weight = bcdValue / 1000; // Assume 3 decimal places
+      const weight = bcdValue / 1000;
       if (weight >= 0.1 && weight <= 200) {
         console.log(`✅ DR Series parsed BCD: ${weight} kg`);
         return weight;
       }
     }
   }
-  
+
   // PRIORITY 3: Check if the entire text is digits that could be grams
   const cleanDigits = text.replace(/[^0-9]/g, '');
-  if (cleanDigits.length >= 4 && cleanDigits.length <= 6) {
-    const gramsValue = parseInt(cleanDigits);
-    // Must be in reasonable grams range (100g to 200kg = 200000g)
-    if (gramsValue >= 100 && gramsValue <= 200000) {
+  if (cleanDigits.length >= 3 && cleanDigits.length <= 6) {
+    const gramsValue = parseInt(cleanDigits, 10);
+    if (gramsValue >= 1 && gramsValue <= 200000) {
       const weight = gramsValue / 1000;
       console.log(`✅ DR Series parsed integer grams: ${weight} kg`);
       return weight;
     }
   }
-  
-  // DO NOT fall back to arbitrary binary byte interpretation
-  // This was causing the hardcoded 212 kg issue from misinterpreted header bytes
-  
+
   console.log(`⚠️ DR Series: Could not parse weight from data`);
   return null;
 };
@@ -569,6 +649,65 @@ export const broadcastPrinterConnectionChange = (connected: boolean) => {
   window.dispatchEvent(new CustomEvent('printerConnectionChange', { detail: { connected } }));
 };
 
+// BLE incoming stream buffer for assembling split packet MTU chunks
+let bleStreamBuffer = '';
+
+const processBleIncomingStream = (
+  rawBytes: Uint8Array,
+  text: string,
+  isTuyaDevice: boolean,
+  onParsed: (weight: number) => void
+) => {
+  bleStreamBuffer += text;
+
+  if (bleStreamBuffer.length > 1024) {
+    bleStreamBuffer = bleStreamBuffer.slice(-512);
+  }
+
+  // If stream buffer contains line breaks (\r\n, \r, or \n), split and process complete lines
+  if (/[\r\n]/.test(bleStreamBuffer)) {
+    const lines = bleStreamBuffer.split(/[\r\n]+/);
+    if (!/[\r\n]$/.test(text)) {
+      bleStreamBuffer = lines.pop() || '';
+    } else {
+      bleStreamBuffer = '';
+    }
+
+    for (const line of lines) {
+      const cleanLine = line.trim();
+      if (!cleanLine) continue;
+
+      let parsed: number | null = null;
+      if (isTuyaDevice) {
+        parsed = parseTuyaWeight(rawBytes, cleanLine);
+      } else {
+        parsed = parseDRSeriesWeight(rawBytes, cleanLine);
+      }
+
+      if (parsed !== null && !isNaN(parsed) && parsed >= -50 && parsed < 1000) {
+        onParsed(parsed);
+      }
+    }
+  } else {
+    // If no newline present yet, check if buffer ends with an explicit unit (e.g. "kg", "g", "lb", "oz")
+    // or is a Tuya binary packet. Do NOT prematurely parse incomplete split frames like "ST,GS,+0000".
+    const hasUnitAtEnd = /(?:kg|g|lb|oz)\s*$/i.test(bleStreamBuffer);
+    if (isTuyaDevice || hasUnitAtEnd) {
+      let parsed: number | null = null;
+      if (isTuyaDevice) {
+        parsed = parseTuyaWeight(rawBytes, bleStreamBuffer);
+      } else {
+        parsed = parseDRSeriesWeight(rawBytes, bleStreamBuffer);
+      }
+
+      if (parsed !== null && !isNaN(parsed) && parsed >= -50 && parsed < 1000) {
+        bleStreamBuffer = '';
+        onParsed(parsed);
+      }
+    }
+  }
+};
+
 // Force re-subscribe to BLE notifications on current scale connection
 // Use when weight data stops flowing but scale still shows connected
 export const resubscribeScaleNotifications = async (
@@ -638,52 +777,14 @@ export const resubscribeScaleNotifications = async (
     // Create weight handler
     const handleResubscribeWeight = (value: DataView) => {
       const rawBytes = new Uint8Array(value.buffer);
-      const text = new TextDecoder().decode(value);
+      const text = new TextDecoder().decode(value).replace(',', '.');
       console.log(`📊 Resubscribe data: "${text}"`);
-      
-      // Parse weight
-      let parsed: number | null = null;
-      
-      // Use DR/BTM parser
-      parsed = parseDRSeriesWeight(rawBytes, text);
 
-      if (parsed === null) {
-        // Try Tuya parser
-        parsed = parseTuyaWeight(rawBytes, text);
-      }
-
-      if (parsed === null) {
-        // Standard decimal format
-        const decimalMatch = text.match(/([+-]?)\s*(\d+\.\d+)/);
-        if (decimalMatch) {
-          const isNeg = decimalMatch[1] === '-';
-          parsed = parseFloat(decimalMatch[2]);
-          if (isNeg) parsed = -parsed;
-        }
-      }
-      
-      if (parsed === null) {
-        // Zero match
-        const zeroMatch = text.match(/^\s*[+-]?\s*0+\.?0*\s*$/);
-        if (zeroMatch) parsed = 0;
-      }
-      
-      if (parsed === null) {
-        // Integer
-        const intMatch = text.match(/([+-]?)\s*(\d+)/);
-        if (intMatch) {
-          const isNeg = intMatch[1] === '-';
-          const intValue = parseInt(intMatch[2]);
-          parsed = intValue > 1000 ? intValue / 1000 : intValue;
-          if (isNeg) parsed = -parsed;
-        }
-      }
-      
-      if (parsed !== null && !isNaN(parsed) && parsed >= -50 && parsed < 1000) {
+      processBleIncomingStream(rawBytes, text, false, (parsed) => {
         console.log(`✅ Resubscribe weight: ${parsed} kg`);
         broadcastScaleWeightUpdate(parsed, scaleType);
         try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
-      }
+      });
     };
     
     // Start notifications
@@ -956,26 +1057,12 @@ export const connectBluetoothScale = async (
           console.log(`📊 BLE Notification [${characteristicUuid}]: ${hex}`);
           
           const text = new TextDecoder().decode(value);
-          let parsed: number | null = null;
-          if (isTuyaDevice || (device.name && device.name.includes('TY'))) {
-             parsed = parseTuyaWeight(rawBytes, text);
-          } else {
-             parsed = parseDRSeriesWeight(rawBytes, text);
-          }
-          
-          if (parsed === null) {
-            const decimalMatch = text.match(/([+-]?)\s*(\d+\.\d+)/);
-            if (decimalMatch) {
-              const isNeg = decimalMatch[1] === '-';
-              parsed = parseFloat(decimalMatch[2]);
-              if (isNeg) parsed = -parsed;
-            }
-          }
+          const isTuya = Boolean(isTuyaDevice || (device.name && device.name.includes('TY')));
 
-          if (parsed !== null && !isNaN(parsed) && parsed >= -50 && parsed < 1000) {
+          processBleIncomingStream(rawBytes, text, isTuya, (parsed) => {
             broadcastScaleWeightUpdate(parsed, scaleType);
             try { onWeightUpdate(parsed, scaleType); } catch {}
-          }
+          });
         };
 
         try {
@@ -1259,26 +1346,10 @@ export const quickReconnect = async (
             console.log(`📊 BLE Reconnect Notification [${characteristicUuid}]: ${hex}`);
 
             const text = new TextDecoder().decode(value);
-            let parsed: number | null = null;
-            if (isTuyaDevice) {
-               parsed = parseTuyaWeight(rawBytes, text);
-            } else {
-               parsed = parseDRSeriesWeight(rawBytes, text);
-            }
-
-            if (parsed === null) {
-              const decimalMatch = text.match(/([+-]?)\s*(\d+\.\d+)/);
-              if (decimalMatch) {
-                const isNeg = decimalMatch[1] === '-';
-                parsed = parseFloat(decimalMatch[2]);
-                if (isNeg) parsed = -parsed;
-              }
-            }
-
-            if (parsed !== null && !isNaN(parsed) && parsed >= -50 && parsed < 1000) {
+            processBleIncomingStream(rawBytes, text, Boolean(isTuyaDevice), (parsed) => {
               broadcastScaleWeightUpdate(parsed, scaleType);
               try { onWeightUpdate(parsed, scaleType); } catch (e) { /* Stale callback */ }
-            }
+            });
           };
 
           // 3. ENABLE NOTIFICATIONS
@@ -2388,10 +2459,17 @@ export const printZReport = async (data: {
   const sep = '-'.repeat(W);
 
   // Helper to determine if a transaction represents produce (weight in KGS) vs store merchandise
-  const isProduceTx = (tx: { product_code?: string; milk_session_id?: string; transtype?: number }) => {
-    const code = (tx.product_code || '').trim().toUpperCase();
-    const milkId = String((tx as any).milk_session_id || '').trim();
-    return code === 'S0001' || tx.transtype === 1 || milkId.length === 10 || (tx.transtype === 2 && data.isCoffee);
+  const isProduceTx = (tx: { product_code?: string; milk_session_id?: string; transtype?: number; recordType?: string; type?: string; isMilkFormat?: boolean }) => {
+    if (!tx) return false;
+    const tt = Number(tx.transtype) || 1;
+    if (tt === 1) return true;
+    if (tt === 3) return false;
+    if (tt === 2) {
+      const code = (tx.product_code || '').trim().toUpperCase();
+      const milkId = String((tx as any).milk_session_id || '').trim();
+      return code === 'S0001' || milkId.length === 10 || data.isCoffee === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true;
+    }
+    return false;
   };
 
   // Format date as DD/MM/YYYY
@@ -2564,7 +2642,8 @@ export const printZReport = async (data: {
         prevProductCode = currentProduct;
 
         const shortRef = (tx.refno || '').slice(-6);
-        const time = tx.time.substring(0, 5);
+        const rawTime = tx.time || tx.created_at;
+        const time = rawTime ? String(rawTime).includes('T') ? String(rawTime).split('T')[1].substring(0, 5) : String(rawTime).substring(0, 5) : '--:--';
 
         if (showMoney) {
           const rawQty = Number(tx.weight || 0);
@@ -2743,8 +2822,8 @@ export const printMemberProduceStatement = async (data: {
   receipt += dashLine + '\n';
 
   // Member Info — compact: single dotted separator after the pair
-  receipt += `MEMBER NO: ${data.farmerId}\n`;
-  receipt += `MEMBER NAME: ${data.farmerName.substring(0, W - 13)}\n`;
+  receipt += `MEMBER NO: ${data.farmerId || ''}\n`;
+  receipt += `MEMBER NAME: ${String(data.farmerName || '').substring(0, W - 13)}\n`;
   receipt += dotLine + '\n';
 
   // v2.12.51: Group Number Report Logic (Printer) - Case-insensitive check
@@ -2782,7 +2861,7 @@ export const printMemberProduceStatement = async (data: {
         const idOnly = resolved.includes(' - ') ? resolved.split(' - ')[0] : resolved;
         const qty = formatWeight(Number(tx.quantity) || 0);
 
-        receipt += rec.padEnd(recColW) + ' ' + idOnly.substring(0, nameColW).padEnd(nameColW) + qty.padStart(qtyColW) + '\n';
+        receipt += rec.padEnd(recColW) + ' ' + String(idOnly || '').substring(0, nameColW).padEnd(nameColW) + qty.padStart(qtyColW) + '\n';
       }
     }
 
@@ -2799,7 +2878,7 @@ export const printMemberProduceStatement = async (data: {
     const sortedTotals = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]);
     for (const [deliverer, total] of sortedTotals) {
       const resolved = resolveMemberName(deliverer, data.allFarmers || []);
-      receipt += formatLine(resolved.substring(0, 20), formatWeight(total), W) + '\n';
+      receipt += formatLine(String(resolved || '').substring(0, 20), formatWeight(total), W) + '\n';
     }
   } else {
     // v2.10.77: Group transactions by icode so each product gets its own

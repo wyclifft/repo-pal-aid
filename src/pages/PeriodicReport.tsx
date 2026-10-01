@@ -434,7 +434,7 @@ export default function PeriodicReport() {
                     <TableRow key={index}>
                       <TableCell>{item.farmer_id}</TableCell>
                       <TableCell>{item.farmer_name}</TableCell>
-                      <TableCell>{item.route}</TableCell>
+                      <TableCell>{item.transaction_route_name || item.farmer_route_name || item.route}</TableCell>
                       <TableCell>{item.collection_count}</TableCell>
                       <TableCell>{formatWeight(item.total_weight)}</TableCell>
                       <TableCell className="text-right">

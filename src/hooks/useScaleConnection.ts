@@ -31,7 +31,7 @@ import {
 import { useAppSettings } from '@/hooks/useAppSettings';
 
 // Stable reading configuration
-const STABLE_READING_THRESHOLD = 0.1; // Max variance in kg
+const STABLE_READING_THRESHOLD = 0.05; // Max 50g variance to consider "stable" (suited for field scales)
 const STABLE_READING_COUNT = 3; // Number of consecutive readings required
 const STABLE_READING_TIMEOUT = 5000; // Max wait time in ms
 
@@ -181,25 +181,25 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     setLiveWeight(newWeight);
     if (type) setScaleType(type);
     
-    // Always update for 0 weight to show empty scale state
-    if (newWeight === 0) {
-      onWeightChangeRef.current(0);
+    // zeroOpt return-to-zero protection: if weight is <= 0.2 kg, propagate immediately
+    // so return-to-zero unlocks capture lock immediately even if scale is settling/fluctuating.
+    if (newWeight <= 0.2) {
+      console.log(`🔓 zeroOpt return-to-zero weight detected: ${newWeight} kg — propagating immediately`);
+      onWeightChangeRef.current(newWeight);
       onEntryTypeChangeRef.current('scale');
       updateWaitingState(false);
-      setStableReadingProgress(0);
+      setStableReadingProgress(newWeight === 0 ? 0 : 100);
       stableReadingsRef.current = [];
-      lastStableWeightRef.current = 0;
-
-      // Broadcast that we have reached stability (0 is stable)
-      window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: true, weight: 0 } }));
+      lastStableWeightRef.current = newWeight;
+      window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: true, weight: newWeight } }));
       return;
     }
     
     if (requireStableReading && newWeight !== 0) {
-      // INSTANT FLICKER DETECTOR: If new weight deviates from last stable weight by even 0.01 kg,
-      // lock capture IMMEDIATELY.
+      // INSTANT FLICKER DETECTOR: If new weight deviates from last stable weight by > 0.08 kg (80g),
+      // lock capture.
       const isFlickering = lastStableWeightRef.current !== null &&
-        Math.abs(newWeight - lastStableWeightRef.current) > 0.01;
+        Math.abs(newWeight - lastStableWeightRef.current) > 0.08;
 
       if (isFlickering) {
         console.log(`⚖️ Scale flicker/fluctuation detected: ${newWeight} kg (was ${lastStableWeightRef.current}) — INSTANT CAPTURE LOCK`);
@@ -211,8 +211,13 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         return;
       }
 
-      // Add to readings buffer
-      stableReadingsRef.current.push(newWeight);
+      // Detect step changes (>= 50g) and flush previous readings immediately
+      const lastReading = stableReadingsRef.current.length > 0 ? stableReadingsRef.current[stableReadingsRef.current.length - 1] : null;
+      if (lastReading !== null && Math.abs(newWeight - lastReading) >= STABLE_READING_THRESHOLD) {
+        stableReadingsRef.current = [newWeight];
+      } else {
+        stableReadingsRef.current.push(newWeight);
+      }
       
       // Keep only recent readings
       if (stableReadingsRef.current.length > STABLE_READING_COUNT * 2) {
@@ -232,7 +237,7 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         const finalWeight = roundWeight(stableWeight, 3);
         
         // Only update and broadcast if it's the first stable reading OR weight changed significantly
-        if (lastStableWeightRef.current === null || Math.abs(finalWeight - lastStableWeightRef.current) > 0.01) {
+        if (lastStableWeightRef.current === null || Math.abs(finalWeight - lastStableWeightRef.current) > 0.05) {
           console.log(`⚖️ Stability reached: ${finalWeight} kg`);
           onWeightChangeRef.current(finalWeight);
           onEntryTypeChangeRef.current('scale');

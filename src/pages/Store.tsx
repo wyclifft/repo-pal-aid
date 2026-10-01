@@ -300,7 +300,6 @@ const Store = () => {
   };
 
   // Parse crbal string (e.g. "CR02#11200,CR22#340") into structured entries with descriptions
-  // Only show credits matching the member's ccode
   const parsedCredits = useMemo<ParsedCredit[]>(() => {
     if (!selectedFarmer?.crbal || typeof selectedFarmer.crbal !== 'string' || !selectedFarmer.crbal.trim()) {
       return [];
@@ -308,25 +307,21 @@ const Store = () => {
     
     // Split by comma for multiple entries
     const entries = selectedFarmer.crbal.split(',').filter(Boolean);
-    const memberCcode = selectedFarmer.ccode || '';
-    
+
     return entries
       .map(entry => {
         const [code, amountStr] = entry.trim().split('#');
+        const codeClean = code?.trim() || '';
         const amount = parseFloat(amountStr) || 0;
-        const creditType = creditTypes.find(ct => ct.crcode?.trim() === code?.trim());
+        const creditType = creditTypes.find(ct => ct.crcode?.trim().toUpperCase() === codeClean.toUpperCase());
         return {
-          code: code?.trim() || '',
+          code: codeClean,
           amount,
           description: creditType?.descript || ''
         };
       })
-      // Filter to only show credits matching member's ccode (if ccode exists)
-      .filter(credit => {
-        if (!memberCcode) return true; // Show all if no ccode
-        return credit.code === memberCcode || creditTypes.some(ct => ct.crcode === credit.code);
-      });
-  }, [selectedFarmer?.crbal, selectedFarmer?.ccode, creditTypes]);
+      .filter(credit => credit.code !== '' && !isNaN(credit.amount));
+  }, [selectedFarmer?.crbal, creditTypes]);
 
   // Calculate total credit balance from parsed entries
   const totalCreditBalance = useMemo(() => {
@@ -825,7 +820,7 @@ const Store = () => {
         transtype: 2, // Store transaction
         farmer_id: selectedFarmer.farmer_id,
         farmer_name: selectedFarmer.name,
-        route: selectedRouteTcode || selectedFarmer.route || '', // Use Dashboard-selected tcode as primary route
+        route: selectedRouteTcode || routeName || '', // Use Dashboard-selected tcode as primary route
         route_tcode: selectedRouteTcode, // Dashboard-selected fm_tanks.tcode
         user_id: userId, // Login user_id for DB userId column
         sold_by: clerkName, // Display name for DB clerk column
@@ -849,7 +844,7 @@ const Store = () => {
             transtype: 2,
             farmer_id: selectedFarmer.farmer_id,
             farmer_name: selectedFarmer.name,
-            route: selectedRouteTcode || selectedFarmer.route || '',
+            route: selectedRouteTcode || routeName || '',
             route_tcode: selectedRouteTcode,
             item_code: item.item_code,
             item_name: item.item_name,

@@ -421,18 +421,21 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           });
           
           setSettings(newSettings);
-          saveCachedSettings(newSettings, deviceData.ccode);
+          const cleanCcode = (deviceData.ccode && deviceData.ccode !== '000' && deviceData.ccode !== '0') ? deviceData.ccode : undefined;
+          saveCachedSettings(newSettings, cleanCcode);
           setIsDeviceAuthorized(true);
           setIsPendingApproval(false);
           localStorage.setItem('device_authorized', 'true');
-          if (deviceData.ccode) {
-            localStorage.setItem('device_ccode', deviceData.ccode);
+          if (cleanCcode) {
+            localStorage.setItem('device_ccode', cleanCcode);
+          } else {
+            localStorage.removeItem('device_ccode');
           }
           setLastRefresh(Date.now());
           
           // Dispatch event to notify other components of settings update & device authorization
           window.dispatchEvent(new CustomEvent('psettingsUpdated', { detail: newSettings }));
-          window.dispatchEvent(new CustomEvent('deviceAuthorized', { detail: { ccode: deviceData.ccode } }));
+          window.dispatchEvent(new CustomEvent('deviceAuthorized', { detail: { ccode: cleanCcode } }));
         } else {
           // Response OK but no data - treat as unauthorized
           setIsDeviceAuthorized(false);

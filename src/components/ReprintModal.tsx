@@ -200,7 +200,7 @@ export const ReprintModal = ({
           }
           
           if (copy < printCopies - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 1500));
           }
         }
       } else {
@@ -221,8 +221,8 @@ export const ReprintModal = ({
             companyName: companyName,
             farmerName: firstReceipt.farmer_name,
             farmerId: firstReceipt.farmer_id,
-            route: receipt.memberRoute || firstReceipt.route,
-            memberRoute: receipt.memberRoute || firstReceipt.route,
+            route: firstReceipt.route || receipt.locationCode || '',
+            memberRoute: receipt.memberRoute || '',
             routeLabel: receipt.routeLabel || routeLabel,
             session: firstReceipt.session_descript || firstReceipt.session,
             periodLabel: receipt.periodLabel || periodLabel,
@@ -257,7 +257,7 @@ export const ReprintModal = ({
           }
           
           if (copy < printCopies - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 1500));
           }
         }
       }
@@ -889,9 +889,9 @@ export const ReprintModal = ({
             showCumulativeFrequency: !isSellProduce && viewingReceipt.cumulativeWeight !== undefined && viewingReceipt.cumulativeWeight > 0,
             routeLabel: viewingReceipt.routeLabel || routeLabel,
             periodLabel: viewingReceipt.periodLabel || periodLabel,
-            locationCode: viewingReceipt.locationCode,
+            locationCode: viewingReceipt.locationCode || viewingReceipt.collections[0]?.route,
             locationName: viewingReceipt.locationName || locationName,
-            memberRoute: viewingReceipt.memberRoute || viewingReceipt.collections[0]?.route,
+            memberRoute: viewingReceipt.memberRoute || '',
             productName: viewingReceipt.productName || viewingReceipt.collections[0]?.product_name,
             deliveredBy: resolveMemberName(viewingReceipt.collections[0]?.delivered_by, allFarmers),
             // Set reprintedAt to NOW for the reprint footer

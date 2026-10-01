@@ -105,7 +105,8 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           
           // Check if ccode changed - clear cached company name if so
           const cachedCcode = localStorage.getItem('device_ccode');
-          const newCcode = data.data.ccode;
+          const rawCcode = data.data.ccode;
+          const newCcode = (rawCcode && rawCcode !== '000' && rawCcode !== '0') ? rawCcode : null;
           if (cachedCcode && newCcode && cachedCcode !== newCcode) {
             console.log('🔄 CCODE changed from', cachedCcode, 'to', newCcode, '- clearing cached company name');
             localStorage.removeItem('device_company_name');
@@ -128,9 +129,11 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
           onCompanyNameChange?.(fetchedCompanyName);
           localStorage.setItem('device_company_name', fetchedCompanyName);
           
-          // Store ccode for future reference
+          // Store ccode for future reference (clear if '000' / unassigned)
           if (newCcode) {
             localStorage.setItem('device_ccode', newCcode);
+          } else {
+            localStorage.removeItem('device_ccode');
           }
           
           // Also save for offline login

@@ -343,21 +343,21 @@ export const BluetoothConnectionDialog = ({
                       disabled={isConnecting}
                       className={`w-full p-3 text-left border rounded-lg transition-colors ${
                         selectedDevice?.address === device.address
-                          ? 'bg-primary/10 border-primary'
-                          : 'hover:bg-muted/50'
+                          ? 'bg-primary/20 border-primary text-foreground'
+                          : 'bg-card text-card-foreground border-border hover:bg-accent hover:text-accent-foreground'
                       } ${isConnecting && selectedDevice?.address !== device.address ? 'opacity-50' : ''}`}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <p className={`font-medium ${!device.name ? 'text-muted-foreground' : ''}`}>
+                            <p className="font-semibold text-foreground text-sm">
                               {getDeviceDisplayName(device)}
                             </p>
                             {isKnownScaleType(device) && (
-                              <CheckCircle2 className="h-4 w-4 text-accent-foreground" />
+                              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                             )}
                           </div>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-xs text-muted-foreground font-mono">
                             {device.address}
                             {device.isResolving && ' • Resolving name...'}
                           </p>

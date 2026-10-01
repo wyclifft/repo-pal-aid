@@ -123,7 +123,7 @@ export const BuyProduceScreen = ({
   const farmerInputRef = useRef<HTMLInputElement>(null);
   const deliveredByRef = useRef<HTMLInputElement>(null);
   const prevCapturedLenRef = useRef<number>(0);
-  const { getFarmers, isReady } = useIndexedDB();
+  const { getFarmers, getRecentReceipts, isReady } = useIndexedDB();
   
   // v2.12.51: Auto-focus Delivered By when a Group member is selected (case-insensitive)
   useEffect(() => {
@@ -213,12 +213,14 @@ export const BuyProduceScreen = ({
   // Filter out blacklisted farmers for display
   // IMPORTANT: blacklist applies only to multOpt=0 farmers; do not hide multOpt=1 farmers.
   // v2.12.40: Also check sessionSubmittedFarmerIds for immediate feedback after submission.
-  const availableFarmers = cachedFarmers.filter(f => {
-    const cleanId = f.farmer_id.replace(/^#/, '').trim();
-    const inBlacklist = blacklistedFarmerIds?.has(cleanId);
-    const inSessionQueue = sessionSubmittedFarmerIds?.has(cleanId);
-    return !(f.multOpt === 0 && (inBlacklist || inSessionQueue));
-  });
+  const availableFarmers = useMemo(() => {
+    return cachedFarmers.filter(f => {
+      const cleanId = f.farmer_id.replace(/^#/, '').trim();
+      const inBlacklist = blacklistedFarmerIds?.has(cleanId);
+      const inSessionQueue = sessionSubmittedFarmerIds?.has(cleanId);
+      return !(f.multOpt === 0 && (inBlacklist || inSessionQueue));
+    });
+  }, [cachedFarmers, blacklistedFarmerIds, sessionSubmittedFarmerIds]);
 
   // Derive session type (AM/PM) respecting explicit session SCODE/descript first.
   const getSessionType = (): 'AM' | 'PM' => {
@@ -297,25 +299,66 @@ export const BuyProduceScreen = ({
     toast.error(`Member ${farmer.name || farmer.farmer_id} has delivered this session${routeStr}${devStr}`, { duration: 3000 });
   };
 
-  // Live online check for multOpt=0 farmers to catch transactions made on other devices in real-time
+  // Live online & local check for multOpt=0 farmers to catch transactions made on this or other devices
   const checkOnlineDuplicate = async (farmer: Farmer): Promise<{ isDuplicate: boolean; devcode?: string; route?: string } | null> => {
-    if (!navigator.onLine) return null;
+    const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
+    const currentSessionType = getSessionType();
+    const today = new Date().toISOString().split('T')[0];
+
+    // 1. Check local IndexedDB receipts first (works offline across app restarts)
     try {
-      const cleanId = farmer.farmer_id.replace(/^#/, '').trim();
-      const currentSessionType = getSessionType();
-      const today = new Date().toISOString().split('T')[0];
+      const recentReceipts = await getRecentReceipts();
+      const localMatch = recentReceipts.find(r => {
+        const fId = String(r.farmer_id || '').replace(/^#/, '').trim();
+        if (fId !== cleanId) return false;
+
+        const receiptDate = r.collection_date
+          ? new Date(r.collection_date).toISOString().split('T')[0]
+          : today;
+        if (receiptDate !== today) return false;
+
+        const rSession = String(r.session || '').trim().toUpperCase();
+        return rSession === currentSessionType ||
+          rSession.includes(currentSessionType) ||
+          (currentSessionType === 'AM' && (rSession.includes('MORNING') || rSession === '1')) ||
+          (currentSessionType === 'PM' && (rSession.includes('EVENING') || rSession.includes('AFTERNOON') || rSession === '2'));
+      });
+
+      if (localMatch) {
+        return {
+          isDuplicate: true,
+          devcode: (localMatch as any).devcode || (localMatch as any).device || 'This Device',
+          route: localMatch.route || farmer.route
+        };
+      }
+    } catch (e) {
+      console.warn('Local receipt duplicate check failed:', e);
+    }
+
+    // 2. Check online API if connected (with strict 300ms timeout fallback to offline immediately)
+    if (!navigator.onLine) return { isDuplicate: false };
+    try {
       const deviceFingerprint = await generateDeviceFingerprint();
 
-      const collections = await mysqlApi.milkCollection.getAll({
+      const onlinePromise = mysqlApi.milkCollection.getAll({
         farmerId: cleanId,
-        session: currentSessionType,
         dateFrom: today,
         dateTo: today,
         uniquedevcode: deviceFingerprint
       });
 
+      const timeoutPromise = new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 300));
+      const collections = await Promise.race([onlinePromise, timeoutPromise]);
+
       if (collections && collections.length > 0) {
-        const match = collections[0];
+        const match = collections.find(c => {
+          const cSession = String(c.session || '').trim().toUpperCase();
+          return cSession === currentSessionType ||
+            cSession.includes(currentSessionType) ||
+            (currentSessionType === 'AM' && (cSession.includes('MORNING') || cSession === '1')) ||
+            (currentSessionType === 'PM' && (cSession.includes('EVENING') || cSession.includes('AFTERNOON') || cSession === '2'));
+        }) || collections[0];
+
         const matchDevcode = match.devcode || 'Other Device';
         const matchRoute = match.route || farmer.route;
         return {
@@ -330,11 +373,32 @@ export const BuyProduceScreen = ({
     return { isDuplicate: false };
   };
 
-  // Resolve numeric input to full farmer ID (only from available farmers)
+  // O(1) Farmer Lookup Maps for instant member resolution (eliminates UI lag on typing/enter)
+  const { exactMap, numericMap, paddedMap } = useMemo(() => {
+    const exact = new Map<string, Farmer>();
+    const numeric = new Map<number, Farmer>();
+    const padded = new Map<string, Farmer>();
+
+    for (const f of cachedFarmers) {
+      if (!f.farmer_id) continue;
+      const cleanId = f.farmer_id.replace(/^#/, '').trim();
+      exact.set(cleanId.toLowerCase(), f);
+      exact.set(f.farmer_id.toLowerCase(), f);
+
+      const num = parseInt(cleanId.replace(/\D/g, ''), 10);
+      if (!isNaN(num)) {
+        numeric.set(num, f);
+      }
+      padded.set(`M${String(num).padStart(5, '0')}`.toUpperCase(), f);
+    }
+    return { exactMap: exact, numericMap: numeric, paddedMap: padded };
+  }, [cachedFarmers]);
+
+  // Resolve numeric input to full farmer ID instantly using O(1) maps
   const resolveFarmerId = (input: string): Farmer | null => {
     if (!input.trim()) return null;
-
-    const numericInput = input.replace(/\D/g, '');
+    const trimmed = input.trim();
+    const numericInput = trimmed.replace(/\D/g, '');
     const mprefixStr = route?.mprefix ? String(route.mprefix).trim() : '';
 
     const checkAndReturnMatch = (f: Farmer | undefined): Farmer | null => {
@@ -349,57 +413,34 @@ export const BuyProduceScreen = ({
       return f;
     };
 
-    // 1. Search by exact farmer_id first (in ALL cached farmers to detect blocked ones)
-    const exactMatch = cachedFarmers.find(
-      f => f.farmer_id.toLowerCase() === input.toLowerCase() ||
-           f.farmer_id.replace(/^#/, '').toLowerCase() === input.toLowerCase()
-    );
-    if (exactMatch) {
-      return checkAndReturnMatch(exactMatch);
+    // 1. Exact match
+    const exact = exactMap.get(trimmed.toLowerCase());
+    if (exact) {
+      return checkAndReturnMatch(exact);
     }
 
-    // 2. Try mprefix prepended match and suffix matching (e.g. mprefix = "915", input = "200" -> "915200" or suffix "200")
+    // 2. Prefixed match (mprefix + numeric)
     if (mprefixStr && numericInput) {
-      const prefixedId = `${mprefixStr}${numericInput}`;
-      const prefixedMatch = cachedFarmers.find(
-        f => f.farmer_id.toLowerCase() === prefixedId.toLowerCase() ||
-             f.farmer_id.replace(/^#/, '').toLowerCase() === prefixedId.toLowerCase()
-      );
-      if (prefixedMatch) {
-        return checkAndReturnMatch(prefixedMatch);
-      }
-
-      const suffixMatch = cachedFarmers.find(f => {
-        const cleanFId = f.farmer_id.replace(/^#/, '').trim();
-        if (!cleanFId.startsWith(mprefixStr)) return false;
-        const suffix = cleanFId.slice(mprefixStr.length);
-        if (!suffix) return false;
-        const suffixNumeric = suffix.replace(/\D/g, '');
-        return suffix.toLowerCase() === input.trim().toLowerCase() ||
-               (Boolean(suffixNumeric) && parseInt(suffixNumeric, 10) === parseInt(numericInput, 10));
-      });
-      if (suffixMatch) {
-        return checkAndReturnMatch(suffixMatch);
+      const prefixed = exactMap.get(`${mprefixStr}${numericInput}`.toLowerCase());
+      if (prefixed) {
+        return checkAndReturnMatch(prefixed);
       }
     }
 
-    // 3. If pure numeric, resolve to padded format (e.g., 1 -> M00001)
-    if (numericInput && numericInput === input.trim()) {
-      const paddedId = `M${numericInput.padStart(5, '0')}`;
-      const paddedMatch = cachedFarmers.find(
-        f => f.farmer_id.toUpperCase() === paddedId.toUpperCase()
-      );
-      if (paddedMatch) {
-        return checkAndReturnMatch(paddedMatch);
+    // 3. Padded match & Numeric match
+    if (numericInput) {
+      const paddedKey = `M${numericInput.padStart(5, '0')}`.toUpperCase();
+      const padded = paddedMap.get(paddedKey);
+      if (padded) {
+        return checkAndReturnMatch(padded);
       }
 
-      // 4. Also try matching by numeric portion
-      const numericMatch = cachedFarmers.find(f => {
-        const farmerNumeric = f.farmer_id.replace(/\D/g, '');
-        return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
-      });
-      if (numericMatch) {
-        return checkAndReturnMatch(numericMatch);
+      const num = parseInt(numericInput, 10);
+      if (!isNaN(num)) {
+        const numMatch = numericMap.get(num);
+        if (numMatch) {
+          return checkAndReturnMatch(numMatch);
+        }
       }
     }
 
@@ -582,53 +623,42 @@ export const BuyProduceScreen = ({
           />
         )}
 
-        {/* Manual Weight Entry - enforces supervisor mode and psettings AutoW */}
-        <div className={`flex gap-2 items-center ${manualDisabled ? 'opacity-50' : ''}`}>
-          <span className="text-xs font-medium text-gray-700 whitespace-nowrap">
-            {isCoffee ? 'Manual Gross:' : 'Manual:'}
-            {manualDisabled && <span className="text-red-500 ml-1">(Disabled)</span>}
-          </span>
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.1"
-            min="0"
-            placeholder={manualDisabled ? "Use scale only" : (isCoffee ? "Enter gross weight" : "Enter weight")}
-            disabled={manualDisabled}
-            onChange={(e) => {
-              if (manualDisabled) {
-                toast.error('Manual weight entry is disabled. Please use the digital scale.');
-                return;
-              }
-              const grossValue = parseFloat(e.target.value) || 0;
-              if (isCoffee) {
-                // For coffee: manual entry is gross weight, calculate net using CURRENT tare (may be edited)
-                onGrossWeightChange?.(grossValue);
-                const netValue = Math.max(0, grossValue - currentTareWeight);
-                const cleanNetValue = roundWeight(netValue, 3);
-                onNetWeightChange?.(cleanNetValue);
-                onWeightChange?.(cleanNetValue); // Main weight is net
-                onEntryTypeChange?.('manual');
-              } else {
-                onManualWeightChange?.(grossValue);
-              }
-            }}
-            className={`flex-1 px-3 py-1.5 border-2 rounded-lg text-sm ${
-              manualDisabled 
-                ? 'border-gray-200 bg-gray-100 cursor-not-allowed' 
-                : 'border-gray-300'
-            }`}
-          />
-        </div>
-        {manualDisabled && (
-          <p className="text-xs text-red-500 -mt-2 mb-2 px-1">
-            Manual entry is disabled. Use the digital scale.
-          </p>
-        )}
-        {isCoffee && !manualDisabled && (
-          <p className="text-xs text-amber-600 -mt-2 mb-2 px-1">
-            Enter gross weight. Net = Gross - {currentTareWeight} kg (sack weight)
-          </p>
+        {/* Manual Weight Entry - enforces supervisor mode and psettings AutoW (hidden when disabled to save space) */}
+        {!manualDisabled && (
+          <>
+            <div className="flex gap-2 items-center">
+              <span className="text-xs font-medium text-gray-700 whitespace-nowrap">
+                {isCoffee ? 'Manual Gross:' : 'Manual:'}
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min="0"
+                placeholder={isCoffee ? "Enter gross weight" : "Enter weight"}
+                onChange={(e) => {
+                  const grossValue = parseFloat(e.target.value) || 0;
+                  if (isCoffee) {
+                    // For coffee: manual entry is gross weight, calculate net using CURRENT tare (may be edited)
+                    onGrossWeightChange?.(grossValue);
+                    const netValue = Math.max(0, grossValue - currentTareWeight);
+                    const cleanNetValue = roundWeight(netValue, 3);
+                    onNetWeightChange?.(cleanNetValue);
+                    onWeightChange?.(cleanNetValue); // Main weight is net
+                    onEntryTypeChange?.('manual');
+                  } else {
+                    onManualWeightChange?.(grossValue);
+                  }
+                }}
+                className="flex-1 px-3 py-1.5 border-2 border-gray-300 rounded-lg text-sm"
+              />
+            </div>
+            {isCoffee && (
+              <p className="text-xs text-amber-600 -mt-2 mb-2 px-1">
+                Enter gross weight. Net = Gross - {currentTareWeight} kg (sack weight)
+              </p>
+            )}
+          </>
         )}
 
         {/* Member Search */}

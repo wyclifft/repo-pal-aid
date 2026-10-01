@@ -334,6 +334,37 @@ button, .no-select {
   user-select: none;
 }
 
+/* Universal high-contrast dropdown option styling for native WebView select popups */
+select {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--background)) !important;
+}
+
+select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  font-weight: 600 !important;
+  padding: 8px 12px;
+}
+
+select option:disabled {
+  color: #94a3b8 !important;
+  background-color: #ffffff !important;
+}
+
+.dark select option,
+html.dark select option {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  font-weight: 600 !important;
+}
+
+.dark select option:disabled,
+html.dark select option:disabled {
+  color: #64748b !important;
+  background-color: #0f172a !important;
+}
+
 /* Improve touch targets */
 button, [role="button"], input, select, textarea {
   min-height: 44px;

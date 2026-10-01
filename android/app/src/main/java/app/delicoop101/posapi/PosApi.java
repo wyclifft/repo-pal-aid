@@ -228,10 +228,10 @@ public final class PosApi {
     }
 
     /** v2.11.30: CS10 receipt defaults — taller glyphs, tight leading, no head offset. */
-    public static final int DEFAULT_FONT_HEIGHT = 32;
+    public static final int DEFAULT_FONT_HEIGHT = 24;
     public static final int DEFAULT_FONT_WIDTH  = 24;
     public static final int DEFAULT_LINE_SPACE  = 2;
-    public static final int DEFAULT_FEED_DOTS   = 80;
+    public static final int DEFAULT_FEED_DOTS   = 180;
 
     public Result printReceipt(String[] lines) {
         return printReceipt(lines, DEFAULT_FONT_HEIGHT, DEFAULT_FONT_WIDTH,
@@ -262,9 +262,9 @@ public final class PosApi {
         // safer stock sizes, instead of failing the whole receipt.
         int gray = 2;
         int[][] candidates = new int[][] {
+            { 24, 24 },
             { fontHeight, fontWidth },
             { fontHeight, fontHeight },
-            { 24, 24 },
             { 16, 16 }
         };
         Result init = null;
@@ -283,10 +283,12 @@ public final class PosApi {
         try { helper.PrintSetAlign(0); } catch (Throwable ignored) { }
 
         if (lines != null) {
+            StringBuilder sb = new StringBuilder();
             for (String line : lines) {
-                r = printStr((line == null ? "" : line) + "\n");
-                if (r.code != null) return r;
+                sb.append(line == null ? "" : line).append("\n");
             }
+            r = printStr(sb.toString());
+            if (r.code != null) return r;
         }
 
         Result started = printStart();

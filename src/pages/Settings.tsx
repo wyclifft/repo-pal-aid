@@ -31,6 +31,7 @@ import {
 import { runBluetoothDiagnostics, logConnectionTips } from "@/utils/bluetoothDiagnostics";
 import { generateDeviceFingerprint } from "@/utils/deviceFingerprint";
 import { FarmerSyncDashboard } from "@/components/FarmerSyncDashboard";
+import { bt } from "@/services/btConnectionManager";
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -166,22 +167,16 @@ const Settings = () => {
   }, [refreshSettings, settings.company_name]);
 
   const handleQuickReconnect = async () => {
-    if (!storedDevice) return;
-    
     setIsConnectingScale(true);
-    const result = await quickReconnect(storedDevice.deviceId, (weight, type) => {
-      setLastWeight(weight);
-      // Silent - no toast notification for weight updates
-    });
-
+    const result = await bt.forceReconnect('scale');
     setIsConnectingScale(false);
+
     if (result.success) {
+      const name = bt.getDeviceName('scale') || 'Scale';
       setScaleConnected(true);
-      setScaleType(result.type);
-      toast.success(`Reconnected to ${storedDevice.deviceName}`);
+      toast.success(`Reconnected to ${name}`);
     } else {
-      toast.error(result.error || "Failed to reconnect. Try searching for device again.");
-      setStoredDevice(null);
+      toast.error(result.error || "Failed to reconnect scale.");
     }
   };
 
@@ -229,19 +224,17 @@ const Settings = () => {
   };
 
   const handleQuickReconnectPrinter = async () => {
-    if (!storedPrinter) return;
-    
     setIsConnectingPrinter(true);
-    const result = await quickReconnectPrinter(storedPrinter.deviceId);
-
+    const result = await bt.forceReconnect('printer');
     setIsConnectingPrinter(false);
+
     if (result.success) {
+      const name = bt.getDeviceName('printer') || 'Printer';
       setPrinterConnected(true);
-      setPrinterName(storedPrinter.deviceName);
-      toast.success(`Reconnected to ${storedPrinter.deviceName}`);
+      setPrinterName(name);
+      toast.success(`Reconnected to ${name}`);
     } else {
-      toast.error(result.error || "Failed to reconnect. Try searching for device again.");
-      setStoredPrinter(null);
+      toast.error(result.error || "Failed to reconnect printer.");
     }
   };
 
@@ -404,18 +397,6 @@ const Settings = () => {
                 </>
               )}
             </div>
-            
-            {!scaleConnected && (
-              <div className="mt-4 p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
-                <p className="font-semibold mb-2">Having trouble connecting?</p>
-                <ul className="space-y-1 list-disc list-inside">
-                  <li>Ensure scale is powered on and in pairing mode</li>
-                  <li>Keep phone within 5 meters of the scale</li>
-                  <li>Enable Location permission (Android)</li>
-                  <li>Click the <Bug className="inline h-3 w-3" /> button to run diagnostics</li>
-                </ul>
-              </div>
-            )}
           </CardContent>
         </Card>
 
@@ -573,7 +554,12 @@ Date: ${new Date().toLocaleString()}
             <div className="space-y-3">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Company Code:</span>
-                <span className="font-medium">{localStorage.getItem('device_ccode') || 'Not assigned'}</span>
+                <span className="font-medium">
+                  {(() => {
+                    const raw = localStorage.getItem('device_ccode');
+                    return (raw && raw !== '000' && raw !== '0') ? raw : 'Not assigned';
+                  })()}
+                </span>
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-sm text-muted-foreground">Company Name (cname):</span>

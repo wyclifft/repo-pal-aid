@@ -23,7 +23,7 @@ interface WeightInputProps {
 }
 
 // Stable reading configuration
-const STABLE_READING_THRESHOLD = 0.1; // Max variance in kg
+const STABLE_READING_THRESHOLD = 0.05; // Max 50g variance in kg
 const STABLE_READING_COUNT = 3; // Number of consecutive readings required
 const STABLE_READING_TIMEOUT = 5000; // Max wait time in ms
 
@@ -78,8 +78,13 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
     if (type) setScaleType(type);
     
     if (requireStableReading && newWeight > 0) {
-      // Add to readings buffer
-      stableReadingsRef.current.push(newWeight);
+      // Detect step changes (>= 50g) and flush previous readings immediately
+      const lastReading = stableReadingsRef.current.length > 0 ? stableReadingsRef.current[stableReadingsRef.current.length - 1] : null;
+      if (lastReading !== null && Math.abs(newWeight - lastReading) >= STABLE_READING_THRESHOLD) {
+        stableReadingsRef.current = [newWeight];
+      } else {
+        stableReadingsRef.current.push(newWeight);
+      }
       
       // Keep only recent readings
       if (stableReadingsRef.current.length > STABLE_READING_COUNT * 2) {

@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
 // Display stabilization - prevents flickering when scale is stable
-const DISPLAY_STABLE_THRESHOLD = 0.15; // Max kg variance to consider "stable"
+const DISPLAY_STABLE_THRESHOLD = 0.05; // Max 50g variance to consider "stable" (suited for field scales)
 const DISPLAY_STABLE_COUNT = 3; // Readings within threshold to lock display
 const DISPLAY_UPDATE_INTERVAL = 200; // Min ms between display updates
 
@@ -84,8 +84,14 @@ export const LiveWeightDisplay = ({
       return;
     }
     
-    // Add to readings buffer
-    recentReadingsRef.current.push(incomingWeight);
+    // Detect step changes (>= 50g) and flush previous readings immediately
+    const lastReading = recentReadingsRef.current.length > 0 ? recentReadingsRef.current[recentReadingsRef.current.length - 1] : null;
+    if (lastReading !== null && Math.abs(incomingWeight - lastReading) >= DISPLAY_STABLE_THRESHOLD) {
+      recentReadingsRef.current = [incomingWeight];
+    } else {
+      recentReadingsRef.current.push(incomingWeight);
+    }
+
     if (recentReadingsRef.current.length > DISPLAY_STABLE_COUNT * 2) {
       recentReadingsRef.current = recentReadingsRef.current.slice(-DISPLAY_STABLE_COUNT);
     }
@@ -172,6 +178,11 @@ export const LiveWeightDisplay = ({
           }`}
           title={!scaleConnected ? 'Scale Disconnected' : (requireStableReading && isWaitingForStable) ? 'Waiting for stable reading...' : 'Reading Stable'}
         />
+        {scaleConnected && requireStableReading && isWaitingForStable && (
+          <span className="absolute top-1.5 right-7 text-[10px] font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/50 px-1.5 py-0.5 rounded border border-red-200 dark:border-red-800 z-10 pointer-events-none whitespace-nowrap">
+            Weight not stable
+          </span>
+        )}
 
         {/* Kgs Label Box - Left side */}
         <div className="flex-1 bg-white border-[3px] border-gray-900 rounded-l-lg py-6 sm:py-8 flex items-center justify-center">
