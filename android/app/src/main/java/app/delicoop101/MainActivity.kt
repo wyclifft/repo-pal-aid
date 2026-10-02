@@ -127,6 +127,27 @@ class MainActivity : BridgeActivity() {
         
         // Schedule background sync on app start
         SyncWorker.schedulePeriodicSync(this)
+
+        // Prompt user for files & media / storage permissions if not granted
+        checkAndRequestStoragePermissions()
+    }
+
+    private fun checkAndRequestStoragePermissions() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val readPerm = androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            val writePerm = androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            if (readPerm != android.content.pm.PackageManager.PERMISSION_GRANTED || writePerm != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.d(TAG, "[PERMISSION] Storage permissions not granted. Requesting...")
+                androidx.core.app.ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(
+                        android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                        android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    ),
+                    1002
+                )
+            }
+        }
     }
     
     override fun onDestroy() {

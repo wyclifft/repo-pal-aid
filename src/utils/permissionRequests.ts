@@ -26,10 +26,12 @@ const loadCapacitorCamera = async () => {
 export const requestAllPermissions = async (): Promise<{
   bluetooth: boolean;
   camera: boolean;
+  storage: boolean;
 }> => {
   const results = {
     bluetooth: false,
     camera: false,
+    storage: false,
   };
 
   // Request Bluetooth permissions (native only)

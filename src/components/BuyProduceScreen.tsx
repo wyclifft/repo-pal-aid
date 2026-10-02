@@ -648,6 +648,8 @@ export const BuyProduceScreen = ({
                     onEntryTypeChange?.('manual');
                   } else {
                     onManualWeightChange?.(grossValue);
+                    onWeightChange?.(grossValue);
+                    onEntryTypeChange?.('manual');
                   }
                 }}
                 className="flex-1 px-3 py-1.5 border-2 border-gray-300 rounded-lg text-sm"

@@ -440,53 +440,44 @@ export const SellProduceScreen = ({
           />
         )}
 
-        {/* Manual Weight Entry - enforces supervisor mode and psettings AutoW */}
-        <div className={`flex gap-2 items-center ${manualDisabled ? 'opacity-50' : ''}`}>
-          <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
-            {isCoffee ? 'Manual Gross:' : 'Manual:'}
-            {manualDisabled && <span className="text-red-500 ml-1">(Disabled)</span>}
-          </span>
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.1"
-            min="0"
-            placeholder={manualDisabled ? "Use scale only" : (isCoffee ? "Enter gross weight" : "Enter weight")}
-            disabled={manualDisabled}
-            onChange={(e) => {
-              if (manualDisabled) {
-                toast.error('Manual weight entry is disabled. Please use the digital scale.');
-                return;
-              }
-              const grossValue = parseFloat(e.target.value) || 0;
-              if (isCoffee) {
-                // For coffee: manual entry is gross weight, calculate net using CURRENT tare (may be edited)
-                onGrossWeightChange?.(grossValue);
-                const netValue = Math.max(0, grossValue - currentTareWeight);
-                const cleanNetValue = roundWeight(netValue, 3);
-                onNetWeightChange?.(cleanNetValue);
-                onWeightChange?.(cleanNetValue); // Main weight is net
-                onEntryTypeChange?.('manual');
-              } else {
-                onManualWeightChange?.(grossValue);
-              }
-            }}
-            className={`flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 rounded-lg text-base sm:text-lg min-h-[44px] ${
-              manualDisabled 
-                ? 'border-gray-200 bg-gray-100 cursor-not-allowed' 
-                : 'border-gray-300'
-            }`}
-          />
-        </div>
-        {manualDisabled && (
-          <p className="text-xs text-red-500 -mt-2 mb-2 px-1">
-            Manual entry is disabled. Use the digital scale.
-          </p>
-        )}
-        {isCoffee && !manualDisabled && (
-          <p className="text-xs text-amber-600 -mt-2 mb-2 px-1">
-            Enter gross weight. Net = Gross - {currentTareWeight} kg (sack weight)
-          </p>
+        {/* Manual Weight Entry - hidden completely when manual entry is disabled */}
+        {!manualDisabled && (
+          <>
+            <div className="flex gap-2 items-center">
+              <span className="text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
+                {isCoffee ? 'Manual Gross:' : 'Manual:'}
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min="0"
+                placeholder={isCoffee ? "Enter gross weight" : "Enter weight"}
+                onChange={(e) => {
+                  const grossValue = parseFloat(e.target.value) || 0;
+                  if (isCoffee) {
+                    // For coffee: manual entry is gross weight, calculate net using CURRENT tare
+                    onGrossWeightChange?.(grossValue);
+                    const netValue = Math.max(0, grossValue - currentTareWeight);
+                    const cleanNetValue = roundWeight(netValue, 3);
+                    onNetWeightChange?.(cleanNetValue);
+                    onWeightChange?.(cleanNetValue);
+                    onEntryTypeChange?.('manual');
+                  } else {
+                    onManualWeightChange?.(grossValue);
+                    onWeightChange?.(grossValue);
+                    onEntryTypeChange?.('manual');
+                  }
+                }}
+                className="flex-1 px-3 sm:px-4 py-2.5 sm:py-2 border-2 border-gray-300 rounded-lg text-base sm:text-lg min-h-[44px]"
+              />
+            </div>
+            {isCoffee && (
+              <p className="text-xs text-amber-600 -mt-2 mb-2 px-1">
+                Enter gross weight. Net = Gross - {currentTareWeight} kg (sack weight)
+              </p>
+            )}
+          </>
         )}
 
         {/* Member Search */}
