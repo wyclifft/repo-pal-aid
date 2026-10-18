@@ -1,6 +1,6 @@
 import { type Farmer } from '@/lib/supabase';
 import { resolveMemberName } from '@/utils/farmerUtils';
-import { formatWeight } from '@/utils/weightUtils';
+import { formatWeight, roundWeight } from '@/utils/weightUtils';
 import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetooth-le';
 import { Capacitor } from '@capacitor/core';
 import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
@@ -368,11 +368,13 @@ export const resetNetWeightTracker = () => {
 
 // Comprehensive Net Weight Regex
 // Matches: NT, NET, NW, N.W., NET., NT., NW., WN, W.N., NET WEIGHT, NET-WT, N:, N=, etc.
-const NET_WEIGHT_REGEX = /(?:NT|NET|NW|N\.W\.|NET\.|NT\.|NW\.|WN|W\.N\.|NET\s*WEIGHT|NET-WT|\bN\b)\s*[:=,-]?\s*([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)?/i;
+// Note: Delimiter is [:=,]? so negative sign '-' is NOT swallowed as a delimiter!
+const NET_WEIGHT_REGEX = /(?:NT|NET|NW|N\.W\.|NET\.|NT\.|NW\.|WN|W\.N\.|NET\s*WEIGHT|NET-WT)\s*[:=,]?\s*([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)?/i;
 
 // Comprehensive Gross Weight Regex
 // Matches: GS, GW, GROSS, G.W., WW, GROSS WEIGHT, GROSS-WT, G:, G=, etc.
-const GROSS_WEIGHT_REGEX = /(?:GS|GW|GROSS|G\.W\.|WW|GROSS\s*WEIGHT|GROSS-WT|\bG\b)\s*[:=,-]?\s*([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)?/i;
+// Note: Delimiter is [:=,]? so negative sign '-' is NOT swallowed as a delimiter!
+const GROSS_WEIGHT_REGEX = /(?:GS|GW|GROSS|G\.W\.|WW|GROSS\s*WEIGHT|GROSS-WT)\s*[:=,]?\s*([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)?/i;
 
 /**
  * Parses scale text data for weight, strictly prioritizing Net weight over Gross weight.
@@ -382,6 +384,25 @@ const GROSS_WEIGHT_REGEX = /(?:GS|GW|GROSS|G\.W\.|WW|GROSS\s*WEIGHT|GROSS-WT|\bG
 export const parseScaleWeightText = (text: string): number | null => {
   if (!text) return null;
   text = text.replace(',', '.');
+
+  // Check if string contains corrupted binary or replacement characters (\uFFFD / ?)
+  const hasCorruptedChars = /[\uFFFD\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\xFF]/.test(text);
+
+  // Support frame delimiters (=, \r, \n, STX, ETX, ;) - extract the latest frame from right to left
+  const FRAME_DELIMITER_REGEX = /[\r\n=\x02\x03;]/;
+  if (FRAME_DELIMITER_REGEX.test(text)) {
+    const parts = text.split(/[\r\n=\x02\x03;]+/).map(p => p.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const weight = parseScaleWeightText(parts[i]);
+        if (weight !== null) return weight;
+      }
+      return null;
+    }
+    if (parts.length === 1 && parts[0] !== text) {
+      text = parts[0];
+    }
+  }
 
   // PRIORITY 0: Check for explicit Net weight in multi-field or single-field frames
   const netMatch = text.match(NET_WEIGHT_REGEX);
@@ -396,19 +417,17 @@ export const parseScaleWeightText = (text: string): number | null => {
 
     if (!isNaN(weight) && weight >= -50 && weight < 1000) {
       lastNetWeightTimestamp = Date.now();
-      console.log(`✅ Parsed Net weight: ${weight} kg (from "${text.trim()}")`);
       return weight;
     }
   }
 
   // Check if text is an explicit Gross weight frame
   const hasGrossToken = GROSS_WEIGHT_REGEX.test(text);
-  const isNetActiveRecently = (Date.now() - lastNetWeightTimestamp) < 5000;
+  const isNetActiveRecently = (Date.now() - lastNetWeightTimestamp) < 500;
 
   // If frame has an explicit Gross Weight marker and Net Weight stream was active recently,
   // ignore this Gross Weight frame so it doesn't overwrite the Net Weight reading.
   if (hasGrossToken && isNetActiveRecently) {
-    console.log(`⚠️ Suppressing Gross Weight frame ("${text.trim()}") because active Net Weight stream is active`);
     return null;
   }
 
@@ -425,7 +444,6 @@ export const parseScaleWeightText = (text: string): number | null => {
       if (isNegative) weight = -weight;
 
       if (!isNaN(weight) && weight >= -50 && weight < 1000) {
-        console.log(`✅ Parsed Gross weight (no active Net weight): ${weight} kg`);
         return weight;
       }
     }
@@ -441,7 +459,6 @@ export const parseScaleWeightText = (text: string): number | null => {
     else if (unit === 'oz') weight = weight * 0.0283495;
 
     if (!isNaN(weight) && weight >= -50 && weight < 1000) {
-      console.log(`✅ Parsed negative weight: ${weight} kg`);
       return weight;
     }
   }
@@ -449,12 +466,11 @@ export const parseScaleWeightText = (text: string): number | null => {
   // PRIORITY 3: Zero weight format ("0 kg", "+0000.00", "0.00")
   const zeroMatch = text.match(/^\s*\+?\s*0+\.?0*\s*(kg|g|lb|oz)?\s*$/i);
   if (zeroMatch) {
-    console.log(`✅ Parsed weight (zero): 0 kg`);
     return 0;
   }
 
   // PRIORITY 4: Standard decimal weight format with unit ("12.345 kg", "+  0002.60kg")
-  const standardMatch = text.match(/([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)/i);
+  const standardMatch = text.match(/(?:^|[\s,:=])([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)\b/i);
   if (standardMatch) {
     const isNegative = standardMatch[1] === '-';
     let weight = parseFloat(standardMatch[2]);
@@ -466,31 +482,31 @@ export const parseScaleWeightText = (text: string): number | null => {
 
     if (!isNaN(weight) && weight >= -50 && weight < 1000) {
       if (weight >= 0 && weight < 0.1) return 0;
-      console.log(`✅ Parsed weight (standard with unit): ${weight} kg`);
       return weight;
     }
   }
 
-  // Decimal number match ("2.60", "+0002.60")
-  const decimalMatch = text.match(/([+-]?)\s*(\d+(?:\.\d+)?|\.\d+)/);
-  if (decimalMatch) {
-    const isNeg = decimalMatch[1] === '-';
-    let weight = parseFloat(decimalMatch[2]);
-    if (isNeg) weight = -weight;
+  // PRIORITY 5: Bare Decimal number match ("2.60", "+0002.60", " 5.6 ")
+  // Strictly requires clean text AND a decimal point to avoid matching random corrupted digits
+  if (!hasCorruptedChars) {
+    const decimalMatch = text.match(/(?:^|[\s,:=])([+-]?)\s*(\d+\.\d+|\.\d+)(?:[\s,]|$)/);
+    if (decimalMatch) {
+      const isNeg = decimalMatch[1] === '-';
+      let weight = parseFloat(decimalMatch[2]);
+      if (isNeg) weight = -weight;
 
-    if (!isNaN(weight) && weight >= -50 && weight < 1000) {
-      if (weight >= 0 && weight < 0.1) return 0;
-      console.log(`✅ Parsed weight (decimal): ${weight} kg`);
-      return weight;
+      if (!isNaN(weight) && weight >= -50 && weight < 1000) {
+        if (weight >= 0 && weight < 0.1) return 0;
+        return weight;
+      }
     }
   }
 
-  // Grams / Integer match ("12345g" or clean integer)
+  // Grams / Integer match ("12345g" - strictly requires explicit 'g' unit)
   const gramsMatch = text.match(/(\d{3,6})\s*(g|G)\b/);
   if (gramsMatch) {
     const weight = parseInt(gramsMatch[1], 10) / 1000;
     if (!isNaN(weight) && weight >= 0.1 && weight < 1000) {
-      console.log(`✅ Parsed weight (grams): ${weight} kg`);
       return weight;
     }
   }
@@ -522,17 +538,6 @@ const parseDRSeriesWeight = (rawBytes: Uint8Array, text: string): number | null 
         console.log(`✅ DR Series parsed BCD: ${weight} kg`);
         return weight;
       }
-    }
-  }
-
-  // PRIORITY 3: Check if the entire text is digits that could be grams
-  const cleanDigits = text.replace(/[^0-9]/g, '');
-  if (cleanDigits.length >= 3 && cleanDigits.length <= 6) {
-    const gramsValue = parseInt(cleanDigits, 10);
-    if (gramsValue >= 1 && gramsValue <= 200000) {
-      const weight = gramsValue / 1000;
-      console.log(`✅ DR Series parsed integer grams: ${weight} kg`);
-      return weight;
     }
   }
 
@@ -633,15 +638,64 @@ export const broadcastScaleConnectionChange = (connected: boolean) => {
     // Track last successful connect time so the printer auto-reconnect can
     // defer if the scale is "warming up" (avoids cross-talk on Android GATT).
     lastScaleConnectedAt = Date.now();
+  } else {
+    lastBroadcastWeight = null;
+    lastBroadcastTime = 0;
   }
   console.log(`📡 Broadcasting scale connection: ${connected}`);
   window.dispatchEvent(new CustomEvent('scaleConnectionChange', { detail: { connected } }));
 };
 
+// v2.12.99: Smart broadcast throttler (max 20 Hz / 50ms) to prevent flooding React & bridge
+let lastBroadcastWeight: number | null = null;
+let lastBroadcastTime = 0;
+let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingBroadcast: { weight: number; scaleType: ScaleType } | null = null;
+
+const doBroadcast = (weight: number, scaleType: ScaleType) => {
+  lastBroadcastWeight = weight;
+  lastBroadcastTime = Date.now();
+  pendingBroadcast = null;
+  if (broadcastTimer) {
+    clearTimeout(broadcastTimer);
+    broadcastTimer = null;
+  }
+  window.dispatchEvent(new CustomEvent('scaleWeightUpdate', { detail: { weight, scaleType } }));
+};
+
 // Broadcast weight update events - allows any component to receive live weight
 export const broadcastScaleWeightUpdate = (weight: number, scaleType: ScaleType) => {
-  console.log(`📡 Broadcasting weight update: ${weight} kg from ${scaleType}`);
-  window.dispatchEvent(new CustomEvent('scaleWeightUpdate', { detail: { weight, scaleType } }));
+  const now = Date.now();
+  const timeSinceLast = now - lastBroadcastTime;
+
+  // Immediate bypass conditions:
+  // 1. Initial broadcast (lastBroadcastTime === 0)
+  // 2. Return-to-zero transition (weight drops from > 0.2 kg to <= 0.2 kg)
+  // 3. Weight value change (>= 0.01 kg)
+  // 4. Elapsed time >= 50ms
+  const isReturnToZero = weight <= 0.2 && (lastBroadcastWeight === null || lastBroadcastWeight > 0.2);
+  const isStepChange = lastBroadcastWeight !== null && Math.abs(weight - lastBroadcastWeight) >= 0.01;
+
+  // Skip duplicate broadcast if weight is identical to lastBroadcastWeight and less than 250ms has elapsed.
+  // This avoids spamming identical values 20-30x/sec while maintaining a 4Hz heartbeat for UI sync.
+  const isIdentical = lastBroadcastWeight !== null && weight === lastBroadcastWeight;
+  if (isIdentical && timeSinceLast < 250 && !isReturnToZero) {
+    return;
+  }
+
+  if (lastBroadcastTime === 0 || isReturnToZero || isStepChange || timeSinceLast >= 50) {
+    doBroadcast(weight, scaleType);
+  } else {
+    pendingBroadcast = { weight, scaleType };
+    if (!broadcastTimer) {
+      const delay = Math.max(1, 50 - timeSinceLast);
+      broadcastTimer = setTimeout(() => {
+        if (pendingBroadcast) {
+          doBroadcast(pendingBroadcast.weight, pendingBroadcast.scaleType);
+        }
+      }, delay);
+    }
+  }
 };
 
 export const broadcastPrinterConnectionChange = (connected: boolean) => {
@@ -652,7 +706,7 @@ export const broadcastPrinterConnectionChange = (connected: boolean) => {
 // BLE incoming stream buffer for assembling split packet MTU chunks
 let bleStreamBuffer = '';
 
-const processBleIncomingStream = (
+export const processBleIncomingStream = (
   rawBytes: Uint8Array,
   text: string,
   isTuyaDevice: boolean,
@@ -664,15 +718,19 @@ const processBleIncomingStream = (
     bleStreamBuffer = bleStreamBuffer.slice(-512);
   }
 
-  // If stream buffer contains line breaks (\r\n, \r, or \n), split and process complete lines
-  if (/[\r\n]/.test(bleStreamBuffer)) {
-    const lines = bleStreamBuffer.split(/[\r\n]+/);
-    if (!/[\r\n]$/.test(text)) {
+  const FRAME_DELIMITER_REGEX = /[\r\n=\x02\x03;]/;
+
+  // If stream buffer contains frame delimiters (\r, \n, =, STX, ETX, ;), split and process complete lines
+  if (FRAME_DELIMITER_REGEX.test(bleStreamBuffer)) {
+    const lines = bleStreamBuffer.split(/[\r\n=\x02\x03;]+/);
+    if (!FRAME_DELIMITER_REGEX.test(text.slice(-1))) {
       bleStreamBuffer = lines.pop() || '';
     } else {
       bleStreamBuffer = '';
     }
 
+    // v2.12.99: Process stream buffer and extract ONLY the LATEST valid weight frame in the batch.
+    let latestParsed: number | null = null;
     for (const line of lines) {
       const cleanLine = line.trim();
       if (!cleanLine) continue;
@@ -685,8 +743,12 @@ const processBleIncomingStream = (
       }
 
       if (parsed !== null && !isNaN(parsed) && parsed >= -50 && parsed < 1000) {
-        onParsed(parsed);
+        latestParsed = parsed;
       }
+    }
+
+    if (latestParsed !== null) {
+      onParsed(latestParsed);
     }
   } else {
     // If no newline present yet, check if buffer ends with an explicit unit (e.g. "kg", "g", "lb", "oz")
@@ -843,6 +905,7 @@ export const verifyScaleConnection = async (): Promise<boolean> => {
 
       if (!ok) {
         console.warn('⚠️ Scale GATT health check failed (timeout or error)');
+        scale.isConnected = false;
         return false;
       }
       return true;
@@ -1088,7 +1151,7 @@ export const connectBluetoothScale = async (
            writeUuid = wChar?.uuid || '';
         }
 
-        if (writeUuid) {
+        if (writeUuid && isTuyaDevice) {
           const startCommands = [
             new Uint8Array([0x55]),
             new Uint8Array([0x01]),
@@ -1099,7 +1162,7 @@ export const connectBluetoothScale = async (
           ];
           for (const cmd of startCommands) {
             try {
-              console.log(`📤 Writing command [${Array.from(cmd).map(b => b.toString(16)).join(' ')}] to ${writeUuid}`);
+              console.log(`📤 Writing Tuya command [${Array.from(cmd).map(b => b.toString(16)).join(' ')}] to ${writeUuid}`);
               await BleClient.write(device.deviceId, serviceUuid, writeUuid, new DataView(cmd.buffer), { timeout: 500 });
               await new Promise(r => setTimeout(r, 100));
             } catch (e) {
@@ -1375,7 +1438,7 @@ export const quickReconnect = async (
              writeUuid = wChar?.uuid || '';
           }
 
-          if (writeUuid) {
+          if (writeUuid && isTuyaDevice) {
             const startCommands = [
               new Uint8Array([0x55]),
               new Uint8Array([0x01]),
@@ -2121,7 +2184,7 @@ export const printReceipt = async (data: {
   showProductName?: boolean;
 }): Promise<{ success: boolean; error?: string }> => {
   const companyName = data.companyName || 'DAIRY COLLECTION';
-  const totalWeight = data.collections.reduce((sum, col) => sum + col.weight, 0);
+  const totalWeight = roundWeight(data.collections.reduce((sum, col) => sum + (Number(col.weight) || 0), 0), 3);
   
   const dateObj = data.collectionDate || new Date();
   const formattedDate = dateObj.toLocaleDateString('en-CA');

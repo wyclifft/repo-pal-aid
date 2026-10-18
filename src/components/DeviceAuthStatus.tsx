@@ -25,7 +25,8 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
   });
   const hasInitialized = useRef(false);
   const fetchAttempted = useRef(false);
-
+  const lastAuthCheckRef = useRef<number>(0);
+  const authCheckInFlightRef = useRef(false);
 
   // Fetch company name from psettings based on ccode
   const fetchCompanyNameByCcode = useCallback(async (ccode: string): Promise<string | null> => {
@@ -71,7 +72,13 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
       setLoading(false);
       return;
     }
-    
+
+    if (authCheckInFlightRef.current) return;
+    const now = Date.now();
+    if (now - lastAuthCheckRef.current < 10000) return;
+    lastAuthCheckRef.current = now;
+    authCheckInFlightRef.current = true;
+
     try {
       const fingerprint = await generateDeviceFingerprint();
       const apiUrl = API_CONFIG.MYSQL_API_URL;
@@ -165,6 +172,7 @@ export const DeviceAuthStatus = ({ onCompanyNameChange, onAuthorizationChange }:
     } finally {
       setLoading(false);
       fetchAttempted.current = true;
+      authCheckInFlightRef.current = false;
     }
   }, [onAuthorizationChange, onCompanyNameChange, fetchCompanyNameByCcode]);
 

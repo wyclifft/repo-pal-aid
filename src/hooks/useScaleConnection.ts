@@ -31,8 +31,8 @@ import {
 import { useAppSettings } from '@/hooks/useAppSettings';
 
 // Stable reading configuration
-const STABLE_READING_THRESHOLD = 0.05; // Max 50g variance to consider "stable" (suited for field scales)
-const STABLE_READING_COUNT = 3; // Number of consecutive readings required
+const STABLE_READING_THRESHOLD = 0.1; // Max 0.1kg (100g) threshold to consider "stable" (supports 0.1kg and 0.2kg even-number step scales)
+const STABLE_READING_COUNT = 2; // Number of consecutive matching quantized readings required (~100-200ms)
 const STABLE_READING_TIMEOUT = 5000; // Max wait time in ms
 
 interface UseScaleConnectionOptions {
@@ -143,7 +143,6 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   useEffect(() => {
     const handleWeightUpdate = (e: CustomEvent<{ weight: number; scaleType: ScaleType }>) => {
       const { weight: newWeight, scaleType: type } = e.detail;
-      console.log(`🎯 useScaleConnection received scaleWeightUpdate event: ${newWeight} kg from ${type}`);
 
       if (!isScaleConnected()) {
         console.log('🚫 Ignoring scaleWeightUpdate — no scale currently connected (likely printer cross-talk)');
@@ -172,11 +171,18 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     return (max - min) <= STABLE_READING_THRESHOLD && min >= -50;
   }, []);
 
+  const lastDispatchedStabilityRef = useRef<boolean | null>(null);
+  const dispatchStabilityChange = useCallback((isStable: boolean, weight: number) => {
+    if (lastDispatchedStabilityRef.current !== isStable) {
+      lastDispatchedStabilityRef.current = isStable;
+      window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable, weight } }));
+    }
+  }, []);
+
   // Handle weight reading from scale (BLE or Classic)
   // Uses refs to avoid stale closures
   const handleScaleReading = useCallback((newWeight: number, type?: ScaleType) => {
     const isWaiting = isWaitingForStableRef.current;
-    console.log(`🎯 handleScaleReading: ${newWeight} kg, type: ${type}, waitingForStable: ${isWaiting}`);
     setLastRawWeight(newWeight);
     setLiveWeight(newWeight);
     if (type) setScaleType(type);
@@ -184,39 +190,42 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     // zeroOpt return-to-zero protection: if weight is <= 0.2 kg, propagate immediately
     // so return-to-zero unlocks capture lock immediately even if scale is settling/fluctuating.
     if (newWeight <= 0.2) {
-      console.log(`🔓 zeroOpt return-to-zero weight detected: ${newWeight} kg — propagating immediately`);
       onWeightChangeRef.current(newWeight);
       onEntryTypeChangeRef.current('scale');
       updateWaitingState(false);
       setStableReadingProgress(newWeight === 0 ? 0 : 100);
       stableReadingsRef.current = [];
       lastStableWeightRef.current = newWeight;
-      window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: true, weight: newWeight } }));
+      dispatchStabilityChange(true, newWeight);
       return;
     }
     
     if (requireStableReading && newWeight !== 0) {
+      // Quantize to display precision (1 decimal place / 0.1 kg) for stability check.
+      // Scales often send unrounded high-precision floats over Bluetooth (e.g. 2.61, 2.58, 2.63)
+      // while displaying 2.6 on their screen. Quantizing ensures stability matches the physical display.
+      const quantizedWeight = Math.round(newWeight * 10) / 10;
+
       // INSTANT FLICKER DETECTOR: If new weight deviates from last stable weight by > 0.08 kg (80g),
       // lock capture.
       const isFlickering = lastStableWeightRef.current !== null &&
-        Math.abs(newWeight - lastStableWeightRef.current) > 0.08;
+        Math.abs(quantizedWeight - lastStableWeightRef.current) > 0.08;
 
       if (isFlickering) {
-        console.log(`⚖️ Scale flicker/fluctuation detected: ${newWeight} kg (was ${lastStableWeightRef.current}) — INSTANT CAPTURE LOCK`);
         lastStableWeightRef.current = null;
-        stableReadingsRef.current = [newWeight];
+        stableReadingsRef.current = [quantizedWeight];
         updateWaitingState(true);
         setStableReadingProgress(33);
-        window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: false, weight: newWeight } }));
+        dispatchStabilityChange(false, quantizedWeight);
         return;
       }
 
       // Detect step changes (>= 50g) and flush previous readings immediately
       const lastReading = stableReadingsRef.current.length > 0 ? stableReadingsRef.current[stableReadingsRef.current.length - 1] : null;
-      if (lastReading !== null && Math.abs(newWeight - lastReading) >= STABLE_READING_THRESHOLD) {
-        stableReadingsRef.current = [newWeight];
+      if (lastReading !== null && Math.abs(quantizedWeight - lastReading) >= STABLE_READING_THRESHOLD) {
+        stableReadingsRef.current = [quantizedWeight];
       } else {
-        stableReadingsRef.current.push(newWeight);
+        stableReadingsRef.current.push(quantizedWeight);
       }
       
       // Keep only recent readings
@@ -238,7 +247,7 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         
         // Only update and broadcast if it's the first stable reading OR weight changed significantly
         if (lastStableWeightRef.current === null || Math.abs(finalWeight - lastStableWeightRef.current) > 0.05) {
-          console.log(`⚖️ Stability reached: ${finalWeight} kg`);
+          console.log(`⚖️ Stability reached: ${finalWeight} kg (raw: ${newWeight})`);
           onWeightChangeRef.current(finalWeight);
           onEntryTypeChangeRef.current('scale');
           updateWaitingState(false);
@@ -252,7 +261,7 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
           }
 
           // Broadcast that we have reached stability
-          window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: true, weight: finalWeight } }));
+          dispatchStabilityChange(true, finalWeight);
         } else {
           // Weight is already stable and hasn't changed enough to re-broadcast
           updateWaitingState(false);
@@ -260,14 +269,12 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         }
       } else {
         // Readings are not stable (scale is fluctuating or settling) — ALWAYS lock capture
-        console.log(`⚖️ Scale fluctuating: ${newWeight} kg — locking capture`);
         updateWaitingState(true);
         lastStableWeightRef.current = null;
         if (stableReadingsRef.current.length > STABLE_READING_COUNT) {
-          stableReadingsRef.current = [newWeight];
+          stableReadingsRef.current = [quantizedWeight];
         }
-        // ALWAYS broadcast unstable event to lock Capture button
-        window.dispatchEvent(new CustomEvent('scaleStabilityChange', { detail: { isStable: false, weight: newWeight } }));
+        dispatchStabilityChange(false, quantizedWeight);
       }
     } else {
       // No stable reading required OR weight is <= 0 - use weight directly

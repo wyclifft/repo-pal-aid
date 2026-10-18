@@ -373,7 +373,8 @@ const toYmdLocal = (d) => {
 };
 
 /**
- * v2.12.32: Shared helper to calculate farmer's monthly/seasonal cumulative totals.
+ * v2.12.32 / v2.12.45: Ultra-fast helper to calculate farmer's monthly/seasonal cumulative totals.
+ * Uses index-sargable transdate BETWEEN range and in-memory fm_items lookup.
  * Returns { cumulative_weight, by_product }.
  */
 async function getFarmerCumulativeStats(conn, ccode, farmer_id, route, transdate, orgtype, season_code) {
@@ -420,54 +421,41 @@ async function getFarmerCumulativeStats(conn, ccode, farmer_id, route, transdate
     const nRoute = effectiveRoute ? norm(effectiveRoute) : null;
     const indRouteFilter = nRoute ? ' AND route = ?' : '';
 
-    // v2.12.37: Dairy (orgtype D) cumulative uses Nairobi-adjusted monthly timestamps (UTC+3)
-    // while Coffee (orgtype C) uses season ranges, and others use calendar months.
-    let dateRangeFilter = ' AND transdate BETWEEN ? AND ?';
-    let dateParams = [periodStart, periodEnd];
-
-    if (orgtype === 'D') {
-      const collDate = new Date(transdate);
-      const year = collDate.getFullYear();
-      const month = collDate.getMonth();
-
-      // monthStart: YYYY-MM-01 00:00:00 Nairobi (UTC+3)
-      const startNairobi = new Date(Date.UTC(year, month, 1, -3, 0, 0));
-      // monthEnd: last day of month 23:59:59 Nairobi (UTC+3)
-      const endNairobi = new Date(Date.UTC(year, month + 1, 0, 20, 59, 59, 999));
-
-      dateRangeFilter = ' AND time BETWEEN ? AND ?';
-      dateParams = [Math.floor(startNairobi.getTime() / 1000), Math.floor(endNairobi.getTime() / 1000)];
-    }
+    // v2.12.45: Use transdate BETWEEN ? AND ? for all orgtypes to leverage idx_tx_cum_scan(ccode, transdate, route).
+    // Using integer `time BETWEEN` prevented index usage, causing full table scans per transaction insert.
+    const dateRangeFilter = ' AND transdate BETWEEN ? AND ?';
+    const dateParams = [periodStart, periodEnd];
 
     const indParams = nRoute ? [nFarmerId, nCcode, ...dateParams, nRoute] : [nFarmerId, nCcode, ...dateParams];
 
-    const [sumRows] = await conn.query(
-      `SELECT IFNULL(SUM(weight), 0) as cumulative_weight
-       FROM transactions
-       WHERE memberno = ? AND ccode = ? AND Transtype = 1
-       ${dateRangeFilter}${indRouteFilter}`,
+    // Single grouped query replaces separate sum + LEFT JOIN fm_items queries
+    const [productRows] = await conn.query(
+      `SELECT icode, IFNULL(SUM(weight), 0) as weight
+         FROM transactions
+        WHERE memberno = ? AND ccode = ? AND Transtype = 1
+        ${dateRangeFilter}${indRouteFilter}
+        GROUP BY icode`,
       indParams
     );
 
-    const [productRows] = await conn.query(
-      `SELECT t.icode as icode,
-              IFNULL(MAX(fi.descript), MIN(t.icode)) as product_name,
-              IFNULL(SUM(t.weight), 0) as weight
-       FROM transactions t
-       LEFT JOIN fm_items fi ON fi.icode = t.icode AND fi.ccode = t.ccode
-       WHERE t.memberno = ? AND t.ccode = ? AND t.Transtype = 1
-       ${dateRangeFilter.replace('time', 't.time')}${indRouteFilter.replace('route', 't.route')}
-       GROUP BY t.icode`,
-      indParams
-    );
+    // In-memory product name map (60s TTL)
+    const nameMap = await getItemNameMap(nCcode);
+
+    let cumulativeWeight = 0;
+    const byProduct = productRows.map(r => {
+      const w = parseFloat(r.weight) || 0;
+      cumulativeWeight += w;
+      const icode = r.icode || '';
+      return {
+        icode,
+        product_name: nameMap.get(icode.toUpperCase()) || icode,
+        weight: w
+      };
+    });
 
     return {
-      cumulative_weight: sumRows.length > 0 ? parseFloat(sumRows[0].cumulative_weight) || 0 : 0,
-      by_product: productRows.map(r => ({
-        icode: r.icode || '',
-        product_name: r.product_name || r.icode || '',
-        weight: parseFloat(r.weight) || 0
-      }))
+      cumulative_weight: cumulativeWeight,
+      by_product: byProduct
     };
   } catch (err) {
     console.warn('[CUM] Helper calculation failed:', err.message);
@@ -1840,9 +1828,15 @@ const server = http.createServer(async (req, res) => {
 
     if (path.startsWith('/api/milk-collection/') && method === 'GET') {
       const ref = path.split('/')[3];
-      // v2.12.18: wrap in withConn to ensure single connection use
+      // v2.12.18 / v2.12.45: UNION ALL uses index scans instead of un-indexed OR full table scan
       return withConn(async (conn) => {
-        const [rows] = await conn.query('SELECT * FROM transactions WHERE transrefno = ? OR Uploadrefno = ?', [ref, ref]);
+        const [rows] = await conn.query(
+          `(SELECT * FROM transactions WHERE transrefno = ? LIMIT 1)
+           UNION ALL
+           (SELECT * FROM transactions WHERE Uploadrefno = ? AND transrefno != ? LIMIT 1)
+           LIMIT 1`,
+          [ref, ref, ref]
+        );
         if (rows.length === 0) return sendJSON(res, { success: false, error: 'Collection not found' }, 404);
 
         // Map transaction fields back to expected format
@@ -2421,7 +2415,9 @@ const server = http.createServer(async (req, res) => {
 
         try {
           const result = await attemptInsert(transrefno, uploadrefno);
-          const cumulativeData = await getFarmerCumulativeStats(conn, ccode, body.farmer_id, body.route, transdate, orgtype, body.season_code);
+          const cumulativeData = (result && result.cumulative_weight !== undefined)
+            ? { cumulative_weight: result.cumulative_weight, by_product: result.by_product }
+            : await getFarmerCumulativeStats(conn, ccode, body.farmer_id, body.route, transdate, orgtype, body.season_code);
 
           return sendJSON(res, {
             success: true,
@@ -2777,7 +2773,7 @@ const server = http.createServer(async (req, res) => {
         SELECT t.transrefno, t.Uploadrefno as uploadrefno, t.memberno as farmer_id, t.route, t.weight, t.session,
                t.transdate as collection_date, t.clerk as clerk_name, t.icode as product_code, t.entry_type,
                t.milk_session_id, t.CAN as season_code,
-               IFNULL(TRIM(r.descript), IFNULL(NULLIF(TRIM(t.route_name), ''), TRIM(t.route))) as route_name
+               IFNULL(TRIM(r.descript), TRIM(t.route)) as route_name
         FROM transactions t
         LEFT JOIN fm_tanks r ON (TRIM(t.route) = TRIM(r.tcode) OR TRIM(t.route) = TRIM(r.descript)) AND t.ccode = r.ccode
         WHERE t.transdate = ? AND t.Transtype = 1 AND t.ccode = ?
@@ -2988,7 +2984,7 @@ const server = http.createServer(async (req, res) => {
                t.entry_type, t.CAN as season_code, t.milk_session_id, t.Transtype as transtype,
                t.iprice, t.amount,
                i.descript as product_name,
-               IFNULL(TRIM(r.descript), IFNULL(NULLIF(TRIM(t.route_name), ''), TRIM(t.route))) as route_name
+               IFNULL(TRIM(r.descript), TRIM(t.route)) as route_name
         FROM transactions t
         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
         LEFT JOIN fm_tanks r ON (TRIM(t.route) = TRIM(r.tcode) OR TRIM(t.route) = TRIM(r.descript)) AND r.ccode = ?

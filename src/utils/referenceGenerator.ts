@@ -27,6 +27,7 @@ interface DeviceConfig {
 // we never request a stale version against the same database (was causing
 // repeated `VersionError: requested version 11 < existing 12` floods).
 import { DB_NAME, DB_VERSION } from '@/hooks/useIndexedDB';
+import { syncNativeDeviceCode } from '@/services/offlineStorage';
 const STORE_NAME = 'device_config';
 const LOCALSTORAGE_KEY = 'device_config_backup';
 
@@ -154,7 +155,8 @@ export const storeDeviceConfig = async (companyName: string, devcode: string): P
   
   // Also save devcode directly for quick access
   localStorage.setItem('devcode', devcode);
-  
+  syncNativeDeviceCode(devcode).catch(() => {});
+
   try {
     const db = await getDB();
     
@@ -455,6 +457,18 @@ export const syncOfflineCounter = async (
   const safeStoreId = Math.max(currentLocalStoreId, backendStoreId);
   const safeAiId = Math.max(currentLocalAiId, backendAiId);
   
+  // v2.12.99: If counters haven't changed, skip unnecessary IndexedDB writes and event dispatches
+  const countersUnchanged =
+    safeTrnId === currentLocalTrnId &&
+    safeMilkId === currentLocalMilkId &&
+    safeStoreId === currentLocalStoreId &&
+    safeAiId === currentLocalAiId &&
+    currentConfig?.devcode === devcode;
+
+  if (countersUnchanged) {
+    return;
+  }
+
   console.log(`🔄 syncOfflineCounter: trnid(local=${currentLocalTrnId}, backend=${backendTrnId}, using=${safeTrnId})`);
   console.log(`🔄 syncOfflineCounter: milkId(local=${currentLocalMilkId}, backend=${backendMilkId}, using=${safeMilkId})`);
   console.log(`🔄 syncOfflineCounter: storeId(local=${currentLocalStoreId}, backend=${backendStoreId}, using=${safeStoreId})`);

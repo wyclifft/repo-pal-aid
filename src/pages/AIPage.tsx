@@ -708,10 +708,12 @@ const AIPage = () => {
     setItemDisplayLimit(50);
   }, [itemSearchQuery]);
 
-  const prefix = isMemberMode ? 'M' : 'D';
   const prefixFilteredFarmers = useMemo(() => {
-    return farmers.filter(f => f.farmer_id.toUpperCase().startsWith(prefix));
-  }, [farmers, prefix]);
+    return farmers.filter(f => {
+      const cleanId = (f.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
+      return isMemberMode ? !cleanId.startsWith('D') : cleanId.startsWith('D');
+    });
+  }, [farmers, isMemberMode]);
 
   const filteredFarmers = useMemo(() => {
     if (!farmerSearchQuery.trim()) return prefixFilteredFarmers;

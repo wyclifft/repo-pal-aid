@@ -150,8 +150,6 @@ export const BluetoothConnectionDialog = ({
       console.log('🔍 Starting BLE scan for scales...');
       
       const result = await connectBluetoothScale((weight, scaleType) => {
-        // Log raw incoming BLE data
-        console.log(`📡 BLE Raw Weight Update: ${weight} kg from ${scaleType}`);
         onWeightUpdate(weight, scaleType);
       });
 
@@ -191,8 +189,6 @@ export const BluetoothConnectionDialog = ({
     
     try {
       const result = await connectClassicScale(device, (weight) => {
-        // Log raw incoming Classic BT data
-        console.log(`📡 Classic BT Raw Weight Update: ${weight} kg`);
         onWeightUpdate(weight, 'Classic-SPP');
       });
 

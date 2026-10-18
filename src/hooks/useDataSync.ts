@@ -739,10 +739,14 @@ export const useDataSync = () => {
   const updatePendingCount = useCallback(async (force = false) => {
     if (!isReady) return;
 
-    // v2.12.39: Debounce bridge-heavy count updates (min 2s between calls)
+    // v2.12.39: Debounce bridge-heavy count updates (min 2s unforced, 500ms forced)
     // to keep UI responsive on legacy WebViews during rapid events.
     const now = Date.now();
-    if (!force && (now - lastPendingUpdateRef.current < 2000)) {
+    const timeSinceLast = now - lastPendingUpdateRef.current;
+    if (!force && timeSinceLast < 2000) {
+      return;
+    }
+    if (force && timeSinceLast < 500) {
       return;
     }
     lastPendingUpdateRef.current = now;
@@ -1283,14 +1287,12 @@ export const useDataSync = () => {
       if (navigator.onLine && isAuthenticated) {
         const syncKey = `full_sync_completed_${deviceCcode || 'default'}`;
         const completed = localStorage.getItem(syncKey) === 'true';
-        if (!completed) {
+        if (!completed && hasRunInitialSyncRef.current !== `blocking_${deviceCcode}`) {
+          hasRunInitialSyncRef.current = `blocking_${deviceCcode}`;
+          localStorage.setItem(syncKey, 'true');
+          localStorage.setItem('full_sync_completed', 'true');
           console.log(`[SYNC] Triggering initial blocking sync following authorization for ${deviceCcode}`);
-          syncAllData(false, true).then((success) => {
-            if (success) {
-              localStorage.setItem(syncKey, 'true');
-              localStorage.setItem('full_sync_completed', 'true');
-            }
-          });
+          syncAllData(false, true);
         }
       }
     };

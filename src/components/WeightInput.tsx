@@ -23,8 +23,8 @@ interface WeightInputProps {
 }
 
 // Stable reading configuration
-const STABLE_READING_THRESHOLD = 0.05; // Max 50g variance in kg
-const STABLE_READING_COUNT = 3; // Number of consecutive readings required
+const STABLE_READING_THRESHOLD = 0.1; // Max 0.1kg variance in kg
+const STABLE_READING_COUNT = 2; // Number of consecutive readings required
 const STABLE_READING_TIMEOUT = 5000; // Max wait time in ms
 
 export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTypeChange, lastSavedWeight, lastEntryType }: WeightInputProps) => {
@@ -78,12 +78,17 @@ export const WeightInput = ({ weight, onWeightChange, currentUserRole, onEntryTy
     if (type) setScaleType(type);
     
     if (requireStableReading && newWeight > 0) {
+      // Quantize to display precision (1 decimal place / 0.1 kg) for stability check.
+      // Scales often send unrounded high-precision floats over Bluetooth (e.g. 2.61, 2.58, 2.63)
+      // while displaying 2.6 on their screen. Quantizing ensures stability matches the physical display.
+      const quantizedWeight = Math.round(newWeight * 10) / 10;
+
       // Detect step changes (>= 50g) and flush previous readings immediately
       const lastReading = stableReadingsRef.current.length > 0 ? stableReadingsRef.current[stableReadingsRef.current.length - 1] : null;
-      if (lastReading !== null && Math.abs(newWeight - lastReading) >= STABLE_READING_THRESHOLD) {
-        stableReadingsRef.current = [newWeight];
+      if (lastReading !== null && Math.abs(quantizedWeight - lastReading) >= STABLE_READING_THRESHOLD) {
+        stableReadingsRef.current = [quantizedWeight];
       } else {
-        stableReadingsRef.current.push(newWeight);
+        stableReadingsRef.current.push(quantizedWeight);
       }
       
       // Keep only recent readings

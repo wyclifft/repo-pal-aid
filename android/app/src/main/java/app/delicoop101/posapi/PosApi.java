@@ -49,6 +49,8 @@ public final class PosApi {
     private final AtomicBoolean appInitDone = new AtomicBoolean(false);
     private volatile Throwable initError;
     private volatile int lastPrintRc = 0;
+    private volatile long lastInitAttemptTime = 0L;
+    private static final long INIT_RETRY_COOLDOWN_MS = 30000L; // 30s cooldown after failure
 
     private PosApi() {
         this.helper = PosApiHelper.getInstance();
@@ -58,9 +60,14 @@ public final class PosApi {
 
     /** Called once from the plugin's load(). Sys.Lib_AppInit(Context) runs exactly once. */
     public Result appInit(Context ctx) {
+        long now = System.currentTimeMillis();
+        if (initError != null && (now - lastInitAttemptTime) < INIT_RETRY_COOLDOWN_MS) {
+            return Result.err("HARDWARE_UNAVAILABLE", "Lib_AppInit (cooldown active)", initError);
+        }
         if (!appInitDone.compareAndSet(false, true)) {
             return Result.ok(0);
         }
+        lastInitAttemptTime = now;
         try {
             Sys.Lib_AppInit(ctx);
             Log.i(TAG, "Sys.Lib_AppInit completed");

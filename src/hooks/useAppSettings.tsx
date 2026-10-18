@@ -305,6 +305,7 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
   const [deviceFingerprint, setDeviceFingerprint] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<number>(0);
   const refreshInFlightRef = useRef(false);
+  const lastDispatchedCcodeRef = useRef<string | null>(null);
 
   const refreshSettings = useCallback(async () => {
     if (refreshInFlightRef.current) {
@@ -435,7 +436,13 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           
           // Dispatch event to notify other components of settings update & device authorization
           window.dispatchEvent(new CustomEvent('psettingsUpdated', { detail: newSettings }));
-          window.dispatchEvent(new CustomEvent('deviceAuthorized', { detail: { ccode: cleanCcode } }));
+
+          // v2.12.99: Deduplicate deviceAuthorized dispatches — only fire when ccode changes
+          // to prevent continuous re-triggering of full sync loops on routine background psettings refreshes.
+          if (cleanCcode !== lastDispatchedCcodeRef.current) {
+            lastDispatchedCcodeRef.current = cleanCcode;
+            window.dispatchEvent(new CustomEvent('deviceAuthorized', { detail: { ccode: cleanCcode } }));
+          }
         } else {
           // Response OK but no data - treat as unauthorized
           setIsDeviceAuthorized(false);

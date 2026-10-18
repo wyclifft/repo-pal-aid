@@ -41,6 +41,9 @@ type LastSyncState =
   | { kind: 'incomplete'; at: number; reason: string }
   | { kind: 'failed'; at: number; reason: string };
 
+const farmerNameLookupCache = new Map<string, Farmer>();
+let lastFarmerNameLookupTime = 0;
+
 const BATCH_SIZE = 20;
 const PAGE_SIZE = 50;
 
@@ -146,29 +149,35 @@ export const FarmerSyncDashboard = () => {
   /**
    * Build a name lookup map from cm_members (IndexedDB or API).
    * Used only for display names — never for filtering the farmer list.
+   * Cached for 5 minutes in memory to prevent blocking JS main thread on 4,000+ farmers on every render.
    */
   const buildNameLookup = useCallback(async (): Promise<Map<string, Farmer>> => {
-    const lookup = new Map<string, Farmer>();
+    const now = Date.now();
+    if (farmerNameLookupCache.size > 0 && (now - lastFarmerNameLookupTime) < 300000) {
+      return farmerNameLookupCache;
+    }
+
     const deviceFingerprint = await resolveFingerprint();
 
     // Try IndexedDB first for fast local load
     const farmers = await getFarmers();
-    farmers.forEach(f => lookup.set(f.farmer_id.trim(), f));
+    farmers.forEach(f => farmerNameLookupCache.set(f.farmer_id.trim(), f));
 
     // Try API to augment/refresh names if online
     if (navigator.onLine && deviceFingerprint) {
       try {
         const response = await mysqlApi.farmers.getByDevice(deviceFingerprint);
         if (response.success && response.data && response.data.length > 0) {
-          (response.data as Farmer[]).forEach(f => lookup.set(f.farmer_id.trim(), f));
-          console.log(`[SyncDash] Name lookup: ${lookup.size} farmers augmented from API`);
+          (response.data as Farmer[]).forEach(f => farmerNameLookupCache.set(f.farmer_id.trim(), f));
+          console.log(`[SyncDash] Name lookup: ${farmerNameLookupCache.size} farmers augmented from API`);
         }
       } catch (err) {
         console.warn('[SyncDash] API name lookup augmentation failed:', err);
       }
     }
 
-    return lookup;
+    lastFarmerNameLookupTime = Date.now();
+    return farmerNameLookupCache;
   }, [getFarmers]);
 
   /**

@@ -63,8 +63,10 @@ export const useFarmerResolution = ({
     const oppositeLabel = isMemberMode ? 'Debtors' : 'Members';
     const mprefixStr = mprefix ? String(mprefix).trim() : '';
 
-    const matchesActivePrefix = (f: Farmer) =>
-      f.farmer_id.toUpperCase().startsWith(prefix);
+    const matchesActivePrefix = (f: Farmer) => {
+      const cleanId = (f.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
+      return isMemberMode ? !cleanId.startsWith('D') : cleanId.startsWith('D');
+    };
 
     // Prefix-enforced mode: warn if the typed ID belongs to the opposite mode.
     if (enforcePrefix) {
@@ -87,7 +89,7 @@ export const useFarmerResolution = ({
            (!enforcePrefix || matchesActivePrefix(f))
     ) || null;
 
-    // 2. Try mprefix prepended match and suffix matching (e.g., mprefix = "915", input = "200" -> "915200" or suffix "200")
+    // 2. Try mprefix prepended match and suffix matching (e.g., mprefix = "915", input = "200" -> "915200" or suffix "200", or "915000044" for "44")
     if (!match && mprefixStr && numericInput) {
       const prefixedId = `${mprefixStr}${numericInput}`;
       match = availableFarmers.find(
@@ -97,10 +99,22 @@ export const useFarmerResolution = ({
       ) || null;
 
       if (!match) {
+        // Try zero-padded prepends: e.g. mprefixStr="915", numericInput="44" -> "915000044" or "91500044"
+        for (const padLen of [4, 5, 6, 7, 8]) {
+          const paddedPrefixed = `${mprefixStr}${numericInput.padStart(padLen, '0')}`.toLowerCase();
+          match = availableFarmers.find(
+            f => f.farmer_id.replace(/^#/, '').trim().toLowerCase() === paddedPrefixed &&
+                 (!enforcePrefix || matchesActivePrefix(f))
+          ) || null;
+          if (match) break;
+        }
+      }
+
+      if (!match) {
         match = availableFarmers.find(f => {
           if (enforcePrefix && !matchesActivePrefix(f)) return false;
           const cleanFId = f.farmer_id.replace(/^#/, '').trim();
-          if (!cleanFId.startsWith(mprefixStr)) return false;
+          if (!cleanFId.toLowerCase().startsWith(mprefixStr.toLowerCase())) return false;
           const suffix = cleanFId.slice(mprefixStr.length);
           if (!suffix) return false;
           const suffixNumeric = suffix.replace(/\D/g, '');
@@ -110,8 +124,9 @@ export const useFarmerResolution = ({
       }
     }
 
-    // 3. If pure numeric, resolve to padded format (e.g., 1 -> M00001)
+    // 3. If pure numeric, resolve to padded format (e.g., 1 -> M00001) or zero-padded suffix
     if (!match && numericInput && numericInput === input.trim()) {
+      const inputNum = parseInt(numericInput, 10);
       const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
       match = availableFarmers.find(
         f => f.farmer_id.toUpperCase() === paddedId.toUpperCase() &&
@@ -119,11 +134,22 @@ export const useFarmerResolution = ({
       ) || null;
 
       // 4. Try matching by numeric portion only
-      if (!match) {
+      if (!match && !isNaN(inputNum)) {
         match = availableFarmers.find(f => {
           if (enforcePrefix && !matchesActivePrefix(f)) return false;
           const farmerNumeric = f.farmer_id.replace(/\D/g, '');
-          return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
+          return Boolean(farmerNumeric) && parseInt(farmerNumeric, 10) === inputNum;
+        }) || null;
+      }
+
+      // 5. Try zero-padded suffix match (e.g. 915000044 for input 44)
+      if (!match && !isNaN(inputNum)) {
+        match = availableFarmers.find(f => {
+          if (enforcePrefix && !matchesActivePrefix(f)) return false;
+          const cleanFId = f.farmer_id.replace(/^#/, '').trim();
+          if (!cleanFId.endsWith(numericInput)) return false;
+          const prefixPart = cleanFId.slice(0, cleanFId.length - numericInput.length);
+          return prefixPart.length === 0 || /[\D0]$/.test(prefixPart);
         }) || null;
       }
     }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { formatWeight } from '@/utils/weightUtils';
+import { formatWeight, roundWeight } from '@/utils/weightUtils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Printer, X, RefreshCw, Check, AlertTriangle } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
@@ -771,7 +771,7 @@ export const createMilkReceiptData = (
   if (receipts.length === 0) return null;
   
   const first = receipts[0];
-  const totalWeight = receipts.reduce((sum, r) => sum + r.weight, 0);
+  const totalWeight = roundWeight(receipts.reduce((sum, r) => sum + (Number(r.weight) || 0), 0), 3);
   
   return {
     transtype: (first.transtype as TransactionType) || 1,

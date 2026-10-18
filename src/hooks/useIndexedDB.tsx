@@ -1,7 +1,13 @@
-import { useEffect, useState, useCallback, createContext, useContext } from 'react';
+import { useEffect, useState, useCallback, createContext, useContext, useRef } from 'react';
 import type { Farmer, AppUser, MilkCollection } from '@/lib/supabase';
 import { observeBaseChange, isFocusedFarmer, plogFocus, observeIncomingZero, clearZeroPending, noteReversalIfNegative, logWrite, logPrint, logVerify, logCaptureRead, logScopeFallback, logStaleCheck, logStaleReject, logBackendDecrease, logStaleReconcile } from '@/utils/cumulativeMonitor';
 import { plog } from '@/utils/persistentLogger';
+import {
+  syncNativeMembers,
+  syncNativeItems,
+  syncNativeUsers,
+  syncNativeTanks
+} from '@/services/offlineStorage';
 
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
 // (e.g. referenceGenerator) open the SAME version and never trigger
@@ -111,6 +117,7 @@ export const useIndexedDBStandalone = () => {
 // ...
   const [isReady, setIsReady] = useState(false);
   const [schemaError, setSchemaError] = useState(false);
+  const lastSavedSessionsJsonRef = useRef<string>('');
 
   useEffect(() => {
     if (dbInstance && !schemaError) {
@@ -358,22 +365,24 @@ export const useIndexedDBStandalone = () => {
   }, [schemaError]);
 
   const saveFarmers = useCallback((farmers: Farmer[]) => {
-    if (!db) return;
-    // Guard: never save empty array — prevents accidental cache wipe
     if (!farmers || farmers.length === 0) {
       console.warn('⚠️ saveFarmers called with empty array — skipping to protect cache');
       return;
     }
-    try {
-      const tx = db.transaction('farmers', 'readwrite');
-      const store = tx.objectStore('farmers');
-      // Clear old entries then write fresh data to remove stale farmers
-      store.clear();
-      farmers.forEach((farmer) => store.put(farmer));
-      tx.onerror = () => console.error('Error saving farmers:', tx.error);
-    } catch (error) {
-      console.error('Failed to save farmers:', error);
+    if (db) {
+      try {
+        const tx = db.transaction('farmers', 'readwrite');
+        const store = tx.objectStore('farmers');
+        // Clear old entries then write fresh data to remove stale farmers
+        store.clear();
+        farmers.forEach((farmer) => store.put(farmer));
+        tx.onerror = () => console.error('Error saving farmers:', tx.error);
+      } catch (error) {
+        console.error('Failed to save farmers:', error);
+      }
     }
+    // Also push to native Room DB for native offline caching
+    syncNativeMembers(farmers).catch(() => {});
   }, [db]);
 
   const getFarmers = useCallback((): Promise<Farmer[]> => {
@@ -393,14 +402,17 @@ export const useIndexedDBStandalone = () => {
   }, [db]);
 
   const saveUser = useCallback((user: AppUser) => {
-    if (!db) return;
-    try {
-      const tx = db.transaction('app_users', 'readwrite');
-      const store = tx.objectStore('app_users');
-      store.put(user);
-    } catch (error) {
-      console.warn('Failed to save app user to IndexedDB:', error);
+    if (db) {
+      try {
+        const tx = db.transaction('app_users', 'readwrite');
+        const store = tx.objectStore('app_users');
+        store.put(user);
+      } catch (error) {
+        console.warn('Failed to save app user to IndexedDB:', error);
+      }
     }
+    // Also push to native Room DB
+    syncNativeUsers([user]).catch(() => {});
   }, [db]);
 
   const getUser = useCallback((userId: string): Promise<AppUser | undefined> => {
@@ -761,11 +773,18 @@ export const useIndexedDBStandalone = () => {
   }, [db]);
 
   const saveItems = useCallback((items: any[]) => {
-    if (!db) return;
-    const tx = db.transaction('items', 'readwrite');
-    const store = tx.objectStore('items');
-    items.forEach((item) => store.put(item));
-    console.log('Items cached in IndexedDB');
+    if (db) {
+      try {
+        const tx = db.transaction('items', 'readwrite');
+        const store = tx.objectStore('items');
+        items.forEach((item) => store.put(item));
+        console.log('Items cached in IndexedDB');
+      } catch (e) {
+        console.warn('Failed to save items to IndexedDB:', e);
+      }
+    }
+    // Also push to native Room DB for native offline caching
+    syncNativeItems(items).catch(() => {});
   }, [db]);
 
   const getItems = useCallback((): Promise<any[]> => {
@@ -926,6 +945,50 @@ export const useIndexedDBStandalone = () => {
   }, [db]);
 
   /**
+   * v2.12.100: PRINTED RECEIPT CUMULATIVE FLOOR GUARD
+   * Reads the highest cumulative weight printed on any physical receipt for a farmer in the current month.
+   * Guarantees that printed cumulative totals are strictly monotonic (never regress on physical slips).
+   */
+  const getMaxPrintedCumulative = useCallback(async (
+    farmerId: string,
+    monthOverride?: string
+  ): Promise<number> => {
+    if (!db) return 0;
+    try {
+      const cleanId = String(farmerId || '').replace(/^#/, '').trim();
+      if (!cleanId) return 0;
+
+      const receipts = await getPrintedReceipts();
+      if (!Array.isArray(receipts) || receipts.length === 0) return 0;
+
+      const now = new Date();
+      const targetMonth = monthOverride || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      let maxPrinted = 0;
+      for (const r of receipts) {
+        if (!r || r.type !== 'milk') continue;
+        const rFarmerId = String(r.farmerId || '').replace(/^#/, '').trim();
+        if (rFarmerId !== cleanId) continue;
+
+        const rDate = r.transactionDate ? new Date(r.transactionDate) : (r.printedAt ? new Date(r.printedAt) : null);
+        if (rDate && !isNaN(rDate.getTime())) {
+          const rMonth = `${rDate.getFullYear()}-${String(rDate.getMonth() + 1).padStart(2, '0')}`;
+          if (rMonth !== targetMonth) continue;
+        }
+
+        const weight = Number(r.cumulativeWeight || 0);
+        if (isFinite(weight) && weight > maxPrinted) {
+          maxPrinted = weight;
+        }
+      }
+      return maxPrinted;
+    } catch (error) {
+      console.warn('[CUM] Failed to calculate max printed cumulative floor:', error);
+      return 0;
+    }
+  }, [db, getPrintedReceipts]);
+
+  /**
    * Clear all unsynced receipts from IndexedDB
    */
   const clearUnsyncedReceipts = useCallback(async (): Promise<number> => {
@@ -964,15 +1027,18 @@ export const useIndexedDBStandalone = () => {
    * Save routes (fm_tanks) to IndexedDB
    */
   const saveRoutes = useCallback((routes: any[]) => {
-    if (!db) return;
-    try {
-      const tx = db.transaction('routes', 'readwrite');
-      const store = tx.objectStore('routes');
-      routes.forEach((route) => store.put(route));
-      console.log('Routes cached in IndexedDB');
-    } catch (error) {
-      console.error('Failed to save routes:', error);
+    if (db) {
+      try {
+        const tx = db.transaction('routes', 'readwrite');
+        const store = tx.objectStore('routes');
+        routes.forEach((route) => store.put(route));
+        console.log('Routes cached in IndexedDB');
+      } catch (error) {
+        console.error('Failed to save routes:', error);
+      }
     }
+    // Also push to native Room DB for native offline caching
+    syncNativeTanks(routes).catch(() => {});
   }, [db]);
 
   /**
@@ -1016,6 +1082,10 @@ export const useIndexedDBStandalone = () => {
       console.warn('[DB] saveSessions called with empty array — skipping');
       return;
     }
+    const currentJson = JSON.stringify(sessions);
+    if (currentJson === lastSavedSessionsJsonRef.current) {
+      return;
+    }
     try {
       const tx = db.transaction('sessions', 'readwrite');
       const store = tx.objectStore('sessions');
@@ -1023,6 +1093,7 @@ export const useIndexedDBStandalone = () => {
       // cached without SCODE) cannot linger and feed AM/PM into transactions.session
       store.clear();
       sessions.forEach((session) => store.put(session));
+      lastSavedSessionsJsonRef.current = currentJson;
       console.log('[DB] Sessions cache replaced with', sessions.length, 'entries');
     } catch (error) {
       console.error('Failed to save sessions:', error);
@@ -1263,6 +1334,20 @@ export const useIndexedDBStandalone = () => {
       const seasonKey = (scode || '').trim().toUpperCase() || 'ALL';
       const cacheKey = buildCumulativeKey(cleanId, route, month, scode);
 
+      // v2.12.100: PRINTED RECEIPT FLOOR GUARD
+      // Ensure backend updates do not lower the local base below what was already printed on a physical receipt,
+      // unless the update explicitly requests a reduction (allowDecrease = true for admin void/correction).
+      let effectiveCount = count;
+      if (fromBackend && !options?.allowDecrease) {
+        const maxPrinted = await getMaxPrintedCumulative(cleanId, month);
+        if (maxPrinted > effectiveCount) {
+          plog.info('CUM:PRINT-FLOOR-HELD',
+            `${cleanId} route=${routeKey} backend count=${count} < maxPrinted=${maxPrinted} → applied floor=${maxPrinted}`,
+            { farmerId: cleanId, backendCount: count, maxPrinted });
+          effectiveCount = maxPrinted;
+        }
+      }
+
       // Inner writer: performs one get→put inside a single readwrite tx and
       // resolves ONLY on tx.oncomplete (durable commit), rejects on
       // tx.onabort/tx.onerror. Returns:
@@ -1300,7 +1385,7 @@ export const useIndexedDBStandalone = () => {
               ? byProduct.reduce((s, p) => s + (Number(p?.weight) || 0), 0)
               : 0;
             const existingBase = Number(existing?.baseCount || 0);
-            const incomingIsEmpty = (Number(count) || 0) === 0 && incomingByProductSum === 0;
+            const incomingIsEmpty = (Number(effectiveCount) || 0) === 0 && incomingByProductSum === 0;
             if (existingBase > 0 && incomingIsEmpty) {
               const result = observeIncomingZero(cleanId, routeKey, existingBase);
               if (result === 'stash' || result === 'expired-restash') {
@@ -1326,7 +1411,7 @@ export const useIndexedDBStandalone = () => {
             // explicitly opts into a decrease (allowDecrease=true; reserved
             // for future reconciliation/correction flows; no caller today).
             // No writeSeq comparison — name reflects what's actually checked.
-            const incomingNum = Number(count) || 0;
+            const incomingNum = Number(effectiveCount) || 0;
             const decreaseAttempt = existingBase > 0 && incomingNum < existingBase && !incomingIsEmpty;
             const staleCtx = {
               farmerId: cleanId,
@@ -1358,7 +1443,7 @@ export const useIndexedDBStandalone = () => {
               // Surface every blocked downward write so /debug shows why the
               // cache did not move. Pinned so it bypasses the rate cap.
               plog.pinned('warn', 'CUM:DOWNWARD-HELD',
-                `${cleanId} route=${routeKey} held prev=${+existingBase.toFixed(3)} incoming=${+(Number(count)||0).toFixed(3)} vs=${options?.verifySource || '?'} caller=${options?.caller || '?'}`,
+                `${cleanId} route=${routeKey} held prev=${+existingBase.toFixed(3)} incoming=${+(Number(effectiveCount)||0).toFixed(3)} vs=${options?.verifySource || '?'} caller=${options?.caller || '?'}`,
                 { ...staleCtx });
               logStaleReject(staleCtx);
               skippedStaleReject = { baseCount: existingBase };
@@ -1371,18 +1456,18 @@ export const useIndexedDBStandalone = () => {
             if (decreaseAttempt && options?.allowDecrease) {
               logBackendDecrease(staleCtx);
               plog.pinned('warn', 'CUM:DOWNWARD-CONFIRMED',
-                `${cleanId} route=${routeKey} confirmed prev=${+existingBase.toFixed(3)} new=${+(Number(count)||0).toFixed(3)} vs=${options?.verifySource || '?'} caller=${options?.caller || '?'}`,
+                `${cleanId} route=${routeKey} confirmed prev=${+existingBase.toFixed(3)} new=${+(Number(effectiveCount)||0).toFixed(3)} vs=${options?.verifySource || '?'} caller=${options?.caller || '?'}`,
                 { ...staleCtx });
             }
             logStaleCheck('accept', staleCtx);
-            observeBaseChange(existing?.baseCount, count, {
+            observeBaseChange(existing?.baseCount, effectiveCount, {
               farmerId: cleanId,
               route: routeKey,
               source: 'backend',
               prevByProduct: existing?.byProduct,
               nextByProduct: byProduct,
             });
-            logWrite(existing?.baseCount, count, {
+            logWrite(existing?.baseCount, effectiveCount, {
               farmerId: cleanId,
               route: routeKey,
               source: 'backend',
@@ -1394,8 +1479,8 @@ export const useIndexedDBStandalone = () => {
               writeSeq: Number(existing?.writeSeq || 0) + 1,
             });
             if (isFocusedFarmer(cleanId)) {
-              plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} BACKEND ${existing?.baseCount ?? 0}→${count}`,
-                { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: count, prevByProduct: existing?.byProduct, nextByProduct: byProduct, verifySource: options?.verifySource, caller: options?.caller });
+              plogFocus('CUM:FOCUS', `${cleanId} route=${routeKey} BACKEND ${existing?.baseCount ?? 0}→${effectiveCount}`,
+                { farmerId: cleanId, route: routeKey, source: 'backend', before: existing?.baseCount ?? 0, after: effectiveCount, prevByProduct: existing?.byProduct, nextByProduct: byProduct, verifySource: options?.verifySource, caller: options?.caller });
             }
             // v2.10.116: monotonic writeSeq so a future race-clobber check has
             // a definitive ordering. Additive field — schemaless on values.
@@ -1410,7 +1495,7 @@ export const useIndexedDBStandalone = () => {
               route: routeKey,
               scode: seasonKey,
               month,
-              baseCount: Number(count) || 0,
+              baseCount: Number(effectiveCount) || 0,
               localCount: preservedLocal,
               byProduct: byProduct || [],
               lastUpdated: new Date().toISOString(),
@@ -1848,7 +1933,18 @@ export const useIndexedDBStandalone = () => {
 
     // Recalculate from actual unsynced receipts for the EXACT SAME scope and month.
     const unsynced = await getUnsyncedWeightForFarmer(farmerId, routeFilter, seasonFilter, { monthOverride });
-    const total = baseCount + unsynced.total;
+    let total = baseCount + unsynced.total;
+
+    // v2.12.100: PRINTED RECEIPT FLOOR GUARD
+    // Protect against printed cumulative regression: never return a total lower than
+    // what has ALREADY been printed on a physical receipt for this farmer in this month.
+    const maxPrinted = await getMaxPrintedCumulative(farmerId, monthOverride);
+    if (maxPrinted > total) {
+      plog.info('CUM:PRINT-FLOOR-GUARD',
+        `${farmerId} total=${total} < maxPrinted=${maxPrinted} → applied floor=${maxPrinted}`,
+        { farmerId, computedTotal: total, maxPrintedFloor: maxPrinted });
+      total = maxPrinted;
+    }
     
     // Merge by-product: base + unsynced (normalize icode keys to prevent fragmentation)
     const merged: Record<string, { icode: string; product_name: string; weight: number }> = {};
@@ -1894,7 +1990,7 @@ export const useIndexedDBStandalone = () => {
     });
 
     return { total, byProduct: Object.values(merged) };
-  }, [getFarmerCumulative, getUnsyncedWeightForFarmer]);
+  }, [getFarmerCumulative, getUnsyncedWeightForFarmer, getMaxPrintedCumulative]);
 
   // Get ALL unsynced records from receipts store (no type filtering) — used for legacy orphan cleanup
   const getAllUnsyncedRecords = useCallback((): Promise<any[]> => {
@@ -1945,6 +2041,7 @@ export const useIndexedDBStandalone = () => {
     getPeriodicReport,
     savePrintedReceipts,
     getPrintedReceipts,
+    getMaxPrintedCumulative,
     clearUnsyncedReceipts,
     saveRoutes,
     getRoutes,

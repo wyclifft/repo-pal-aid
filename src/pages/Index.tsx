@@ -139,8 +139,13 @@ const Index = () => {
   useEffect(() => {
     const handleStabilityChange = (e: any) => {
       const { isStable } = e.detail;
-      console.log(`⚖️ Index: Scale stability changed: ${isStable}`);
-      setIsScaleStable(isStable);
+      setIsScaleStable((prev) => {
+        if (prev !== isStable) {
+          console.log(`⚖️ Index: Scale stability changed: ${isStable}`);
+          return isStable;
+        }
+        return prev;
+      });
     };
 
     window.addEventListener('scaleStabilityChange', handleStabilityChange as EventListener);
@@ -1669,7 +1674,7 @@ const Index = () => {
       productIcode: selectedProduct?.icode,
       routeCode: cumulativeRouteCode,
       previousCumulativeTotal: cumulativeFrequency?.total ?? 0,
-      justSubmittedWeight: capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0),
+      justSubmittedWeight: roundWeight(capturedCollections.reduce((sum, c) => sum + Number(c.weight || 0), 0), 3),
       submittedRefs: capturedCollections.map((c) => c.reference_no).filter(Boolean) as string[],
       memberRoute: (selectedFarmer?.route || capturedCollections[0]?.route || '').trim(),
       deliveredBy: selectedDeliverer

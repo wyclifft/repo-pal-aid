@@ -1,4 +1,18 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.100: STRICT DIRECT TRUNCATION & STEP SCALE STABILITY FIX.
+//   - Fixed receipt total calculation glitch (16.2 + 11.6 = 27.799999999999997 -> 27.8) by cleaning binary floating-point representation artifacts.
+//   - Enforced strict direct truncation without rounding off weights up (e.g. 16.777 -> 16.7, 16.2999 -> 16.2).
+//   - Optimized scale stability detection for 0.1kg and 0.2kg even-number step scales (0.1kg threshold, 2 matching quantized frames ~100ms) to resolve "weight not stable" lockups.
+//
+// v2.12.99: POS ONLINE LAG FIX & SYNC EVENT LOOP DEDUPLICATION.
+//   - Fixed infinite online sync ping-pong loop between `refreshSettings` (`deviceAuthorized`), `useDataSync` (`syncAllData`), `DeviceAuthStatus` (`checkAuthorization`), and `syncOfflineCounter`.
+//   - Added `cleanCcode` deduplication in `useAppSettings` so routine 30s background psettings refreshes do NOT spam `deviceAuthorized` custom events.
+//   - Added single-trigger guard in `handleDeviceAuthorized` (`useDataSync`) to prevent recursive parallel `syncAllData` executions.
+//   - Added unchanged counter guard in `syncOfflineCounter` to avoid redundant IndexedDB writes and `counterUpdate` event dispatches when counters match.
+//   - Added 10s cooldown and in-flight guard to `checkAuthorization` in `DeviceAuthStatus`.
+//   - Debounced `updatePendingCount` forced calls in `useDataSync` (500ms min spacing) to stop Capacitor bridge floods on rapid receipts/sync completion.
+//   - Fixed high-frequency zero-weight broadcast loop in `broadcastScaleWeightUpdate` and removed streaming console logs across bridge.
+//
 // v2.12.98: SCALE DATABASE PARITY, DYNAMIC NAMING & AUTO-BACKUP / RESTORE.
 //   - Aligned Room DB schema with scale database (rt_scale_AH04.db) with 19 full entities & DAOs.
 //   - Implemented dynamic database naming delicoop101_database_{devcode} (e.g. delicoop101_database_AH04).
@@ -1371,17 +1385,18 @@
 //   and Buy/Sell forms so soft keyboard never hides bottom list items or inputs.
 //   Dashboard Header: Prominent, bold AM/PM session breakdown & total offline KGs badge.
 //
-// v2.12.95: RESTORED NATIVE SELECTORS WITH DAYNIGHT HIGH-CONTRAST TEXT.
-//   - Restored SessionSelector and ProductSelector to standard native HTML <select> dropdowns.
-//   - Added DayNight resources (values/colors.xml and values-night/colors.xml) so native Android spinner popups use crisp dark text on white in Light Mode, and crisp white text on dark navy in Dark Mode.
-//   - Updated global CSS select option styles so HTML options render with bold, high-contrast text in all themes.
+// v2.12.99: Z91 POS TERMINAL PERFORMANCE & BLUETOOTH SOCKET CLEANUP FIX.
+//   - Fixed Bluetooth Classic socket memory leak by closing unhandled reflectionSocket handles on connection failures.
+//   - Added 30s cooldown for PosApi.initializePrinter and PosApi.appInit on hardware probe errors.
+//   - Added in-flight promise deduplication to getUnsyncedFromLocalDB to eliminate rapid parallel Capacitor bridge calls.
+//   - Added 5-minute memory cache to FarmerSyncDashboard name lookup and skipped redundant IndexedDB session writes.
 //
-export const APP_VERSION = '2.12.98';
-export const APP_VERSION_CODE = 248;
+export const APP_VERSION = '2.12.100';
+export const APP_VERSION_CODE = 250;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'scale-db-parity-auto-backup';
+export const APP_FIX_TAG = 'direct-truncation-step-scale-fix';
 
 
 

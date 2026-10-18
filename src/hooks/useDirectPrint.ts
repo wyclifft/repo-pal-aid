@@ -1,4 +1,5 @@
 import { printReceipt } from '@/services/bluetooth';
+import { roundWeight } from '@/utils/weightUtils';
 import type { MilkCollection } from '@/lib/supabase';
 import { toast } from 'sonner';
 
@@ -41,7 +42,7 @@ export const printMilkReceiptDirect = async (
   }
 
   const first = receipts[0];
-  const totalWeight = receipts.reduce((sum, r) => sum + r.weight, 0);
+  const totalWeight = roundWeight(receipts.reduce((sum, r) => sum + (Number(r.weight) || 0), 0), 3);
 
   // Format collections for printing
   const collections = receipts.map((receipt, index) => ({

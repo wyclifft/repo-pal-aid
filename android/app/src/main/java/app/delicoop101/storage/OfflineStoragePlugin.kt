@@ -10,6 +10,14 @@ import app.delicoop101.database.DelicoopDatabase
 import app.delicoop101.database.SyncRecord
 import app.delicoop101.database.DatabaseLogger
 import app.delicoop101.database.DatabaseBackupManager
+import app.delicoop101.database.BackfillManager
+import app.delicoop101.database.CmMember
+import app.delicoop101.database.FmItem
+import app.delicoop101.database.UserEntity
+import app.delicoop101.database.CmCredit
+import app.delicoop101.database.FmTank
+import app.delicoop101.database.Season
+import app.delicoop101.database.DeviceConfig
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -79,6 +87,17 @@ class OfflineStoragePlugin : Plugin() {
                 Log.d(TAG, "[SAVE] Record saved: $referenceNo (id=$id, type=$recordType)")
                 DatabaseLogger.info(TAG, "Record saved to encrypted DB", "ref=$referenceNo, type=$recordType, id=$id")
 
+                // Synchronize transaction to em_transaction for instant local reporting/queries
+                try {
+                    val emTx = BackfillManager.parsePayloadToTransaction(record, referenceNo)
+                    if (emTx != null) {
+                        db.emTransactionDao().insert(emTx)
+                        Log.d(TAG, "[SAVE] Record dual-written to em_transaction: $referenceNo")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "[SAVE] Dual-write to em_transaction skipped: ${e.message}")
+                }
+
                 // Asynchronously trigger backup to external storage
                 scope.launch {
                     DatabaseBackupManager.backupDatabase(context)
@@ -114,13 +133,8 @@ class OfflineStoragePlugin : Plugin() {
                     db.syncRecordDao().getUnsynced()
                 }
 
-                Log.d(TAG, "[GET] Found ${records.size} unsynced records")
-                if (records.isNotEmpty()) {
-                    records.forEach { 
-                        Log.d(TAG, "[GET] PENDING DETECTED: ref=${it.referenceNo}, type=${it.recordType}, id=${it.id}")
-                    }
-                }
-                DatabaseLogger.info(TAG, "Retrieved unsynced records", "count=${records.size}")
+                Log.d(TAG, "[GET] Found ${records.size} unsynced records for type=${recordType ?: "all"}")
+                DatabaseLogger.info(TAG, "Retrieved unsynced records", "type=${recordType ?: "all"}, count=${records.size}")
 
                 // Convert to JSON string for web layer
                 val jsonArray = JSONArray()
@@ -425,6 +439,404 @@ class OfflineStoragePlugin : Plugin() {
                 withContext(Dispatchers.Main) {
                     call.reject("Failed to restore database: ${e.message}")
                 }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun upsertMembers(call: PluginCall) {
+        val membersArray = call.getArray("members")
+        if (membersArray == null) {
+            call.reject("members array is required")
+            return
+        }
+
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                val memberList = mutableListOf<CmMember>()
+
+                for (i in 0 until membersArray.length()) {
+                    val obj = membersArray.getJSONObject(i)
+                    memberList.add(
+                        CmMember(
+                            descript = obj.optString("descript", obj.optString("name", "")),
+                            mcode = obj.optString("mcode", obj.optString("memberno", "")),
+                            idno = obj.optString("idno", ""),
+                            route = obj.optString("route", ""),
+                            status = obj.optInt("status", 1),
+                            mstatus = obj.optString("mstatus", ""),
+                            clientFetch = obj.optString("clientFetch", null),
+                            clientFetch1 = obj.optString("clientFetch1", null),
+                            ccode = obj.optString("ccode", ""),
+                            crbal = obj.optString("crbal", "0"),
+                            prvqty = obj.optDouble("prvqty", 0.0),
+                            currqty = obj.optDouble("currqty", 0.0),
+                            multOpt = obj.optInt("multOpt", 0)
+                        )
+                    )
+                }
+
+                if (memberList.isNotEmpty()) {
+                    db.cmMemberDao().insertAll(memberList)
+                    scope.launch { DatabaseBackupManager.backupDatabase(context) }
+                }
+
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("success", true)
+                    result.put("count", memberList.size)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[MEMBERS] Upsert failed: ${e.message}", e)
+                withContext(Dispatchers.Main) { call.reject("Failed to upsert members: ${e.message}") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun getMembers(call: PluginCall) {
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                val members = db.cmMemberDao().getAll()
+                val jsonArray = JSONArray()
+
+                for (m in members) {
+                    val obj = JSONObject()
+                    obj.put("id", m.id)
+                    obj.put("descript", m.descript)
+                    obj.put("mcode", m.mcode)
+                    obj.put("idno", m.idno)
+                    obj.put("route", m.route)
+                    obj.put("status", m.status)
+                    obj.put("ccode", m.ccode)
+                    obj.put("crbal", m.crbal)
+                    obj.put("prvqty", m.prvqty)
+                    obj.put("currqty", m.currqty)
+                    jsonArray.put(obj)
+                }
+
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("members", jsonArray.toString())
+                    result.put("count", members.size)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { call.reject("Failed to get members: ${e.message}") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun upsertItems(call: PluginCall) {
+        val itemsArray = call.getArray("items")
+        if (itemsArray == null) {
+            call.reject("items array is required")
+            return
+        }
+
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                val itemList = mutableListOf<FmItem>()
+
+                for (i in 0 until itemsArray.length()) {
+                    val obj = itemsArray.getJSONObject(i)
+                    itemList.add(
+                        FmItem(
+                            icode = obj.optString("icode", ""),
+                            descript = obj.optString("descript", ""),
+                            sprice = obj.optDouble("sprice", 0.0),
+                            mprice = obj.optDouble("mprice", 0.0),
+                            stockbal = obj.optDouble("stockbal", 0.0),
+                            ccode = obj.optString("ccode", ""),
+                            coreUpload = obj.optInt("coreUpload", 0),
+                            clientFetch = obj.optInt("clientFetch", 0),
+                            clientFetch1 = obj.optInt("clientFetch1", 0),
+                            invtype = obj.optString("invtype", "")
+                        )
+                    )
+                }
+
+                if (itemList.isNotEmpty()) {
+                    db.fmItemDao().insertAll(itemList)
+                    scope.launch { DatabaseBackupManager.backupDatabase(context) }
+                }
+
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("success", true)
+                    result.put("count", itemList.size)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[ITEMS] Upsert failed: ${e.message}", e)
+                withContext(Dispatchers.Main) { call.reject("Failed to upsert items: ${e.message}") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun getItems(call: PluginCall) {
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                val items = db.fmItemDao().getAll()
+                val jsonArray = JSONArray()
+
+                for (item in items) {
+                    val obj = JSONObject()
+                    obj.put("id", item.id)
+                    obj.put("icode", item.icode)
+                    obj.put("descript", item.descript)
+                    obj.put("sprice", item.sprice)
+                    obj.put("mprice", item.mprice)
+                    obj.put("stockbal", item.stockbal)
+                    obj.put("ccode", item.ccode)
+                    obj.put("invtype", item.invtype)
+                    jsonArray.put(obj)
+                }
+
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("items", jsonArray.toString())
+                    result.put("count", items.size)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { call.reject("Failed to get items: ${e.message}") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun getEmTransactions(call: PluginCall) {
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                val transactions = db.emTransactionDao().getAll()
+                val jsonArray = JSONArray()
+
+                for (tx in transactions) {
+                    val obj = JSONObject()
+                    obj.put("id", tx.id)
+                    obj.put("transrefno", tx.transrefno)
+                    obj.put("userId", tx.userId)
+                    obj.put("clerk", tx.clerk)
+                    obj.put("deviceserial", tx.deviceserial)
+                    obj.put("memberno", tx.memberno)
+                    obj.put("route", tx.route)
+                    obj.put("weight", tx.weight)
+                    obj.put("session", tx.session)
+                    obj.put("transdate", tx.transdate)
+                    obj.put("transtime", tx.transtime)
+                    obj.put("amount", tx.amount)
+                    obj.put("icode", tx.icode)
+                    obj.put("uploaded", tx.uploaded)
+                    obj.put("ccode", tx.ccode)
+                    jsonArray.put(obj)
+                }
+
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("transactions", jsonArray.toString())
+                    result.put("count", transactions.size)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { call.reject("Failed to get em_transactions: ${e.message}") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun upsertUsers(call: PluginCall) {
+        val usersArray = call.getArray("users")
+        if (usersArray == null) {
+            call.reject("users array is required")
+            return
+        }
+
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                val userList = mutableListOf<UserEntity>()
+
+                for (i in 0 until usersArray.length()) {
+                    val obj = usersArray.getJSONObject(i)
+                    userList.add(
+                        UserEntity(
+                            userid = obj.optString("userid", ""),
+                            username = obj.optString("username", ""),
+                            password = obj.optString("password", ""),
+                            groupid = obj.optString("groupid", "1"),
+                            supervisor = obj.optInt("supervisor", 0),
+                            astatus = obj.optInt("astatus", 1),
+                            cPassword = obj.optString("c_password", ""),
+                            email = obj.optString("email", ""),
+                            ccode = obj.optString("ccode", "")
+                        )
+                    )
+                }
+
+                if (userList.isNotEmpty()) {
+                    db.userDao().insertAll(userList)
+                    scope.launch { DatabaseBackupManager.backupDatabase(context) }
+                }
+
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("success", true)
+                    result.put("count", userList.size)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[USERS] Upsert failed: ${e.message}", e)
+                withContext(Dispatchers.Main) { call.reject("Failed to upsert users: ${e.message}") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun upsertCredits(call: PluginCall) {
+        val creditsArray = call.getArray("credits")
+        if (creditsArray == null) {
+            call.reject("credits array is required")
+            return
+        }
+
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                val creditList = mutableListOf<CmCredit>()
+
+                for (i in 0 until creditsArray.length()) {
+                    val obj = creditsArray.getJSONObject(i)
+                    creditList.add(
+                        CmCredit(
+                            crcode = obj.optString("crcode", ""),
+                            descript = obj.optString("descript", ""),
+                            ccode = obj.optString("ccode", ""),
+                            coreUpload = obj.optString("coreUpload", "0"),
+                            clientFetch = obj.optString("clientFetch", "0"),
+                            clientFetch1 = obj.optInt("clientFetch1", 0)
+                        )
+                    )
+                }
+
+                if (creditList.isNotEmpty()) {
+                    db.cmCreditDao().insertAll(creditList)
+                    scope.launch { DatabaseBackupManager.backupDatabase(context) }
+                }
+
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("success", true)
+                    result.put("count", creditList.size)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[CREDITS] Upsert failed: ${e.message}", e)
+                withContext(Dispatchers.Main) { call.reject("Failed to upsert credits: ${e.message}") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun upsertTanks(call: PluginCall) {
+        val tanksArray = call.getArray("tanks")
+        if (tanksArray == null) {
+            call.reject("tanks array is required")
+            return
+        }
+
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                val tankList = mutableListOf<FmTank>()
+
+                for (i in 0 until tanksArray.length()) {
+                    val obj = tanksArray.getJSONObject(i)
+                    tankList.add(
+                        FmTank(
+                            tcode = obj.optString("tcode", ""),
+                            descript = obj.optString("descript", ""),
+                            icode = obj.optString("icode", ""),
+                            idesc = obj.optString("idesc", ""),
+                            depart = obj.optString("depart", ""),
+                            ccode = obj.optString("ccode", ""),
+                            cname = obj.optString("cname", ""),
+                            caddress = obj.optString("caddress", ""),
+                            tel = obj.optString("tel", ""),
+                            email = obj.optString("email", ""),
+                            printOptions = obj.optString("printOptions", "3"),
+                            clientFetch = obj.optInt("clientFetch", 1),
+                            mprefix = obj.optString("mprefix", "M")
+                        )
+                    )
+                }
+
+                if (tankList.isNotEmpty()) {
+                    db.fmTankDao().insertAll(tankList)
+                    scope.launch { DatabaseBackupManager.backupDatabase(context) }
+                }
+
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("success", true)
+                    result.put("count", tankList.size)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[TANKS] Upsert failed: ${e.message}", e)
+                withContext(Dispatchers.Main) { call.reject("Failed to upsert tanks: ${e.message}") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun upsertSeasons(call: PluginCall) {
+        val seasonsArray = call.getArray("seasons")
+        if (seasonsArray == null) {
+            call.reject("seasons array is required")
+            return
+        }
+
+        scope.launch {
+            try {
+                val db = DelicoopDatabase.getInstance(context)
+                val seasonList = mutableListOf<Season>()
+
+                for (i in 0 until seasonsArray.length()) {
+                    val obj = seasonsArray.getJSONObject(i)
+                    seasonList.add(
+                        Season(
+                            ccode = obj.optString("ccode", ""),
+                            scode = obj.optString("scode", ""),
+                            descript = obj.optString("descript", ""),
+                            dateFrom = obj.optString("date_from", obj.optString("dateFrom", "")),
+                            dateTo = obj.optString("date_to", obj.optString("dateTo", ""))
+                        )
+                    )
+                }
+
+                if (seasonList.isNotEmpty()) {
+                    db.seasonDao().insertAll(seasonList)
+                    scope.launch { DatabaseBackupManager.backupDatabase(context) }
+                }
+
+                withContext(Dispatchers.Main) {
+                    val result = JSObject()
+                    result.put("success", true)
+                    result.put("count", seasonList.size)
+                    call.resolve(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[SEASONS] Upsert failed: ${e.message}", e)
+                withContext(Dispatchers.Main) { call.reject("Failed to upsert seasons: ${e.message}") }
             }
         }
     }

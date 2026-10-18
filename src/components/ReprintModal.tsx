@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { formatWeight } from '@/utils/weightUtils';
+import { formatWeight, roundWeight } from '@/utils/weightUtils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -475,7 +475,7 @@ export const ReprintModal = ({
   };
 
   const getTotalWeight = (collections: MilkCollection[]) => {
-    return collections.reduce((sum, r) => sum + r.weight, 0);
+    return roundWeight(collections.reduce((sum, r) => sum + (Number(r.weight) || 0), 0), 3);
   };
 
   const goToPage = (page: number) => {

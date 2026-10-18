@@ -55,6 +55,12 @@ abstract class DelicoopDatabase : RoomDatabase() {
     abstract fun milkTransactionDao(): MilkTransactionDao
     abstract fun fmTankDao(): FmTankDao
     abstract fun sessDao(): SessDao
+    abstract fun cmCreditDao(): CmCreditDao
+    abstract fun rtInitDao(): RtInitDao
+    abstract fun milkSessionDao(): MilkSessionDao
+    abstract fun seasonDao(): SeasonDao
+    abstract fun aiTransactionDao(): AiTransactionDao
+    abstract fun storeTransactionDao(): StoreTransactionDao
 
     companion object {
         private const val TAG = "DelicoopDatabase"
@@ -390,6 +396,7 @@ abstract class DelicoopDatabase : RoomDatabase() {
                 }
             }
             forceOpen(instance)
+            BackfillManager.triggerBackfillIfNeeded(context.applicationContext)
             return instance
         }
 

@@ -262,6 +262,14 @@ async function tryConnectOnce(role: BtRole, saved: SavedDevice): Promise<{ ok: b
 function scheduleRetry(role: BtRole) {
   const s = state[role];
   if (s.forgotten) return;
+
+  // v2.12.100: Max 5 consecutive retry attempts when scale/printer is offline to prevent endlessly locking Bluetooth sockets
+  if (s.attempt >= 5) {
+    btlog("warn", role, `max retry attempts (${s.attempt}) reached; pausing background auto-reconnect until manual user action`);
+    setStatus(role, "failed", { retryAt: null });
+    return;
+  }
+
   const delay = BACKOFF_MS[Math.min(s.attempt, BACKOFF_MS.length - 1)];
   s.retryAt = Date.now() + delay;
   setStatus(role, "reconnecting", {});
@@ -482,12 +490,23 @@ export function installAutoReconnect() {
   window.addEventListener("printerConnectionChange", handle("printer"));
 
   // Resume from background: try to (re)connect both roles with stagger.
+  let lastResumeAt = 0;
   const onResume = () => {
-    btlog("info", "scale", "app resumed → ensureConnected both roles (staggered)");
-    state.scale.attempt = 0;
-    state.printer.attempt = 0;
-    void ensureConnected("scale");
-    setTimeout(() => void ensureConnected("printer"), 600);
+    const now = Date.now();
+    if (now - lastResumeAt < 1500) return; // Debounce simultaneous appStateChange / visibilitychange / online events
+    lastResumeAt = now;
+
+    // Only retry on resume if scale/printer hasn't failed max retries (prevent background socket flooding)
+    if (state.scale.attempt < 5) {
+      btlog("info", "scale", "app resumed → ensureConnected scale");
+      void ensureConnected("scale");
+    }
+    if (state.printer.attempt < 5) {
+      setTimeout(() => {
+        btlog("info", "printer", "app resumed → ensureConnected printer");
+        void ensureConnected("printer");
+      }, 600);
+    }
   };
 
   if (Capacitor.isNativePlatform()) {

@@ -97,7 +97,16 @@ export const FarmerSearch = ({ onSelectFarmer, value, selectedRoute, selectedMpr
         }
       }
 
-      return idMatch || includesMatch || nameMatch || mprefixSuffixMatch;
+      // Zero-padded suffix match: e.g. typing "44" matches "915000044" or "M00044"
+      let zeroSuffixMatch = false;
+      if (numericQuery && cleanId.endsWith(numericQuery)) {
+        const prefixPart = cleanId.slice(0, cleanId.length - numericQuery.length);
+        if (prefixPart.length === 0 || /[\D0]$/.test(prefixPart)) {
+          zeroSuffixMatch = true;
+        }
+      }
+
+      return idMatch || includesMatch || nameMatch || mprefixSuffixMatch || zeroSuffixMatch;
     });
     
     setSuggestions(filtered.slice(0, 50));

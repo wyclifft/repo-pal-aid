@@ -376,6 +376,13 @@ class BluetoothClassicPlugin : Plugin() {
         } catch (firstError: IOException) {
             try { first.close() } catch (_: IOException) {}
 
+            val msg = firstError.message ?: ""
+            // Fail fast if remote device is completely unreachable / turned off to prevent multi-tier timeout locks
+            if (msg.contains("socket might closed or timeout", ignoreCase = true) || msg.contains("Connection refused", ignoreCase = true)) {
+                Log.w(TAG, "[BT] Primary connect failed due to device offline/unreachable (${firstError.message}); skipping secondary fallbacks")
+                throw firstError
+            }
+
             Log.w(TAG, "[BT] Secure connect failed (${firstError.message}), trying insecure fallback...")
             val fallback = try {
                 device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
@@ -392,12 +399,14 @@ class BluetoothClassicPlugin : Plugin() {
             }
 
             // Fallback: Reflection createRfcommSocket(1) for RFCOMM channel 1 direct socket
+            var reflectionSocket: BluetoothSocket? = null
             try {
                 val m = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
-                val reflectionSocket = m.invoke(device, 1) as BluetoothSocket
+                reflectionSocket = m.invoke(device, 1) as BluetoothSocket
                 reflectionSocket.connect()
                 reflectionSocket
             } catch (reflectionError: Throwable) {
+                try { reflectionSocket?.close() } catch (_: Throwable) {}
                 Log.e(TAG, "[BT] Reflection fallback failed: ${reflectionError.message}")
                 throw firstError
             }
@@ -506,16 +515,15 @@ class BluetoothClassicPlugin : Plugin() {
                 try {
                     val bytes = stream.read(buffer)
                     if (bytes > 0) {
-                        val data = String(buffer, 0, bytes)
-                        Log.d(TAG, "[BT][$role] Received: $data")
-
-                        withContext(Dispatchers.Main) {
-                            val event = JSObject()
-                            event.put("data", data)
-                            event.put("role", role)
-                            event.put("address", connection.device?.address)
-                            notifyListeners("dataReceived", event)
-                        }
+                        val data = String(buffer, 0, bytes, Charsets.ISO_8859_1)
+                        Log.d(TAG, "[BT][$role] Read $bytes bytes: '$data'")
+                        // v2.12.99: Emit directly on Dispatchers.IO background thread to eliminate Dispatchers.Main
+                        // queue lag when streaming high-frequency scale data (e.g. 20-50 Hz).
+                        val event = JSObject()
+                        event.put("data", data)
+                        event.put("role", role)
+                        event.put("address", connection.device?.address)
+                        notifyListeners("dataReceived", event)
                     } else if (bytes < 0) {
                         val reason = "bt socket closed, read return: $bytes"
                         Log.e(TAG, "[BT][$role] Read error: $reason")
@@ -539,16 +547,18 @@ class BluetoothClassicPlugin : Plugin() {
         if (connection.socket == null && connection.inputStream == null && connection.device == null) {
             return
         }
-        try {
-            connection.inputStream?.close()
-            connection.socket?.close()
-        } catch (e: IOException) {
-            Log.e(TAG, "[BT][$role] Error closing stale connection: ${e.message}")
-        }
+        connection.readJob?.cancel()
+        connection.readJob = null
+
+        val socketToClose = connection.socket
+        val streamToClose = connection.inputStream
         connection.inputStream = null
         connection.socket = null
         connection.device = null
-        connection.readJob = null
+
+        try { streamToClose?.close() } catch (_: Throwable) {}
+        try { socketToClose?.close() } catch (_: Throwable) {}
+
         withContext(Dispatchers.Main) {
             val event = JSObject()
             event.put("error", error)
@@ -569,15 +579,15 @@ class BluetoothClassicPlugin : Plugin() {
         val address = connection.device?.address
         connection.readJob?.cancel()
         connection.readJob = null
-        try {
-            connection.inputStream?.close()
-            connection.socket?.close()
-        } catch (e: IOException) {
-            Log.e(TAG, "[BT][$role] Error closing connection: ${e.message}")
-        }
+
+        val socketToClose = connection.socket
+        val streamToClose = connection.inputStream
         connection.inputStream = null
         connection.socket = null
         connection.device = null
+
+        try { streamToClose?.close() } catch (_: Throwable) {}
+        try { socketToClose?.close() } catch (_: Throwable) {}
 
         if (notify) {
             val state = JSObject()

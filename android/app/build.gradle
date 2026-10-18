@@ -23,8 +23,10 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 248
-        versionName "2.12.98"
+        versionCode 250
+        versionName "2.12.100"
+        
+        multiDexEnabled true
         
         ndk {
             abiFilters "armeabi-v7a"
@@ -52,6 +54,10 @@ android {
     // NEVER committed. When they are absent the build behaves exactly as
     // before (no signingConfig), so nothing breaks for local/debug builds.
     signingConfigs {
+        debug {
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
         release {
             def storePath = project.findProperty('DELICOOP_STORE_FILE') ?: System.getenv('DELICOOP_STORE_FILE')
             if (storePath) {
@@ -59,11 +65,16 @@ android {
                 storePassword project.findProperty('DELICOOP_STORE_PASSWORD') ?: System.getenv('DELICOOP_STORE_PASSWORD')
                 keyAlias project.findProperty('DELICOOP_KEY_ALIAS') ?: System.getenv('DELICOOP_KEY_ALIAS')
                 keyPassword project.findProperty('DELICOOP_KEY_PASSWORD') ?: System.getenv('DELICOOP_KEY_PASSWORD')
+                v1SigningEnabled true
+                v2SigningEnabled true
             }
         }
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
@@ -73,11 +84,15 @@ android {
         }
     }
 
-    // v2.12.13: Ensure legacy packaging is enabled so 4KB-aligned native libs (like SQLCipher & POS C++ libs)
-    // are extracted to disk on installation, enabling dlopen to succeed on Android 14+ without crashing.
+    // Ensure legacy packaging is enabled for 4KB page alignment on Android 14+ / 15.
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            excludes += [
+                'lib/x86/**',
+                'lib/x86_64/**',
+                'lib/arm64-v8a/**'
+            ]
         }
     }
 

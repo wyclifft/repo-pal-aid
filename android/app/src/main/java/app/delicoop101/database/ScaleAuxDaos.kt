@@ -61,3 +61,57 @@ interface SessDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(sessions: List<Sess>)
 }
+
+@Dao
+interface CmCreditDao {
+    @Query("SELECT * FROM cm_credits")
+    suspend fun getAll(): List<CmCredit>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(credits: List<CmCredit>)
+}
+
+@Dao
+interface RtInitDao {
+    @Query("SELECT * FROM rtinit")
+    suspend fun getAll(): List<RtInit>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(items: List<RtInit>)
+}
+
+@Dao
+interface MilkSessionDao {
+    @Query("SELECT * FROM milk_session ORDER BY id DESC LIMIT 1")
+    suspend fun getLatest(): MilkSession?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(session: MilkSession): Long
+}
+
+@Dao
+interface SeasonDao {
+    @Query("SELECT * FROM Seasons")
+    suspend fun getAll(): List<Season>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(seasons: List<Season>)
+}
+
+@Dao
+interface AiTransactionDao {
+    @Query("SELECT * FROM ai_transaction")
+    suspend fun getAll(): List<AiTransaction>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(tx: AiTransaction): Long
+}
+
+@Dao
+interface StoreTransactionDao {
+    @Query("SELECT * FROM store_transaction")
+    suspend fun getAll(): List<StoreTransaction>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(tx: StoreTransaction): Long
+}

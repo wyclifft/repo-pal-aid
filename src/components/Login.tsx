@@ -512,25 +512,6 @@ export const Login = memo(({ onLogin }: LoginProps) => {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-4 overflow-hidden">
-        {deviceStatus === 'pending' && (
-          <div className="mb-3 p-3 bg-yellow-50 border-2 border-yellow-400 rounded-lg max-w-sm w-full">
-            <div className="flex items-start gap-2.5">
-              <span className="text-xl">⏳</span>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-semibold text-yellow-800 mb-0.5 text-xs">Device Pending Approval</h3>
-                <p className="text-[11px] text-yellow-700 mb-1.5">
-                  Your device is waiting for administrator approval.
-                </p>
-                <div className="bg-white p-2 rounded border border-yellow-300">
-                  <p className="text-[10px] font-mono text-gray-800 break-all select-all">
-                    <strong>Device ID:</strong> {currentDeviceId || displayFingerprint}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {deviceStatus === 'approved' && (
           <div className="mb-3 p-2.5 bg-green-50 border border-green-400 rounded-lg text-center max-w-sm w-full">
             <span className="text-green-700 font-semibold text-xs">✓ Device Approved</span>

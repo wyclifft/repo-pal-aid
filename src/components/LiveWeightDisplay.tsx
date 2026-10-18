@@ -42,7 +42,6 @@ export const LiveWeightDisplay = ({
     lastRawWeight,
   } = useScaleConnection({
     onWeightChange: (w) => {
-      console.log(`📺 LiveWeightDisplay onWeightChange callback fired: ${w} kg`);
       onWeightChange(w);
     }, 
     onEntryTypeChange 
@@ -66,71 +65,20 @@ export const LiveWeightDisplay = ({
     }
   }, []); // Only on mount
   
-  // Stabilize display weight - prevents flickering when scale is stable
+  // Update display weight instantly when live weight or props weight changes
   useEffect(() => {
     if (!scaleConnected) {
-      recentReadingsRef.current = [];
       setStableDisplayWeight(0);
       return;
     }
-    
-    // v2.12.61: Support negative weight display (e.g. -0.4 when container removed)
     const incomingWeight = liveWeight !== 0 ? liveWeight : weight;
-    
-    // Handle zero weight immediately
-    if (incomingWeight === 0) {
-      recentReadingsRef.current = [];
-      setStableDisplayWeight(0);
-      return;
-    }
-    
-    // Detect step changes (>= 50g) and flush previous readings immediately
-    const lastReading = recentReadingsRef.current.length > 0 ? recentReadingsRef.current[recentReadingsRef.current.length - 1] : null;
-    if (lastReading !== null && Math.abs(incomingWeight - lastReading) >= DISPLAY_STABLE_THRESHOLD) {
-      recentReadingsRef.current = [incomingWeight];
-    } else {
-      recentReadingsRef.current.push(incomingWeight);
-    }
-
-    if (recentReadingsRef.current.length > DISPLAY_STABLE_COUNT * 2) {
-      recentReadingsRef.current = recentReadingsRef.current.slice(-DISPLAY_STABLE_COUNT);
-    }
-    
-    const now = Date.now();
-    const recentReadings = recentReadingsRef.current.slice(-DISPLAY_STABLE_COUNT);
-    
-    // Check if readings are stable (within threshold)
-    let isStable = false;
-    if (recentReadings.length >= DISPLAY_STABLE_COUNT) {
-      const min = Math.min(...recentReadings);
-      const max = Math.max(...recentReadings);
-      isStable = (max - min) <= DISPLAY_STABLE_THRESHOLD;
-    }
-    
-    // Update display if stable OR enough time has passed
-    const timeSinceLastUpdate = now - lastDisplayUpdateRef.current;
-    
-    if (isStable) {
-      // Lock to average of stable readings
-      const avg = recentReadings.reduce((a, b) => a + b, 0) / recentReadings.length;
-      const roundedAvg = roundWeight(avg, 3);
-      if (roundedAvg !== stableDisplayWeight) {
-        setStableDisplayWeight(roundedAvg);
-        lastDisplayUpdateRef.current = now;
-      }
-    } else if (timeSinceLastUpdate > DISPLAY_UPDATE_INTERVAL) {
-      // Not stable but throttle rapid updates
-      setStableDisplayWeight(roundWeight(incomingWeight, 3));
-      lastDisplayUpdateRef.current = now;
-    }
-    
-    // Track data received
+    setStableDisplayWeight(incomingWeight);
     if (incomingWeight !== 0) {
       setHasReceivedData(true);
-      setLastWeightTime(now);
+      setLastWeightTime(Date.now());
       setShowResubscribe(false);
     }
-  }, [scaleConnected, liveWeight, weight, stableDisplayWeight]);
+  }, [scaleConnected, liveWeight, weight]);
 
   // Show resubscribe button if connected but no data for 10 seconds
   useEffect(() => {

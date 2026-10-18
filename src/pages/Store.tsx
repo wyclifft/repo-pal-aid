@@ -480,8 +480,10 @@ const Store = () => {
     const activeRoute = resolveDashboardActiveRoute();
     const mprefixStr = activeRoute?.mprefix ? String(activeRoute.mprefix).trim() : '';
 
-    const matchesActivePrefix = (f: Farmer) =>
-      f.farmer_id.toUpperCase().startsWith(prefix);
+    const matchesActivePrefix = (f: Farmer) => {
+      const cleanId = (f.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
+      return isMemberMode ? !cleanId.startsWith('D') : cleanId.startsWith('D');
+    };
 
     // Detect when a typed full ID belongs to the opposite mode and warn the user.
     const trimmedUpper = input.trim().toUpperCase();
@@ -510,10 +512,20 @@ const Store = () => {
       );
       if (prefixedMatch) return prefixedMatch;
 
+      // Try zero-padded prepends: e.g. mprefixStr="915", numericInput="44" -> "915000044" or "91500044"
+      for (const padLen of [4, 5, 6, 7, 8]) {
+        const paddedPrefixed = `${mprefixStr}${numericInput.padStart(padLen, '0')}`.toLowerCase();
+        const padMatch = farmers.find(
+          f => f.farmer_id.replace(/^#/, '').trim().toLowerCase() === paddedPrefixed &&
+               matchesActivePrefix(f)
+        );
+        if (padMatch) return padMatch;
+      }
+
       const suffixMatch = farmers.find(f => {
         if (!matchesActivePrefix(f)) return false;
         const cleanFId = f.farmer_id.replace(/^#/, '').trim();
-        if (!cleanFId.startsWith(mprefixStr)) return false;
+        if (!cleanFId.toLowerCase().startsWith(mprefixStr.toLowerCase())) return false;
         const suffix = cleanFId.slice(mprefixStr.length);
         if (!suffix) return false;
         const suffixNumeric = suffix.replace(/\D/g, '');
@@ -524,6 +536,7 @@ const Store = () => {
     }
 
     if (numericInput && numericInput === input.trim()) {
+      const inputNum = parseInt(numericInput, 10);
       const paddedId = `${prefix}${numericInput.padStart(5, '0')}`;
       const paddedMatch = farmers.find(
         f => f.farmer_id.toUpperCase() === paddedId.toUpperCase() && matchesActivePrefix(f)
@@ -533,9 +546,19 @@ const Store = () => {
       const numericMatch = farmers.find(f => {
         if (!matchesActivePrefix(f)) return false;
         const farmerNumeric = f.farmer_id.replace(/\D/g, '');
-        return parseInt(farmerNumeric, 10) === parseInt(numericInput, 10);
+        return Boolean(farmerNumeric) && parseInt(farmerNumeric, 10) === inputNum;
       });
       if (numericMatch) return numericMatch;
+
+      // Zero-padded suffix match (e.g. 915000044 for input 44)
+      const zeroSuffixMatch = farmers.find(f => {
+        if (!matchesActivePrefix(f)) return false;
+        const cleanFId = f.farmer_id.replace(/^#/, '').trim();
+        if (!cleanFId.endsWith(numericInput)) return false;
+        const prefixPart = cleanFId.slice(0, cleanFId.length - numericInput.length);
+        return prefixPart.length === 0 || /[\D0]$/.test(prefixPart);
+      });
+      if (zeroSuffixMatch) return zeroSuffixMatch;
     }
     return null;
   }, [farmers, isMemberMode]);
@@ -985,10 +1008,12 @@ const Store = () => {
     setItemDisplayLimit(50);
   }, [itemSearchQuery]);
 
-  const prefix = isMemberMode ? 'M' : 'D';
   const prefixFilteredFarmers = useMemo(() => {
-    return farmers.filter(f => f.farmer_id.toUpperCase().startsWith(prefix));
-  }, [farmers, prefix]);
+    return farmers.filter(f => {
+      const cleanId = (f.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
+      return isMemberMode ? !cleanId.startsWith('D') : cleanId.startsWith('D');
+    });
+  }, [farmers, isMemberMode]);
 
   const filteredFarmers = useMemo(() => {
     if (!farmerSearchQuery.trim()) return prefixFilteredFarmers;

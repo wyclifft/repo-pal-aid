@@ -145,9 +145,9 @@ export const BuyProduceScreen = ({
   const [currentTareWeight, setCurrentTareWeight] = useState(effectiveTareWeight);
   const { light: hapticLight, medium: hapticMedium, success: hapticSuccess } = useHaptics();
 
-  // v2.12.52: Filter Delivered By members to only show those with 'M' prefix
+  // v2.12.52: Filter Delivered By members to exclude Debtors ('D' prefix)
   const groupSearchFarmers = useMemo(() => {
-    return allFarmers.filter(f => f.farmer_id && f.farmer_id.toUpperCase().startsWith('M'));
+    return allFarmers.filter(f => f.farmer_id && !f.farmer_id.replace(/^#/, '').trim().toUpperCase().startsWith('D'));
   }, [allFarmers]);
 
   // Get psettings for AutoW enforcement and produce labeling
@@ -425,9 +425,28 @@ export const BuyProduceScreen = ({
       if (prefixed) {
         return checkAndReturnMatch(prefixed);
       }
+
+      // Try zero-padded prepends: e.g. mprefixStr="915", numericInput="44" -> "915000044"
+      for (const padLen of [4, 5, 6, 7, 8]) {
+        const paddedPrefixed = `${mprefixStr}${numericInput.padStart(padLen, '0')}`.toLowerCase();
+        const padMatch = exactMap.get(paddedPrefixed);
+        if (padMatch) return checkAndReturnMatch(padMatch);
+      }
+
+      // Suffix match with mprefix
+      const suffixMatch = cachedFarmers.find(f => {
+        const cleanFId = f.farmer_id.replace(/^#/, '').trim();
+        if (!cleanFId.toLowerCase().startsWith(mprefixStr.toLowerCase())) return false;
+        const suffix = cleanFId.slice(mprefixStr.length);
+        if (!suffix) return false;
+        const suffixNumeric = suffix.replace(/\D/g, '');
+        return suffix.toLowerCase() === trimmed.toLowerCase() ||
+               (Boolean(suffixNumeric) && parseInt(suffixNumeric, 10) === parseInt(numericInput, 10));
+      });
+      if (suffixMatch) return checkAndReturnMatch(suffixMatch);
     }
 
-    // 3. Padded match & Numeric match
+    // 3. Padded match & Numeric match & Zero-padded suffix match
     if (numericInput) {
       const paddedKey = `M${numericInput.padStart(5, '0')}`.toUpperCase();
       const padded = paddedMap.get(paddedKey);
@@ -441,6 +460,15 @@ export const BuyProduceScreen = ({
         if (numMatch) {
           return checkAndReturnMatch(numMatch);
         }
+
+        // Suffix match for zero-padded farmer IDs (e.g., 915000044 for input 44)
+        const zeroSuffixMatch = cachedFarmers.find(f => {
+          const cleanFId = f.farmer_id.replace(/^#/, '').trim();
+          if (!cleanFId.endsWith(numericInput)) return false;
+          const prefixPart = cleanFId.slice(0, cleanFId.length - numericInput.length);
+          return prefixPart.length === 0 || /[\D0]$/.test(prefixPart);
+        });
+        if (zeroSuffixMatch) return checkAndReturnMatch(zeroSuffixMatch);
       }
     }
 
@@ -578,7 +606,7 @@ export const BuyProduceScreen = ({
   }, []);
 
   // Calculate total captured weight for current farmer
-  const totalCapturedWeight = capturedCollections.reduce((sum, c) => sum + c.weight, 0);
+  const totalCapturedWeight = roundWeight(capturedCollections.reduce((sum, c) => sum + (Number(c.weight) || 0), 0), 3);
 
   return (
     <div className="min-h-screen min-h-[100dvh] bg-gradient-to-b from-teal-100 to-teal-200 flex flex-col overflow-x-hidden">

@@ -251,6 +251,13 @@ class BluetoothClassicJsBridge(
         } catch (firstError: IOException) {
             try { first.close() } catch (_: IOException) {}
 
+            val msg = firstError.message ?: ""
+            // Fail fast if remote device is completely unreachable / turned off to prevent multi-tier timeout locks
+            if (msg.contains("socket might closed or timeout", ignoreCase = true) || msg.contains("Connection refused", ignoreCase = true)) {
+                Log.w(TAG, "[BT][JS] Primary connect failed due to device offline/unreachable (${firstError.message}); skipping secondary fallbacks")
+                throw firstError
+            }
+
             Log.w(TAG, "[BT][JS] Secure connect failed (${firstError.message}), trying insecure fallback...")
             val fallback = try {
                 device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
@@ -267,12 +274,14 @@ class BluetoothClassicJsBridge(
             }
 
             // Fallback: Reflection createRfcommSocket(1) for direct RFCOMM channel 1
+            var reflectionSocket: BluetoothSocket? = null
             try {
                 val m = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
-                val reflectionSocket = m.invoke(device, 1) as BluetoothSocket
+                reflectionSocket = m.invoke(device, 1) as BluetoothSocket
                 reflectionSocket.connect()
                 reflectionSocket
             } catch (reflectionError: Throwable) {
+                try { reflectionSocket?.close() } catch (_: Throwable) {}
                 Log.e(TAG, "[BT][JS] Reflection fallback failed: ${reflectionError.message}")
                 throw firstError
             }
@@ -291,7 +300,8 @@ class BluetoothClassicJsBridge(
                 try {
                     val bytes = stream.read(buffer)
                     if (bytes > 0) {
-                        val data = String(buffer, 0, bytes)
+                        val data = String(buffer, 0, bytes, Charsets.ISO_8859_1)
+                        Log.d(TAG, "[BT][JS][$role] Read $bytes bytes: '$data'")
                         emit("BluetoothClassic:dataReceived", JSONObject()
                             .put("data", data)
                             .put("role", role)
@@ -334,11 +344,15 @@ class BluetoothClassicJsBridge(
         val address = connection.device?.address
         connection.reader?.interrupt()
         connection.reader = null
-        try { connection.inputStream?.close() } catch (_: IOException) {}
-        try { connection.socket?.close() } catch (_: IOException) {}
+
+        val socketToClose = connection.socket
+        val streamToClose = connection.inputStream
         connection.inputStream = null
         connection.socket = null
         connection.device = null
+
+        try { streamToClose?.close() } catch (_: Throwable) {}
+        try { socketToClose?.close() } catch (_: Throwable) {}
 
         if (notify) {
             emit("BluetoothClassic:connectionStateChanged", JSONObject()
