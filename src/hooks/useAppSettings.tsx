@@ -454,62 +454,76 @@ export const useAppSettingsStandalone = (): AppSettingsContextType => {
           console.log('⚠️ Device response missing data - blocking access');
         }
       } else if (response.status === 404) {
-        // Device not found - AUTO-REGISTER it for admin approval
-        console.log('🆕 Device not found, auto-registering for admin approval...');
-        const registered = await registerDevice(fingerprint);
-        
-        if (registered) {
-          console.log('✅ Device registered successfully, waiting for admin approval');
-          setIsPendingApproval(true);
-        } else {
-          console.log('❌ Device registration failed');
+        const cachedAuth = localStorage.getItem('device_authorized');
+        if (cachedAuth === 'true') {
+          // Device was previously authorized - backend route/DB transition, preserve offline capability!
+          const cached = loadCachedSettings();
+          setSettings(cached);
+          setIsDeviceAuthorized(true);
           setIsPendingApproval(false);
+          console.warn('⚠️ Server 404 on previously authorized device - maintaining cached authorization for offline operation');
+        } else {
+          // Device not found - AUTO-REGISTER it for admin approval
+          console.log('🆕 Device not found, auto-registering for admin approval...');
+          const registered = await registerDevice(fingerprint);
+
+          if (registered) {
+            console.log('✅ Device registered successfully, waiting for admin approval');
+            setIsPendingApproval(true);
+          } else {
+            console.log('❌ Device registration failed');
+            setIsPendingApproval(false);
+          }
+
+          // Block access - brand new device needs admin approval
+          setIsDeviceAuthorized(false);
+          localStorage.setItem('device_authorized', 'false');
+          localStorage.removeItem(SETTINGS_STORAGE_KEY);
+          localStorage.removeItem(SETTINGS_CCODE_KEY);
+          setSettings(DEFAULT_SETTINGS);
         }
-        
-        // Block access - device needs admin approval
-        setIsDeviceAuthorized(false);
-        localStorage.setItem('device_authorized', 'false');
-        localStorage.removeItem(SETTINGS_STORAGE_KEY);
-        localStorage.removeItem(SETTINGS_CCODE_KEY);
-        setSettings(DEFAULT_SETTINGS);
-      } else if (response.status === 401) {
-        // Device found but not authorized (exists in devsettings but authorized=0)
-        console.log('🚫 Device exists but not authorized');
+      } else if (response.status === 401 || response.status === 403) {
+        // Device explicitly revoked or unauthorized by admin
+        console.log('🚫 Device explicitly revoked/unauthorized by admin');
         setIsDeviceAuthorized(false);
         setIsPendingApproval(true); // Already registered, waiting approval
         localStorage.setItem('device_authorized', 'false');
         localStorage.removeItem(SETTINGS_STORAGE_KEY);
         localStorage.removeItem(SETTINGS_CCODE_KEY);
         setSettings(DEFAULT_SETTINGS);
-      } else if (response.status === 500) {
-        // Server error - could be database issue or stale code
-        // Try to register the device anyway as it might not exist
-        console.log('⚠️ Server error (500), attempting device registration...');
-        const registered = await registerDevice(fingerprint);
-        
-        if (registered) {
-          console.log('✅ Device registered successfully despite server error');
-          setIsPendingApproval(true);
+      } else if (response.status >= 500) {
+        // Server error (500/502/503/504) - database busy / pool limit reached / server error
+        // CRITICAL FOR OFFLINE POS: Never revoke previously authorized device on server errors!
+        const cachedAuth = localStorage.getItem('device_authorized');
+        if (cachedAuth === 'true') {
+          const cached = loadCachedSettings();
+          setSettings(cached);
+          setIsDeviceAuthorized(true);
+          setIsPendingApproval(false);
+          console.warn(`⚠️ Server returned status ${response.status} (database busy/server error) - maintaining cached authorization for offline operation`);
         } else {
-          console.log('❌ Device registration also failed');
+          console.warn(`⚠️ Server error ${response.status} on unauthorized device - waiting for server recovery`);
+          setIsDeviceAuthorized(false);
           setIsPendingApproval(false);
         }
-        
-        // Block access until backend is fixed and device is approved
-        setIsDeviceAuthorized(false);
-        localStorage.setItem('device_authorized', 'false');
-        localStorage.removeItem(SETTINGS_STORAGE_KEY);
-        localStorage.removeItem(SETTINGS_CCODE_KEY);
-        setSettings(DEFAULT_SETTINGS);
       } else {
-        // Other error - treat as unauthorized for safety
-        setIsDeviceAuthorized(false);
-        setIsPendingApproval(false);
-        localStorage.setItem('device_authorized', 'false');
-        localStorage.removeItem(SETTINGS_STORAGE_KEY);
-        localStorage.removeItem(SETTINGS_CCODE_KEY);
-        setSettings(DEFAULT_SETTINGS);
-        console.log('⚠️ Unexpected response status:', response.status, '- blocking access');
+        // Other unexpected response status - if previously authorized, fallback to cached settings
+        const cachedAuth = localStorage.getItem('device_authorized');
+        if (cachedAuth === 'true') {
+          const cached = loadCachedSettings();
+          setSettings(cached);
+          setIsDeviceAuthorized(true);
+          setIsPendingApproval(false);
+          console.warn(`⚠️ Unexpected status ${response.status} - maintaining cached authorization for offline operation`);
+        } else {
+          setIsDeviceAuthorized(false);
+          setIsPendingApproval(false);
+          localStorage.setItem('device_authorized', 'false');
+          localStorage.removeItem(SETTINGS_STORAGE_KEY);
+          localStorage.removeItem(SETTINGS_CCODE_KEY);
+          setSettings(DEFAULT_SETTINGS);
+          console.log('⚠️ Unexpected response status:', response.status, '- blocking un-authorized access');
+        }
       }
     } catch (error) {
       const errorName = (error as Error).name;

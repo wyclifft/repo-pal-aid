@@ -5,7 +5,10 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
@@ -82,6 +85,7 @@ class BluetoothClassicPlugin : Plugin() {
             val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             bluetoothAdapter = bluetoothManager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
             Log.d(TAG, "[BT] Plugin loaded, adapter available: ${bluetoothAdapter != null}, enabled: ${bluetoothAdapter?.isEnabled == true}, sdk: ${Build.VERSION.SDK_INT}")
+            registerBluetoothReceiver()
         } catch (t: Throwable) {
             // Never let load() throw — a thrown load() causes Capacitor to drop
             // the plugin's method table so every JS call resolves to "not implemented".
@@ -607,7 +611,73 @@ class BluetoothClassicPlugin : Plugin() {
         }
     }
 
+    private var bluetoothReceiverRegistered = false
+    private val bluetoothReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            val action = intent?.action ?: return
+            when (action) {
+                BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                    val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                    Log.d(TAG, "[BT] BroadcastReceiver ACTION_STATE_CHANGED: state=$state")
+                    if (state == BluetoothAdapter.STATE_TURNING_OFF || state == BluetoothAdapter.STATE_OFF) {
+                        Log.w(TAG, "[BT] Bluetooth adapter turning off or off — disconnecting all roles")
+                        disconnectRole("scale", notify = true)
+                        disconnectRole("printer", notify = true)
+                    } else if (state == BluetoothAdapter.STATE_ON) {
+                        Log.i(TAG, "[BT] Bluetooth adapter turned ON — notifying listeners")
+                        val event = JSObject()
+                        event.put("enabled", true)
+                        event.put("state", state)
+                        notifyListeners("adapterStateChanged", event)
+                    }
+                }
+                BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                    val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    }
+                    val address = device?.address
+                    Log.d(TAG, "[BT] BroadcastReceiver ACTION_ACL_DISCONNECTED: device=${device?.name} ($address)")
+                    if (address != null) {
+                        connections.forEach { (role, conn) ->
+                            if (conn.device?.address == address) {
+                                Log.w(TAG, "[BT][$role] Device ACL disconnected ($address)")
+                                disconnectRole(role, notify = true)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun registerBluetoothReceiver() {
+        if (bluetoothReceiverRegistered) return
+        try {
+            val filter = IntentFilter().apply {
+                addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+                addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            }
+            context.registerReceiver(bluetoothReceiver, filter)
+            bluetoothReceiverRegistered = true
+            Log.d(TAG, "[BT] Registered Bluetooth state/ACL BroadcastReceiver")
+        } catch (t: Throwable) {
+            Log.e(TAG, "[BT] Failed to register Bluetooth BroadcastReceiver: ${t.message}")
+        }
+    }
+
+    private fun unregisterBluetoothReceiver() {
+        if (!bluetoothReceiverRegistered) return
+        try {
+            context.unregisterReceiver(bluetoothReceiver)
+            bluetoothReceiverRegistered = false
+        } catch (_: Throwable) {}
+    }
+
     override fun handleOnDestroy() {
+        unregisterBluetoothReceiver()
         disconnectAllInternal()
         scope.cancel()
         super.handleOnDestroy()

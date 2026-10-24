@@ -27,6 +27,7 @@
 import { Capacitor } from "@capacitor/core";
 import { App as CapacitorApp } from "@capacitor/app";
 import {
+  isBluetoothAdapterEnabled,
   isScaleConnected,
   isPrinterConnected,
   verifyScaleConnection,
@@ -41,6 +42,7 @@ import {
   disconnectBluetoothScale,
   disconnectBluetoothPrinter,
   isClassicScaleConnected,
+  syncClassicScaleConnectionState,
   quickReconnectClassicScale,
   isClassicPrinterConnected,
   quickReconnectClassicPrinter,
@@ -197,7 +199,14 @@ function getSavedDevice(role: BtRole): SavedDevice | null {
 
 
 function isLowLevelConnected(role: BtRole): boolean {
-  if (role === "scale") return isScaleConnected() || isClassicScaleConnected();
+  if (role === "scale") {
+    const connected = isScaleConnected() || isClassicScaleConnected();
+    if (!connected && Capacitor.isNativePlatform()) {
+      void syncClassicScaleConnectionState();
+      return isScaleConnected() || isClassicScaleConnected();
+    }
+    return connected;
+  }
   return isPrinterConnected() || isClassicPrinterConnected();
 }
 
@@ -287,6 +296,18 @@ async function ensureConnected(role: BtRole): Promise<void> {
   if (s.forgotten) return;
   if (s.pausedForGesture) return; // wait for next user gesture / manual pair
 
+  if (Capacitor.isNativePlatform()) {
+    const btEnabled = await isBluetoothAdapterEnabled();
+    if (!btEnabled) {
+      btlog("info", role, "Bluetooth adapter is disabled — aborting ensureConnected");
+      if (s.retryTimer) { clearTimeout(s.retryTimer); s.retryTimer = null; }
+      s.attempt = 0;
+      s.lastError = "Bluetooth disabled";
+      setStatus(role, "failed", { retryAt: null });
+      return;
+    }
+  }
+
   let saved = getSavedDevice(role);
 
   // Check if scale and printer share the exact same physical device MAC address
@@ -297,13 +318,14 @@ async function ensureConnected(role: BtRole): Promise<void> {
     otherSaved &&
     saved.deviceId &&
     otherSaved.deviceId &&
-    saved.deviceId.toUpperCase() === otherSaved.deviceId.toUpperCase()
+    saved.deviceId.toUpperCase() === otherSaved.deviceId.toUpperCase() &&
+    saved.deviceId.toUpperCase() !== 'CS10-INTERNAL-PRINTER'
   ) {
-    if (isLowLevelConnected(otherRole) || state[otherRole].status === "connected") {
+    if (isLowLevelConnected(otherRole)) {
       btlog(
         "info",
         role,
-        `Scale and printer share the same device address (${saved.deviceId}). ${otherRole} is currently active. Skipping concurrent connection attempt to prevent RFCOMM collision.`
+        `Scale and printer share device address (${saved.deviceId}). ${otherRole} is active.`
       );
       setStatus(role, "connected", {
         deviceName: saved.deviceName,
@@ -407,11 +429,25 @@ function startHealthMonitor() {
 async function runHealthCheck() {
   for (const role of ["scale", "printer"] as const) {
     const s = state[role];
+    if ((s.status === "failed" || s.status === "disconnected") && s.lastError === "Bluetooth disabled") {
+      if (Capacitor.isNativePlatform()) {
+        const enabled = await isBluetoothAdapterEnabled();
+        if (enabled) {
+          btlog("info", role, "Bluetooth adapter re-enabled (detected in health check) → auto-reconnecting");
+          s.attempt = 0;
+          s.lastError = null;
+          s.pausedForGesture = false;
+          s.forgotten = false;
+          void ensureConnected(role);
+          continue;
+        }
+      }
+    }
     if (s.status !== "connected") continue;
     try {
       const verifier = role === "scale" ? verifyScaleConnection : verifyPrinterConnection;
       const ok = await verifier();
-      if (!ok && !isLowLevelConnected(role)) {
+      if (!ok) {
         btlog("warn", role, "health check failed → triggering reconnect");
         s.attempt = 0;
         s.lastError = "health check failed";
@@ -434,7 +470,7 @@ export function installAutoReconnect() {
   btlog("info", "scale", "BT manager installed");
 
   // Listen for low-level disconnect broadcasts and trigger reconnect with oscillation protection.
-  const handle = (role: BtRole) => (e: Event) => {
+  const handle = (role: BtRole) => async (e: Event) => {
     const detail = (e as CustomEvent<{ connected: boolean }>).detail;
     if (!detail) return;
     if (detail.connected) {
@@ -450,6 +486,18 @@ export function installAutoReconnect() {
       if (state[role].forgotten) {
         setStatus(role, "idle", { deviceName: null });
         return;
+      }
+
+      if (Capacitor.isNativePlatform()) {
+        const btEnabled = await isBluetoothAdapterEnabled();
+        if (!btEnabled) {
+          btlog("info", role, "disconnect event while Bluetooth is disabled — skipping auto-retry schedule");
+          if (state[role].retryTimer) { clearTimeout(state[role].retryTimer!); state[role].retryTimer = null; }
+          state[role].attempt = 0;
+          state[role].lastError = "Bluetooth disabled";
+          setStatus(role, "failed", { retryAt: null });
+          return;
+        }
       }
 
       // Check if low-level disconnect occurred immediately after the other role connected
@@ -488,6 +536,34 @@ export function installAutoReconnect() {
 
   window.addEventListener("scaleConnectionChange", handle("scale"));
   window.addEventListener("printerConnectionChange", handle("printer"));
+
+  // Handle Bluetooth Adapter being turned ON
+  const handleAdapterStateChange = (enabled: boolean) => {
+    if (enabled) {
+      btlog("info", "scale", "Bluetooth adapter turned ON → triggering auto-reconnect for scale and printer");
+      for (const role of ["scale", "printer"] as const) {
+        state[role].attempt = 0;
+        state[role].lastError = null;
+        state[role].pausedForGesture = false;
+        state[role].forgotten = false;
+        if (state[role].retryTimer) {
+          clearTimeout(state[role].retryTimer!);
+          state[role].retryTimer = null;
+        }
+      }
+      void ensureConnected("scale");
+      setTimeout(() => void ensureConnected("printer"), 600);
+    }
+  };
+
+  window.addEventListener("BluetoothClassic:adapterStateChanged", (e: Event) => {
+    const detail = (e as CustomEvent<{ enabled: boolean }>).detail;
+    if (detail?.enabled !== false) handleAdapterStateChange(true);
+  });
+  window.addEventListener("adapterStateChanged", (e: Event) => {
+    const detail = (e as CustomEvent<{ enabled: boolean }>).detail;
+    if (detail?.enabled !== false) handleAdapterStateChange(true);
+  });
 
   // Resume from background: try to (re)connect both roles with stagger.
   let lastResumeAt = 0;

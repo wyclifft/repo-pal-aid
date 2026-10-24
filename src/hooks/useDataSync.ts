@@ -1113,9 +1113,27 @@ export const useDataSync = () => {
       } catch {}
 
       if (mountedRef.current) {
-        setLastSyncTime(new Date());
+        const syncNow = new Date();
+        const syncNowIso = syncNow.toISOString();
+        setLastSyncTime(syncNow);
         await updatePendingCount(true);
-        
+
+        // Report appVersion, lastSynced timestamp, and lastUpdate timestamp to devSettings on backend
+        try {
+          const { initApkVersionTracking } = await import('@/utils/apkVersionTracker');
+          const { appVersion, lastUpdate } = initApkVersionTracking();
+          const { devicesApi } = await import('@/services/mysqlApi');
+          await devicesApi.updateSyncStatus({
+            device_fingerprint: deviceFingerprint,
+            appVersion,
+            lastSynced: syncNowIso,
+            lastUpdate
+          });
+          console.log(`[SYNC] Updated devSettings sync status: appVersion=${appVersion}, lastSynced=${syncNowIso}, lastUpdate=${lastUpdate}`);
+        } catch (statusErr) {
+          console.warn('[SYNC] Failed to update devSettings sync status:', statusErr);
+        }
+
         // v2.12.18: Always dispatch syncComplete so dashboards and other components refresh
         window.dispatchEvent(new CustomEvent('syncComplete', {
           detail: { synced: syncedCount, source: 'syncAllData' }

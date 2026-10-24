@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useOfflineStatus } from '@/hooks/useOfflineStatus';
-import { WifiOff, AlertTriangle, X, Cloud, CloudOff, RefreshCw } from 'lucide-react';
+import { WifiOff, AlertTriangle, X, Cloud, CloudOff, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 
 export const OfflineIndicator = () => {
   const { isOnline, isSlowConnection } = useOfflineStatus();
   const [dismissed, setDismissed] = useState(false);
-  const [visible, setVisible] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [serverStatus, setServerStatus] = useState<'healthy' | 'db_busy' | 'server_unavailable'>('healthy');
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
   const { isReady, getUnsyncedReceipts, getUnsyncedSales } = useIndexedDB();
 
   // Update pending count - includes milk receipts + store/AI sales
@@ -20,7 +21,6 @@ export const OfflineIndicator = () => {
 
       let totalCount = (unsyncedReceipts?.length || 0) + (unsyncedSales?.length || 0);
 
-      // v2.12.30: Check native storage for discrepancies
       try {
         const { isNativeStorageAvailable, getUnsyncedFromLocalDB } = await import('@/services/offlineStorage');
         if (isNativeStorageAvailable()) {
@@ -28,7 +28,6 @@ export const OfflineIndicator = () => {
           const nativeSales = await getUnsyncedFromLocalDB('store_sale');
           const nativeAI = await getUnsyncedFromLocalDB('ai_sale');
 
-          // Deduplicate refs that exist in both places to avoid double counting
           const idbRefs = new Set(unsyncedReceipts.map(r => r.reference_no));
           const idbSaleRefs = new Set(unsyncedSales.map(r => r.transrefno || r.reference_no));
 
@@ -51,11 +50,11 @@ export const OfflineIndicator = () => {
   // Check pending count on mount and periodically
   useEffect(() => {
     updatePendingCount();
-    const interval = setInterval(updatePendingCount, 10000); // Check every 10 seconds
+    const interval = setInterval(updatePendingCount, 10000);
     return () => clearInterval(interval);
   }, [updatePendingCount]);
 
-  // Listen for sync events
+  // Listen for sync and server status change events
   useEffect(() => {
     const handleSyncStart = () => setIsSyncing(true);
     const handleSyncEnd = () => {
@@ -63,26 +62,40 @@ export const OfflineIndicator = () => {
       updatePendingCount();
     };
 
+    const handleServerStatusChange = (e: CustomEvent<{ type: 'healthy' | 'db_busy' | 'server_unavailable' }>) => {
+      const newStatus = e.detail?.type;
+      if (newStatus && newStatus !== serverStatus) {
+        if (serverStatus !== 'healthy' && newStatus === 'healthy') {
+          // Transitioned from busy/unavailable to healthy -> show recovery message for 2.5s
+          setRecoveryMessage('Server is now available. Syncing pending transactions...');
+          const timer = setTimeout(() => setRecoveryMessage(null), 2500);
+          setServerStatus('healthy');
+          return () => clearTimeout(timer);
+        }
+        setServerStatus(newStatus);
+        if (newStatus !== 'healthy') {
+          setRecoveryMessage(null);
+        }
+      }
+    };
+
     window.addEventListener('syncStart', handleSyncStart);
     window.addEventListener('syncComplete', handleSyncEnd);
     window.addEventListener('backgroundSync', handleSyncEnd);
+    window.addEventListener('serverStatusChange', handleServerStatusChange as EventListener);
 
     return () => {
       window.removeEventListener('syncStart', handleSyncStart);
       window.removeEventListener('syncComplete', handleSyncEnd);
       window.removeEventListener('backgroundSync', handleSyncEnd);
+      window.removeEventListener('serverStatusChange', handleServerStatusChange as EventListener);
     };
-  }, [updatePendingCount]);
+  }, [serverStatus]);
 
-  // Show indicator only when offline or slow, reset dismissed on status change
+  // Reset dismissed when network status changes
   useEffect(() => {
     if (!isOnline || isSlowConnection) {
-      setVisible(true);
       setDismissed(false);
-    } else {
-      // Hide after coming online with a small delay
-      const timer = setTimeout(() => setVisible(false), 2000);
-      return () => clearTimeout(timer);
     }
   }, [isOnline, isSlowConnection]);
 
@@ -94,24 +107,101 @@ export const OfflineIndicator = () => {
     }
   }, [isOnline, isSlowConnection, dismissed]);
 
-  // Show pending count badge if there are pending items (even when online)
-  const showPendingBadge = pendingCount > 0 && isOnline && !visible;
-
-  // Use relative positioning - this component should be placed INSIDE the header area
-  // The parent component controls where it appears in the layout
-  if (showPendingBadge) {
+  // 1. Priority: Recovery Message (Green)
+  if (recoveryMessage) {
     return (
-      <div className="w-full px-3 py-1 text-center text-xs font-medium bg-amber-500/90 text-amber-900 transition-all duration-300">
+      <div className="w-full py-2.5 px-4 text-center text-sm sm:text-base font-semibold bg-emerald-600 text-white transition-all duration-300 shadow-sm flex items-center justify-center gap-2">
+        <CheckCircle2 className="h-4 w-4" />
+        <span>{recoveryMessage}</span>
+      </div>
+    );
+  }
+
+  // 2. Priority: Offline Banner (Red)
+  if (!isOnline) {
+    return (
+      <div className="w-full py-2.5 px-4 text-center text-sm sm:text-base font-semibold bg-red-600 text-white transition-all duration-300 shadow-sm flex items-center justify-center gap-2">
+        <WifiOff className="h-4 w-4" />
+        <span>
+          Offline.{' '}
+          {pendingCount > 0 ? (
+            <>
+              <span className="font-bold">{pendingCount} pending</span> saved locally
+            </>
+          ) : (
+            'Data saved locally'
+          )}
+        </span>
+      </div>
+    );
+  }
+
+  // 3. Priority: DB Busy Banner (Yellow/Amber)
+  if (serverStatus === 'db_busy') {
+    return (
+      <div className="w-full py-2.5 px-4 text-center text-sm sm:text-base font-semibold bg-amber-500 text-amber-950 transition-all duration-300 shadow-sm flex items-center justify-center gap-2">
+        <AlertTriangle className="h-4 w-4" />
+        <span>
+          Database busy.{' '}
+          {pendingCount > 0 ? (
+            <><span className="font-bold">{pendingCount} pending</span> will sync later. Continue working offline.</>
+          ) : (
+            'Will sync later. Continue working offline.'
+          )}
+        </span>
+      </div>
+    );
+  }
+
+  // 4. Priority: Server Unavailable Banner (Yellow/Amber)
+  if (serverStatus === 'server_unavailable') {
+    return (
+      <div className="w-full py-2.5 px-4 text-center text-sm sm:text-base font-semibold bg-amber-500 text-amber-950 transition-all duration-300 shadow-sm flex items-center justify-center gap-2">
+        <AlertTriangle className="h-4 w-4" />
+        <span>
+          Server unavailable.{' '}
+          {pendingCount > 0 ? (
+            <><span className="font-bold">{pendingCount} pending</span> will sync later. Continue working offline.</>
+          ) : (
+            'Will sync later. Continue working offline.'
+          )}
+        </span>
+      </div>
+    );
+  }
+
+  // 5. Priority: Slow Connection Warning (Yellow/Amber)
+  if (isSlowConnection && !dismissed) {
+    return (
+      <div className="w-full py-2.5 px-4 text-center text-sm sm:text-base font-semibold bg-amber-500 text-amber-950 transition-all duration-300 shadow-sm flex items-center justify-between px-4">
+        <div className="flex items-center justify-center gap-2 flex-1">
+          <AlertTriangle className="h-4 w-4" />
+          <span>Slow connection</span>
+        </div>
+        <button
+          onClick={() => setDismissed(true)}
+          className="p-1 hover:bg-amber-600/30 rounded"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  }
+
+  // 6. Priority: Online Pending Badge
+  if (pendingCount > 0) {
+    return (
+      <div className="w-full py-2 px-4 text-center text-sm sm:text-base font-semibold bg-amber-500/90 text-amber-950 transition-all duration-300 shadow-sm">
         <div className="flex items-center justify-center gap-2">
           {isSyncing ? (
             <>
-              <RefreshCw className="h-3 w-3 animate-spin" />
-              <span>Syncing {pendingCount} pending...</span>
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              <span>Syncing <span className="font-bold">{pendingCount} pending</span>...</span>
             </>
           ) : (
             <>
-              <CloudOff className="h-3 w-3" />
-              <span>{pendingCount} pending to sync</span>
+              <CloudOff className="h-4 w-4" />
+              <span><span className="font-bold">{pendingCount} pending</span> to sync</span>
             </>
           )}
         </div>
@@ -119,38 +209,7 @@ export const OfflineIndicator = () => {
     );
   }
 
-  if (!visible || dismissed || (isOnline && !isSlowConnection)) return null;
-
-  // Relative positioning - placed inside header section, below header bar
-  return (
-    <div 
-      className={`w-full px-3 py-1 text-center text-xs font-medium transition-all duration-300 ${
-        !isOnline 
-          ? 'bg-red-600/90 text-white' 
-          : 'bg-yellow-500/90 text-yellow-900'
-      }`}
-    >
-      <div className="flex items-center justify-center gap-2">
-        {!isOnline ? (
-          <>
-            <WifiOff className="h-3 w-3" />
-            <span>Offline{pendingCount > 0 ? ` - ${pendingCount} pending` : ' - Data saved locally'}</span>
-          </>
-        ) : (
-          <>
-            <AlertTriangle className="h-3 w-3" />
-            <span>Slow connection</span>
-            <button 
-              onClick={() => setDismissed(true)}
-              className="ml-2 p-0.5 hover:bg-yellow-600 rounded"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
+  return null;
 };
 
 export default OfflineIndicator;

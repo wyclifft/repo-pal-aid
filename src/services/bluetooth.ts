@@ -5,6 +5,9 @@ import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetoo
 import { Capacitor } from '@capacitor/core';
 import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
 import {
+  isBluetoothAdapterEnabled,
+  checkClassicConnection,
+  syncClassicScaleConnectionState,
   isClassicBluetoothAvailable,
   getPairedScales,
   connectClassicScale,
@@ -35,6 +38,9 @@ import {
 
 // Re-export Classic Bluetooth functions for convenience
 export {
+  isBluetoothAdapterEnabled,
+  checkClassicConnection,
+  syncClassicScaleConnectionState,
   isClassicBluetoothAvailable,
   getPairedScales,
   connectClassicScale,
@@ -383,15 +389,20 @@ const GROSS_WEIGHT_REGEX = /(?:GS|GW|GROSS|G\.W\.|WW|GROSS\s*WEIGHT|GROSS-WT)\s*
  */
 export const parseScaleWeightText = (text: string): number | null => {
   if (!text) return null;
-  text = text.replace(',', '.');
+  // Convert European decimal commas between digits (e.g. "12,5kg") to dots without corrupting field commas (e.g. "ST,GS,+00000.2kg")
+  text = text.replace(/(\d+),(\d+)/g, '$1.$2');
 
-  // Check if string contains corrupted binary or replacement characters (\uFFFD / ?)
-  const hasCorruptedChars = /[\uFFFD\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\xFF]/.test(text);
+  // Strip non-printable ASCII control characters, binary checksum bytes (>0x7F), and replacement characters (\uFFFD)
+  const cleanText = text.replace(/[\x00-\x1F\x7F-\xFF\uFFFD]/g, '').trim();
+  if (!cleanText) return null;
 
-  // Support frame delimiters (=, \r, \n, STX, ETX, ;) - extract the latest frame from right to left
-  const FRAME_DELIMITER_REGEX = /[\r\n=\x02\x03;]/;
-  if (FRAME_DELIMITER_REGEX.test(text)) {
-    const parts = text.split(/[\r\n=\x02\x03;]+/).map(p => p.trim()).filter(Boolean);
+  // Check if string still contains non-numeric corrupted characters
+  const hasCorruptedChars = /[^\w\s\.\,\+\-\:\=\;\/]/i.test(cleanText);
+
+  // Support frame delimiters (=, \r, \n, STX, ETX, ;, \s{2,}, or lookahead headers ST/US/OL/QT/GS/NT/GW/NW) - extract the latest frame from right to left
+  const FRAME_DELIMITER_REGEX = /[\r\n=\x02\x03;]|\s{2,}|(?=(?:ST|US|OL|QT|GS|NT|GW|NW),)/i;
+  if (FRAME_DELIMITER_REGEX.test(cleanText)) {
+    const parts = cleanText.split(FRAME_DELIMITER_REGEX).map(p => p.trim()).filter(Boolean);
     if (parts.length > 1) {
       for (let i = parts.length - 1; i >= 0; i--) {
         const weight = parseScaleWeightText(parts[i]);
@@ -399,9 +410,13 @@ export const parseScaleWeightText = (text: string): number | null => {
       }
       return null;
     }
-    if (parts.length === 1 && parts[0] !== text) {
+    if (parts.length === 1 && parts[0] !== cleanText) {
       text = parts[0];
+    } else {
+      text = cleanText;
     }
+  } else {
+    text = cleanText;
   }
 
   // PRIORITY 0: Check for explicit Net weight in multi-field or single-field frames
@@ -449,7 +464,7 @@ export const parseScaleWeightText = (text: string): number | null => {
     }
   }
 
-  // PRIORITY 2: Negative weight format (e.g. "-  0002.60kg" or "-2.6kg")
+  // PRIORITY 2: Negative/Positive signed weight format (e.g. "-  0002.60kg", "+  0002.60kg", "-2.6kg")
   const negativeMatch = text.match(/-\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)?/i);
   if (negativeMatch) {
     let weight = -parseFloat(negativeMatch[1]);
@@ -459,6 +474,20 @@ export const parseScaleWeightText = (text: string): number | null => {
     else if (unit === 'oz') weight = weight * 0.0283495;
 
     if (!isNaN(weight) && weight >= -50 && weight < 1000) {
+      return weight;
+    }
+  }
+
+  const positiveMatch = text.match(/\+\s*(\d+(?:\.\d+)?|\.\d+)\s*(kg|g|lb|oz)?/i);
+  if (positiveMatch) {
+    let weight = parseFloat(positiveMatch[1]);
+    const unit = positiveMatch[2]?.toLowerCase();
+    if (unit === 'g') weight = weight / 1000;
+    else if (unit === 'lb') weight = weight * 0.453592;
+    else if (unit === 'oz') weight = weight * 0.0283495;
+
+    if (!isNaN(weight) && weight >= -50 && weight < 1000) {
+      if (weight >= 0 && weight < 0.1) return 0;
       return weight;
     }
   }
@@ -606,6 +635,7 @@ const clearScaleState = () => {
     isConnected: false,
     connectionType: 'ble',
   };
+  lastKnownScaleInfo = null;
   setBleState('IDLE');
   broadcastScaleConnectionChange(false);
 };
@@ -651,10 +681,16 @@ let lastBroadcastWeight: number | null = null;
 let lastBroadcastTime = 0;
 let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingBroadcast: { weight: number; scaleType: ScaleType } | null = null;
+let lastKnownScaleInfo: { weight: number; scaleType: ScaleType; timestamp: number } | null = null;
+
+export const getLastKnownScaleWeight = (): { weight: number; scaleType: ScaleType; timestamp: number } | null => {
+  return lastKnownScaleInfo;
+};
 
 const doBroadcast = (weight: number, scaleType: ScaleType) => {
   lastBroadcastWeight = weight;
   lastBroadcastTime = Date.now();
+  lastKnownScaleInfo = { weight, scaleType, timestamp: lastBroadcastTime };
   pendingBroadcast = null;
   if (broadcastTimer) {
     clearTimeout(broadcastTimer);
@@ -675,13 +711,6 @@ export const broadcastScaleWeightUpdate = (weight: number, scaleType: ScaleType)
   // 4. Elapsed time >= 50ms
   const isReturnToZero = weight <= 0.2 && (lastBroadcastWeight === null || lastBroadcastWeight > 0.2);
   const isStepChange = lastBroadcastWeight !== null && Math.abs(weight - lastBroadcastWeight) >= 0.01;
-
-  // Skip duplicate broadcast if weight is identical to lastBroadcastWeight and less than 250ms has elapsed.
-  // This avoids spamming identical values 20-30x/sec while maintaining a 4Hz heartbeat for UI sync.
-  const isIdentical = lastBroadcastWeight !== null && weight === lastBroadcastWeight;
-  if (isIdentical && timeSinceLast < 250 && !isReturnToZero) {
-    return;
-  }
 
   if (lastBroadcastTime === 0 || isReturnToZero || isStepChange || timeSinceLast >= 50) {
     doBroadcast(weight, scaleType);
@@ -839,7 +868,7 @@ export const resubscribeScaleNotifications = async (
     // Create weight handler
     const handleResubscribeWeight = (value: DataView) => {
       const rawBytes = new Uint8Array(value.buffer);
-      const text = new TextDecoder().decode(value).replace(',', '.');
+      const text = new TextDecoder().decode(value).replace(/(\d+),(\d+)/g, '$1.$2');
       console.log(`📊 Resubscribe data: "${text}"`);
 
       processBleIncomingStream(rawBytes, text, false, (parsed) => {
@@ -876,8 +905,38 @@ export const resubscribeScaleNotifications = async (
 // Uses debouncing to prevent Android Bluetooth stack issues from frequent calls
 // NOTE: Does NOT clear state on timeout - only on definitive disconnection evidence
 export const verifyScaleConnection = async (): Promise<boolean> => {
-  // First check if Classic scale is connected
+  // Check if Bluetooth adapter is enabled on native platform
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const enabled = await isBluetoothAdapterEnabled();
+      if (!enabled) {
+        if (scale.isConnected || isClassicScaleConnected()) {
+          console.warn('⚠️ Bluetooth adapter is disabled — clearing scale connection state');
+          disconnectBluetoothScale(false).catch(() => {});
+          disconnectClassicScale().catch(() => {});
+        }
+        return false;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Check Classic scale with native socket verification
   if (isClassicScaleConnected()) {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const ok = await checkClassicConnection('scale');
+        if (!ok) {
+          console.warn('⚠️ Classic BT scale native socket disconnected — clearing state');
+          disconnectClassicScale().catch(() => {});
+          return false;
+        }
+      } catch {
+        disconnectClassicScale().catch(() => {});
+        return false;
+      }
+    }
     return true;
   }
   
@@ -933,8 +992,45 @@ export const verifyScaleConnection = async (): Promise<boolean> => {
 // Uses debouncing to prevent Android Bluetooth stack issues from frequent calls
 // NOTE: Does NOT clear state on timeout - only on definitive disconnection evidence
 export const verifyPrinterConnection = async (): Promise<boolean> => {
-  // First check if Classic printer is connected
+  // Check if Bluetooth adapter is enabled on native platform
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const enabled = await isBluetoothAdapterEnabled();
+      if (!enabled) {
+        const isInternal = getCurrentClassicPrinterInfo()?.address === 'CS10-INTERNAL-PRINTER';
+        if (!isInternal && (printer.isConnected || isClassicPrinterConnected())) {
+          console.warn('⚠️ Bluetooth adapter is disabled — clearing BT printer connection state');
+          disconnectBluetoothPrinter(false).catch(() => {});
+          disconnectClassicPrinter().catch(() => {});
+        }
+        if (isInternal) {
+          return true; // Internal hardware CS10 printer works without Bluetooth
+        }
+        return false;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Check Classic printer with native socket verification
   if (isClassicPrinterConnected()) {
+    const isInternal = getCurrentClassicPrinterInfo()?.address === 'CS10-INTERNAL-PRINTER';
+    if (isInternal) return true;
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const ok = await checkClassicConnection('printer');
+        if (!ok) {
+          console.warn('⚠️ Classic BT printer native socket disconnected — clearing state');
+          disconnectClassicPrinter().catch(() => {});
+          return false;
+        }
+      } catch {
+        disconnectClassicPrinter().catch(() => {});
+        return false;
+      }
+    }
     return true;
   }
   

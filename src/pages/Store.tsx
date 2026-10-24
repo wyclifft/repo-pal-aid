@@ -22,6 +22,7 @@ import PhotoAuditViewer from '@/components/PhotoAuditViewer';
 import { useReprint } from '@/contexts/ReprintContext';
 import { getTimeoutSignal } from '@/utils/abortUtils';
 import { resolveSessionMetadata, resolveDashboardActiveSession, resolveDashboardActiveRoute } from '@/utils/sessionMetadata';
+import { isTodayKenyanTime } from '@/lib/utils';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { useBackgroundPhotoUpload } from '@/hooks/useBackgroundPhotoUpload';
 import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
@@ -138,25 +139,48 @@ const Store = () => {
   const userId = currentUser?.user_id || 'unknown';
   const clerkName = currentUser?.username || currentUser?.user_id || 'Unknown';
 
-  const { getFarmers, saveSale, getUnsyncedSales, getItems, getFarmerCumulative, getFarmerTotalCumulative, isReady } = useIndexedDB();
+  const { getFarmers, saveSale, getUnsyncedSales, getItems, getFarmerCumulative, getFarmerTotalCumulative, getPrintedReceipts, isReady } = useIndexedDB();
   const { syncPendingSales: syncPendingSalesHook } = useSalesSync();
   const { addStoreReceipt } = useReprint();
   const { queuePhotoUpload } = useBackgroundPhotoUpload();
 
-  // Pending sales count for header indicator
+  // Pending sales count and sold bags for header indicator
   const [pendingSalesCount, setPendingSalesCount] = useState(0);
+  const [storeSoldBags, setStoreSoldBags] = useState(0);
 
-  // Update pending sales count
+  // Update pending sales count and bags (persisting for today in Kenyan time, surviving syncs)
   const updatePendingSalesCount = useCallback(async () => {
     if (!isReady) return;
     try {
-      const sales = await getUnsyncedSales();
-      const storeSales = sales.filter((r: any) => r.type === 'sale');
+      const sales = await getUnsyncedSales() || [];
+      const storeSales = sales.filter((r: any) => {
+        const tt = Number(r.transtype || 2);
+        return tt === 2 && r.type !== 'ai';
+      });
       setPendingSalesCount(storeSales.length);
+
+      let printedReceipts: any[] = [];
+      try {
+        printedReceipts = await getPrintedReceipts() || [];
+      } catch {}
+
+      const todayStoreReceipts = printedReceipts.filter((r: any) => r.type === 'store' && isTodayKenyanTime(r.transactionDate || r.printedAt));
+      const printedBags = todayStoreReceipts.reduce((sum: number, r: any) => {
+        const items = r.items || [];
+        const itemSum = items.reduce((iSum: number, item: any) => iSum + (Number(item.quantity) || 1), 0);
+        return sum + (itemSum > 0 ? itemSum : (Number(r.itemCount) || 1));
+      }, 0);
+
+      const unsyncedTodayBags = storeSales
+        .filter((r: any) => isTodayKenyanTime(r.transdate ? `${r.transdate}T${r.transtime || '00:00:00'}` : new Date()))
+        .reduce((sum: number, r: any) => sum + (Number(r.quantity) || 1), 0);
+
+      const totalBags = Math.max(printedBags, unsyncedTodayBags);
+      setStoreSoldBags(totalBags);
     } catch {
       // ignore
     }
-  }, [isReady, getUnsyncedSales]);
+  }, [isReady, getUnsyncedSales, getPrintedReceipts]);
 
   useEffect(() => {
     updatePendingSalesCount();
@@ -870,6 +894,8 @@ const Store = () => {
             route: selectedRouteTcode || routeName || '',
             route_tcode: selectedRouteTcode,
             item_code: item.item_code,
+            icode: item.item_code,
+            product_code: item.item_code,
             item_name: item.item_name,
             quantity: item.quantity,
             price: item.price,
@@ -1060,9 +1086,9 @@ const Store = () => {
               <ArrowLeft className="h-5 w-5" />
             </button>
             <h1 className="text-xl font-semibold">Store</h1>
-            {pendingSalesCount > 0 && (
+            {(pendingSalesCount > 0 || storeSoldBags > 0) && (
               <span className="bg-amber-500 text-amber-900 text-xs font-bold px-2 py-0.5 rounded-full">
-                {pendingSalesCount} pending
+                {storeSoldBags > 0 ? `${storeSoldBags} bags · ` : ''}{pendingSalesCount} pending
               </span>
             )}
           </div>

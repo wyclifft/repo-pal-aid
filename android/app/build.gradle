@@ -23,13 +23,13 @@ android {
         applicationId "app.delicoop101"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 250
-        versionName "2.12.100"
+        versionCode 254
+        versionName "2.12.104"
         
         multiDexEnabled true
         
         ndk {
-            abiFilters "armeabi-v7a"
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
         }
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -88,11 +88,6 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            excludes += [
-                'lib/x86/**',
-                'lib/x86_64/**',
-                'lib/arm64-v8a/**'
-            ]
         }
     }
 

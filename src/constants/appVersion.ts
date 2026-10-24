@@ -1,4 +1,26 @@
 // Shared app version constant — update here and in android/app/build.gradle
+// v2.12.104: SCALE NEGATIVE TO POSITIVE WEIGHT TRANSITION & DR SERIES CHECKSUM SANITIZATION FIX.
+//   - Fixed digital scale readings getting stuck at negative values (e.g., -0.2 kg) when positive weight was placed on the scale.
+//   - Sanitized non-printable control characters, 8-bit checksum bytes (>0x7F / e.g. 0xD3/0xE3), and replacement characters (\uFFFD) from raw scale text in `parseScaleWeightText` and `parseSerialWeightData`.
+//   - Allowed DR Series bare decimal positive frames (e.g. "@    0.5", "@    0.8") to pass Priority 5 `decimalMatch` without being falsely blocked by trailing checksum bytes.
+//   - Optimized `broadcastScaleWeightUpdate` in `bluetooth.ts` so identical scale stream frames are delivered at 50ms smooth intervals (20Hz max) via `pendingBroadcast` rather than dropped for 250ms.
+//   - Ensured `useScaleConnection` receives consecutive readings to confirm scale stability and propagate positive weight updates to the UI immediately.
+//
+// v2.12.103: DEVSETTINGS APP VERSION, LAST SYNCED & LAST UPDATE TRACKING AND VERSION BUMP.
+//   - Added appVersion, lastSynced, and lastUpdate columns to devSettings table on MySQL backend with automatic self-healing schema migration.
+//   - Populates appVersion with running APK version (e.g., v2.12.103) and lastUpdate timestamp whenever an APK version update is detected.
+//   - Populates lastSynced timestamp in devSettings whenever the device completes a full data sync.
+//
+// v2.12.102: COMMA-DELIMITED BLUETOOTH SCALE DATA STREAM PARSING FIX.
+//   - Fixed Bluetooth scale stream parsing failure on CSV/comma-separated scale frames (e.g. "US,GS,+00000.2kg\r\n", "ST,GS,+00000.2kg\r\n").
+//   - Replaced single-occurrence `.replace(',', '.')` with digit-targeted `replace(/(\d+),(\d+)/g, '$1.$2')` in `bluetooth.ts` and `bluetoothClassic.ts`.
+//   - Prevented field-separating commas from being converted into dots (e.g. `ST,GS` -> `ST.GS`), preserving regex header matching and live weight propagation to the APK UI.
+//
+// v2.12.101: Z-REPORT ONLINE & SYNC RESTRICTIONS WITH UNBLOCKED SESSION CLOSE.
+//   - Restricted Z-report production (generation, preview, thermal printing, PDF export, auto-printing) to online & fully synced state.
+//   - Unblocked session close when offline or with pending transactions so operators can close sessions cleanly.
+//   - Configured global toast notifications to be swipeable/dismissible by operators across all app actions.
+//
 // v2.12.100: STRICT DIRECT TRUNCATION & STEP SCALE STABILITY FIX.
 //   - Fixed receipt total calculation glitch (16.2 + 11.6 = 27.799999999999997 -> 27.8) by cleaning binary floating-point representation artifacts.
 //   - Enforced strict direct truncation without rounding off weights up (e.g. 16.777 -> 16.7, 16.2999 -> 16.2).
@@ -1391,12 +1413,12 @@
 //   - Added in-flight promise deduplication to getUnsyncedFromLocalDB to eliminate rapid parallel Capacitor bridge calls.
 //   - Added 5-minute memory cache to FarmerSyncDashboard name lookup and skipped redundant IndexedDB session writes.
 //
-export const APP_VERSION = '2.12.100';
-export const APP_VERSION_CODE = 250;
+export const APP_VERSION = '2.12.104';
+export const APP_VERSION_CODE = 254;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'direct-truncation-step-scale-fix';
+export const APP_FIX_TAG = 'scale-negative-to-positive-weight-transition-fix';
 
 
 

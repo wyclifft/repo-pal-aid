@@ -18,6 +18,8 @@ import app.delicoop101.database.CmCredit
 import app.delicoop101.database.FmTank
 import app.delicoop101.database.Season
 import app.delicoop101.database.DeviceConfig
+import app.delicoop101.database.AiTransaction
+import app.delicoop101.database.StoreTransaction
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -87,15 +89,42 @@ class OfflineStoragePlugin : Plugin() {
                 Log.d(TAG, "[SAVE] Record saved: $referenceNo (id=$id, type=$recordType)")
                 DatabaseLogger.info(TAG, "Record saved to encrypted DB", "ref=$referenceNo, type=$recordType, id=$id")
 
-                // Synchronize transaction to em_transaction for instant local reporting/queries
+                // Route transaction to appropriate domain table based on recordType
                 try {
+                    val devCode = DelicoopDatabase.getDeviceCode(context)
+                    // Write transaction into central em_transaction table
                     val emTx = BackfillManager.parsePayloadToTransaction(record, referenceNo)
                     if (emTx != null) {
                         db.emTransactionDao().insert(emTx)
-                        Log.d(TAG, "[SAVE] Record dual-written to em_transaction: $referenceNo")
+                        Log.d(TAG, "[SAVE] Transaction written to em_transaction: $referenceNo (type=$recordType, icode=${emTx.icode})")
+                    }
+
+                    when (recordType.lowercase()) {
+                        "store_sale", "store", "sale" -> {
+                            val jsonObj = org.json.JSONObject(payload)
+                            val memberNo = jsonObj.optString("memberno", jsonObj.optString("memberNo", jsonObj.optString("farmer_id", jsonObj.optString("farmerId", jsonObj.optString("farmerno", jsonObj.optString("mcode", ""))))))
+                            val transType = jsonObj.optString("transtype", jsonObj.optString("transType", "2"))
+                            val storeTx = StoreTransaction(
+                                deviceCode = devCode,
+                                memberNumber = memberNo,
+                                transactionType = transType
+                            )
+                            db.storeTransactionDao().insert(storeTx)
+                            Log.d(TAG, "[SAVE] Store transaction written to store_transaction: $referenceNo (member=$memberNo)")
+                        }
+                        "ai_sale", "ai", "ai_service" -> {
+                            val jsonObj = org.json.JSONObject(payload)
+                            val memberNo = jsonObj.optString("memberno", jsonObj.optString("memberNo", jsonObj.optString("farmer_id", jsonObj.optString("farmerId", jsonObj.optString("farmerno", jsonObj.optString("mcode", ""))))))
+                            val aiTx = AiTransaction(
+                                deviceCode = devCode,
+                                memberNumber = memberNo
+                            )
+                            db.aiTransactionDao().insert(aiTx)
+                            Log.d(TAG, "[SAVE] AI transaction written to ai_transaction: $referenceNo (member=$memberNo)")
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "[SAVE] Dual-write to em_transaction skipped: ${e.message}")
+                    Log.w(TAG, "[SAVE] Domain table routing skipped: ${e.message}")
                 }
 
                 // Asynchronously trigger backup to external storage

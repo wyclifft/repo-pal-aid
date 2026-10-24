@@ -40,8 +40,130 @@ const toastVariants = cva(
 const Toast = React.forwardRef<
   React.ElementRef<typeof ToastPrimitives.Root>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root> & VariantProps<typeof toastVariants>
->(({ className, variant, ...props }, ref) => {
-  return <ToastPrimitives.Root ref={ref} className={cn(toastVariants({ variant }), className)} {...props} />;
+>(({ className, variant, onPointerDown, onPointerMove, onPointerUp, onPointerCancel, style, ...props }, ref) => {
+  const [transformStyle, setTransformStyle] = React.useState<React.CSSProperties>({});
+  const isDraggingRef = React.useRef(false);
+  const startPosRef = React.useRef({ x: 0, y: 0 });
+  const currentDeltaRef = React.useRef({ x: 0, y: 0 });
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLLIElement>) => {
+    onPointerDown?.(e);
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+
+    isDraggingRef.current = true;
+    startPosRef.current = { x: e.clientX, y: e.clientY };
+    currentDeltaRef.current = { x: 0, y: 0 };
+
+    if (e.currentTarget.setPointerCapture) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {}
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLLIElement>) => {
+    onPointerMove?.(e);
+    if (!isDraggingRef.current) return;
+
+    const deltaX = e.clientX - startPosRef.current.x;
+    const deltaY = e.clientY - startPosRef.current.y;
+
+    let validX = deltaX;
+    let validY = deltaY;
+
+    // Dampen downward movement (only top, left, right are active swipe directions)
+    if (deltaY > 0 && Math.abs(deltaY) > Math.abs(deltaX)) {
+      validY = deltaY * 0.15;
+    }
+
+    currentDeltaRef.current = { x: validX, y: validY };
+
+    const distance = Math.sqrt(validX * validX + validY * validY);
+    const opacity = Math.max(0.2, 1 - distance / 300);
+
+    setTransformStyle({
+      transform: `translate3d(${validX}px, ${validY}px, 0)`,
+      opacity,
+      transition: 'none',
+      touchAction: 'none',
+    });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLLIElement>) => {
+    onPointerUp?.(e);
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+
+    const { x, y } = currentDeltaRef.current;
+    const absX = Math.abs(x);
+    const absY = Math.abs(y);
+    const SWIPE_THRESHOLD = 40;
+
+    let dismissed = false;
+    let exitX = 0;
+    let exitY = 0;
+
+    if (y < -SWIPE_THRESHOLD && absY >= absX) {
+      // Swipe Top (Up)
+      dismissed = true;
+      exitY = -300;
+    } else if (x < -SWIPE_THRESHOLD && absX > absY) {
+      // Swipe Left
+      dismissed = true;
+      exitX = -400;
+    } else if (x > SWIPE_THRESHOLD && absX > absY) {
+      // Swipe Right
+      dismissed = true;
+      exitX = 400;
+    }
+
+    if (dismissed) {
+      setTransformStyle({
+        transform: `translate3d(${exitX}px, ${exitY}px, 0)`,
+        opacity: 0,
+        transition: 'transform 0.2s ease-out, opacity 0.2s ease-out',
+      });
+      setTimeout(() => {
+        props.onOpenChange?.(false);
+      }, 150);
+    } else {
+      setTransformStyle({
+        transform: 'translate3d(0, 0, 0)',
+        opacity: 1,
+        transition: 'transform 0.2s ease-out, opacity 0.2s ease-out',
+      });
+    }
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent<HTMLLIElement>) => {
+    onPointerCancel?.(e);
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    setTransformStyle({
+      transform: 'translate3d(0, 0, 0)',
+      opacity: 1,
+      transition: 'transform 0.2s ease-out, opacity 0.2s ease-out',
+    });
+  };
+
+  return (
+    <ToastPrimitives.Root
+      ref={ref}
+      className={cn(toastVariants({ variant }), className)}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      style={{ ...style, ...transformStyle }}
+      {...props}
+    />
+  );
 });
 Toast.displayName = ToastPrimitives.Root.displayName;
 

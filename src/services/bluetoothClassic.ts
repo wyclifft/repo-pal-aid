@@ -77,6 +77,12 @@ export interface BluetoothClassicPlugin {
     listenerFunc: (state: { connected: boolean }) => void
   ): Promise<PluginListenerHandle>;
 
+  /** Add listener for Bluetooth adapter state changes */
+  addListener(
+    eventName: 'adapterStateChanged',
+    listenerFunc: (state: { enabled: boolean }) => void
+  ): Promise<PluginListenerHandle>;
+
   /** Remove all listeners */
   removeAllListeners(): Promise<void>;
 }
@@ -216,7 +222,7 @@ const androidFallbackBluetoothClassic: BluetoothClassicPlugin = {
     if (!bridge) throw new Error('BluetoothClassicAndroid bridge unavailable');
     parseAndroidClassicResult('writeScale', bridge.write(JSON.stringify({ ...options, role: 'scale' })));
   },
-  async addListener(eventName: 'dataReceived' | 'connectionStateChanged', listenerFunc: (data: any) => void) {
+  async addListener(eventName: 'dataReceived' | 'connectionStateChanged' | 'adapterStateChanged', listenerFunc: (data: any) => void) {
     const mappedEvent = `BluetoothClassic:${eventName}`;
     const handler = (event: Event) => listenerFunc((event as CustomEvent).detail || {});
     window.addEventListener(mappedEvent, handler as EventListener);
@@ -354,6 +360,24 @@ export const isLikelyClassicDevice = (deviceName: string | undefined): boolean =
 // ============================================================================
 // CORE FUNCTIONS
 // ============================================================================
+
+/**
+ * Check if device Bluetooth adapter is currently enabled on native platform
+ */
+export const isBluetoothAdapterEnabled = async (): Promise<boolean> => {
+  if (!Capacitor.isNativePlatform()) return true;
+  try {
+    const bridge = androidClassicBridge();
+    if (bridge) {
+      const parsed = parseAndroidClassicResult<{ available: boolean; enabled: boolean }>('isAvailable', bridge.isAvailable());
+      return parsed?.enabled !== false;
+    }
+    const result = await BluetoothClassic.isAvailable();
+    return result?.enabled !== false;
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Check if Classic Bluetooth SPP is available
@@ -520,9 +544,9 @@ export const getAllPairedDevices = async (): Promise<ClassicBluetoothDevice[]> =
 export const parseSerialWeightData = (data: string): number | null => {
   if (!data) return null;
 
-  // Clean ASCII text for standard text parsing
-  const text = data.replace(',', '.');
-  const cleanData = text.replace(/[\x00-\x1F\x7F]/g, '').trim();
+  // Clean ASCII text for standard text parsing - convert European decimal commas between digits without breaking field commas
+  const text = data.replace(/(\d+),(\d+)/g, '$1.$2');
+  const cleanData = text.replace(/[\x00-\x1F\x7F-\xFF\uFFFD]/g, '').trim();
   if (!cleanData) return null;
 
   // If cleanData contains multiple frame delimiters, split and process
@@ -557,6 +581,151 @@ export const parseSerialWeightData = (data: string): number | null => {
 // CONNECTION MANAGEMENT
 // ============================================================================
 
+let activeOnWeightUpdateCallback: ((weight: number) => void) | null = null;
+let serialBuffer = '';
+
+/**
+ * Set up continuous data listener for incoming Classic Bluetooth scale stream.
+ */
+export const setupClassicScaleDataListener = async (
+  onWeightUpdate?: (weight: number) => void
+) => {
+  if (onWeightUpdate) {
+    activeOnWeightUpdateCallback = onWeightUpdate;
+  }
+
+  if (dataListenerHandle) {
+    try {
+      await dataListenerHandle.remove();
+    } catch { /* ignore stale handle cleanup error */ }
+    dataListenerHandle = null;
+  }
+
+  dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (event: any) => {
+    if (event.role && event.role !== 'scale') {
+      return;
+    }
+
+    // Auto-sync connection state if native stream delivers scale bytes
+    if (!classicScale.isConnected && event.address) {
+      const stored = getStoredClassicDevice();
+      const deviceName = event.name || stored?.name || 'Classic Scale';
+      console.log(`📡 [BT][scale] Stream chunk received while JS state disconnected — auto-syncing scale state for ${deviceName} (${event.address})`);
+      classicScale = {
+        device: { address: event.address, name: deviceName, bonded: true },
+        address: event.address,
+        isConnected: true,
+        connectionType: 'classic-spp',
+      };
+      broadcastScaleConnectionChange(true);
+    }
+
+    if (!classicScale.isConnected) {
+      return;
+    }
+
+    const rawData = event.data ?? event.value ?? '';
+    if (!rawData) return;
+
+    lastDataReceivedTime = Date.now();
+    console.log(`📡 [BT][scale] Raw stream chunk received (${rawData.length} chars): ${JSON.stringify(rawData)}`);
+
+    // Accumulate serial stream buffer
+    serialBuffer += rawData;
+    if (serialBuffer.length > 2048) {
+      serialBuffer = serialBuffer.slice(-1024);
+    }
+
+    // Support frame delimiters: \r, \n, =, \x02 (STX), \x03 (ETX), \x00 (NUL), ;, \s{2,}, or lookahead for headers (ST, US, OL, QT, GS, NT, GW, NW)
+    const FRAME_DELIMITER_REGEX = /[\r\n=\x02\x03\x00;]|\s{2,}|(?=(?:ST|US|OL|QT|GS|NT|GW|NW),)/i;
+
+    if (FRAME_DELIMITER_REGEX.test(serialBuffer)) {
+      const lines = serialBuffer.split(FRAME_DELIMITER_REGEX);
+      if (!FRAME_DELIMITER_REGEX.test(rawData.slice(-1))) {
+        serialBuffer = lines.pop() || '';
+      } else {
+        serialBuffer = '';
+      }
+
+      let latestWeight: number | null = null;
+      for (const line of lines) {
+        const cleanLine = line.trim();
+        if (!cleanLine) continue;
+        const weight = parseSerialWeightData(cleanLine);
+        if (weight !== null) {
+          latestWeight = weight;
+        }
+      }
+
+      if (latestWeight !== null) {
+        console.log(`⚖️ [BT][scale] Parsed valid weight: ${latestWeight} kg`);
+        broadcastScaleWeightUpdate(latestWeight, 'Classic-SPP');
+        if (activeOnWeightUpdateCallback) {
+          try {
+            activeOnWeightUpdateCallback(latestWeight);
+          } catch (callbackError) {
+            // Callback stale
+          }
+        }
+      }
+    } else if (serialBuffer.length >= 6) {
+      const weight = parseSerialWeightData(serialBuffer);
+      if (weight !== null) {
+        console.log(`⚖️ [BT][scale] Parsed valid weight from raw buffer: ${weight} kg`);
+        serialBuffer = '';
+        broadcastScaleWeightUpdate(weight, 'Classic-SPP');
+        if (activeOnWeightUpdateCallback) {
+          try {
+            activeOnWeightUpdateCallback(weight);
+          } catch (callbackError) {}
+        }
+      } else if (serialBuffer.length > 64) {
+        serialBuffer = serialBuffer.slice(-32);
+      }
+    }
+  });
+};
+
+/**
+ * Synchronize JS classicScale state with native Bluetooth socket status.
+ * Prevents UI from showing "Not Connected" when native Android thread is actively reading data.
+ */
+export const syncClassicScaleConnectionState = async (): Promise<boolean> => {
+  if (!Capacitor.isNativePlatform()) return false;
+  try {
+    const status = await BluetoothClassic.isConnected({ role: 'scale' });
+    if (status?.connected && status?.address) {
+      const stored = getStoredClassicDevice();
+      const deviceName = (status as any).name || stored?.name || 'Classic Scale';
+      const device: ClassicBluetoothDevice = {
+        address: status.address,
+        name: deviceName,
+        bonded: true,
+      };
+
+      if (!classicScale.isConnected || classicScale.address !== status.address) {
+        console.log(`🔄 [BT][scale] Syncing active native socket state: ${deviceName} (${status.address})`);
+        classicScale = {
+          device,
+          address: status.address,
+          isConnected: true,
+          connectionType: 'classic-spp',
+        };
+        saveClassicDeviceInfo(device);
+        broadcastScaleConnectionChange(true);
+      }
+
+      if (!dataListenerHandle) {
+        await setupClassicScaleDataListener();
+      }
+      return true;
+    }
+  } catch (e) {
+    console.warn('⚠️ [BT][scale] Error checking/syncing native connection state:', e);
+  }
+  return false;
+};
+
 /**
  * Connect to a Classic Bluetooth scale via SPP/RFCOMM
  */
@@ -571,19 +740,41 @@ export const connectClassicScale = async (
     };
   }
 
+  const enabled = await isBluetoothAdapterEnabled();
+  if (!enabled) {
+    console.log('📡 [BT][scale] connectClassicScale skipped: Bluetooth adapter is disabled');
+    return { success: false, error: 'Bluetooth is disabled' };
+  }
+
   try {
     console.log(`🔗 Connecting to Classic BT device: ${device.name} (${device.address})`);
 
     // Launch BLE GATT bridge IMMEDIATELY in parallel (0ms delay) for dual-mode/BLE scales (e.g. ACS-SB1 / SB-series)
-    attemptBleGattFallback(device.address, onWeightUpdate, device.name).catch(() => {});
+    const blePromise = attemptBleGattFallback(device.address, onWeightUpdate, device.name).catch(() => {});
 
-    // Connect to device via RFCOMM
-    const result = BluetoothClassic.connectScale
-      ? await BluetoothClassic.connectScale({ address: device.address })
-      : await BluetoothClassic.connect({ address: device.address, role: 'scale' });
-    
-    if (!result.connected) {
-      return { success: false, error: 'Failed to connect to device' };
+    // Connect to device via RFCOMM — check if native socket is ALREADY active to prevent destructive socket disconnects
+    let rfcommSuccess = false;
+    try {
+      const status = await BluetoothClassic.isConnected({ role: 'scale' });
+      if (status?.connected && status?.address === device.address) {
+        console.log(`✅ [BT][scale] Native socket already connected to ${device.name} (${device.address}) — re-using active socket`);
+        rfcommSuccess = true;
+      } else {
+        const result = BluetoothClassic.connectScale
+          ? await BluetoothClassic.connectScale({ address: device.address })
+          : await BluetoothClassic.connect({ address: device.address, role: 'scale' });
+        rfcommSuccess = !!result?.connected;
+      }
+    } catch (rfcommError) {
+      console.warn(`⚠️ Native RFCOMM connect scale notice: ${rfcommError instanceof Error ? rfcommError.message : rfcommError}`);
+    }
+
+    await blePromise;
+
+    const bleConnected = bleFallbackActiveAddress === device.address;
+
+    if (!rfcommSuccess && !bleConnected) {
+      return { success: false, error: 'Failed to connect to scale via RFCOMM or BLE GATT' };
     }
 
     // Update state FIRST so incoming stream chunks aren't dropped by data listener guard
@@ -591,79 +782,14 @@ export const connectClassicScale = async (
       device,
       address: device.address,
       isConnected: true,
-      connectionType: 'classic-spp',
+      connectionType: bleConnected && !rfcommSuccess ? 'ble' : 'classic-spp',
     };
 
     lastDataReceivedTime = Date.now();
 
-    // Set up data listener - uses line buffering for multi-field streaming scales
-    let serialBuffer = '';
-    dataListenerHandle = await BluetoothClassic.addListener('dataReceived', (event: any) => {
-      if (event.role && event.role !== 'scale') {
-        return;
-      }
-      if (!classicScale.isConnected || !classicScale.address) {
-        return;
-      }
-      const rawData = event.data ?? event.value ?? '';
-      if (!rawData) return;
-
-      lastDataReceivedTime = Date.now();
-      console.log(`📡 [BT][scale] Raw stream chunk received (${rawData.length} chars): ${JSON.stringify(rawData)}`);
-
-      // Accumulate serial stream buffer
-      serialBuffer += rawData;
-      if (serialBuffer.length > 1024) {
-        serialBuffer = serialBuffer.slice(-512);
-      }
-
-      // Support frame delimiters: \r, \n, =, \x02 (STX), \x03 (ETX), \x00 (NUL), ;
-      const FRAME_DELIMITER_REGEX = /[\r\n=\x02\x03\x00;]/;
-
-      if (FRAME_DELIMITER_REGEX.test(serialBuffer)) {
-        const lines = serialBuffer.split(/[\r\n=\x02\x03\x00;]+/);
-        // Keep trailing incomplete line segment in buffer if rawData didn't end with a delimiter
-        if (!FRAME_DELIMITER_REGEX.test(rawData.slice(-1))) {
-          serialBuffer = lines.pop() || '';
-        } else {
-          serialBuffer = '';
-        }
-
-        // v2.12.99: Process stream buffer and extract ONLY the LATEST valid weight frame in the batch.
-        let latestWeight: number | null = null;
-        for (const line of lines) {
-          const cleanLine = line.trim();
-          if (!cleanLine) continue;
-          const weight = parseSerialWeightData(cleanLine);
-          if (weight !== null) {
-            latestWeight = weight;
-          }
-        }
-
-        if (latestWeight !== null) {
-          console.log(`⚖️ [BT][scale] Parsed valid weight: ${latestWeight} kg`);
-          broadcastScaleWeightUpdate(latestWeight, 'Classic-SPP');
-          try {
-            onWeightUpdate(latestWeight);
-          } catch (callbackError) {
-            // Callback stale
-          }
-        }
-      } else if (serialBuffer.length >= 6) {
-        // Fallback for scales that stream continuous string blocks without explicit frame delimiters
-        const weight = parseSerialWeightData(serialBuffer);
-        if (weight !== null) {
-          console.log(`⚖️ [BT][scale] Parsed valid weight from raw buffer: ${weight} kg`);
-          serialBuffer = '';
-          broadcastScaleWeightUpdate(weight, 'Classic-SPP');
-          try {
-            onWeightUpdate(weight);
-          } catch (callbackError) {}
-        } else if (serialBuffer.length > 64) {
-          serialBuffer = serialBuffer.slice(-32);
-        }
-      }
-    });
+    if (rfcommSuccess) {
+      await setupClassicScaleDataListener(onWeightUpdate);
+    }
 
     // Set up connection state listener
     const scaleAddress = device.address;
@@ -678,16 +804,16 @@ export const connectClassicScale = async (
         return;
       }
       try {
-        const check = await BluetoothClassic.isConnected({ role: 'scale' });
-        if (check?.connected) {
-          console.warn('⚠️ Classic BT scale: spurious disconnect event — native still connected, preserving state');
+        const check = await checkClassicConnection('scale');
+        if (check) {
+          console.warn('⚠️ Classic BT scale: spurious disconnect event — connection still active (SPP or BLE GATT), preserving state');
           return;
         }
       } catch {
         // If verify fails, fall through to clear
       }
       console.log('⚠️ Classic BT scale connection lost (verified)');
-      clearClassicScaleState();
+      clearClassicScaleState(true);
     });
 
     // Save device for quick reconnect
@@ -695,32 +821,30 @@ export const connectClassicScale = async (
 
     broadcastScaleConnectionChange(true);
 
-    // Prompt passive/command-mode scales to start sending data (send ENQ & CRLF commands)
-    sendScaleCommand(SCALE_COMMANDS.READ_WEIGHT).catch(() => {});
-    setTimeout(() => {
-      sendScaleCommand(SCALE_COMMANDS.CRLF).catch(() => {});
-    }, 200);
-
-    // Active polling fallback: If scale doesn't auto-stream, poll with ENQ every 1 second
-    if (pollIntervalHandle) clearInterval(pollIntervalHandle);
-    pollIntervalHandle = setInterval(() => {
-      if (!classicScale.isConnected) {
-        if (pollIntervalHandle) clearInterval(pollIntervalHandle);
-        pollIntervalHandle = null;
-        return;
-      }
-      // If no data received in last 1.5s, send query command to keep data flowing
-      if (Date.now() - lastDataReceivedTime > 1500) {
-        console.log('📡 [BT][scale] Polling scale with ENQ / CRLF...');
-        sendScaleCommand(SCALE_COMMANDS.READ_WEIGHT).catch(() => {});
+    if (rfcommSuccess) {
+      // Prompt passive/command-mode scales to start sending data (send ENQ & CRLF commands)
+      sendScaleCommand(SCALE_COMMANDS.READ_WEIGHT).catch(() => {});
+      setTimeout(() => {
         sendScaleCommand(SCALE_COMMANDS.CRLF).catch(() => {});
-      }
-    }, 1000);
+      }, 200);
 
-    // Launch BLE GATT notification bridge in parallel for dual-mode/BLE scales (e.g. ACS-SB1 / SB-series)
-    attemptBleGattFallback(device.address, onWeightUpdate, device.name).catch(() => {});
+      // Active polling fallback: If scale doesn't auto-stream, poll with ENQ every 1 second
+      if (pollIntervalHandle) clearInterval(pollIntervalHandle);
+      pollIntervalHandle = setInterval(() => {
+        if (!classicScale.isConnected) {
+          if (pollIntervalHandle) clearInterval(pollIntervalHandle);
+          pollIntervalHandle = null;
+          return;
+        }
+        if (Date.now() - lastDataReceivedTime > 1500) {
+          console.log('📡 [BT][scale] Polling scale with ENQ / CRLF...');
+          sendScaleCommand(SCALE_COMMANDS.READ_WEIGHT).catch(() => {});
+          sendScaleCommand(SCALE_COMMANDS.CRLF).catch(() => {});
+        }
+      }, 1000);
+    }
 
-    console.log(`✅ Connected to Classic BT scale: ${device.name}`);
+    console.log(`✅ Connected to scale: ${device.name} (via ${bleConnected && !rfcommSuccess ? 'BLE GATT Bridge' : 'Classic SPP'})`);
     return { success: true };
 
   } catch (error) {
@@ -732,11 +856,9 @@ export const connectClassicScale = async (
       return { success: true };
     }
 
-    // Check if this is because native plugin isn't implemented
     if (errorMessage.includes('not implemented') || errorMessage.includes('plugin')) {
       console.log('⚠️ Classic Bluetooth SPP requires native plugin implementation');
-      console.log('💡 Try using BLE connection instead - most BTM/DR scales support both');
-      return { 
+      return {
         success: false, 
         error: 'Classic Bluetooth plugin not yet implemented. Try BLE connection.' 
       };
@@ -835,7 +957,7 @@ export const attemptBleGattFallback = async (
         });
 
         if (parsedWeight === null) {
-          const cleanText = text.replace(',', '.').replace(/[\x00-\x1F\x7F]/g, '').trim();
+          const cleanText = text.replace(/(\d+),(\d+)/g, '$1.$2').replace(/[\x00-\x1F\x7F]/g, '').trim();
           if (cleanText) {
             parsedWeight = parseScaleWeightText(cleanText);
           }
@@ -972,6 +1094,37 @@ export const quickReconnectClassicScale = async (
 // ============================================================================
 
 /**
+ * Verify with native socket whether classic connection for role is active
+ */
+export const checkClassicConnection = async (role: 'scale' | 'printer'): Promise<boolean> => {
+  if (!Capacitor.isNativePlatform()) return true;
+
+  let rfcommConnected = false;
+  try {
+    const result = await BluetoothClassic.isConnected({ role });
+    rfcommConnected = !!result?.connected;
+  } catch {
+    rfcommConnected = false;
+  }
+
+  if (rfcommConnected) return true;
+
+  // If RFCOMM is not connected, check BLE GATT fallback if active
+  if (role === 'scale' && bleFallbackActiveAddress) {
+    try {
+      const services = await BleClient.getServices(bleFallbackActiveAddress);
+      if (services && services.length > 0) {
+        return true;
+      }
+    } catch {
+      bleFallbackActiveAddress = null;
+    }
+  }
+
+  return false;
+};
+
+/**
  * Check if Classic scale is connected
  */
 export const isClassicScaleConnected = (): boolean => {
@@ -1005,11 +1158,14 @@ export const SCALE_COMMANDS = {
   CRLF: '\r\n',             // Line terminator
 };
 
+let consecutiveScaleWriteErrors = 0;
+
 /**
  * Send command to connected scale
  */
 export const sendScaleCommand = async (command: string): Promise<boolean> => {
   if (!classicScale.isConnected) {
+    consecutiveScaleWriteErrors = 0;
     console.warn('⚠️ Cannot send command: No Classic BT connection');
     return false;
   }
@@ -1020,9 +1176,18 @@ export const sendScaleCommand = async (command: string): Promise<boolean> => {
     } else {
       await BluetoothClassic.write({ data: command, role: 'scale' });
     }
+    consecutiveScaleWriteErrors = 0;
     return true;
   } catch (error) {
-    console.error('❌ Failed to send command:', error);
+    consecutiveScaleWriteErrors += 1;
+    console.error(`❌ Failed to send scale command (error count: ${consecutiveScaleWriteErrors}):`, error);
+    if (consecutiveScaleWriteErrors >= 1) {
+      console.warn('⚠️ Scale write failure detected — verifying connection liveness');
+      const check = await checkClassicConnection('scale');
+      if (!check) {
+        clearClassicScaleState(true);
+      }
+    }
     return false;
   }
 };
@@ -1240,6 +1405,12 @@ export const connectClassicPrinter = async (
       success: false, 
       error: 'Classic Bluetooth only available on native platforms' 
     };
+  }
+
+  const enabled = await isBluetoothAdapterEnabled();
+  if (!enabled) {
+    console.log('🖨️ [BT][printer] connectClassicPrinter skipped: Bluetooth adapter is disabled');
+    return { success: false, error: 'Bluetooth is disabled' };
   }
 
   try {

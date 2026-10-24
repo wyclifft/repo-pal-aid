@@ -422,21 +422,96 @@ abstract class DelicoopDatabase : RoomDatabase() {
         }
 
         /**
-         * Update the stored device code and return the new database name
+         * Update the stored device code and return the new database name.
+         * Automatically migrates existing database files and switches the active database instance.
          */
-        fun setDeviceCode(context: Context, devCode: String) {
+        @Synchronized
+        fun setDeviceCode(context: Context, devCode: String): String {
             val sanitized = devCode.replace("[^a-zA-Z0-9]".toRegex(), "").ifEmpty { DEFAULT_DEVCODE }
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
+            val oldDevCode = getDeviceCode(context)
+            val oldDbName = "${BASE_DATABASE_NAME}_${oldDevCode}"
+            val newDbName = "${BASE_DATABASE_NAME}_${sanitized}"
+
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit()
                 .putString(KEY_DEVCODE, sanitized)
+                .putString("deviceCode", sanitized)
                 .commit()
-            Log.d(TAG, "[DB] Saved device code: $sanitized")
+
+            Log.d(TAG, "[DB] Updated stored device code: '$oldDevCode' -> '$sanitized'")
+
+            if (!oldDbName.equals(newDbName, ignoreCase = true) || INSTANCE == null) {
+                Log.d(TAG, "[DB] Switching active database from '$oldDbName' to '$newDbName'")
+                
+                // 1. Close current connection
+                closeDatabase()
+
+                // 2. Migrate existing database file to new name
+                renameDatabaseFile(context, oldDbName, newDbName)
+                
+                // 3. Re-open connection under new database name
+                getInstance(context)
+            }
+
+            return newDbName
+        }
+
+        /**
+         * Safely renames an existing database file and its sidecars (-journal, -wal, -shm).
+         */
+        @Synchronized
+        fun renameDatabaseFile(context: Context, srcName: String, dstName: String): Boolean {
+            if (srcName.equals(dstName, ignoreCase = true)) return true
+
+            val srcFile = context.getDatabasePath(srcName)
+            val dstFile = context.getDatabasePath(dstName)
+
+            if (!srcFile.exists() || srcFile.length() == 0L) {
+                Log.d(TAG, "[DB] Cannot rename '$srcName': source file does not exist or is empty")
+                return false
+            }
+
+            // If destination already exists with valid data, do not overwrite unless empty
+            if (dstFile.exists() && dstFile.length() > 0L) {
+                Log.d(TAG, "[DB] Target database file '$dstName' already exists (${dstFile.length()} bytes)")
+                return true
+            }
+
+            dstFile.parentFile?.mkdirs()
+
+            val extensions = listOf("", "-journal", "-wal", "-shm")
+            var success = true
+
+            for (ext in extensions) {
+                val s = java.io.File(srcFile.absolutePath + ext)
+                val d = java.io.File(dstFile.absolutePath + ext)
+
+                if (s.exists()) {
+                    if (d.exists()) {
+                        d.delete()
+                    }
+                    val renamed = s.renameTo(d)
+                    if (!renamed) {
+                        Log.w(TAG, "[DB] renameTo failed for ${s.name} -> ${d.name}, trying copy")
+                        try {
+                            s.copyTo(d, overwrite = true)
+                            s.delete()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "[DB] Error copying ${s.name} -> ${d.name}: ${e.message}")
+                            success = false
+                        }
+                    }
+                }
+            }
+
+            Log.d(TAG, "[DB] Database file migration completed: '$srcName' -> '$dstName' (success=$success)")
+            return success
         }
 
         private fun forceOpen(db: DelicoopDatabase) {
             if (isOpened.compareAndSet(false, true)) {
                 try {
-                    db.openHelper.writableDatabase
+                    val writableDb = db.openHelper.writableDatabase
                     Log.d(TAG, "[DB] Database file opened and schema verified")
                 } catch (e: Exception) {
                     Log.e(TAG, "[DB] Failed to force-open database: ${e.message}", e)
@@ -454,6 +529,42 @@ abstract class DelicoopDatabase : RoomDatabase() {
             DatabaseBackupManager.restoreIfNeeded(appContext)
 
             val dbName = getDatabaseName(appContext)
+            val targetDbFile = appContext.getDatabasePath(dbName)
+
+            // Auto-migrate fallback DB files (e.g. delicoop101_database_AH04) if target DB does not exist
+            if (!targetDbFile.exists() || targetDbFile.length() == 0L) {
+                val fallbackCandidates = mutableListOf(
+                    "${BASE_DATABASE_NAME}_${DEFAULT_DEVCODE}",
+                    BASE_DATABASE_NAME
+                )
+
+                val dbDir = targetDbFile.parentFile
+                if (dbDir != null && dbDir.exists()) {
+                    dbDir.listFiles()?.forEach { file ->
+                        if (file.isFile && file.name.startsWith("${BASE_DATABASE_NAME}_") 
+                            && !file.name.endsWith("-journal") 
+                            && !file.name.endsWith("-wal") 
+                            && !file.name.endsWith("-shm")) {
+                            if (!fallbackCandidates.contains(file.name)) {
+                                fallbackCandidates.add(file.name)
+                            }
+                        }
+                    }
+                }
+
+                for (fallbackName in fallbackCandidates) {
+                    if (!fallbackName.equals(dbName, ignoreCase = true)) {
+                        val fallbackFile = appContext.getDatabasePath(fallbackName)
+                        if (fallbackFile.exists() && fallbackFile.length() > 0L) {
+                            Log.d(TAG, "[DB] Auto-migrating existing database '${fallbackName}' -> '${dbName}'")
+                            if (renameDatabaseFile(appContext, fallbackName, dbName)) {
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+
             Log.d(TAG, "[DB] Building unencrypted single-file database: $dbName")
 
             return Room.databaseBuilder(

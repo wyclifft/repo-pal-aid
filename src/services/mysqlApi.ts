@@ -361,6 +361,8 @@ export interface MilkCollection {
   user_id?: string;           // → DB: userId (login user_id for tracking)
   clerk_name: string;         // → DB: clerk (display name/username)
   collection_date: Date | string; // → DB: transdate
+  transdate?: string;         // Local date (YYYY-MM-DD) → DB: transdate
+  transtime?: string;         // Local time (HH:mm:ss) → DB: transtime
   created_at?: string;
   updated_at?: string;
   /**
@@ -612,6 +614,22 @@ export interface ApprovedDevice {
 }
 
 export const devicesApi = {
+  /**
+   * Update device sync status in devSettings (appVersion, lastSynced, lastUpdate)
+   */
+  updateSyncStatus: async (params: {
+    device_fingerprint: string;
+    appVersion?: string;
+    lastSynced?: string;
+    lastUpdate?: string;
+    updateLastSynced?: boolean;
+  }): Promise<ApiResponse<any>> => {
+    return apiRequest<any>('/devices/sync-status', {
+      method: 'POST',
+      body: JSON.stringify(params)
+    });
+  },
+
   /**
    * Get all devices
    */

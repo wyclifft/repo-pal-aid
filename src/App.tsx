@@ -397,7 +397,7 @@ const App = () => {
               <ReprintErrorBoundary>
                 <ReprintProvider>
                   <Toaster />
-                  <Sonner position="top-center" richColors closeButton />
+                  <Sonner position="top-center" richColors closeButton swipeDirections={["up", "left", "right"]} />
                   <AppContent />
                 </ReprintProvider>
               </ReprintErrorBoundary>

@@ -1551,14 +1551,19 @@ const Index = () => {
     const now = new Date();
     const pad2 = (n: number) => String(n).padStart(2, '0');
     const transdate = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+    const transtime = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
 
     const captureData: MilkCollection = {
       reference_no: referenceNo,
       uploadrefno: uploadRefNo, // Type-specific ID for approval workflow
+      Uploadrefno: uploadRefNo, // Explicit alias for DB
       farmer_id: cleanFarmerId,
+      memberno: cleanFarmerId,
+      memberNo: cleanFarmerId,
       farmer_name: farmerName.trim(),
       route: (selectedRouteCode || routeName || '').trim(), // Strict active collection center/route selected on Dashboard
       memberRoute: (selectedFarmer?.route || '').trim(), // Farmer's registered route
+      c_route: (selectedFarmer?.route || '').trim(), // Farmer's registered route for DB c_route column
       session: currentSessionType, // Use already-computed session
       session_descript: activeSession?.descript || currentSessionType, // Full session description for display
       weight: captureWeight, // Net weight for coffee, total for dairy
@@ -1566,12 +1571,17 @@ const Index = () => {
       clerk_name: currentUser ? (currentUser.username || currentUser.user_id) : 'unknown', // Display name for clerk column
       collection_date: now,
       transdate, // v2.12.60: Explicit local date for server to avoid timezone shift
+      transtime, // Local time (HH:mm:ss) for DB transtime column
       multOpt: farmerMultOpt,
       orderId: Date.now(),
       synced: false, // Not synced - only locally captured
       // Product info from selected produce item (invtype=01)
       product_code: selectedProduct?.icode, // → DB: icode column
+      icode: selectedProduct?.icode,
       product_name: selectedProduct?.descript,
+      cowname: (selectedFarmer as any)?.cowname || (selectedFarmer as any)?.cowName || '',
+      cowbreed: (selectedFarmer as any)?.cowbreed || (selectedFarmer as any)?.cowBreed || '',
+      noofcalfs: Number((selectedFarmer as any)?.noofcalfs || (selectedFarmer as any)?.numberOfCalves || 0),
       // Entry type: 'scale' for Bluetooth readings, 'manual' for manual input
       entry_type: entryType,
       // Season SCODE from active session → DB: CAN column

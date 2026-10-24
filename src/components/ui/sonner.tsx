@@ -14,6 +14,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
         theme={theme as ToasterProps["theme"]}
         className="toaster group"
         position="bottom-right"
+        closeButton={true}
+        dismissible={true}
+        swipeDirections={["up", "left", "right"]}
         toastOptions={{
           classNames: {
             toast:

@@ -85,21 +85,17 @@ export const useSessionClose = (
     };
   }, []);
 
-  // Determine if session can be closed
-  const canClose = !isSyncing && !isClosing && (
-    !sessionPrintOnly || // sessPrint = 0: always can close
-    isSyncComplete       // sessPrint = 1: only if sync complete
-  );
+  // Determine total pending count
+  const totalPending = Math.max(pendingSyncCount, pendingCount || 0);
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+
+  // Determine if session can be closed (Operators can always close sessions)
+  const canClose = !isSyncing && !isClosing;
 
   // Dynamic button label
   const getButtonLabel = (): string => {
     if (isClosing) return 'Closing...';
     if (isSyncing) return 'Syncing...';
-    
-    if (sessionPrintOnly && !isSyncComplete) {
-      return `Sync Pending (${pendingSyncCount})`;
-    }
-    
     return 'Close Session';
   };
 
@@ -110,7 +106,7 @@ export const useSessionClose = (
     setPendingCloseAfterPrint(false);
     setIsClosing(false);
     onCloseSuccess();
-    toast.success('Session closed successfully');
+    toast.success('Session closed');
   }, [onCloseSuccess]);
 
   // Called when user cancels Z-report modal
@@ -126,77 +122,80 @@ export const useSessionClose = (
     // Refresh sync status first
     await updateSyncStatus();
     
-    // For Coffee orgs or when sessPrint is disabled (0), close session immediately
-    if (isCoffee || !sessionPrintOnly) {
-      console.log('📝 Closing session without Z-report requirement');
+    const currentlyOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    const currentPending = Math.max(pendingSyncCount, pendingCount || 0);
+
+    // If offline or sessPrint disabled, close session cleanly without navigating to Z-report
+    if (!currentlyOnline || !sessionPrintOnly || isCoffee) {
+      console.log('📝 Closing session directly (offline or Z-report requirement disabled)');
       onCloseSuccess();
       toast.success('Session closed');
       return true;
     }
-    
-    // sessPrint = 1: Require sync completion and Z-report view/print
+
     setIsClosing(true);
-    
+
     try {
-      // If there are pending syncs, try to sync them first
-      if (!isSyncComplete) {
-        console.log('📤 sessPrint=1: Syncing pending transactions before close...');
+      let remainingPending = currentPending;
+
+      // If online with pending transactions, attempt background sync first
+      if (currentlyOnline && currentPending > 0) {
+        console.log('📤 Syncing pending transactions before session close...');
         setIsSyncingForClose(true);
-        
-        // Attempt to sync
-        await syncOfflineReceipts();
-        
-        setIsSyncingForClose(false);
-        
-        // Re-check sync status after sync
-        await updateSyncStatus();
-        
-        // Check again after sync attempt
-        const stillUnsynced = await getUnsyncedReceipts();
-        const stillPending = stillUnsynced.filter((r: any) => r.type !== 'sale');
-        
-        if (stillPending.length > 0) {
-          if (mountedRef.current) {
-            setPendingSyncCount(stillPending.length);
-            setIsSyncComplete(false);
-            setIsClosing(false);
-          }
-          toast.error(`Cannot close: ${stillPending.length} transaction(s) still pending sync`);
-          return false;
+
+        try {
+          await syncOfflineReceipts();
+        } catch (sErr) {
+          console.warn('Pre-close sync error:', sErr);
         }
+
+        setIsSyncingForClose(false);
+        await updateSyncStatus();
+
+        const stillUnsynced = await getUnsyncedReceipts();
+        remainingPending = Math.max(stillUnsynced.filter((r: any) => r.type !== 'sale').length, pendingCount || 0);
       }
-      
-      // All synced - show Z-report for viewing/printing
-      console.log('✅ sessPrint=1: All transactions synced, showing Z-report...');
-      toast.success('All transactions synced! View/print Z-report to complete');
-      
-      // Navigate to Z-report page with session close mode
-      // The user will need to confirm they've viewed/printed before session closes
+
+      // If still offline or pending transactions remain, close session cleanly without Z-report
+      if (remainingPending > 0 || !navigator.onLine) {
+        console.log('📝 Closing session cleanly (Z-report omitted due to pending sync or offline state)');
+        onCloseSuccess();
+        toast.success('Session closed');
+        if (mountedRef.current) {
+          setIsClosing(false);
+        }
+        return true;
+      }
+
+      // All synced and online - show Z-report for viewing/printing
+      console.log('✅ All transactions synced, showing Z-report...');
       const today = selectedDate || new Date().toISOString().split('T')[0];
       setPendingCloseAfterPrint(true);
       setShowZReportModal(true);
-      
-      // Navigate to Z-report page
+
       navigate(`/z-report?date=${today}&sessionclose=true`);
-      
+
       return true;
-      
+
     } catch (err) {
       console.error('Session close error:', err);
-      toast.error('Failed to close session. Please try again.');
+      // Fallback: close session cleanly on error so operator is never blocked
+      onCloseSuccess();
+      toast.success('Session closed');
       if (mountedRef.current) {
         setIsClosing(false);
         setIsSyncingForClose(false);
       }
-      return false;
+      return true;
     }
   }, [
-    sessionPrintOnly, 
+    sessionPrintOnly,
     isCoffee,
-    isSyncComplete,
-    syncOfflineReceipts, 
-    getUnsyncedReceipts, 
-    updateSyncStatus, 
+    pendingCount,
+    pendingSyncCount,
+    syncOfflineReceipts,
+    getUnsyncedReceipts,
+    updateSyncStatus,
     onCloseSuccess,
     selectedDate,
     navigate

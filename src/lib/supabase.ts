@@ -90,10 +90,14 @@ export const getCaptureMode = (supervisor?: number): {
 export interface MilkCollection {
   reference_no?: string;      // → DB: transrefno
   uploadrefno?: string;       // → DB: Uploadrefno - Formatted reference (devcode + milkId)
+  Uploadrefno?: string;       // → DB: Uploadrefno - Explicit alias
   farmer_id: string;          // → DB: memberno
+  memberno?: string;          // → DB: memberno (explicit alias for local DB)
+  memberNo?: string;          // → DB: memberno (explicit alias for local DB)
   farmer_name: string;        // Display only, not stored directly
   route: string;              // → DB: route (Dashboard selected collection center/route)
   memberRoute?: string;       // → DB: c_route (Farmer's registered route from cm_members)
+  c_route?: string;           // → DB: c_route (explicit alias for local DB)
   devcode?: string;           // Device code that performed the collection
   // → DB: session column
   // Dairy (orgtype D): "AM" | "PM"
@@ -105,6 +109,7 @@ export interface MilkCollection {
   clerk_name: string;         // → DB: clerk (display name/username)
   collection_date: Date;      // → DB: transdate
   transdate?: string;         // v2.12.60: Explicit local date for server (YYYY-MM-DD)
+  transtime?: string;         // Local time (HH:mm:ss) → DB: transtime
   /**
    * Snapshot of member multOpt at the time of capture.
    * 0 = single delivery per session, 1 = multiple allowed.
@@ -114,7 +119,13 @@ export interface MilkCollection {
   synced?: boolean;
   // Product info (from fm_items, invtype=01)
   product_code?: string;      // → DB: icode
+  icode?: string;             // → DB: icode (explicit alias for local DB)
   product_name?: string;      // Display only, derived from fm_items.descript
+  // Cow details for AI/milk transactions
+  cowname?: string;           // → DB: cowname
+  cowbreed?: string;          // → DB: cowbreed
+  noofcalfs?: number;         // → DB: noofcalfs
+  aibreed?: string;           // → DB: aibreed
   // Entry type: 'scale' for Bluetooth scale readings, 'manual' for manual input
   entry_type?: 'scale' | 'manual';
   // Season SCODE for coffee (orgtype C) - saved to transactions.CAN column

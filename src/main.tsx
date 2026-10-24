@@ -51,6 +51,16 @@ if (window.__DELICOOP_BOOT) {
 
 console.info('[BOOT] main.tsx module started', { version: APP_VERSION });
 
+// Initialize APK version tracking to detect APK updates and record lastUpdate timestamp
+import('./utils/apkVersionTracker').then(({ initApkVersionTracking }) => {
+  try {
+    const versionInfo = initApkVersionTracking();
+    console.info('[BOOT] APK version tracking initialized:', versionInfo);
+  } catch (err) {
+    console.warn('[BOOT] Failed to initialize APK version tracking:', err);
+  }
+});
+
 // v2.11.21 — Bridge & Plugin Diagnostics (verbose for WebView 51 triage)
 if (Capacitor.isNativePlatform()) {
   setTimeout(() => {

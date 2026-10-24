@@ -106,10 +106,33 @@ const AIPage = () => {
   const [cumulativeLoading, setCumulativeLoading] = useState(false);
   const [viewDate, setViewDate] = useState<Date>(new Date());
 
-  const { getFarmers, getItems, isReady, getFarmerCumulative, getFarmerTotalCumulative } = useIndexedDB();
+  const { getFarmers, getItems, isReady, getFarmerCumulative, getFarmerTotalCumulative, getUnsyncedSales } = useIndexedDB();
   const { saveOfflineSale, syncPendingSales } = useSalesSync();
   const { addAIReceipt } = useReprint();
-  
+
+  // Pending AI sales count for header indicator
+  const [pendingAISalesCount, setPendingAISalesCount] = useState(0);
+
+  const updatePendingAISalesCount = useCallback(async () => {
+    if (!isReady) return;
+    try {
+      const sales = await getUnsyncedSales();
+      const aiSales = sales.filter((r: any) => {
+        const tt = Number(r.transtype || 0);
+        return tt === 3 || r.type === 'ai';
+      });
+      setPendingAISalesCount(aiSales.length);
+    } catch {
+      // ignore
+    }
+  }, [isReady, getUnsyncedSales]);
+
+  useEffect(() => {
+    updatePendingAISalesCount();
+    const interval = setInterval(updatePendingAISalesCount, 10000);
+    return () => clearInterval(interval);
+  }, [updatePendingAISalesCount]);
+
   // Online status tracking
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
@@ -604,6 +627,8 @@ const AIPage = () => {
           route: selectedRouteTcode || routeName || '', // Active collection route / center selected on Dashboard
           route_tcode: selectedRouteTcode, // Dashboard-selected fm_tanks.tcode
           item_code: cartItem.item.icode,
+          icode: cartItem.item.icode,
+          product_code: cartItem.item.icode,
           item_name: cartItem.item.descript,
           quantity: cartItem.quantity,
           price: cartItem.item.sprice,
@@ -624,10 +649,23 @@ const AIPage = () => {
         };
 
         if (navigator.onLine) {
-          // Submit to sales endpoint with transtype=3 for AI
-          await mysqlApi.sales.create(aiTransaction);
-          // v2.12.30: Clear from native storage if it was there
-          markNativeRecordSynced(currentTransRefNo).catch(() => {});
+          try {
+            // Submit to sales endpoint with transtype=3 for AI
+            const result = await mysqlApi.sales.create(aiTransaction);
+            if (result && result.success !== false) {
+              // v2.12.30: Clear from native storage if it was there
+              markNativeRecordSynced(currentTransRefNo).catch(() => {});
+              console.log(`✅ AI transaction submitted online: ${refs.transrefno}`);
+            } else {
+              console.warn('[AI] Online submission returned error, falling back to offline save:', result);
+              await saveOfflineSale(aiTransaction);
+              saveToLocalDB(currentTransRefNo, 'ai_sale', aiTransaction, userId, deviceFingerprint).catch(() => {});
+            }
+          } catch (onlineErr) {
+            console.warn('[AI] Online submission network exception, saving offline:', onlineErr);
+            await saveOfflineSale(aiTransaction);
+            saveToLocalDB(currentTransRefNo, 'ai_sale', aiTransaction, userId, deviceFingerprint).catch(() => {});
+          }
         } else {
           // Save offline for later sync
           await saveOfflineSale(aiTransaction);
@@ -759,6 +797,11 @@ const AIPage = () => {
             <ArrowLeft className="h-6 w-6" />
           </button>
           <h1 className="text-xl font-bold flex-1">AI Services</h1>
+          {pendingAISalesCount > 0 && (
+            <span className="bg-amber-500 text-amber-900 text-xs font-bold px-2 py-0.5 rounded-full mr-2">
+              {pendingAISalesCount} pending
+            </span>
+          )}
           {/* Online/Offline indicator */}
           <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full ${isOnline ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
             {isOnline ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}

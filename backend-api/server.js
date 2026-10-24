@@ -46,11 +46,11 @@ if (!process.env.MYSQL_USER || !process.env.MYSQL_PASSWORD) {
 }
 
 // Database connection pool
-// v2.12.19: Tuning for high concurrency (100+ users).
-// Increased POOL_LIMIT to 40 to accommodate more concurrent I/O.
-// Increased QUEUE_LIMIT to 200 to buffer spikes without immediate 503s.
-const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 40);
-const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 200);
+// v2.12.20: Sized for cPanel max_user_connections=40 shared across workers & apps.
+// Default POOL_LIMIT set to 12 (not 40) so a single worker process doesn't exhaust total cPanel cap.
+// Default QUEUE_LIMIT set to 100 to buffer spikes while fast-failing with retryable 503 on overload.
+const POOL_LIMIT = Number(process.env.MYSQL_POOL_LIMIT || 12);
+const QUEUE_LIMIT = Number(process.env.MYSQL_QUEUE_LIMIT || 100);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 30000);
 
 /**
@@ -200,7 +200,7 @@ pool.on('enqueue', () => {
   console.warn(`[POOL] Waiting for connection slot (inUse=${p.inUse} free=${p.free} queued=${p.queued})`);
 });
 
-// Self-heal devSettings column defaults to prevent ER_NO_DEFAULT_FOR_FIELD (1364) errors
+// Self-heal devSettings column defaults and ensure appVersion column exists
 (async () => {
   const fields = ['ccode', 'devcode', 'uniquedevcode', 'device', 'remotebaseurl', 'localbaseurl', 'userid'];
   for (const field of fields) {
@@ -208,6 +208,10 @@ pool.on('enqueue', () => {
       await pool.query(`ALTER TABLE devSettings ALTER COLUMN ${field} SET DEFAULT '000'`);
     } catch (_) { /* Ignore if column missing or DB permissions prevent ALTER */ }
   }
+
+  try {
+    await pool.query('ALTER TABLE devSettings ADD COLUMN appVersion VARCHAR(50) DEFAULT NULL');
+  } catch (_) { /* Column appVersion already exists */ }
 })();
 
 /**
@@ -251,11 +255,12 @@ async function withTx(fn) {
 
 
 // Identify pool-pressure / DB-busy errors so the request handler can return a
-// retryable 503 instead of letting the client hang. Mirrors the codes that
-// `mysql2` surfaces when the user-level connection cap is hit.
+// retryable 503 instead of letting the client hang or returning a generic 500.
+// Handles mysql2 error codes, errno values, and queue limit messages.
 const isPoolPressureError = (err) => {
   if (!err) return false;
   const code = err.code || '';
+  const message = err.message || (typeof err === 'string' ? err : '');
   const errno = err.errno;
   return (
     code === 'ER_USER_LIMIT_REACHED' ||      // max_user_connections cap
@@ -263,8 +268,12 @@ const isPoolPressureError = (err) => {
     code === 'POOL_ENQUEUELIMIT' ||          // mysql2 queue full
     code === 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR' ||
     code === 'ETIMEDOUT' ||
+    code === 'ECONNRESET' ||
     errno === 1203 ||
-    errno === 1040
+    errno === 1040 ||
+    /queue limit/i.test(message) ||
+    /connection slot/i.test(message) ||
+    (/pool/i.test(message) && /limit/i.test(message))
   );
 };
 
@@ -845,6 +854,37 @@ const cumulativeWarmInFlight = new Map();
 // during a shift; devices were re-requesting it continuously.
 const itemsCache = createCache({ max: 200, ttlMs: 60000 });
 
+// v2.12.20: 30s in-memory cache for device lookups (devSettings by uniquedevcode).
+// Eliminates high-frequency SELECT on devSettings for every incoming device API request.
+const deviceCache = createCache({ max: 500, ttlMs: 30000 });
+
+/**
+ * Resolve device record by uniquedevcode using deviceCache.
+ * Returns { ccode, authorized, devcode, trnid, milkid, storeid, aiid, userId } or null.
+ */
+const getDeviceByUniqueCode = async (uniquedevcode, conn = pool) => {
+  if (!uniquedevcode) return null;
+  const key = `dev:${uniquedevcode}`;
+  const cached = deviceCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const [deviceRows] = await conn.query(
+    'SELECT ccode, authorized, devcode, trnid, milkid, storeid, aiid, userId FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
+    [uniquedevcode]
+  );
+  const device = deviceRows.length > 0 ? deviceRows[0] : null;
+  deviceCache.set(key, device);
+  return device;
+};
+
+const invalidateDeviceCache = (uniquedevcode) => {
+  if (uniquedevcode) {
+    deviceCache.delete(`dev:${uniquedevcode}`);
+  } else {
+    deviceCache.clear();
+  }
+};
+
 
 // v2.12.5: pool-pressure probe. When the pool is effectively exhausted we
 // answer heavy read endpoints with 503 + Retry-After instead of queueing,
@@ -1296,19 +1336,19 @@ process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', errorToPlainObject(err));
 });
 
-// Main server
-const server = http.createServer(async (req, res) => {
+// Main server handler
+const handleRequest = async (req, res) => {
   const origin = req.headers.origin;
   const corsHeaders = getCorsHeaders(origin);
 
   // Ensure headers exist even if something writes early
   for (const [k, v] of Object.entries(corsHeaders)) {
-    res.setHeader(k, v);
+    try { res.setHeader(k, v); } catch (_) {}
   }
 
   const parsedUrl = url.parse(req.url, true);
-  const path = parsedUrl.pathname;
-  const method = req.method;
+  const path = parsedUrl.pathname || '';
+  const method = req.method || 'GET';
 
   // CORS preflight - handle ALL OPTIONS requests immediately
   if (method === 'OPTIONS') {
@@ -1346,20 +1386,17 @@ const server = http.createServer(async (req, res) => {
     if (path.startsWith('/api/sessions/by-device/') && method === 'GET') {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
 
-      // Get device and check authorization
-      const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
-        [uniquedevcode]
-      );
+      // Get device and check authorization (uses 30s in-memory cache)
+      const device = await getDeviceByUniqueCode(uniquedevcode);
 
-      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+      if (!device || device.authorized !== 1) {
         return sendJSON(res, {
           success: false,
           message: 'Device not authorized'
         }, 401);
       }
 
-      const ccode = deviceRows[0].ccode;
+      const ccode = device.ccode;
 
       // Get orgtype from psettings to determine data source
       const [psettingsRows] = await pool.query(
@@ -1483,20 +1520,17 @@ const server = http.createServer(async (req, res) => {
     if (path.startsWith('/api/sessions/active/') && method === 'GET') {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
       
-      // Get device and check authorization
-      const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
-        [uniquedevcode]
-      );
+      // Get device and check authorization (uses 30s in-memory cache)
+      const device = await getDeviceByUniqueCode(uniquedevcode);
       
-      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+      if (!device || device.authorized !== 1) {
         return sendJSON(res, { 
           success: false, 
           message: 'Device not authorized' 
         }, 401);
       }
       
-      const ccode = deviceRows[0].ccode;
+      const ccode = device.ccode;
 
       const now = new Date();
       const currentTime = now.toTimeString().split(' ')[0]; // "HH:MM:SS" (legacy TIME columns)
@@ -1542,20 +1576,17 @@ const server = http.createServer(async (req, res) => {
     if (path.startsWith('/api/routes/by-device/') && method === 'GET') {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
       
-      // Get device and check authorization
-      const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
-        [uniquedevcode]
-      );
+      // Get device and check authorization (uses 30s in-memory cache)
+      const device = await getDeviceByUniqueCode(uniquedevcode);
       
-      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+      if (!device || device.authorized !== 1) {
         return sendJSON(res, { 
           success: false, 
           message: 'Device not authorized' 
         }, 401);
       }
       
-      const ccode = deviceRows[0].ccode;
+      const ccode = device.ccode;
       
       // Get routes from fm_tanks for this company, including clientFetch for flow control
       const [rows] = await pool.query(
@@ -1587,20 +1618,17 @@ const server = http.createServer(async (req, res) => {
       const uniquedevcode = decodeURIComponent(path.split('/')[4]);
       const search = parsedUrl.query.search;
       
-      // Get device and check authorization
-      const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
-        [uniquedevcode]
-      );
+      // Get device and check authorization (uses 30s in-memory cache)
+      const device = await getDeviceByUniqueCode(uniquedevcode);
       
-      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+      if (!device || device.authorized !== 1) {
         return sendJSON(res, { 
           success: false, 
           message: 'Device not authorized' 
         }, 401);
       }
       
-      const ccode = deviceRows[0].ccode;
+      const ccode = device.ccode;
       
       // Get route filter from query params (chkroute=1: filter by exact route)
       const routeFilter = parsedUrl.query.route;
@@ -1664,9 +1692,9 @@ const server = http.createServer(async (req, res) => {
 
       if (!targetCcode && uniquedevcode) {
         try {
-          const [devRows] = await pool.query('SELECT ccode FROM devSettings WHERE uniquedevcode = ? LIMIT 1', [uniquedevcode]);
-          if (devRows.length > 0 && devRows[0].ccode) {
-            targetCcode = devRows[0].ccode;
+          const dev = await getDeviceByUniqueCode(uniquedevcode);
+          if (dev && dev.ccode) {
+            targetCcode = dev.ccode;
           }
         } catch (err) {
           console.warn('[API:credits] Failed to resolve ccode from devSettings:', err.message);
@@ -2116,8 +2144,9 @@ const server = http.createServer(async (req, res) => {
           }, 400);
         }
 
-        // Strict route validation: route must be provided and must strictly exist in fm_tanks for this company.
-        // NO FALLBACKS: transactions.route must be precisely the route selected by the user.
+        const cleanFarmerId = (body.farmer_id || '').replace(/^#/, '').trim();
+
+        // Route validation: if route is not found in fm_tanks, allow sync with the exact route code the transaction carries to prevent data loss or sync rejection.
         const candidateRoute = (body.route_tcode || body.route || '').trim();
         if (!candidateRoute) {
           console.log('❌ Missing route in milk collection request for company', ccode);
@@ -2133,24 +2162,22 @@ const server = http.createServer(async (req, res) => {
           [ccode, candidateRoute, candidateRoute]
         );
 
-        if (routeRows.length === 0) {
-          console.log(`❌ Invalid route: "${candidateRoute}" not found in fm_tanks for company ${ccode}`);
-          return sendJSON(res, {
-            success: false,
-            error: 'INVALID_ROUTE',
-            message: `Route "${candidateRoute}" is not valid for this company.`
-          }, 400);
-        }
+        let finalRoute = candidateRoute;
+        let clientFetch = 1;
 
-        const finalRoute = routeRows[0].tcode.toString().trim();
-        const clientFetch = routeRows[0].clientFetch;
-        if (clientFetch !== 1) {
-          console.log(`❌ clientFetch enforcement: Buy/Sell disabled for route ${finalRoute} (clientFetch=${clientFetch})`);
-          return sendJSON(res, {
-            success: false,
-            error: 'ROUTE_BUY_SELL_DISABLED',
-            message: 'Buy/Sell operations are not allowed for this route. Please use Store instead.'
-          }, 403);
+        if (routeRows.length > 0) {
+          finalRoute = routeRows[0].tcode.toString().trim();
+          clientFetch = routeRows[0].clientFetch;
+          if (clientFetch !== 1) {
+            console.log(`❌ clientFetch enforcement: Buy/Sell disabled for route ${finalRoute} (clientFetch=${clientFetch})`);
+            return sendJSON(res, {
+              success: false,
+              error: 'ROUTE_BUY_SELL_DISABLED',
+              message: 'Buy/Sell operations are not allowed for this route. Please use Store instead.'
+            }, 403);
+          }
+        } else {
+          console.log(`⚠️ Route "${candidateRoute}" not found in fm_tanks for company ${ccode}. Allowing sync with the exact route carried by the transaction (no fallback substitution).`);
         }
 
         const collectionDate = new Date(body.collection_date);
@@ -2160,7 +2187,6 @@ const server = http.createServer(async (req, res) => {
         const transtime = `${pad2(collectionDate.getHours())}:${pad2(collectionDate.getMinutes())}:${pad2(collectionDate.getSeconds())}`; // HH:MM:SS local
         const timestamp = Math.floor(collectionDate.getTime() / 1000); // Unix timestamp
 
-        const cleanFarmerId = (body.farmer_id || '').replace(/^#/, '').trim();
         const rawSession = (body.session || '').trim();
         const transtype = parseInt(body.transtype) || 1;
 
@@ -3138,20 +3164,17 @@ const server = http.createServer(async (req, res) => {
         }, 400);
       }
 
-      // Get device and check authorization
-      const [deviceRows] = await pool.query(
-        'SELECT ccode, authorized FROM devSettings WHERE uniquedevcode = ?',
-        [uniquedevcode]
-      );
+      // Get device and check authorization (uses 30s in-memory cache)
+      const device = await getDeviceByUniqueCode(uniquedevcode);
 
-      if (deviceRows.length === 0 || deviceRows[0].authorized !== 1) {
+      if (!device || device.authorized !== 1) {
         return sendJSON(res, {
           success: false,
           message: 'Device not authorized'
         }, 401);
       }
 
-      const ccode = deviceRows[0].ccode;
+      const ccode = device.ccode;
 
       // v2.12.6: serve from a 60 s cache. Devices were re-requesting the same
       // catalogue continuously; the rows change rarely, so the cache removes
@@ -4827,6 +4850,108 @@ if (path === '/api/sales' && method === 'POST') {
       const deviceId = path.split('/')[3];
       await pool.query('DELETE FROM approved_devices WHERE id = ?', [deviceId]);
       return sendJSON(res, { success: true, message: 'Device deleted' });
+    }
+
+    // Endpoint to update devSettings sync status (appVersion, lastSynced, lastUpdate)
+    if ((path === '/api/devices/sync-status' || path === '/api/device/sync-status') && method === 'POST') {
+      const body = await parseBody(req);
+      const fingerprint = String(body.device_fingerprint || body.uniquedevcode || '').trim();
+
+      if (!fingerprint) {
+        return sendJSON(res, { success: false, error: 'device_fingerprint is required' }, 400);
+      }
+
+      const rawAppVersion = body.appVersion || body.app_version || body.version;
+      const formattedAppVersion = rawAppVersion ? (String(rawAppVersion).startsWith('v') ? String(rawAppVersion) : `v${rawAppVersion}`) : null;
+
+      const rawLastSynced = body.lastSynced || body.last_synced;
+      let validLastSynced = null;
+      if (rawLastSynced) {
+        const p = new Date(rawLastSynced);
+        if (!isNaN(p.getTime())) validLastSynced = p;
+      }
+      if (!validLastSynced && body.updateLastSynced !== false) {
+        validLastSynced = new Date();
+      }
+
+      const rawLastUpdate = body.lastUpdate || body.last_update;
+      let validLastUpdate = null;
+      if (rawLastUpdate) {
+        const p = new Date(rawLastUpdate);
+        if (!isNaN(p.getTime())) validLastUpdate = p;
+      }
+
+      try {
+        const [existingDev] = await pool.query(
+          'SELECT appVersion FROM devSettings WHERE uniquedevcode = ? LIMIT 1',
+          [fingerprint]
+        );
+
+        let finalLastUpdate = validLastUpdate;
+        // If appVersion changed and lastUpdate was not explicitly provided, default lastUpdate to NOW()
+        if (existingDev.length > 0 && formattedAppVersion) {
+          const currentVersion = existingDev[0].appVersion;
+          if (currentVersion && currentVersion !== formattedAppVersion && !finalLastUpdate) {
+            finalLastUpdate = new Date();
+          }
+        }
+
+        if (existingDev.length > 0) {
+          const updates = [];
+          const values = [];
+
+          if (formattedAppVersion) {
+            updates.push('appVersion = ?');
+            values.push(formattedAppVersion);
+          }
+          if (validLastSynced) {
+            updates.push('lastSynced = ?');
+            values.push(validLastSynced);
+          }
+          if (finalLastUpdate) {
+            updates.push('lastUpdate = ?');
+            values.push(finalLastUpdate);
+          }
+
+          if (updates.length > 0) {
+            values.push(fingerprint);
+            await pool.query(`UPDATE devSettings SET ${updates.join(', ')} WHERE uniquedevcode = ?`, values);
+          }
+        } else {
+          // Insert minimal record if device not yet in devSettings
+          const defaultSynced = validLastSynced || new Date();
+          const defaultUpdate = finalLastUpdate || new Date();
+          await pool.query(
+            `INSERT INTO devSettings
+              (uniquedevcode, device, authorized, status, trnid, milkid, storeid, aiid, ccode, devcode, appVersion, lastSynced, lastUpdate)
+             VALUES (?, '000', 0, 0, 0, 0, 0, 0, '000', '000', ?, ?, ?)`,
+            [fingerprint, formattedAppVersion || '000', defaultSynced, defaultUpdate]
+          );
+        }
+
+        // Also update approved_devices last_sync timestamp if row exists
+        if (validLastSynced) {
+          try {
+            await pool.query(
+              'UPDATE approved_devices SET last_sync = ?, updated_at = NOW() WHERE device_fingerprint = ?',
+              [validLastSynced, fingerprint]
+            );
+          } catch (_) {}
+        }
+
+        return sendJSON(res, {
+          success: true,
+          message: 'Sync status updated',
+          data: {
+            appVersion: formattedAppVersion,
+            lastSynced: validLastSynced,
+            lastUpdate: finalLastUpdate
+          }
+        });
+      } catch (err) {
+        console.error('❌ Failed to update devSettings sync status:', err);
+        return sendJSON(res, { success: false, error: err.message }, 500);
+      }
     }
 
     // SMS Configuration endpoints
@@ -6904,7 +7029,6 @@ const txStatus = isSuccess ? 'paid' : 'failed';
     sendJSON(res, { success: false, error: 'Endpoint not found' }, 404);
 
   } catch (error) {
-    console.error(error);
     const requestId = `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
     // v2.10.108: detect DB-busy / pool-pressure and respond with a fast,
@@ -6917,6 +7041,7 @@ const txStatus = isSuccess ? 'paid' : 'failed';
         requestId,
         method,
         path,
+        message: /** @type {any} */ (error).message,
         code: /** @type {any} */ (error).code,
         errno: /** @type {any} */ (error).errno,
       });
@@ -6947,6 +7072,57 @@ const txStatus = isSuccess ? 'paid' : 'failed';
       500
     );
   }
+};
+
+const server = http.createServer((req, res) => {
+  handleRequest(req, res).catch((error) => {
+    const requestId = `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const origin = req.headers?.origin;
+    const corsHeaders = getCorsHeaders(origin);
+
+    try {
+      for (const [k, v] of Object.entries(corsHeaders)) {
+        res.setHeader(k, v);
+      }
+    } catch (_) {}
+
+    if (isPoolPressureError(error)) {
+      console.warn('[DB_BUSY_TOPLEVEL]', {
+        requestId,
+        method: req.method,
+        path: req.url,
+        message: error?.message,
+        code: error?.code,
+      });
+      try {
+        return sendJSON(
+          res,
+          { success: false, error: 'db_busy', retryable: true, requestId },
+          503
+        );
+      } catch (_) {}
+    }
+
+    console.error('[UNCAUGHT_HTTP_REJECTION]', {
+      requestId,
+      method: req.method,
+      path: req.url,
+      error: errorToPlainObject(error),
+    });
+
+    try {
+      sendJSON(
+        res,
+        { success: false, error: 'Server error', requestId },
+        500
+      );
+    } catch (_) {
+      try {
+        res.writeHead(500, corsHeaders);
+        res.end(JSON.stringify({ success: false, error: 'Server error', requestId }));
+      } catch (_) {}
+    }
+  });
 });
 
 // v2.10.119 (backend hotfix): HTTP keep-alive idle reaper. Node fires this

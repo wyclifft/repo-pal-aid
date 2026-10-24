@@ -9,13 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar as CalendarPicker } from '@/components/ui/calendar';
-import { ArrowLeft, Download, Calendar as CalendarIcon, AlertTriangle, Eye, Loader2, Printer } from 'lucide-react';
+import { ArrowLeft, Download, Calendar as CalendarIcon, AlertTriangle, Eye, Loader2, Printer, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateZReportPDF } from '@/utils/pdfExport';
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { DeviceAuthStatus } from '@/components/DeviceAuthStatus';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useAppSettings } from '@/hooks/useAppSettings';
+import { useSync } from '@/contexts/SyncContext';
 import { resolveDashboardActiveRoute } from '@/utils/sessionMetadata';
 import { isCompanyAnalysisAllowed } from '@/lib/supabase';
 import { ZReportReceipt } from '@/components/ZReportReceipt';
@@ -73,7 +74,10 @@ const ZReport = () => {
   // App settings
   const { sessionPrintOnly, routeLabel, produceLabel, isCoffee, isDairy, weightUnit, weightLabel, periodLabel, companyName } = useAppSettings();
   
-  // Sync status tracking for sessprint enforcement
+  // Sync manager context for live pending counts & sync trigger
+  const { pendingCount, isSyncing, syncOfflineReceipts } = useSync();
+
+  // Sync status tracking for sessprint enforcement & pending receipts
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isSyncComplete, setIsSyncComplete] = useState(true);
 
@@ -88,6 +92,16 @@ const ZReport = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [deviceFingerprint, setDeviceFingerprint] = useState<string>("");
+
+  // Total pending count combining local receipts and sync context
+  const totalPendingCount = useMemo(() => {
+    return Math.max(pendingSyncCount, pendingCount || 0);
+  }, [pendingSyncCount, pendingCount]);
+
+  // Z-Report capability rule: Can ONLY produce, print, or preview Z-reports when device is ONLINE and ALL transactions are SYNCED
+  const canProduceZReport = useMemo(() => {
+    return !isOffline && totalPendingCount === 0 && !isSyncing;
+  }, [isOffline, totalPendingCount, isSyncing]);
 
   // Receipt preview states
   const [dateOpen, setDateOpen] = useState(false);
@@ -680,6 +694,14 @@ const ZReport = () => {
   useEffect(() => {
     if (autoPrint && reportData && !loading && !autoPrintTriggeredRef.current) {
       autoPrintTriggeredRef.current = true;
+      if (!canProduceZReport) {
+        if (isOffline) {
+          toast.info('Auto-print skipped: device offline');
+        } else {
+          toast.info('Auto-print skipped: pending sync');
+        }
+        return;
+      }
       console.log('🖨️ Auto-printing Z-report (sessPrint session close)');
       toast.success('Z-report ready - printing...');
       
@@ -689,7 +711,7 @@ const ZReport = () => {
         setHasPrinted(true);
       }, 500);
     }
-  }, [autoPrint, reportData, loading]);
+  }, [autoPrint, reportData, loading, canProduceZReport, isOffline]);
 
   // Inspect device report transactions to decide which Z report types apply.
   const detectAvailableTypes = useCallback((): { hasProduce: boolean; hasStore: boolean } => {
@@ -731,10 +753,13 @@ const ZReport = () => {
 
   // Handle print button click - choose Z type first, then period if applicable.
   const handlePrintClick = () => {
-    console.log('🖨️ Print button clicked', { sessionPrintOnly, isSyncComplete, pendingSyncCount });
-    // Enforce sessprint: only show preview if sync is complete
-    if (sessionPrintOnly && !isSyncComplete) {
-      toast.error(`Cannot print Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
+    console.log('🖨️ Print button clicked', { canProduceZReport, isOffline, isSyncing, totalPendingCount });
+    if (!canProduceZReport) {
+      if (isOffline) {
+        toast.error('Cannot print Z-report: device offline');
+      } else {
+        toast.error('Cannot print Z-report: please sync data first');
+      }
       return;
     }
 
@@ -786,6 +811,14 @@ const ZReport = () => {
 
   // Row click handler with spinner support
   const handleSessionRowClick = async (item: { id: string; period: string; label: string; reportType?: ZReportType }) => {
+    if (!canProduceZReport) {
+      if (isOffline) {
+        toast.error('Cannot view Z-report: device offline');
+      } else {
+        toast.error('Cannot view Z-report: please sync data first');
+      }
+      return;
+    }
     try {
       setLoadingRowId(item.id);
       await handlePeriodSelect(item.period, item.label, item.reportType || 'produce');
@@ -816,7 +849,7 @@ const ZReport = () => {
     localStorage.removeItem('active_session_data');
     // Dispatch event to notify Dashboard
     window.dispatchEvent(new CustomEvent('sessionCloseComplete'));
-    toast.success('Session closed successfully');
+    toast.success('Session closed');
     navigate('/', { replace: true });
   };
 
@@ -829,10 +862,13 @@ const ZReport = () => {
   };
 
   const handlePrint = () => {
-    console.log('🖨️ handlePrint called', { sessionPrintOnly, isSyncComplete });
-    // Enforce sessprint: only print if sync is complete
-    if (sessionPrintOnly && !isSyncComplete) {
-      toast.error(`Cannot print Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
+    console.log('🖨️ handlePrint called', { canProduceZReport, isOffline, isSyncing, totalPendingCount });
+    if (!canProduceZReport) {
+      if (isOffline) {
+        toast.error('Cannot print Z-report: device offline');
+      } else {
+        toast.error('Cannot print Z-report: please sync data first');
+      }
       return;
     }
     console.log('🖨️ Triggering window.print()');
@@ -841,10 +877,13 @@ const ZReport = () => {
   };
 
   const handleDownloadPDF = async () => {
-    console.log('📥 PDF button clicked', { sessionPrintOnly, isSyncComplete, reportData: !!reportData });
-    // Enforce sessprint: only download if sync is complete
-    if (sessionPrintOnly && !isSyncComplete) {
-      toast.error(`Cannot download Z-report: ${pendingSyncCount} collection(s) pending sync. Please sync first.`);
+    console.log('📥 PDF button clicked', { canProduceZReport, isOffline, isSyncing, reportData: !!reportData });
+    if (!canProduceZReport) {
+      if (isOffline) {
+        toast.error('Cannot download Z-report: device offline');
+      } else {
+        toast.error('Cannot download Z-report: please sync data first');
+      }
       return;
     }
     if (reportData) {
@@ -906,8 +945,8 @@ const ZReport = () => {
                 onClick={handlePrintClick}
                 variant="default"
                 size="sm"
-                disabled={(sessionPrintOnly && !isSyncComplete) || isDeviceLoading}
-                className="bg-primary"
+                disabled={!canProduceZReport || isDeviceLoading}
+                className={!canProduceZReport ? "bg-gray-400 opacity-60 cursor-not-allowed" : "bg-primary"}
               >
                 {isDeviceLoading ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -941,23 +980,7 @@ const ZReport = () => {
       </header>
 
       <div className="max-w-6xl mx-auto p-4 space-y-4">
-        {/* Sessprint Warning Banner */}
-        {sessionPrintOnly && !isSyncComplete && (
-          <Card className="border-amber-500 bg-amber-50">
-            <CardContent className="pt-4">
-              <div className="flex items-center gap-3">
-                <AlertTriangle className="h-6 w-6 text-amber-600" />
-                <div>
-                  <p className="font-semibold text-amber-800">Z-Report Printing Blocked</p>
-                  <p className="text-sm text-amber-700">
-                    {pendingSyncCount} collection{pendingSyncCount !== 1 ? 's' : ''} pending sync. 
-                    Print/download will be enabled after all data is synced.
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        {/* Thermal Print Layout - Only visible on print */}
         {/* Thermal Print Layout - Only visible on print */}
         {reportData && (
           <div className="thermal-print">

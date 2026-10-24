@@ -16,6 +16,7 @@ import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { APP_VERSION, APP_VERSION_CODE } from '@/constants/appVersion';
 import { generateMilkSessionId } from '@/utils/sessionMetadata';
 import { formatWeight } from '@/utils/weightUtils';
+import { isTodayKenyanTime } from '@/lib/utils';
 import { useSync } from '@/contexts/SyncContext';
 import { useSessionClose } from '@/hooks/useSessionClose';
 import { useSessionExpiration } from '@/hooks/useSessionExpiration';
@@ -114,9 +115,12 @@ export const Dashboard = ({
     return initialDataRef.current?.route || null;
   });
 
-  const { getUnsyncedReceipts, getUnsyncedSales, isReady: isDbReady } = useIndexedDB();
+  const { getUnsyncedReceipts, getUnsyncedSales, getPrintedReceipts, isReady: isDbReady } = useIndexedDB();
   const [localUnsyncedReceipts, setLocalUnsyncedReceipts] = useState<any[]>([]);
   const [localUnsyncedSalesCount, setLocalUnsyncedSalesCount] = useState<number>(0);
+  const [storeSoldBags, setStoreSoldBags] = useState<number>(0);
+  const [pendingStoreSalesCount, setPendingStoreSalesCount] = useState<number>(0);
+  const [pendingAISalesCount, setPendingAISalesCount] = useState<number>(0);
 
   // Refresh unsynced receipts & sales directly from IndexedDB + Native SQLite
   const refreshUnsyncedReceipts = useCallback(async () => {
@@ -136,24 +140,50 @@ export const Dashboard = ({
       const combined = [...(idbReceipts || []), ...missingNative];
       setLocalUnsyncedReceipts(combined);
 
-      // Fetch pending sales counts directly as well
+      // Fetch pending sales counts and store sold bags separately (surviving sync via printed receipts + unsynced sales)
       try {
-        const idbSales = await getUnsyncedSales();
-        let nativeSalesCount = 0;
+        const idbSales = await getUnsyncedSales() || [];
+        let nativeStoreSales: any[] = [];
+        let nativeAiSales: any[] = [];
         const { getUnsyncedFromLocalDB, isNativeStorageAvailable } = await import('@/services/offlineStorage');
         if (isNativeStorageAvailable()) {
-          const storeSales = await getUnsyncedFromLocalDB('store_sale');
-          const aiSales = await getUnsyncedFromLocalDB('ai_sale');
-          const idbSaleRefs = new Set((idbSales || []).map((s: any) => String(s.transrefno || s.reference_no || s.referenceNo || '').trim().toUpperCase()));
-          nativeSalesCount = (storeSales || []).filter((s: any) => !idbSaleRefs.has(String(s.referenceNo || s.transrefno || '').trim().toUpperCase())).length +
-                             (aiSales || []).filter((s: any) => !idbSaleRefs.has(String(s.referenceNo || s.transrefno || '').trim().toUpperCase())).length;
+          nativeStoreSales = await getUnsyncedFromLocalDB('store_sale') || [];
+          nativeAiSales = await getUnsyncedFromLocalDB('ai_sale') || [];
         }
-        setLocalUnsyncedSalesCount((idbSales || []).length + nativeSalesCount);
+        const idbSaleRefs = new Set(idbSales.map((s: any) => String(s.transrefno || s.reference_no || s.referenceNo || '').trim().toUpperCase()));
+        const uniqueNativeStore = nativeStoreSales.filter((s: any) => !idbSaleRefs.has(String(s.referenceNo || s.transrefno || '').trim().toUpperCase()));
+        const uniqueNativeAi = nativeAiSales.filter((s: any) => !idbSaleRefs.has(String(s.referenceNo || s.transrefno || '').trim().toUpperCase()));
+
+        const allStoreSales = [...idbSales.filter((s: any) => Number(s.transtype || 2) === 2 && s.type !== 'ai'), ...uniqueNativeStore];
+        const allAiSales = [...idbSales.filter((s: any) => Number(s.transtype || 0) === 3 || s.type === 'ai'), ...uniqueNativeAi];
+
+        setPendingStoreSalesCount(allStoreSales.length);
+        setPendingAISalesCount(allAiSales.length);
+
+        let printedReceipts: any[] = [];
+        try {
+          printedReceipts = await getPrintedReceipts() || [];
+        } catch {}
+
+        const todayStoreReceipts = printedReceipts.filter((r: any) => r.type === 'store' && isTodayKenyanTime(r.transactionDate || r.printedAt));
+        const printedBags = todayStoreReceipts.reduce((sum: number, r: any) => {
+          const items = r.items || [];
+          const itemSum = items.reduce((iSum: number, item: any) => iSum + (Number(item.quantity) || 1), 0);
+          return sum + (itemSum > 0 ? itemSum : (Number(r.itemCount) || 1));
+        }, 0);
+
+        const unsyncedTodayBags = allStoreSales
+          .filter((r: any) => isTodayKenyanTime(r.transdate ? `${r.transdate}T${r.transtime || '00:00:00'}` : new Date()))
+          .reduce((sum: number, r: any) => sum + (Number(r.quantity) || 1), 0);
+
+        const totalBags = Math.max(printedBags, unsyncedTodayBags);
+        setStoreSoldBags(totalBags);
+        setLocalUnsyncedSalesCount(allStoreSales.length + allAiSales.length);
       } catch {/* ignore sales err */}
     } catch (err) {
       console.warn('[DASHBOARD] Failed to refresh unsynced receipts:', err);
     }
-  }, [getUnsyncedReceipts, getUnsyncedSales]);
+  }, [getUnsyncedReceipts, getUnsyncedSales, getPrintedReceipts]);
 
   // Sync state on mount, selectedRoute change, receiptSaved, syncComplete, and prop updates
   useEffect(() => {
@@ -846,13 +876,21 @@ export const Dashboard = ({
           </div>
 
           {/* Sync Totals - Moved here for visibility during work */}
-          <div className="text-center py-1 flex items-center justify-center gap-3 flex-wrap mb-2">
-            <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.65rem, 2.3vw, 0.75rem)' }}>
+          <div className="text-center py-1 flex items-center justify-center gap-2 flex-wrap mb-2">
+            <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>
               {produceLabel}: {displayMilkCount}
             </span>
             <span className="text-gray-400">|</span>
-            <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.65rem, 2.3vw, 0.75rem)' }}>
-              Store/AI: {displaySalesCount}
+            <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>
+              Store Bags: {storeSoldBags}
+            </span>
+            <span className="text-gray-400">|</span>
+            <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>
+              Pending Store: {pendingStoreSalesCount}
+            </span>
+            <span className="text-gray-400">|</span>
+            <span className="text-gray-800 dark:text-gray-200 font-bold tracking-wide" style={{ fontSize: 'clamp(0.6rem, 2.2vw, 0.7rem)' }}>
+              Pending AI: {pendingAISalesCount}
             </span>
             {conflictedReceiptsCount > 0 && (
               <span

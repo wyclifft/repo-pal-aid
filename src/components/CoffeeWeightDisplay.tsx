@@ -12,7 +12,7 @@ import { useScaleConnection } from '@/hooks/useScaleConnection';
 import { Button } from '@/components/ui/button';
 
 // Display stabilization - prevents flickering when scale is stable
-const DISPLAY_STABLE_THRESHOLD = 0.05; // Max 50g variance to consider "stable" (suited for field scales)
+const DISPLAY_STABLE_THRESHOLD = 0.1; // Max 0.1kg (100g) threshold to consider "stable"
 const DISPLAY_STABLE_COUNT = 3; // Readings within threshold to lock display
 const DISPLAY_UPDATE_INTERVAL = 200; // Min ms between display updates
 

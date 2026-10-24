@@ -59,6 +59,20 @@ function xhrFetch(url: string, opts: XhrFetchOptions): Promise<Response> {
     }
 
     xhr.onload = () => {
+      // Notify network is online on successful response
+      window.dispatchEvent(new CustomEvent('networkStatusChange', { detail: { online: true } }));
+
+      // Only report server status if internet is connected (navigator.onLine) AND status is an explicit server error (5xx)
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        if (xhr.status === 503) {
+          window.dispatchEvent(new CustomEvent('serverStatusChange', { detail: { type: 'db_busy', status: 503 } }));
+        } else if (xhr.status >= 500) {
+          window.dispatchEvent(new CustomEvent('serverStatusChange', { detail: { type: 'server_unavailable', status: xhr.status } }));
+        } else if (xhr.status >= 200 && xhr.status < 400) {
+          window.dispatchEvent(new CustomEvent('serverStatusChange', { detail: { type: 'healthy' } }));
+        }
+      }
+
       // Build a Headers object from the raw response headers
       const headers = new Headers();
       const rawHeaders = xhr.getAllResponseHeaders();
@@ -85,8 +99,14 @@ function xhrFetch(url: string, opts: XhrFetchOptions): Promise<Response> {
       resolve(response);
     };
 
-    xhr.onerror = () => reject(new TypeError('Network request failed (xhr)'));
-    xhr.ontimeout = () => reject(new DOMException('Timeout', 'AbortError'));
+    xhr.onerror = () => {
+      window.dispatchEvent(new CustomEvent('networkStatusChange', { detail: { online: false } }));
+      reject(new TypeError('Network request failed (xhr)'));
+    };
+    xhr.ontimeout = () => {
+      window.dispatchEvent(new CustomEvent('networkStatusChange', { detail: { online: false } }));
+      reject(new DOMException('Timeout', 'AbortError'));
+    };
 
     xhr.send(opts.body ?? null);
   });
@@ -100,8 +120,25 @@ export async function resilientFetch(url: string, init: RequestInit = {}): Promi
   const method = (init.method || 'GET').toUpperCase();
 
   try {
-    return await fetch(url, init);
+    const res = await fetch(url, init);
+    // Notify network is online on successful response
+    window.dispatchEvent(new CustomEvent('networkStatusChange', { detail: { online: true } }));
+
+    // Only report server status if internet connection is active and server returned an explicit HTTP error code (5xx)
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      if (res.status === 503) {
+        window.dispatchEvent(new CustomEvent('serverStatusChange', { detail: { type: 'db_busy', status: 503 } }));
+      } else if (res.status >= 500) {
+        window.dispatchEvent(new CustomEvent('serverStatusChange', { detail: { type: 'server_unavailable', status: res.status } }));
+      } else if (res.ok || res.status < 400) {
+        window.dispatchEvent(new CustomEvent('serverStatusChange', { detail: { type: 'healthy' } }));
+      }
+    }
+    return res;
   } catch (err) {
+    // Network errors, connection drops, and fetch failures mean internet/network is down or interrupted.
+    window.dispatchEvent(new CustomEvent('networkStatusChange', { detail: { online: false } }));
+
     // Only fall back for network-level errors on non-GET requests.
     const isNetworkError = err instanceof TypeError;
     const shouldFallback = isNetworkError && method !== 'GET';

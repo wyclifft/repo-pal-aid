@@ -33,6 +33,7 @@ class MainActivity : BridgeActivity() {
     private var bluetoothClassicJsBridge: BluetoothClassicJsBridge? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
+        setupUncaughtExceptionHandler()
         disableChromiumMultiProcess()
 
         // v2.11.22: Install direct JS bridges as early as Capacitor exposes the
@@ -130,6 +131,36 @@ class MainActivity : BridgeActivity() {
 
         // Prompt user for files & media / storage permissions if not granted
         checkAndRequestStoragePermissions()
+    }
+
+    private fun setupUncaughtExceptionHandler() {
+        val originalHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            var isDeadBinderOrSystem = false
+            var cause: Throwable? = throwable
+            while (cause != null) {
+                val name = cause.javaClass.name
+                val msg = cause.message ?: ""
+                if (cause is android.os.DeadObjectException ||
+                    name.contains("DeadSystem") ||
+                    name.contains("DeadObject") ||
+                    msg.contains("The system died") ||
+                    msg.contains("DeadObjectException")
+                ) {
+                    isDeadBinderOrSystem = true
+                    break
+                }
+                cause = cause.cause
+            }
+
+            if (isDeadBinderOrSystem) {
+                Log.e(TAG, "⚠️ [SAFETY_NET] Intercepted uncaught DeadSystem/DeadObject exception on thread '${thread.name}': ${throwable.message}", throwable)
+                // Absorb binder/system service crash on background plugin threads to prevent process termination
+                return@setDefaultUncaughtExceptionHandler
+            }
+
+            originalHandler?.uncaughtException(thread, throwable)
+        }
     }
 
     private fun checkAndRequestStoragePermissions() {

@@ -56,10 +56,16 @@ export const useOfflineStatus = () => {
     
     const handleOnline = () => updateStatus({ isOnline: true });
     const handleOffline = () => updateStatus({ isOnline: false });
-    
+    const handleNetworkStatusChange = (e: CustomEvent<{ online: boolean }>) => {
+      if (e.detail && typeof e.detail.online === 'boolean') {
+        updateStatus({ isOnline: e.detail.online });
+      }
+    };
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    
+    window.addEventListener('networkStatusChange', handleNetworkStatusChange as EventListener);
+
     if (connection) {
       connection.addEventListener('change', checkConnection);
     }
@@ -68,6 +74,7 @@ export const useOfflineStatus = () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('networkStatusChange', handleNetworkStatusChange as EventListener);
       if (connection) {
         connection.removeEventListener('change', checkConnection);
       }

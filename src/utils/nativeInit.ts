@@ -180,14 +180,19 @@ const ensureDeviceRegistered = async (): Promise<void> => {
     clearTimeout(timeoutId);
     
     if (response.status === 404) {
-      // Device not found - register it
-      console.log('📱 [Native] Device not found, registering...');
-      const registered = await registerDeviceForApproval(fingerprint);
-      
-      if (registered) {
-        console.log('✅ [Native] Device registered successfully - waiting for admin approval');
+      const cachedAuth = localStorage.getItem('device_authorized');
+      if (cachedAuth !== 'true') {
+        // Unregistered device not found - register it for admin approval
+        console.log('📱 [Native] Device not found, registering for admin approval...');
+        const registered = await registerDeviceForApproval(fingerprint);
+
+        if (registered) {
+          console.log('✅ [Native] Device registered successfully - waiting for admin approval');
+        } else {
+          console.log('❌ [Native] Device registration failed - will retry on next launch');
+        }
       } else {
-        console.log('❌ [Native] Device registration failed - will retry on next launch');
+        console.log('📱 [Native] Device 404 on authorized device - maintaining offline operation');
       }
     } else if (response.ok) {
       const data = await response.json();
@@ -200,10 +205,8 @@ const ensureDeviceRegistered = async (): Promise<void> => {
           console.log('⏳ [Native] Device pending approval');
         }
       }
-    } else if (response.status === 500) {
-      // Server error - try to register anyway as device might not exist yet
-      console.log('⚠️ [Native] Server error (500), attempting registration anyway...');
-      await registerDeviceForApproval(fingerprint);
+    } else if (response.status >= 500) {
+      console.log('⚠️ [Native] Server error/busy (' + response.status + '), skipping auto-registration to maintain offline access');
     } else {
       console.log('⚠️ [Native] Device check returned status:', response.status);
     }

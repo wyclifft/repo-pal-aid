@@ -310,7 +310,11 @@ export const DeviceZReportReceipt = ({
 
   const handlePrint = async () => {
     if (!data) return;
-    
+    if (!navigator.onLine) {
+      toast.error('Cannot print Z-report while offline. Connect online and sync first.');
+      return;
+    }
+
     setIsPrinting(true);
     
     try {
@@ -376,7 +380,11 @@ export const DeviceZReportReceipt = ({
 
   const handleDownloadPDF = async () => {
     if (!data) return;
-    
+    if (!navigator.onLine) {
+      toast.error('Cannot download Z-report while offline. Connect online and sync first.');
+      return;
+    }
+
     setIsDownloading(true);
     
     try {

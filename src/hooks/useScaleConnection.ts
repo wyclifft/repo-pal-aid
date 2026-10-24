@@ -15,6 +15,7 @@ import {
   clearStoredDevice,
   isBleHalfOfDualModeScale,
   isScaleConnected,
+  getLastKnownScaleWeight,
   resubscribeScaleNotifications,
   type ScaleType 
 } from '@/services/bluetooth';
@@ -23,9 +24,11 @@ import {
   getPairedScales,
   connectClassicScale,
   quickReconnectClassicScale,
+  getStoredClassicDevice,
   requestClassicBluetoothPermissions,
   isClassicPrinterConnected,
   getCurrentClassicPrinterInfo,
+  syncClassicScaleConnectionState,
   type ClassicBluetoothDevice,
 } from '@/services/bluetoothClassic';
 import { useAppSettings } from '@/hooks/useAppSettings';
@@ -79,13 +82,27 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     setIsWaitingForStable(waiting);
   }, []);
 
-  // Re-sync connection state on mount in case scale was connected elsewhere
+  // Re-sync connection state and last known scale reading on mount
   useEffect(() => {
-    const currentlyConnected = isScaleConnected();
-    console.log(`🔄 useScaleConnection mount check: scaleConnected=${currentlyConnected}`);
-    if (currentlyConnected !== scaleConnected) {
-      setScaleConnected(currentlyConnected);
-    }
+    const checkAndSyncMount = async () => {
+      await syncClassicScaleConnectionState().catch(() => {});
+      const currentlyConnected = isScaleConnected();
+      console.log(`🔄 useScaleConnection mount check: scaleConnected=${currentlyConnected}`);
+      if (currentlyConnected !== scaleConnected) {
+        setScaleConnected(currentlyConnected);
+      }
+      if (currentlyConnected) {
+        const lastKnown = getLastKnownScaleWeight();
+        if (lastKnown && typeof lastKnown.weight === 'number') {
+          console.log(`⚖️ Seeding initial scale weight on mount: ${lastKnown.weight} kg (${lastKnown.scaleType})`);
+          setLiveWeight(lastKnown.weight);
+          if (lastKnown.scaleType) setScaleType(lastKnown.scaleType);
+          onWeightChangeRef.current(lastKnown.weight);
+          onEntryTypeChangeRef.current('scale');
+        }
+      }
+    };
+    checkAndSyncMount();
   }, []);
   
   // Classic Bluetooth state
@@ -143,6 +160,10 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
   useEffect(() => {
     const handleWeightUpdate = (e: CustomEvent<{ weight: number; scaleType: ScaleType }>) => {
       const { weight: newWeight, scaleType: type } = e.detail;
+
+      if (!isScaleConnected()) {
+        syncClassicScaleConnectionState().catch(() => {});
+      }
 
       if (!isScaleConnected()) {
         console.log('🚫 Ignoring scaleWeightUpdate — no scale currently connected (likely printer cross-talk)');
@@ -245,28 +266,26 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
         // Preserve exact scale precision (up to 3 decimals)
         const finalWeight = roundWeight(stableWeight, 3);
         
-        // Only update and broadcast if it's the first stable reading OR weight changed significantly
-        if (lastStableWeightRef.current === null || Math.abs(finalWeight - lastStableWeightRef.current) > 0.05) {
+        // Update and broadcast stable weight (always propagate onWeightChange so parent state stays synced)
+        const isNewStableReading = lastStableWeightRef.current === null || Math.abs(finalWeight - lastStableWeightRef.current) >= STABLE_READING_THRESHOLD;
+        if (isNewStableReading) {
           console.log(`⚖️ Stability reached: ${finalWeight} kg (raw: ${newWeight})`);
-          onWeightChangeRef.current(finalWeight);
-          onEntryTypeChangeRef.current('scale');
-          updateWaitingState(false);
-          setStableReadingProgress(100);
           lastStableWeightRef.current = finalWeight;
-
-          // Clear timeout
-          if (stableTimeoutRef.current) {
-            clearTimeout(stableTimeoutRef.current);
-            stableTimeoutRef.current = null;
-          }
-
-          // Broadcast that we have reached stability
-          dispatchStabilityChange(true, finalWeight);
-        } else {
-          // Weight is already stable and hasn't changed enough to re-broadcast
-          updateWaitingState(false);
-          setStableReadingProgress(100);
         }
+
+        onWeightChangeRef.current(finalWeight);
+        onEntryTypeChangeRef.current('scale');
+        updateWaitingState(false);
+        setStableReadingProgress(100);
+
+        // Clear timeout
+        if (stableTimeoutRef.current) {
+          clearTimeout(stableTimeoutRef.current);
+          stableTimeoutRef.current = null;
+        }
+
+        // Broadcast that we have reached stability
+        dispatchStabilityChange(true, finalWeight);
       } else {
         // Readings are not stable (scale is fluctuating or settling) — ALWAYS lock capture
         updateWaitingState(true);
@@ -446,14 +465,16 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
     setIsConnecting(false);
   }, [handleClassicWeightUpdate, requireStableReading, isWaitingForStable]);
 
-  // Quick reconnect to last used device
+  // Quick reconnect to last used device (supports both Classic SPP and BLE scales)
   const autoReconnect = useCallback(async () => {
-    const storedDevice = getStoredDeviceInfo();
-    if (!storedDevice || scaleConnected) return;
+    if (scaleConnected) return;
+
+    const classicDevice = getStoredClassicDevice();
+    const bleDevice = getStoredDeviceInfo();
+
+    if (!classicDevice && !bleDevice) return;
 
     // Ensure Bluetooth is enabled before attempting auto-reconnect
-    // Note: We don't toast error here to avoid annoying the user on every mount,
-    // but we check the state so it doesn't fail silently with a cryptic GATT error.
     if (Capacitor.isNativePlatform()) {
       const isEnabled = await BleClient.isEnabled();
       if (!isEnabled) {
@@ -462,35 +483,52 @@ export const useScaleConnection = ({ onWeightChange, onEntryTypeChange }: UseSca
       }
     }
 
-
-    // v2.10.69: Guard for integrated POS hardware. If a Classic printer is
-    // currently connected and its address matches the stored "scale" device id
-    // (which can happen when the same controller exposes both roles), do NOT
-    // attempt to reopen the socket as a scale — that would fire
-    // scaleConnectionChange(true) and turn the Dashboard scale indicator green
-    // even though no real scale is paired.
-    if (isClassicPrinterConnected()) {
-      const printerInfo = getCurrentClassicPrinterInfo();
-      const storedId = (storedDevice.deviceId || '').toUpperCase();
-      const printerAddr = (printerInfo?.address || '').toUpperCase();
-      if (printerInfo && storedId && printerAddr && storedId === printerAddr) {
-        console.warn(
-          `🚫 [v2.10.69] Skipping scale autoReconnect — stored scale id (${storedId}) matches connected printer (${printerAddr}).`
-        );
-        return;
-      }
-    }
+    const isClassic = Boolean(
+      classicDevice &&
+      (!bleDevice || (classicDevice.timestamp || 0) >= (bleDevice.timestamp || 0) || bleDevice.connectionType === 'classic-spp')
+    );
 
     setIsConnecting(true);
-    const result = await quickReconnect(storedDevice.deviceId, handleScaleReading);
-    setIsConnecting(false);
 
-    if (result.success) {
-      setScaleConnected(true);
-      setScaleType(result.type);
-      setConnectionType('ble');
+    if (isClassic && classicDevice) {
+      console.log(`🔄 autoReconnect attempting Classic SPP reconnect to ${classicDevice.name} (${classicDevice.address})`);
+      const result = await quickReconnectClassicScale(handleClassicWeightUpdate);
+      setIsConnecting(false);
+
+      if (result.success) {
+        setScaleConnected(true);
+        setScaleType('Classic-SPP');
+        setConnectionType('classic-spp');
+      }
+    } else if (bleDevice) {
+      // v2.10.69: Guard for integrated POS hardware. If a Classic printer is
+      // currently connected and its address matches the stored "scale" device id
+      if (isClassicPrinterConnected()) {
+        const printerInfo = getCurrentClassicPrinterInfo();
+        const storedId = (bleDevice.deviceId || '').toUpperCase();
+        const printerAddr = (printerInfo?.address || '').toUpperCase();
+        if (printerInfo && storedId && printerAddr && storedId === printerAddr) {
+          console.warn(
+            `🚫 [v2.10.69] Skipping BLE scale autoReconnect — stored scale id (${storedId}) matches connected printer (${printerAddr}).`
+          );
+          setIsConnecting(false);
+          return;
+        }
+      }
+
+      console.log(`🔄 autoReconnect attempting BLE reconnect to ${bleDevice.deviceName} (${bleDevice.deviceId})`);
+      const result = await quickReconnect(bleDevice.deviceId, handleScaleReading);
+      setIsConnecting(false);
+
+      if (result.success) {
+        setScaleConnected(true);
+        setScaleType(result.type);
+        setConnectionType('ble');
+      }
+    } else {
+      setIsConnecting(false);
     }
-  }, [handleScaleReading, scaleConnected]);
+  }, [handleScaleReading, handleClassicWeightUpdate, scaleConnected]);
 
   // Force re-subscribe to BLE notifications (when weight stops flowing)
   const forceResubscribe = useCallback(async () => {
