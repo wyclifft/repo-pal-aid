@@ -130,6 +130,85 @@ const ZReport = () => {
     }
   }, []);
 
+// Helper to extract the canonical transaction reference number across IndexedDB, Native DB, and Server sources
+const getTxRef = (tx: any): string => {
+  if (!tx) return '';
+  // 1. Direct reference fields
+  const ref = String(
+    tx.reference_no ||
+    tx.referenceNo ||
+    tx.refno ||
+    tx.transrefno ||
+    tx.transRefNo ||
+    ''
+  ).trim();
+  if (ref && ref !== 'undefined' && ref !== 'null') return ref;
+
+  // 2. Unwrap nested JSON payload if present (Native SQLite record format)
+  if (tx.payload) {
+    try {
+      const p = typeof tx.payload === 'string' ? JSON.parse(tx.payload) : tx.payload;
+      const pRef = String(
+        p.reference_no ||
+        p.referenceNo ||
+        p.refno ||
+        p.transrefno ||
+        p.transRefNo ||
+        ''
+      ).trim();
+      if (pRef && pRef !== 'undefined' && pRef !== 'null') return pRef;
+    } catch {}
+  }
+
+  // 3. Fallback to orderId or id
+  const fallbackId = String(tx.orderId || tx.id || '').trim();
+  if (fallbackId && fallbackId !== 'undefined' && fallbackId !== 'null') return fallbackId;
+
+  // 4. Composite key fallback
+  const farmer = String(tx.farmer_id || tx.farmerno || tx.farmerId || tx.memberno || '').trim();
+  const weight = Number(tx.weight || tx.liters || tx.quantity || 0);
+  const time = String(tx.created_at || tx.date || tx.transdate || tx.time || '').trim();
+  return `${farmer}_${weight}_${time}`;
+};
+
+// Helper to unpack native SQLite records and normalize transaction fields
+const unpackLocalTx = (c: any) => {
+  let payloadObj: any = {};
+  if (c && c.payload) {
+    try {
+      payloadObj = typeof c.payload === 'string' ? JSON.parse(c.payload) : c.payload;
+    } catch {
+      payloadObj = {};
+    }
+  }
+  const merged = { ...payloadObj, ...c };
+  const ref = getTxRef(merged);
+  return {
+    ...merged,
+    id: ref || String(c.orderId || c.id || Math.random()),
+    refno: ref,
+    referenceNo: ref,
+    reference_no: ref,
+    farmer_id: String(merged.farmer_id || merged.farmerno || merged.farmerId || merged.memberno || '').trim(),
+    farmer_name: merged.farmer_name || merged.farmerName || '',
+    weight: Number(merged.weight || merged.liters || merged.quantity || merged.totalQuantity || merged.itemsCount || 0),
+    amount: Number(merged.amount || merged.totalAmount || 0),
+    session: merged.session || 'AM',
+    milk_session_id: merged.milk_session_id || merged.season_code || '',
+    season_code: merged.season_code || '',
+    created_at: merged.created_at || merged.date || merged.transdate || merged.createdAt || '',
+    mno: merged.mno || merged.farmer_id || merged.farmerno || merged.farmerId || merged.memberno || '',
+    can_no: merged.can_no || merged.can || '',
+    transtype: Number(merged.transtype || (merged.recordType === 'ai_sale' || merged.type === 'ai' ? 3 : merged.recordType === 'store_sale' || merged.type === 'sale' ? 2 : 1)),
+    transTypeLabel: merged.transTypeLabel || (Number(merged.transtype) === 3 || merged.recordType === 'ai_sale' || merged.type === 'ai' ? 'AI' : Number(merged.transtype) === 2 || merged.recordType === 'store_sale' || merged.type === 'sale' ? 'SELL' : 'BUY'),
+    product_code: merged.icode || merged.product_code || merged.itemCode || '',
+    product_name: merged.product_name || merged.itemName || '',
+    route: merged.route || '',
+    route_name: merged.route_name || merged.routeName || merged.route_descript || merged.locationName || '',
+    time: merged.time || merged.transtime || '',
+  };
+};
+
   // Device report data constructed from server deviceReportData, reportData collections, AND local IndexedDB receipts
   const effectiveDeviceReportData: DeviceZReportData | null = useMemo(() => {
     // If server device report has non-empty transactions, use it directly
@@ -139,39 +218,19 @@ const ZReport = () => {
 
     const serverTxs = deviceReportData?.transactions || [];
     const reportCollections = reportData?.collections || [];
-    const localTxs = localDeviceTx.map((c: any) => ({
-      id: String(c.orderId || c.id || c.transrefno || c.referenceNo || Math.random()),
-      farmer_id: String(c.farmer_id || c.farmerno || c.farmerId || c.memberno || ''),
-      farmer_name: c.farmer_name || c.farmerName || '',
-      weight: Number(c.weight || c.liters || c.quantity || c.totalQuantity || c.itemsCount || 0),
-      amount: Number(c.amount || c.totalAmount || 0),
-      session: c.session || 'AM',
-      milk_session_id: c.milk_session_id || c.season_code || '',
-      season_code: c.season_code || '',
-      created_at: c.created_at || c.date || c.transdate || selectedDate,
-      mno: c.mno || c.farmer_id || c.farmerno || c.farmerId || c.memberno || '',
-      can_no: c.can_no || c.can || '',
-      transtype: Number(c.transtype || (c.recordType === 'ai_sale' || c.type === 'ai' ? 3 : c.recordType === 'store_sale' || c.type === 'sale' ? 2 : 1)),
-      transTypeLabel: c.transTypeLabel || (Number(c.transtype) === 3 || c.recordType === 'ai_sale' || c.type === 'ai' ? 'AI' : Number(c.transtype) === 2 || c.recordType === 'store_sale' || c.type === 'sale' ? 'SELL' : 'BUY'),
-      product_code: c.icode || c.product_code || c.itemCode || '',
-      product_name: c.product_name || c.itemName || '',
-      route: c.route || '',
-      route_name: c.route_name || c.routeName || c.route_descript || c.locationName || '',
-      refno: c.refno || c.referenceNo || c.transrefno || '',
-      time: c.time || c.transtime || '',
-    }));
+    const localTxs = localDeviceTx.map(unpackLocalTx);
 
-    // Combine all sources avoiding duplicate entries
+    // Combine all sources avoiding duplicate entries using canonical reference numbers
     const combinedTxsMap = new Map<string, any>();
 
     serverTxs.forEach((t: any) => {
-      const key = String(t.id || t.orderId || Math.random());
-      combinedTxsMap.set(key, t);
+      const key = getTxRef(t);
+      if (key) combinedTxsMap.set(key, t);
     });
 
     reportCollections.forEach((c: any) => {
-      const key = String(c.id || c.orderId || Math.random());
-      if (!combinedTxsMap.has(key)) {
+      const key = getTxRef(c);
+      if (key && !combinedTxsMap.has(key)) {
         combinedTxsMap.set(key, {
           id: key,
           farmer_id: String(c.farmer_id || c.farmerno || ''),
@@ -185,13 +244,15 @@ const ZReport = () => {
           can_no: c.can_no || c.can || '',
           route: c.route || '',
           route_name: c.route_name || c.routeName || c.route_descript || c.locationName || '',
+          refno: key,
         });
       }
     });
 
     localTxs.forEach((t: any) => {
-      if (!combinedTxsMap.has(t.id)) {
-        combinedTxsMap.set(t.id, t);
+      const key = getTxRef(t);
+      if (key && !combinedTxsMap.has(key)) {
+        combinedTxsMap.set(key, t);
       }
     });
 
@@ -201,12 +262,14 @@ const ZReport = () => {
       return null;
     }
 
-    const calculatedWeight = allTransactions.reduce((sum, t) => sum + Number(t.weight || 0), 0);
-    const calculatedFarmers = new Set(allTransactions.map(t => String(t.farmer_id || '').trim()).filter(Boolean)).size;
+    const produceTxs = allTransactions.filter(t => isProduceTransaction(t, isCoffee));
+    const calculatedProduceWeight = produceTxs.reduce((sum, t) => sum + Number(t.weight || 0), 0);
+    const calculatedProduceFarmers = new Set(produceTxs.map(t => String(t.farmer_id || '').trim()).filter(Boolean)).size;
+    const calculatedProduceEntries = produceTxs.length;
 
-    const totalWeight = calculatedWeight > 0 ? calculatedWeight : (deviceReportData?.totals?.weight || (reportData?.date === selectedDate ? reportData?.totals?.liters : 0) || 0);
-    const totalFarmers = calculatedFarmers > 0 ? calculatedFarmers : (deviceReportData?.totals?.farmers || (reportData?.date === selectedDate ? reportData?.totals?.farmers : 0) || 0);
-    const totalEntries = allTransactions.length || deviceReportData?.totals?.entries || (reportData?.date === selectedDate ? reportData?.totals?.entries : 0) || 0;
+    const totalWeight = calculatedProduceWeight > 0 ? calculatedProduceWeight : (deviceReportData?.totals?.weight || (reportData?.date === selectedDate ? reportData?.totals?.liters : 0) || 0);
+    const totalFarmers = calculatedProduceFarmers > 0 ? calculatedProduceFarmers : (deviceReportData?.totals?.farmers || (reportData?.date === selectedDate ? reportData?.totals?.farmers : 0) || 0);
+    const totalEntries = calculatedProduceEntries || deviceReportData?.totals?.entries || (reportData?.date === selectedDate ? reportData?.totals?.entries : 0) || 0;
 
     return {
       date: selectedDate,
@@ -516,13 +579,14 @@ const ZReport = () => {
 
           const allLocal = [...recent, ...unsyncedReceipts, ...unsyncedSales, ...nativeSales, ...nativeAI];
           const seenIds = new Set<string>();
-          return allLocal.filter((r: any) => {
+          return allLocal.map(unpackLocalTx).filter((r: any) => {
             if (!r) return false;
-            const rId = String(r.orderId || r.id || r.transrefno || r.referenceNo || `${r.farmer_id || r.farmerId}_${r.created_at || r.transdate}`);
+            const rId = getTxRef(r);
+            if (!rId) return false;
             if (seenIds.has(rId)) return false;
             seenIds.add(rId);
 
-            const rDateStr = r.date || r.created_at || r.transdate || '';
+            const rDateStr = r.created_at || r.date || r.transdate || '';
             if (!rDateStr) return true;
 
             try {
