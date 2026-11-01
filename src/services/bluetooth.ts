@@ -2950,7 +2950,10 @@ export const printZReport = async (data: {
   console.log('[ZREPORT] Data:', {
     transactions: data.transactions.length,
     total: data.totalWeight,
-    totalAmount: sellAiAmount,
+    // v2.12.107: sellAiAmount was never defined in this scope — ReferenceError
+    // aborted printing on every printer type. Use the SELL/AI money totals
+    // computed in the grand-total block above.
+    totalAmount: sellProduceAmount + aiAmount,
     totalItems: storeItemsCount,
     device: data.deviceCode,
     storeGroups: storeGroups.map(sg => sg.routeName)
