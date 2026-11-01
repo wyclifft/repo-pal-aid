@@ -1411,8 +1411,16 @@
 //   - Corrected transaction type (transtype) population across frontend creation, sync engine, reports, and native database layer to: 1 for purchase produce items, 2 for sales of produce, 5 for store merchandise, and 6 for AI services.
 //   - Added centralized normalization and backward compatibility helpers for robust handling of legacy transaction records.
 //
-export const APP_VERSION = '2.12.106';
-export const APP_VERSION_CODE = 256;
+//
+// v2.12.107: Z-REPORT PRINT CRASH FIX (ReferenceError: sellAiAmount is not defined).
+//   printZReport() in src/services/bluetooth.ts logged an undefined variable
+//   (sellAiAmount) before handing the receipt to any printer, so the whole
+//   print call threw and Z Reports never printed — on Classic Bluetooth, BLE,
+//   and CS10/POS internal printers alike. Replaced with the in-scope SELL/AI
+//   money totals (sellProduceAmount + aiAmount). No layout or data changes.
+//
+export const APP_VERSION = '2.12.107';
+export const APP_VERSION_CODE = 257;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
