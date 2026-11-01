@@ -11,6 +11,7 @@ import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { SessionExpiredDialog } from '@/components/SessionExpiredDialog';
 import { AddMemberModal } from '@/components/AddMemberModal';
 import { CloseSessionConfirmDialog } from '@/components/CloseSessionConfirmDialog';
+import { isBuyProduce, isStore, isAI } from '@/utils/transtypeUtils';
 
 import { type Route, type Session, type Item } from '@/services/mysqlApi';
 import { APP_VERSION, APP_VERSION_CODE } from '@/constants/appVersion';
@@ -154,8 +155,8 @@ export const Dashboard = ({
         const uniqueNativeStore = nativeStoreSales.filter((s: any) => !idbSaleRefs.has(String(s.referenceNo || s.transrefno || '').trim().toUpperCase()));
         const uniqueNativeAi = nativeAiSales.filter((s: any) => !idbSaleRefs.has(String(s.referenceNo || s.transrefno || '').trim().toUpperCase()));
 
-        const allStoreSales = [...idbSales.filter((s: any) => Number(s.transtype || 2) === 2 && s.type !== 'ai'), ...uniqueNativeStore];
-        const allAiSales = [...idbSales.filter((s: any) => Number(s.transtype || 0) === 3 || s.type === 'ai'), ...uniqueNativeAi];
+        const allStoreSales = [...idbSales.filter((s: any) => isStore(s.transtype, false) && s.type !== 'ai'), ...uniqueNativeStore];
+        const allAiSales = [...idbSales.filter((s: any) => isAI(s.transtype) || s.type === 'ai'), ...uniqueNativeAi];
 
         setPendingStoreSalesCount(allStoreSales.length);
         setPendingAISalesCount(allAiSales.length);
@@ -246,8 +247,7 @@ export const Dashboard = ({
 
     effectiveUnsyncedList.forEach((r: any) => {
       if (r.type === 'sale') return;
-      const tt = Number(r.transtype || (r as any).transtype || 1);
-      if (tt !== 1) return; // Only Buy Produce (transtype = 1) contributes to route/session KGs
+      if (!isBuyProduce(r.transtype)) return; // Only Buy Produce contributes to route/session KGs
 
       const rRoute = String(r.route || r.route_code || r.center_code || r.memberRoute || '').trim().toUpperCase();
       const rawReceiptRoute = rRoute.replace(/[^A-Z0-9]/g, '');
@@ -628,9 +628,33 @@ export const Dashboard = ({
                   <button onClick={async () => { setMenuOpen(false); await syncAllData(false, true); }} disabled={isSyncing} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100 disabled:opacity-50">{isSyncing ? 'Syncing...' : 'Sync Data'}</button>
                   {allowZReport && (
                     <>
-                      <button onClick={() => { navigate('/z-report'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Z Report</button>
-                      <button onClick={() => { navigate('/z-report?generate=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Generate Z Report</button>
-                      <button onClick={() => { navigate('/z-report?reprint=true'); setMenuOpen(false); }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Reprint Z Report</button>
+                      <button onClick={() => {
+                        if (!navigator.onLine || (pendingCount || 0) > 0) {
+                          toast.error('Cannot open Z-Report while offline or with pending transactions.');
+                          setMenuOpen(false);
+                          return;
+                        }
+                        navigate('/z-report');
+                        setMenuOpen(false);
+                      }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Z Report</button>
+                      <button onClick={() => {
+                        if (!navigator.onLine || (pendingCount || 0) > 0) {
+                          toast.error('Cannot open Z-Report while offline or with pending transactions.');
+                          setMenuOpen(false);
+                          return;
+                        }
+                        navigate('/z-report?generate=true');
+                        setMenuOpen(false);
+                      }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Generate Z Report</button>
+                      <button onClick={() => {
+                        if (!navigator.onLine || (pendingCount || 0) > 0) {
+                          toast.error('Cannot open Z-Report while offline or with pending transactions.');
+                          setMenuOpen(false);
+                          return;
+                        }
+                        navigate('/z-report?reprint=true');
+                        setMenuOpen(false);
+                      }} className="w-full text-left px-4 py-3 text-gray-700 hover:bg-gray-100">Reprint Z Report</button>
                     </>
                   )}
                   <hr className="my-0.5 border-gray-200" />

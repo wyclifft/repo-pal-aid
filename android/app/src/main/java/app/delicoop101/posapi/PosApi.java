@@ -669,7 +669,7 @@ public final class PosApi {
         }
         public static Result err(String code, String op, Throwable t) {
             String msg = op + ": " + (t == null ? code : (t.getClass().getSimpleName() + " " + (t.getMessage() == null ? "" : t.getMessage())));
-            return new Result(0, code, msg, null, null, null, null, null);
+            return new Result(-1, code, msg, null, null, null, null, null);
         }
         public static Result err(String code, String op, int rc) {
             return new Result(rc, code, op + " rc=" + rc, null, null, null, null, null);

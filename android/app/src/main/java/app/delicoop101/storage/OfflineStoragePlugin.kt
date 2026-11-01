@@ -103,7 +103,7 @@ class OfflineStoragePlugin : Plugin() {
                         "store_sale", "store", "sale" -> {
                             val jsonObj = org.json.JSONObject(payload)
                             val memberNo = jsonObj.optString("memberno", jsonObj.optString("memberNo", jsonObj.optString("farmer_id", jsonObj.optString("farmerId", jsonObj.optString("farmerno", jsonObj.optString("mcode", ""))))))
-                            val transType = jsonObj.optString("transtype", jsonObj.optString("transType", "2"))
+                            val transType = jsonObj.optString("transtype", jsonObj.optString("transType", "5"))
                             val storeTx = StoreTransaction(
                                 deviceCode = devCode,
                                 memberNumber = memberNo,

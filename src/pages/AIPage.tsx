@@ -24,6 +24,7 @@ import { useAppSettings } from '@/hooks/useAppSettings';
 import { useReprint } from '@/contexts/ReprintContext';
 import type { ReprintItem } from '@/components/ReprintModal';
 import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
+import { TRANSTYPE_AI, isAI } from '@/utils/transtypeUtils';
 import { getTimeoutSignal } from '@/utils/abortUtils';
 import { resolveSessionMetadata, resolveDashboardActiveSession, resolveDashboardActiveRoute } from '@/utils/sessionMetadata';
 
@@ -86,7 +87,7 @@ const AIPage = () => {
   // v2.12.20: Resolve the active route (store/center) selected on the Dashboard.
   const routeName = useMemo(() => resolveDashboardActiveRoute()?.descript || '', []);
 
-  // clientFetch from route data (3=AI) - initialize eagerly from cache to never block offline use
+  // clientFetch from route data (6=AI) - initialize eagerly from cache to never block offline use
   const [clientFetch, setClientFetch] = useState<number>(() => {
     const cached = localStorage.getItem('ai_clientFetch') || localStorage.getItem('active_session_data');
     if (cached) {
@@ -98,7 +99,7 @@ const AIPage = () => {
         if (!isNaN(num)) return num;
       }
     }
-    return 2; // Default fallback matching route L002
+    return 6; // Default fallback for AI (6)
   });
 
   // Cumulative weight state (matching Store.tsx)
@@ -118,8 +119,7 @@ const AIPage = () => {
     try {
       const sales = await getUnsyncedSales();
       const aiSales = sales.filter((r: any) => {
-        const tt = Number(r.transtype || 0);
-        return tt === 3 || r.type === 'ai';
+        return isAI(r.transtype) || r.type === 'ai';
       });
       setPendingAISalesCount(aiSales.length);
     } catch {
@@ -621,7 +621,9 @@ const AIPage = () => {
         const aiTransaction = {
           transrefno: currentTransRefNo,
           uploadrefno: refs.uploadrefno,
-          transtype: 3, // AI transaction type
+          transtype: TRANSTYPE_AI, // AI transaction type (6)
+          Transtype: TRANSTYPE_AI,
+          trans_type: TRANSTYPE_AI,
           farmer_id: selectedFarmer.farmer_id,
           farmer_name: selectedFarmer.name,
           route: selectedRouteTcode || routeName || '', // Active collection route / center selected on Dashboard

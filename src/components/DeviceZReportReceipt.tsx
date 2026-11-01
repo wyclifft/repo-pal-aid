@@ -33,6 +33,7 @@ import { isPrinterConnected, printZReport } from '@/services/bluetooth';
 import { toast } from 'sonner';
 import { generateDeviceZReportPDF } from '@/utils/pdfExport';
 import type { DeviceZReportData, DeviceZReportTransaction } from '@/services/mysqlApi';
+import { TRANSTYPE_BUY_PRODUCE, TRANSTYPE_SELL_PRODUCE, TRANSTYPE_STORE, TRANSTYPE_AI, isBuyProduce, isSellProduce, isStore, isAI, getTransTypeLabel } from '@/utils/transtypeUtils';
 import { filterTransactionsByPeriod, type ZReportPeriod, getPeriodDisplayLabel } from './ZReportPeriodSelector';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 
@@ -48,7 +49,7 @@ interface DeviceZReportReceiptProps {
   // v2.10.97: 'store' renders an independent stock-only Z report that excludes
   // session, season, produce and farmer-delivery metadata. Defaults to 'produce'
   // so the existing dairy/coffee Z report layout is fully backward-compatible.
-  reportType?: 'produce' | 'store';
+  reportType?: 'produce' | 'sell_produce' | 'store' | 'ai';
 }
 
 // Helper to group transactions by store and then by transaction type
@@ -79,7 +80,7 @@ export const DeviceZReportReceipt = ({
 }: DeviceZReportReceiptProps) => {
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const isStoreReport = reportType === 'store';
+  const isStoreReport = reportType === 'store' || reportType === 'ai';
 
   const { isReady, getRoutes } = useIndexedDB();
   const [cachedRouteMap, setCachedRouteMap] = useState<Map<string, string>>(new Map());
@@ -126,40 +127,32 @@ export const DeviceZReportReceipt = ({
   // Helper to determine if a transaction represents produce (weight in KGS/LITERS) vs store merchandise (items)
   const isProduceTx = (tx: { product_code?: string; milk_session_id?: string; transtype?: number; recordType?: string; type?: string; isMilkFormat?: boolean }) => {
     if (!tx) return false;
-    const tt = Number(tx.transtype) || 1;
-    if (tt === 1) return true;
-    if (tt === 3) return false;
-    if (tt === 2) {
-      const code = (tx.product_code || '').trim().toUpperCase();
-      const milkId = String(tx.milk_session_id || '').trim();
-      return code === 'S0001' || milkId.length === 10 || data?.orgtype === 'C' || data?.isCoffee === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true;
-    }
-    return false;
+    if (isBuyProduce(tx.transtype)) return true;
+    if (isAI(tx.transtype)) return false;
+    if (isStore(tx.transtype, tx.isMilkFormat)) return false;
+    if (isSellProduce(tx.transtype, tx.isMilkFormat)) return true;
+    const code = (tx.product_code || '').trim().toUpperCase();
+    const milkId = String(tx.milk_session_id || '').trim();
+    return code === 'S0001' || milkId.length === 10 || data?.orgtype === 'C' || data?.isCoffee === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true;
   };
 
   // Filter transactions by report type first, then by selected period.
-  // Store report → only store merchandise sales (transtype 2 without produce code) and AI (transtype 3).
-  // Produce report → only produce buy (1) and produce sell (2), with normal period filtering preserved.
   const filteredTransactions = useMemo(() => {
     if (!data?.transactions?.length) return [];
 
-    if (isStoreReport) {
-      // Store Z Report: Only store merchandise sales and AI services
-      const storeOnly = data.transactions.filter(t => {
-        const tt = Number((t as any).transtype) || 1;
-        if (tt === 3) return true;
-        if (tt === 2) {
-          return !isProduceTx(t);
-        }
-        return false;
-      });
-      return filterTransactionsByPeriod(storeOnly, selectedPeriod, data.orgtype);
+    let matched = data.transactions;
+    if (reportType === 'produce') {
+      matched = data.transactions.filter(t => isBuyProduce(t.transtype) || (!t.transtype && isProduceTx(t)));
+    } else if (reportType === 'sell_produce') {
+      matched = data.transactions.filter(t => isSellProduce(t.transtype, t.isMilkFormat) || (Number(t.transtype) === 2 && isProduceTx(t)));
+    } else if (reportType === 'store') {
+      matched = data.transactions.filter(t => isStore(t.transtype, t.isMilkFormat));
+    } else if (reportType === 'ai') {
+      matched = data.transactions.filter(t => isAI(t.transtype));
     }
 
-    // Produce Z Report: Buy produce (1) and Sell produce (2)
-    const produceOnly = data.transactions.filter(t => isProduceTx(t));
-    return filterTransactionsByPeriod(produceOnly, selectedPeriod, data.orgtype);
-  }, [data?.transactions, selectedPeriod, isStoreReport, data?.orgtype, data?.isCoffee]);
+    return filterTransactionsByPeriod(matched, selectedPeriod, data.orgtype);
+  }, [data?.transactions, selectedPeriod, reportType, data?.orgtype]);
   
   // Group filtered transactions by Store (Route) and then by Type (1=Buy, 2=Sell, 3=AI)
   const storeGroups = useMemo<StoreGroup[]>(() => {
@@ -179,12 +172,10 @@ export const DeviceZReportReceipt = ({
         routeNameLabel = cachedRouteMap.get(rawRoute)!;
       } else if (rawRoute && cachedRouteMap.has(rawRoute.toUpperCase())) {
         routeNameLabel = cachedRouteMap.get(rawRoute.toUpperCase())!;
-      } else if (activeRouteCode && (rawRoute === activeRouteCode || !rawRoute) && routeName && routeName !== 'Route' && routeName !== 'Center') {
-        routeNameLabel = routeName;
-      } else if (routeName && routeName !== 'Route' && routeName !== 'Center' && (rawRoute === 'OTHER' || !rawRoute)) {
+      } else if ((!rawRoute || rawRoute === 'OTHER') && routeName && routeName !== 'Route' && routeName !== 'Center') {
         routeNameLabel = routeName;
       } else {
-        routeNameLabel = rawRouteName || rawRoute || routeName || 'OTHER';
+        routeNameLabel = rawRouteName || rawRoute || 'OTHER';
       }
 
       const storeKey = rawRoute || routeNameLabel || 'OTHER';
@@ -199,7 +190,7 @@ export const DeviceZReportReceipt = ({
 
       const storeGroup = storeMap.get(storeKey)!;
       const transtype = tx.transtype || 1;
-      const typeLabel = tx.transTypeLabel || (transtype === 2 ? 'SELL' : transtype === 3 ? 'AI' : 'BUY');
+      const typeLabel = tx.transTypeLabel || getTransTypeLabel(transtype, tx.isMilkFormat);
       
       let typeGroup = storeGroup.typeGroups.find(g => g.transtype === transtype);
       if (!typeGroup) {
@@ -237,18 +228,21 @@ export const DeviceZReportReceipt = ({
     return sortedStores;
   }, [filteredTransactions, activeRouteCode, cachedRouteMap, routeName]);
   
-  // Calculate filtered totals
+  // Calculate filtered totals for milk/produce transactions or store/ai transactions
   const filteredTotals = useMemo(() => {
-    const totalWeight = filteredTransactions.reduce((sum, tx) => sum + tx.weight, 0);
-    const totalAmount = filteredTransactions.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const uniqueFarmers = new Set(filteredTransactions.map(tx => tx.farmer_id)).size;
+    const targetTxs = (reportType === 'store' || reportType === 'ai')
+      ? filteredTransactions
+      : filteredTransactions.filter(tx => isProduceTx(tx));
+    const totalWeight = targetTxs.reduce((sum, tx) => sum + Number(tx.weight || tx.quantity || 0), 0);
+    const totalAmount = targetTxs.reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const uniqueFarmers = new Set(targetTxs.map(tx => tx.farmer_id || (tx as any).farmerno).filter(Boolean)).size;
     return {
       weight: totalWeight,
       amount: totalAmount,
-      entries: filteredTransactions.length,
+      entries: targetTxs.length,
       farmers: uniqueFarmers
     };
-  }, [filteredTransactions]);
+  }, [filteredTransactions, reportType]);
   
   // Get center name from data or props
   const centerName = useMemo(() => {
@@ -268,6 +262,27 @@ export const DeviceZReportReceipt = ({
       return String(data.seasonName).toUpperCase();
     }
 
+    if (selectedPeriod === 'all' || periodLabelProp === 'All Z') {
+      return 'ALL Z';
+    }
+
+    const upperPeriod = String(selectedPeriod || '').trim().toUpperCase();
+    const upperLabel = String(periodLabelProp || '').trim().toUpperCase();
+
+    if (upperPeriod === 'AM' || upperLabel.includes(' AM')) {
+      return 'ALL AM';
+    }
+    if (upperPeriod === 'PM' || upperLabel.includes(' PM')) {
+      return 'ALL PM';
+    }
+    if (upperLabel.startsWith('ALL ')) {
+      let cleaned = upperLabel;
+      if (cleaned.endsWith(' Z') && cleaned.length > 2) {
+        cleaned = cleaned.substring(0, cleaned.length - 2).trim();
+      }
+      return cleaned;
+    }
+
     if (filteredTransactions.length > 0) {
       const sess = (filteredTransactions[0] as any).session || (filteredTransactions[0] as any).season_code;
       if (sess) {
@@ -278,7 +293,7 @@ export const DeviceZReportReceipt = ({
       return selectedPeriod.toUpperCase();
     }
     return (data?.seasonName || 'AM').toUpperCase();
-  }, [filteredTransactions, selectedPeriod, data?.seasonName, data?.isCoffee, data?.orgtype]);
+  }, [filteredTransactions, selectedPeriod, periodLabelProp, data?.seasonName, data?.isCoffee, data?.orgtype]);
 
   if (!data) return null;
 
@@ -331,22 +346,27 @@ export const DeviceZReportReceipt = ({
           factoryName: centerName || routeName || data.routeLabel || 'FACTORY',
           routeLabel: data.routeLabel || 'Center',
           produceName: data.produceName,
-          transactions: filteredTransactions.map(tx => ({
-            farmer_id: tx.farmer_id,
-            refno: tx.refno,
-            weight: tx.weight,
-            time: tx.time,
-            route: tx.route,
-            route_name: tx.route_name,
-            product_code: tx.product_code,
-            product_name: tx.product_name,
-            transtype: tx.transtype,
-            transTypeLabel: tx.transTypeLabel,
-            session: tx.session,
-            price: tx.price,
-            amount: tx.amount,
-            milk_session_id: (tx as any).milk_session_id,
-          })),
+          transactions: filteredTransactions.map(tx => {
+            const fullRef = String(tx.transrefno || (tx as any).referenceNo || (tx as any).uploadrefno || tx.refno || '').trim();
+            const shortRef = tx.refno || (fullRef.length >= 5 ? fullRef.slice(-5) : fullRef);
+            return {
+              farmer_id: tx.farmer_id,
+              refno: shortRef,
+              transrefno: fullRef || shortRef,
+              weight: tx.weight,
+              time: tx.time,
+              route: tx.route,
+              route_name: tx.route_name,
+              product_code: tx.product_code,
+              product_name: tx.product_name,
+              transtype: tx.transtype,
+              transTypeLabel: tx.transTypeLabel,
+              session: tx.session,
+              price: tx.price,
+              amount: tx.amount,
+              milk_session_id: (tx as any).milk_session_id,
+            };
+          }),
           totalWeight: filteredTotals.weight,
           totalAmount: filteredTotals.amount,
           clerkName: data.clerkName,
@@ -365,10 +385,15 @@ export const DeviceZReportReceipt = ({
           toast.error(result.error || 'Failed to print Z-report');
         }
       } else {
-        // No Bluetooth printer - use browser print dialog
-        window.print();
-        toast.info('Opened print dialog (no Bluetooth printer connected)');
-        onPrint?.();
+        if (Capacitor.isNativePlatform()) {
+          toast.error('No printer connected. Connect a Bluetooth or internal printer in Settings.');
+        } else if (typeof window.print === 'function') {
+          window.print();
+          toast.info('Opened print dialog (no Bluetooth printer connected)');
+          onPrint?.();
+        } else {
+          toast.error('Printing is not supported on this browser.');
+        }
       }
     } catch (err) {
       console.error('Print failed:', err);
@@ -411,11 +436,11 @@ export const DeviceZReportReceipt = ({
   const routeLabel = data.routeLabel || 'Center';
 
   // Get last 5 digits of reference number
-  const getShortRef = (refno: string) => (refno || '').slice(-6);
+  const getShortRef = (refno: string) => (refno || '').slice(-5);
 
   // Render transactions for a type group.
   const renderTypeSection = (group: TypeGroup, isFirst: boolean) => {
-    const showMoney = group.transtype !== 1;
+    const showMoney = !isBuyProduce(group.transtype) && !isSellProduce(group.transtype, true);
     // Same template used for header AND every data row → guaranteed alignment.
     const gridTemplate = showMoney
       ? 'grid grid-cols-[6ch_5ch_1fr_1fr_5ch] gap-2'
@@ -426,7 +451,7 @@ export const DeviceZReportReceipt = ({
     const showProductDividers = distinctProducts > 1;
 
     // Unit label for section subtotal: produce sales use KGS, store items use items.
-    const isProduceGroup = !isStoreReport && (group.transtype === 1 || group.transactions.every(t => isProduceTx(t)));
+    const isProduceGroup = !isStoreReport && (isBuyProduce(group.transtype) || isSellProduce(group.transtype, true) || group.transactions.every(t => isProduceTx(t)));
     const itemCount = showMoney
       ? group.transactions.reduce((s, t) => s + Math.max(0, Math.round(t.weight || 0)), 0)
       : 0;
@@ -492,15 +517,29 @@ export const DeviceZReportReceipt = ({
                   )}
                   <span className="text-right tabular-nums">
                     {(() => {
-                      const t = tx.time || tx.created_at;
+                      const t = (tx as any).transtime || tx.time || tx.created_at;
                       if (!t) return '--:--';
-                      const str = String(t);
+                      const str = String(t).trim();
+                      if (str.toUpperCase() === 'AM' || str.toUpperCase() === 'PM') {
+                        return str;
+                      }
                       if (str.includes('T')) return str.split('T')[1].substring(0, 5);
                       if (str.includes(' ')) return str.split(' ')[1].substring(0, 5);
                       return str.substring(0, 5);
                     })()}
                   </span>
                 </div>
+                {/* AI specific details sub-row */}
+                {isAI(group.transtype) && ((tx as any).cow_name || (tx as any).cowname || (tx as any).bullname || (tx as any).bull_name || (tx as any).straw_no) && (
+                  <div className="pl-2 pb-1 text-[10px] text-muted-foreground font-mono space-y-0.5 border-b border-dotted border-muted-foreground/20">
+                    {((tx as any).cow_name || (tx as any).cowname) && (
+                      <div>Cow: {(tx as any).cow_name || (tx as any).cowname} {(tx as any).cow_breed ? `(${(tx as any).cow_breed})` : ''}</div>
+                    )}
+                    {((tx as any).bullname || (tx as any).bull_name) && (
+                      <div>Bull: {(tx as any).bullname || (tx as any).bull_name} {(tx as any).straw_no ? `(Straw: ${(tx as any).straw_no})` : ''}</div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -548,13 +587,28 @@ export const DeviceZReportReceipt = ({
           <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base uppercase tracking-wide">{data.companyName}</h3>
             <p className="font-bold text-sm mt-1">
-              {isStoreReport ? 'STORE Z REPORT' : 'Z REPORT'}
+              {selectedPeriod === 'all' || activeSessionName === 'ALL DAY Z' || activeSessionName === 'ALL Z'
+                ? 'ALL DAY Z REPORT'
+                : reportType === 'sell_produce'
+                ? 'SELL PRODUCE Z REPORT'
+                : reportType === 'store'
+                ? 'STORE SALES Z REPORT'
+                : reportType === 'ai'
+                ? 'AI SERVICES Z REPORT'
+                : reportType === 'produce'
+                ? `${data.produceLabel.toUpperCase()} BUY Z REPORT`
+                : 'Z REPORT'}
             </p>
           </div>
 
           {/* Metadata block (left-aligned 2-col grid for readability) */}
           <div className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-sm pb-2 border-b border-dashed">
-            {!isStoreReport && (
+            {selectedPeriod === 'all' || activeSessionName === 'ALL DAY Z' || activeSessionName === 'ALL Z' ? (
+              <>
+                <span className="font-semibold">SESSION</span>
+                <span>ALL DAY Z</span>
+              </>
+            ) : !isStoreReport ? (
               <>
                 <span className="font-semibold">SUMMARY</span>
                 <span>{data.produceLabel.toUpperCase()}</span>
@@ -562,7 +616,7 @@ export const DeviceZReportReceipt = ({
                 <span className="font-semibold">{data.periodLabel.toUpperCase()}</span>
                 <span>{activeSessionName}</span>
               </>
-            )}
+            ) : null}
 
             {!isStoreReport && activeMilkSessionId && (
               <>
@@ -581,7 +635,7 @@ export const DeviceZReportReceipt = ({
               </>
             )}
 
-            {!isStoreReport && (
+            {!isStoreReport && !(selectedPeriod === 'all' || activeSessionName === 'ALL DAY Z' || activeSessionName === 'ALL Z') && (
               <>
                 <span className="font-semibold">PRODUCE</span>
                 <span>{data.produceName || data.produceLabel.toUpperCase()}</span>
@@ -622,42 +676,63 @@ export const DeviceZReportReceipt = ({
               .filter(tx => (tx.transtype || 1) !== 1 && isProduceTx(tx))
               .reduce((s, tx) => s + tx.weight, 0);
 
-            // Actual Store merchandise transactions (transtype=2 or 3 without produce code)
+            // Actual Store merchandise or AI transactions
             let storeItemsCount = 0;
+            let storeAmount = 0;
+            let aiServicesCount = 0;
+            let aiAmount = 0;
+            let sellProduceAmount = 0;
             let sellAiAmount = 0;
+
             filteredTransactions.forEach(tx => {
-              if ((tx.transtype || 1) === 1) return;
-              sellAiAmount += Number(tx.amount || 0);
-              if (!isProduceTx(tx)) {
-                storeItemsCount += Number(tx.weight || 0);
+              const tt = tx.transtype || 1;
+              const amt = Number(tx.amount || 0);
+              if (tt === 1) return;
+              sellAiAmount += amt;
+              if (isAI(tt)) {
+                aiServicesCount += Number(tx.weight || (tx as any).quantity || 1);
+                aiAmount += amt;
+              } else if (isProduceTx(tx)) {
+                sellProduceAmount += amt;
+              } else {
+                storeItemsCount += Number(tx.weight || (tx as any).quantity || 0);
+                storeAmount += amt;
               }
             });
-            const itemsLabel = storeItemsCount === 1 ? 'item' : 'items';
+            const storeItemsLabel = storeItemsCount === 1 ? 'item' : 'items';
+            const aiServicesLabel = aiServicesCount === 1 ? 'service' : 'services';
+            const totalMoneyAmount = storeAmount + aiAmount + sellProduceAmount;
 
             return (
               <div className="border-t-2 border-double pt-2 mt-2 space-y-1">
                 {buyWeight > 0 && (
-                  <div className="flex justify-between font-bold text-sm">
-                    <span>GRAND TOTAL BUY</span>
+                  <div className="flex justify-between font-bold text-sm flex-wrap">
+                    <span>TOTAL BUY</span>
                     <span className="tabular-nums">{formatWeight(buyWeight)} {weightUnit}</span>
                   </div>
                 )}
                 {sellProduceWeight > 0 && (
-                  <div className="flex justify-between font-bold text-sm">
-                    <span>GRAND TOTAL SELL PRODUCE</span>
+                  <div className="flex justify-between font-bold text-sm flex-wrap">
+                    <span>TOTAL SELL PRODUCE</span>
                     <span className="tabular-nums">{formatWeight(sellProduceWeight)} {weightUnit}</span>
                   </div>
                 )}
                 {storeItemsCount > 0 && (
-                  <div className="flex justify-between font-bold text-sm">
-                    <span>GRAND TOTAL STORE ITEMS</span>
-                    <span className="tabular-nums">{formatWeight(storeItemsCount)} {itemsLabel}</span>
+                  <div className="flex justify-between font-bold text-sm flex-wrap">
+                    <span>TOTAL STORE ITEMS</span>
+                    <span className="tabular-nums">{formatWeight(storeItemsCount)} {storeItemsLabel} (KSh {storeAmount.toFixed(0)})</span>
                   </div>
                 )}
-                {sellAiAmount > 0 && (
-                  <div className="flex justify-between font-bold text-sm">
-                    <span>GRAND TOTAL VALUE</span>
-                    <span className="tabular-nums">KSh {sellAiAmount.toFixed(0)}</span>
+                {aiServicesCount > 0 && (
+                  <div className="flex justify-between font-bold text-sm flex-wrap">
+                    <span>TOTAL AI SERVICES</span>
+                    <span className="tabular-nums">{formatWeight(aiServicesCount)} {aiServicesLabel} (KSh {aiAmount.toFixed(0)})</span>
+                  </div>
+                )}
+                {totalMoneyAmount > 0 && (
+                  <div className="flex justify-between font-bold text-sm border-t border-dashed pt-1 flex-wrap">
+                    <span>GRAND TOTAL KSh</span>
+                    <span className="tabular-nums">KSh {totalMoneyAmount.toFixed(0)}</span>
                   </div>
                 )}
               </div>

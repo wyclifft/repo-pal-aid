@@ -1407,18 +1407,17 @@
 //   and Buy/Sell forms so soft keyboard never hides bottom list items or inputs.
 //   Dashboard Header: Prominent, bold AM/PM session breakdown & total offline KGs badge.
 //
-// v2.12.99: Z91 POS TERMINAL PERFORMANCE & BLUETOOTH SOCKET CLEANUP FIX.
-//   - Fixed Bluetooth Classic socket memory leak by closing unhandled reflectionSocket handles on connection failures.
-//   - Added 30s cooldown for PosApi.initializePrinter and PosApi.appInit on hardware probe errors.
-//   - Added in-flight promise deduplication to getUnsyncedFromLocalDB to eliminate rapid parallel Capacitor bridge calls.
-//   - Added 5-minute memory cache to FarmerSyncDashboard name lookup and skipped redundant IndexedDB session writes.
+// v2.12.106: TRANSTYPE POPULATION CORRECTION & NORMALIZATION.
+//   - Corrected transaction type (transtype) population across frontend creation, sync engine, reports, and native database layer to: 1 for purchase produce items, 2 for sales of produce, 5 for store merchandise, and 6 for AI services.
+//   - Added centralized normalization and backward compatibility helpers for robust handling of legacy transaction records.
 //
-export const APP_VERSION = '2.12.104';
-export const APP_VERSION_CODE = 254;
+export const APP_VERSION = '2.12.106';
+export const APP_VERSION_CODE = 256;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
-export const APP_FIX_TAG = 'scale-negative-to-positive-weight-transition-fix';
+export const APP_FIX_TAG = 'transtype-normalization';
+
 
 
 

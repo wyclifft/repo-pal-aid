@@ -14,6 +14,7 @@ import {
   markNativeRecordFailed 
 } from '@/services/offlineStorage';
 import { syncSalesFromDB } from '@/utils/salesSyncEngine';
+import { isBuyProduce } from '@/utils/transtypeUtils';
 
 // Batch processing configuration to prevent overwhelming system during bulk sync
 const SYNC_BATCH_SIZE = 5; // v2.12.18: Reduced from 10 to stabilize backend pool
@@ -756,8 +757,7 @@ export const useDataSync = () => {
       // Filter out non-receipt entries, sales, and Sell Produce (sales/sell counted separately)
       const receiptsOnly = unsynced.filter((r: any) => {
         if (r.type === 'sale') return false;
-        const tt = Number(r.transtype || (r as any).transtype || 1);
-        if (tt !== 1) return false; // Only Buy Produce (transtype = 1) contributes to milk/produce KGs
+        if (!isBuyProduce(r.transtype)) return false; // Only Buy Produce contributes to milk/produce KGs
         return true;
       });
 
@@ -808,8 +808,7 @@ export const useDataSync = () => {
                              nativeAI.filter(r => !idbSaleRefs.has((r.referenceNo || '').trim().toUpperCase())).length;
 
           missingNativeMilk.forEach((r: any) => {
-            const tt = Number(r.transtype || (r as any).transtype || 1);
-            if (tt !== 1) return; // Only Buy Produce (transtype = 1)
+            if (!isBuyProduce(r.transtype)) return; // Only Buy Produce
             const w = parseFloat(r.weight || r.liters || r.quantity || 0);
             if (!isNaN(w) && w > 0) {
               totalMilkKgs += w;

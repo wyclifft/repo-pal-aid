@@ -380,8 +380,10 @@ export interface MilkCollection {
   // Season SCODE from sessions table - saved to transactions.CAN column
   season_code?: string;       // → DB: CAN (stores session.SCODE for all orgtypes)
   milk_session_id?: string;   // → DB: milk_session_id (10-digit unique session code)
-  // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
-  transtype?: number;         // → DB: Transtype (default: 1)
+  // Transaction type: 1 = Buy Produce, 2 = Sell Produce, 5 = Store, 6 = AI
+  transtype?: number;         // → DB: Transtype
+  Transtype?: number;         // → DB: Transtype (PascalCase alias)
+  trans_type?: number;        // → DB: Transtype (snake_case alias)
   // Coffee sack weighing - gross/tare/net (orgtype C only)
   gross_weight?: number;      // Gross weight from scale (before sack deduction)
   tare_weight?: number;       // Fixed sack weight (1 kg per sack)
@@ -1009,7 +1011,9 @@ export interface Sale {
   sale_ref?: string;
   transrefno?: string;  // Frontend-generated reference (same format as Buy) → DB: transrefno
   uploadrefno?: string; // Frontend-generated type-specific ID → DB: Uploadrefno
-  transtype?: number;   // 2 = Store, 3 = AI → DB: Transtype
+  transtype?: number;   // 1 = Buy, 2 = Sell, 5 = Store, 6 = AI → DB: Transtype
+  Transtype?: number;   // → DB: Transtype (PascalCase alias)
+  trans_type?: number;  // → DB: Transtype (snake_case alias)
   farmer_id: string;    // → DB: memberno
   farmer_name: string;  // → Not stored, used for display
   route?: string;       // → DB: route (fm_tanks.tcode or farmer route)
@@ -1043,6 +1047,8 @@ export interface Sale {
 export interface BatchSaleRequest {
   uploadrefno: string;
   transtype: number;
+  Transtype?: number;
+  trans_type?: number;
   farmer_id: string;
   farmer_name: string;
   route?: string;       // → DB: route (fm_tanks.tcode or farmer route)
@@ -1062,6 +1068,9 @@ export interface BatchSaleRequest {
     item_name: string;
     quantity: number;
     price: number;
+    transtype?: number;
+    Transtype?: number;
+    trans_type?: number;
     transdate?: string;
     transtime?: string;
   }>;

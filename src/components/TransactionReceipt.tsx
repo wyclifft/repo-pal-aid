@@ -8,9 +8,10 @@ import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { resolveDashboardMilkSessionId } from '@/utils/sessionMetadata';
 import { toast } from 'sonner';
 import type { CowDetails } from '@/components/CowDetailsModal';
+import { TRANSTYPE_BUY_PRODUCE, TRANSTYPE_SELL_PRODUCE, TRANSTYPE_STORE, TRANSTYPE_AI, isBuyProduce, isSellProduce, isStore, isAI } from '@/utils/transtypeUtils';
 
-// Transaction types
-export type TransactionType = 1 | 2 | 3; // 1 = Milk/Coffee, 2 = Store, 3 = AI
+// Transaction types: 1 = Buy Produce, 2 = Sell Produce, 5 = Store, 6 = AI
+export type TransactionType = typeof TRANSTYPE_BUY_PRODUCE | typeof TRANSTYPE_SELL_PRODUCE | typeof TRANSTYPE_STORE | typeof TRANSTYPE_AI | number;
 
 // Base transaction item interface
 export interface TransactionItem {
@@ -77,30 +78,30 @@ interface TransactionReceiptProps {
 
 // Get receipt title based on data
 const getReceiptTitle = (data: ReceiptData): string => {
-  if (data.transtype === 2 && data.isMilkFormat) {
+  if (isSellProduce(data.transtype, data.isMilkFormat)) {
     return 'PURCHASE RECEIPT';
   }
-
-  switch (data.transtype) {
-    case 1: return 'CUSTOMER DELIVERY RECEIPT';
-    case 2: return 'STORE PURCHASE RECEIPT';
-    case 3: return 'AI SERVICE RECEIPT';
-    default: return 'TRANSACTION RECEIPT';
+  if (isStore(data.transtype, data.isMilkFormat)) {
+    return 'STORE PURCHASE RECEIPT';
   }
+  if (isAI(data.transtype)) {
+    return 'AI SERVICE RECEIPT';
+  }
+  if (isBuyProduce(data.transtype)) {
+    return 'CUSTOMER DELIVERY RECEIPT';
+  }
+  return 'TRANSACTION RECEIPT';
 };
 
 // Get total label based on data
 const getTotalLabel = (data: ReceiptData): string => {
-  if (data.transtype === 2 && data.isMilkFormat) {
+  if (isBuyProduce(data.transtype) || isSellProduce(data.transtype, data.isMilkFormat)) {
     return 'Total Weight [Kgs]';
   }
-
-  switch (data.transtype) {
-    case 1: return 'Total Weight [Kgs]';
-    case 2: return 'Total Amount [KES]';
-    case 3: return 'Total Amount [KES]';
-    default: return 'Total';
+  if (isStore(data.transtype, data.isMilkFormat) || isAI(data.transtype)) {
+    return 'Total Amount [KES]';
   }
+  return 'Total';
 };
 
 export const TransactionReceipt = ({ 
@@ -415,7 +416,7 @@ export const TransactionReceipt = ({
         for (let copy = 0; copy < printCopies; copy++) {
       let result: { success: boolean; error?: string };
 
-      if ((transtype === 2 && !data.isMilkFormat) || transtype === 3) {
+      if (isStore(transtype, data.isMilkFormat) || isAI(transtype)) {
         // Store/AI receipts — use printStoreAIReceipt with full item details
         result = await printStoreAIReceipt({
           companyName,
@@ -435,7 +436,7 @@ export const TransactionReceipt = ({
           })),
           totalAmount: totalAmount || 0,
           transactionDate,
-          receiptType: transtype === 2 ? 'store' : 'ai',
+          receiptType: isStore(transtype, data.isMilkFormat) ? 'store' : 'ai',
           reprintedAt: reprintedAt
         });
       } else {
@@ -454,8 +455,8 @@ export const TransactionReceipt = ({
           collectorName: clerkName,
           deliveredBy,
           collections,
-          cumulativeFrequency: (showCumulativeFrequency && !isSellProduce) ? cumulativeFrequency : undefined,
-          cumulativeByProduct: (showCumulativeFrequency && !isSellProduce) ? cumulativeByProduct : undefined,
+          cumulativeFrequency: (showCumulativeFrequency && !isSellProduceTx) ? cumulativeFrequency : undefined,
+          cumulativeByProduct: (showCumulativeFrequency && !isSellProduceTx) ? cumulativeByProduct : undefined,
           locationCode,
           locationName,
           collectionDate: transactionDate,
@@ -488,11 +489,11 @@ export const TransactionReceipt = ({
     onPrint?.();
   };
 
-  const isSellProduce = transtype === 2 && data.isMilkFormat;
+  const isSellProduceTx = isSellProduce(transtype, data.isMilkFormat);
   const isDairy = (orgtype || 'D').trim().toUpperCase() === 'D';
 
   // Calculate display total
-  const displayTotal = (transtype === 1 || isSellProduce)
+  const displayTotal = (isBuyProduce(transtype) || isSellProduceTx)
     ? formatWeight(totalWeight || 0)
     : totalAmount?.toFixed(2);
 
@@ -533,7 +534,7 @@ export const TransactionReceipt = ({
           {/* Items/Collections List */}
           <div className="border-t border-b border-dashed py-2 space-y-1">
             {/* Product name for milk/coffee (transtype 1 or Sell Produce) */}
-            {(transtype === 1 || isSellProduce) && productName && showProductName && (
+            {(isBuyProduce(transtype) || isSellProduceTx) && productName && showProductName && (
               <div className="flex justify-between text-xs mb-1 pb-1 border-b border-dashed">
                 <span className="text-muted-foreground">Product</span>
                 <span className="font-medium">{productName}</span>
@@ -562,16 +563,16 @@ export const TransactionReceipt = ({
                 const syncKey = getItemSyncKey(index);
                 return (
                   <div key={syncKey} className="space-y-0.5">
-                    {/* For Store (transtype 2) - show item name, qty, amount */}
-                    {transtype === 2 && (
+                    {/* For Store (transtype 5 / 2) - show item name, qty, amount */}
+                    {isStore(transtype, data.isMilkFormat) && (
                       <div className="flex justify-between text-xs">
                         <span>{item.item_name} x{formatWeight(Number(item.quantity || 0))}</span>
                         <span className="font-medium">KES {item.lineTotal?.toFixed(0)}</span>
                       </div>
                     )}
 
-                    {/* For AI (transtype 3) - show item name, qty, amount + cow details */}
-                    {transtype === 3 && (
+                    {/* For AI (transtype 6 / 3) - show item name, qty, amount + cow details */}
+                    {isAI(transtype) && (
                       <>
                         <div className="flex justify-between text-xs">
                           <span>{item.item_name} x{formatWeight(Number(item.quantity || 0))}</span>
@@ -617,13 +618,13 @@ export const TransactionReceipt = ({
 
           {/* Footer Info - Shared with optional fields */}
           <div className="space-y-0.5 text-xs">
-            {showCumulativeFrequency && !isSellProduce && cumulativeFrequency !== undefined && (
+            {showCumulativeFrequency && !isSellProduceTx && cumulativeFrequency !== undefined && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Cumulative{isDairy ? ':' : ''}</span>
                 <span className="font-medium">{formatWeight(cumulativeFrequency)}</span>
               </div>
             )}
-            {showCumulativeFrequency && !isSellProduce && cumulativeByProduct && cumulativeByProduct.length > 1 && (
+            {showCumulativeFrequency && !isSellProduceTx && cumulativeByProduct && cumulativeByProduct.length > 1 && (
               <div className="space-y-0.5 pl-2">
                 {cumulativeByProduct.map((prod) => (
                   <div key={prod.icode} className="flex justify-between text-[10px]">
@@ -655,14 +656,14 @@ export const TransactionReceipt = ({
               <span className="text-muted-foreground">Clerk Name</span>
               <span className="font-medium">{clerkName}</span>
             </div>
-            {deliveredBy && (transtype === 1 || transtype === 2) && (
+            {deliveredBy && (isBuyProduce(transtype) || isSellProduceTx) && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Delivered By</span>
                 <span className="font-medium">{deliveredBy}</span>
               </div>
             )}
             {/* ID NO and SIGN fields for Store/AI receipts - EXCLUDING Sell Produce Portal */}
-            {(transtype === 3 || (transtype === 2 && !data.isMilkFormat)) && (
+            {(isAI(transtype) || isStore(transtype, data.isMilkFormat)) && (
               <>
                 <div className="mt-3 flex items-end gap-2">
                   <span className="text-muted-foreground text-sm whitespace-nowrap">ID NO:</span>
@@ -817,7 +818,7 @@ export const createStoreReceiptData = (
   extraOptions?: { orgtype?: string; showProductName?: boolean; reprintedAt?: Date }
 ): ReceiptData => {
   return {
-    transtype: 2,
+    transtype: TRANSTYPE_STORE,
     transrefno: transactionInfo.transrefno,
     uploadrefno: transactionInfo.uploadrefno,
     companyName,
@@ -856,7 +857,7 @@ export const createAIReceiptData = (
   extraOptions?: { orgtype?: string; showProductName?: boolean; reprintedAt?: Date }
 ): ReceiptData => {
   return {
-    transtype: 3,
+    transtype: TRANSTYPE_AI,
     transrefno: transactionInfo.transrefno,
     uploadrefno: transactionInfo.uploadrefno,
     companyName,

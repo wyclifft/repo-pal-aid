@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { jsPDF } from 'jspdf';
+import { isBuyProduce, isSellProduce, isStore, isAI, getTransTypeLabel } from '@/utils/transtypeUtils';
 
 // Helper to get org settings from localStorage (for non-React contexts)
 const getOrgSettingsFromCache = (): { label: string; isCoffee: boolean; weightUnit: string; weightLabel: string } => {
@@ -378,7 +379,15 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       // Header
       const pdfMilkId = (selectedPeriod && String(selectedPeriod).trim().length === 10 && selectedPeriod !== 'all') ? selectedPeriod : null;
       lines.push(reportData.companyName.toUpperCase());
-      lines.push('Z REPORT');
+      const rType = (reportData as any).reportType;
+      const pdfTitle = rType === 'sell_produce'
+        ? 'SELL PRODUCE Z REPORT'
+        : rType === 'store'
+        ? 'STORE SALES Z REPORT'
+        : rType === 'ai'
+        ? 'AI SERVICES Z REPORT'
+        : 'Z REPORT';
+      lines.push(pdfTitle);
       lines.push('');
       lines.push(`* ${reportData.produceLabel.toUpperCase()} SUMMARY`);
       lines.push(`* ${reportData.periodLabel.toUpperCase()}: ${reportData.seasonName}`);
@@ -392,11 +401,11 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       lines.push(`* PRODUCE: ${reportData.produceName || reportData.produceLabel.toUpperCase()}`);
       lines.push('');
 
-      // Group transactions by transtype (1=BUY, 2=SELL, 3=AI).
+      // Group transactions by transtype (1=BUY, 2=SELL, 5=STORE, 6=AI).
       const typeGroups = new Map<number, { label: string; rows: typeof reportData.transactions; weight: number; amount: number }>();
       for (const tx of reportData.transactions) {
-        const tt = (tx as any).transtype || 1;
-        const lbl = (tx as any).transTypeLabel || (tt === 2 ? 'SELL' : tt === 3 ? 'AI' : 'BUY');
+        const tt = Number((tx as any).transtype || 1);
+        const lbl = (tx as any).transTypeLabel || getTransTypeLabel(tt, (tx as any).isMilkFormat);
         if (!typeGroups.has(tt)) typeGroups.set(tt, { label: lbl, rows: [], weight: 0, amount: 0 });
         const g = typeGroups.get(tt)!;
         g.rows.push(tx);
@@ -407,15 +416,14 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       // Helper to determine produce vs store merchandise
       const isProduceTx = (tx: any) => {
         if (!tx) return false;
-        const tt = Number(tx.transtype || tx.Transtype) || 1;
-        if (tt === 1) return true;
-        if (tt === 3) return false;
-        if (tt === 2) {
-          const code = String(tx.product_code || tx.icode || '').trim().toUpperCase();
-          const milkId = String(tx.milk_session_id || '').trim();
-          return code === 'S0001' || milkId.length === 10 || reportData.orgtype === 'C' || reportData.isCoffee === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true;
-        }
-        return false;
+        const tt = tx.transtype || tx.Transtype;
+        if (isBuyProduce(tt)) return true;
+        if (isAI(tt)) return false;
+        if (isStore(tt, tx.isMilkFormat)) return false;
+        if (isSellProduce(tt, tx.isMilkFormat)) return true;
+        const code = String(tx.product_code || tx.icode || '').trim().toUpperCase();
+        const milkId = String(tx.milk_session_id || '').trim();
+        return code === 'S0001' || milkId.length === 10 || reportData.orgtype === 'C' || reportData.isCoffee === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true;
       };
 
       let buyWeight = 0;

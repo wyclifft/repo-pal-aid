@@ -2,6 +2,7 @@ import { mysqlApi, type Sale, type BatchSaleRequest } from '@/services/mysqlApi'
 import { generateDeviceFingerprint } from '@/utils/deviceFingerprint';
 import { resolveSessionMetadata } from '@/utils/sessionMetadata';
 import { markNativeRecordSynced, isNativeStorageAvailable, getUnsyncedFromLocalDB } from '@/services/offlineStorage';
+import { TRANSTYPE_STORE, isAI } from '@/utils/transtypeUtils';
 
 interface SaleRecord extends Sale {
   orderId?: number;
@@ -109,7 +110,7 @@ export const syncSalesFromDB = async (
     const aiSales: SaleRecord[] = [];
 
     for (const sale of pendingSales) {
-      if (sale.transtype === 3) {
+      if (isAI(sale.transtype)) {
         aiSales.push(sale);
       } else if (sale.uploadrefno) {
         if (!storeBatches[sale.uploadrefno]) {
@@ -194,9 +195,12 @@ export const syncSalesFromDB = async (
           ? (finalSeason || rawSessionLabel || enriched?.session_label || '')
           : (rawSessionLabel || enriched?.session_label || '');
 
+        const batchTt = Number(firstSale.transtype || (firstSale as any).Transtype || TRANSTYPE_STORE);
         const batchRequest: BatchSaleRequest = {
           uploadrefno,
-          transtype: 2,
+          transtype: batchTt,
+          Transtype: batchTt,
+          trans_type: batchTt,
           farmer_id: String(firstSale.farmer_id || '').replace(/^#/, '').trim(),
           farmer_name: String(firstSale.farmer_name || '').trim(),
           route: String(firstSale.route_tcode || firstSale.route || '').trim(),
@@ -209,15 +213,21 @@ export const syncSalesFromDB = async (
           photo: firstSale.photo,
           season: finalSeason,
           session_label: finalSessionLabel,
-          items: batchSales.map(sale => ({
-            transrefno: sale.transrefno || '',
-            item_code: String(sale.item_code || '').trim(),
-            item_name: String(sale.item_name || '').trim(),
-            quantity: Number(sale.quantity) || 0,
-            price: Number(sale.price) || 0,
-            transdate: sale.transdate || (sale.sale_date ? sale.sale_date.split('T')[0] : undefined),
-            transtime: sale.transtime,
-          })),
+          items: batchSales.map(sale => {
+            const itemTt = Number(sale.transtype || (sale as any).Transtype || batchTt);
+            return {
+              transrefno: sale.transrefno || '',
+              item_code: String(sale.item_code || '').trim(),
+              item_name: String(sale.item_name || '').trim(),
+              quantity: Number(sale.quantity) || 0,
+              price: Number(sale.price) || 0,
+              transtype: itemTt,
+              Transtype: itemTt,
+              trans_type: itemTt,
+              transdate: sale.transdate || (sale.sale_date ? sale.sale_date.split('T')[0] : undefined),
+              transtime: sale.transtime,
+            };
+          }),
         };
 
         const result = await mysqlApi.sales.createBatch(batchRequest);
@@ -279,6 +289,7 @@ export const syncSalesFromDB = async (
           ? (finalSeason || rawSessionLabel || enriched?.session_label || '')
           : (rawSessionLabel || enriched?.session_label || '');
 
+        const aiTt = Number(saleRecord.transtype || (saleRecord as any).Transtype || TRANSTYPE_AI);
         const cleanSale: Sale = {
           farmer_id: String(saleRecord.farmer_id || '').replace(/^#/, '').trim(),
           farmer_name: String(saleRecord.farmer_name || '').trim(),
@@ -291,6 +302,9 @@ export const syncSalesFromDB = async (
           sold_by: String(saleRecord.sold_by || '').trim(),
           device_fingerprint: deviceFingerprint,
           season: finalSeason,
+          transtype: aiTt,
+          Transtype: aiTt,
+          trans_type: aiTt,
           ...(saleRecord.transdate && { transdate: saleRecord.transdate }),
           ...(saleRecord.transtime && { transtime: saleRecord.transtime }),
           ...(saleRecord.sale_date && !saleRecord.transdate && { transdate: saleRecord.sale_date.split('T')[0] }),
@@ -298,7 +312,6 @@ export const syncSalesFromDB = async (
           ...(saleRecord.photo && { photo: saleRecord.photo }),
           ...(saleRecord.transrefno && { transrefno: saleRecord.transrefno }),
           ...(saleRecord.uploadrefno && { uploadrefno: saleRecord.uploadrefno }),
-          ...(saleRecord.transtype && { transtype: saleRecord.transtype }),
           ...(saleRecord.route_tcode && { route_tcode: saleRecord.route_tcode }),
           ...(saleRecord.cow_name && { cow_name: saleRecord.cow_name }),
           ...(saleRecord.cow_breed && { cow_breed: saleRecord.cow_breed }),

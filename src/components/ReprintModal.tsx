@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import type { Farmer, MilkCollection } from '@/lib/supabase';
-import { Printer, X, Clock, ChevronLeft, ChevronRight, Trash2, Square, CheckSquare, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check, Coffee, Beef } from 'lucide-react';
+import { Printer, X, Clock, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ShoppingCart, Bot, Milk, Search, List, RefreshCw, Check, Coffee, Beef, Calendar } from 'lucide-react';
 import { printReceipt, printStoreAIReceipt } from '@/services/bluetooth';
 import { mysqlApi } from '@/services/mysqlApi';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
@@ -67,7 +67,6 @@ interface ReprintModalProps {
   routeLabel?: string;
   periodLabel?: string;
   locationName?: string;
-  onDeleteReceipts?: (indices: number[]) => void;
 }
 
 const ITEMS_PER_PAGE = 4;
@@ -80,8 +79,7 @@ export const ReprintModal = ({
   printCopies = 1, 
   routeLabel = 'Route', 
   periodLabel = 'Session', 
-  locationName,
-  onDeleteReceipts 
+  locationName
 }: ReprintModalProps) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [isPrinting, setIsPrinting] = useState<string | null>(null);
@@ -89,10 +87,10 @@ export const ReprintModal = ({
   const [syncingCollections, setSyncingCollections] = useState<Set<string>>(new Set());
   const [syncedCollections, setSyncedCollections] = useState<Set<string>>(new Set());
   const [failedCollections, setFailedCollections] = useState<Set<string>>(new Set());
-  const [isDeleteMode, setIsDeleteMode] = useState(false);
-  const [selectedForDelete, setSelectedForDelete] = useState<Set<number>>(new Set());
   const [activeTab, setActiveTab] = useState<'recent' | 'search'>('recent');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [jumpPageInput, setJumpPageInput] = useState<string>('');
   // On-screen receipt viewing (for printCopies=0)
   const [viewingReceipt, setViewingReceipt] = useState<PrintedReceipt | null>(null);
   
@@ -107,21 +105,51 @@ export const ReprintModal = ({
     }
   }, [isReady, getFarmers]);
 
-  // Filter receipts based on search query
+  // Filter receipts based on search query and selected calendar date
   const filteredReceipts = useMemo(() => {
-    if (!searchQuery.trim()) return receipts;
-    const query = searchQuery.toLowerCase().trim();
-    return receipts.filter(receipt => 
-      receipt.farmerId.toLowerCase().includes(query) ||
-      receipt.farmerName.toLowerCase().includes(query) ||
-      (receipt.uploadrefno && receipt.uploadrefno.toLowerCase().includes(query))
-    );
-  }, [receipts, searchQuery]);
+    let result = receipts;
 
-  // Use filtered receipts for search tab, all receipts for recent tab
-  const displayReceipts = activeTab === 'search' ? filteredReceipts : receipts;
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      result = result.filter(receipt =>
+        receipt.farmerId.toLowerCase().includes(query) ||
+        receipt.farmerName.toLowerCase().includes(query) ||
+        (receipt.uploadrefno && receipt.uploadrefno.toLowerCase().includes(query))
+      );
+    }
+
+    if (selectedDate) {
+      result = result.filter(receipt => {
+        const receiptDate = new Date(
+          receipt.transactionDate ||
+          (receipt.collections?.[0]?.collection_date ? receipt.collections[0].collection_date : receipt.printedAt)
+        );
+        const receiptDateStr = format(receiptDate, 'yyyy-MM-dd');
+        return receiptDateStr === selectedDate;
+      });
+    }
+
+    return result;
+  }, [receipts, searchQuery, selectedDate]);
+
+  // Use filtered receipts for search tab, all receipts for recent tab (but respecting date filter if set)
+  const displayReceipts = useMemo(() => {
+    if (activeTab === 'search') {
+      return filteredReceipts;
+    }
+    if (selectedDate) {
+      return receipts.filter(receipt => {
+        const receiptDate = new Date(
+          receipt.transactionDate ||
+          (receipt.collections?.[0]?.collection_date ? receipt.collections[0].collection_date : receipt.printedAt)
+        );
+        return format(receiptDate, 'yyyy-MM-dd') === selectedDate;
+      });
+    }
+    return receipts;
+  }, [activeTab, filteredReceipts, receipts, selectedDate]);
   
-  const totalPages = Math.ceil(displayReceipts.length / ITEMS_PER_PAGE);
+  const totalPages = Math.ceil(displayReceipts.length / ITEMS_PER_PAGE) || 1;
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedReceipts = displayReceipts.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
@@ -130,9 +158,6 @@ export const ReprintModal = ({
     if (!open) return;
 
     const handleBackButton = (e: Event) => {
-      // If a sub-modal (TransactionReceipt) is open, it will handle the event first
-      // because it's rendered later in the DOM or higher in the stack.
-      // But just in case, we only handle if viewingReceipt is NOT open.
       if (!viewingReceipt) {
         e.preventDefault();
         onClose();
@@ -145,8 +170,7 @@ export const ReprintModal = ({
   }, [open, onClose, viewingReceipt]);
 
   const handleReprint = async (receipt: PrintedReceipt) => {
-    // For Store/AI receipts, check items; for milk, check collections
-    const hasData = (receipt.type === 'store' || receipt.type === 'ai') 
+    const hasData = (receipt.type === 'store' || receipt.type === 'ai')
       ? (receipt.items && receipt.items.length > 0)
       : (receipt.collections && receipt.collections.length > 0);
     
@@ -156,7 +180,6 @@ export const ReprintModal = ({
     }
     
     if (printCopies === 0) {
-      // PrintOption=0: Display receipt on screen instead of printing
       setViewingReceipt(receipt);
       return;
     }
@@ -164,7 +187,6 @@ export const ReprintModal = ({
     setIsPrinting(receipt.farmerId);
 
     try {
-      // Handle Store/AI receipts differently
       if ((receipt.type === 'store' || receipt.type === 'ai') && receipt.items) {
         const transactionDate = receipt.transactionDate 
           ? new Date(receipt.transactionDate) 
@@ -204,7 +226,6 @@ export const ReprintModal = ({
           }
         }
       } else {
-        // Original milk receipt handling
         const firstReceipt = receipt.collections[0];
         const collectionDateTime = new Date(firstReceipt.collection_date);
         
@@ -269,10 +290,6 @@ export const ReprintModal = ({
     }
   };
 
-  /**
-   * Confirm a record exists on the backend by its EXACT reference number.
-   * IMPORTANT: treat as confirmed only if it matches expected date + farmer.
-   */
   const confirmExactOnBackend = async (
     referenceNo: string,
     expected: { dateISO: string; farmerId: string }
@@ -288,18 +305,15 @@ export const ReprintModal = ({
       const expectedFarmerId = expected.farmerId.replace(/^#/, '').trim();
 
       if (foundDateISO && foundDateISO !== expected.dateISO) {
-        console.warn(`[SYNC] Reference mismatch: ${referenceNo} found on DB date=${foundDateISO}, expected=${expected.dateISO}`);
         return { confirmed: false, mismatchReason: 'date_mismatch' };
       }
 
       if (foundFarmerId && expectedFarmerId && foundFarmerId !== expectedFarmerId) {
-        console.warn(`[SYNC] Reference mismatch: ${referenceNo} found for DB farmer=${foundFarmerId}, expected=${expectedFarmerId}`);
         return { confirmed: false, mismatchReason: 'farmer_mismatch' };
       }
 
       return { confirmed: true };
     } catch (err) {
-      console.error(`[SYNC] Error checking backend for ${referenceNo}:`, err);
       return { confirmed: false, mismatchReason: 'not_found' };
     }
   };
@@ -309,13 +323,10 @@ export const ReprintModal = ({
     return errorMsg.includes('duplicate') || errorMsg.includes('already exists') || errorMsg.includes('unique');
   };
 
-  // Manual sync handler for a SINGLE collection
   const handleSyncCollection = async (collection: MilkCollection) => {
     const refNo = collection.reference_no;
     
-    // CRITICAL: Cannot sync without a reference number
     if (!refNo) {
-      console.error('[SYNC ERROR] Collection is missing reference_no - cannot sync');
       toast.error('Record has no reference number - cannot sync');
       return;
     }
@@ -325,13 +336,10 @@ export const ReprintModal = ({
       return;
     }
 
-    // Prevent duplicate sync attempts
     if (syncingCollections.has(refNo)) {
-      console.log(`[SYNC] Already syncing: ${refNo}`);
       return;
     }
 
-    // Mark as syncing
     setSyncingCollections(prev => new Set(prev).add(refNo));
     setFailedCollections(prev => {
       const next = new Set(prev);
@@ -349,7 +357,6 @@ export const ReprintModal = ({
       const normalizedSession = String(collection.session || '').trim() || 'AM';
 
       const submitOnce = async (referenceNoToUse: string) => {
-        console.log(`[SYNC] Submitting: ref=${referenceNoToUse}`);
         return mysqlApi.milkCollection.create({
           reference_no: referenceNoToUse,
           uploadrefno: collection.uploadrefno || referenceNoToUse,
@@ -361,7 +368,7 @@ export const ReprintModal = ({
           user_id: collection.user_id,
           clerk_name: collection.clerk_name,
           collection_date: new Date(collection.collection_date),
-          transdate: collection.transdate, // v2.12.60: Forward explicit local date
+          transdate: collection.transdate,
           device_fingerprint: deviceFingerprint,
           entry_type: (collection.entry_type as 'scale' | 'manual') || 'manual',
           product_code: collection.product_code,
@@ -371,7 +378,6 @@ export const ReprintModal = ({
         });
       };
 
-      // Attempt #1 with captured reference
       const result1 = await submitOnce(refNo);
       const duplicateLike1 = isDuplicateLike(result1.error || result1.message);
       const apiOk1 = result1.success || duplicateLike1;
@@ -397,9 +403,7 @@ export const ReprintModal = ({
         }
       }
 
-      // Reference collision -> retry once with a fresh backend reference
       if (!confirmed && mismatch === 'date_mismatch') {
-        console.warn(`[SYNC] Reference collision detected for ${refNo}. Generating new reference and retrying once...`);
         const nextRefResp = await mysqlApi.milkCollection.getNextReference(deviceFingerprint);
         const newRef = (nextRefResp.data?.reference_no || '').trim();
         if (newRef) {
@@ -437,7 +441,6 @@ export const ReprintModal = ({
       } else {
         setFailedCollections(prev => new Set(prev).add(refNo));
         toast.error(`Sync failed`);
-        console.error(`[SYNC] Error syncing ${refNo}:`, err);
       }
     } finally {
       setSyncingCollections(prev => {
@@ -448,7 +451,6 @@ export const ReprintModal = ({
     }
   };
 
-  // Sync all collections for a receipt
   const handleSyncAllCollections = async (receipt: PrintedReceipt) => {
     if (!navigator.onLine) {
       toast.error('You are offline. Please connect to sync.');
@@ -463,10 +465,8 @@ export const ReprintModal = ({
     for (let i = 0; i < receipt.collections.length; i++) {
       const collection = receipt.collections[i];
       const refNo = collection.reference_no;
-      // Skip already synced collections
       if (refNo && !syncedCollections.has(refNo)) {
         await handleSyncCollection(collection);
-        // Small delay between syncs
         if (i < receipt.collections.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
@@ -482,52 +482,22 @@ export const ReprintModal = ({
     setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   };
 
-  const toggleDeleteMode = () => {
-    setIsDeleteMode(!isDeleteMode);
-    setSelectedForDelete(new Set());
-  };
-
-  const toggleSelectReceipt = (globalIndex: number) => {
-    const newSelected = new Set(selectedForDelete);
-    if (newSelected.has(globalIndex)) {
-      newSelected.delete(globalIndex);
-    } else {
-      newSelected.add(globalIndex);
+  const handleJumpToPage = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pageNum = parseInt(jumpPageInput, 10);
+    if (!isNaN(pageNum)) {
+      goToPage(pageNum);
+      setJumpPageInput('');
     }
-    setSelectedForDelete(newSelected);
-  };
-
-  const selectAllOnPage = () => {
-    const newSelected = new Set(selectedForDelete);
-    paginatedReceipts.forEach((_, idx) => {
-      newSelected.add(startIndex + idx);
-    });
-    setSelectedForDelete(newSelected);
-  };
-
-  const handleDeleteSelected = () => {
-    if (selectedForDelete.size === 0) {
-      toast.error('No receipts selected');
-      return;
-    }
-    
-    if (onDeleteReceipts) {
-      onDeleteReceipts(Array.from(selectedForDelete));
-      toast.success(`Deleted ${selectedForDelete.size} receipt${selectedForDelete.size !== 1 ? 's' : ''}`);
-    }
-    
-    setSelectedForDelete(new Set());
-    setIsDeleteMode(false);
-    setCurrentPage(1);
   };
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
       setCurrentPage(1);
-      setIsDeleteMode(false);
-      setSelectedForDelete(new Set());
       setActiveTab('recent');
       setSearchQuery('');
+      setSelectedDate('');
+      setJumpPageInput('');
       onClose();
     }
   };
@@ -570,20 +540,8 @@ export const ReprintModal = ({
             <div className="flex items-center gap-3">
               {receipts.length > 0 && (
                 <span className="text-xs sm:text-sm font-normal text-muted-foreground">
-                  {receipts.length} total
+                  {displayReceipts.length} total {selectedDate && `(filtered)`}
                 </span>
-              )}
-              {onDeleteReceipts && receipts.length > 0 && (
-                <button
-                  onClick={toggleDeleteMode}
-                  className={`p-2 rounded-md transition-colors ${
-                    isDeleteMode 
-                      ? 'bg-destructive text-destructive-foreground' 
-                      : 'hover:bg-accent'
-                  }`}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
               )}
               <button
                 onClick={onClose}
@@ -608,6 +566,32 @@ export const ReprintModal = ({
             </TabsTrigger>
           </TabsList>
 
+          {/* Calendar Date Filter Bar */}
+          <div className="flex items-center gap-2 mb-2 p-2 bg-slate-50 rounded-lg border flex-shrink-0 text-xs">
+            <Calendar className="h-4 w-4 text-primary flex-shrink-0" />
+            <span className="font-medium text-slate-700">Date:</span>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => {
+                setSelectedDate(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="px-2 py-1 bg-white border rounded text-xs flex-1 focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            {selectedDate && (
+              <button
+                onClick={() => {
+                  setSelectedDate('');
+                  setCurrentPage(1);
+                }}
+                className="px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded transition-colors"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
           {/* Search input - only visible on search tab */}
           {activeTab === 'search' && (
             <div className="mb-2 flex-shrink-0">
@@ -620,61 +604,23 @@ export const ReprintModal = ({
             </div>
           )}
 
-          {/* Delete mode toolbar */}
-          {isDeleteMode && (
-            <div className="flex items-center justify-between p-2 bg-destructive/10 rounded-lg mb-2 flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={selectAllOnPage}
-                  className="text-xs px-2 py-1 bg-secondary rounded hover:bg-secondary/80"
-                >
-                  Select Page
-                </button>
-                <span className="text-sm text-muted-foreground">
-                  {selectedForDelete.size} selected
-                </span>
-              </div>
-              <button
-                onClick={handleDeleteSelected}
-                disabled={selectedForDelete.size === 0}
-                className="px-3 py-1 bg-destructive text-destructive-foreground rounded text-sm font-medium
-                         hover:bg-destructive/90 disabled:opacity-50"
-              >
-                Delete
-              </button>
-            </div>
-          )}
-
           {/* Scrollable receipt list */}
           <div className="flex-1 overflow-y-auto min-h-0 space-y-2 sm:space-y-3 -mx-1 px-1 pb-32 sm:pb-8">
             {displayReceipts.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground text-sm">
-                {activeTab === 'search' && searchQuery ? 'No receipts match your search' : 'No recent receipts to display'}
+                {selectedDate ? `No receipts found for date ${selectedDate}` : activeTab === 'search' && searchQuery ? 'No receipts match your search' : 'No recent receipts to display'}
               </div>
             ) : (
             paginatedReceipts.map((receipt, index) => {
               const globalIndex = startIndex + index;
-              const isSelected = selectedForDelete.has(globalIndex);
-              
+
               return (
                 <div
                   key={globalIndex}
-                  className={`border rounded-lg p-3 space-y-2 transition-colors ${getReceiptTypeBg(receipt.type)} ${
-                    isDeleteMode && isSelected ? 'ring-2 ring-destructive' : ''
-                  }`}
-                  onClick={isDeleteMode ? () => toggleSelectReceipt(globalIndex) : undefined}
+                  className={`border rounded-lg p-3 space-y-2 transition-colors ${getReceiptTypeBg(receipt.type)}`}
                 >
                   {/* Header: Farmer info + Weight/Amount */}
                   <div className="flex justify-between items-start gap-2">
-                    {isDeleteMode && (
-                      <div className="flex-shrink-0 pt-1">
-                        {isSelected ? (
-                          <CheckSquare className="h-5 w-5 text-destructive" />
-                        ) : (
-                          <Square className="h-5 w-5 text-muted-foreground" />
-                        )}
-                      </div>
-                    )}
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold text-sm sm:text-base truncate">{receipt.farmerName}</div>
                       <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-2">
@@ -740,51 +686,49 @@ export const ReprintModal = ({
                     </div>
                   )}
 
-                  {/* Action Buttons - Only show when not in delete mode */}
-                  {!isDeleteMode && (
-                    <div className="flex gap-2">
+                  {/* Action Buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleReprint(receipt)}
+                      disabled={isPrinting !== null || syncingCollections.size > 0}
+                      className="flex-1 py-3 sm:py-2 bg-primary text-primary-foreground rounded-md font-medium
+                               hover:bg-primary/90 active:bg-primary/80 transition-colors
+                               flex items-center justify-center gap-2 min-h-[44px]
+                               disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Printer className="h-4 w-4" />
+                      {isPrinting === receipt.farmerId ? 'Printing...' : 'Reprint'}
+                    </button>
+                    {/* Sync All button - only for milk receipts */}
+                    {(!receipt.type || receipt.type === 'milk') && receipt.collections && (
                       <button
-                        onClick={() => handleReprint(receipt)}
+                        onClick={() => handleSyncAllCollections(receipt)}
                         disabled={isPrinting !== null || syncingCollections.size > 0}
-                        className="flex-1 py-3 sm:py-2 bg-primary text-primary-foreground rounded-md font-medium 
-                                 hover:bg-primary/90 active:bg-primary/80 transition-colors 
-                                 flex items-center justify-center gap-2 min-h-[44px]
-                                 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className={`py-3 sm:py-2 px-3 rounded-md font-medium
+                                 transition-colors flex items-center justify-center gap-2 min-h-[44px]
+                                 disabled:opacity-50 disabled:cursor-not-allowed ${
+                                   receipt.collections.every(c => syncedCollections.has(c.reference_no || ''))
+                                     ? 'bg-green-500 text-white'
+                                     : receipt.collections.some(c => failedCollections.has(c.reference_no || ''))
+                                     ? 'bg-red-500 text-white hover:bg-red-600'
+                                     : 'bg-amber-500 text-white hover:bg-amber-600'
+                                 }`}
+                        title={
+                          receipt.collections.every(c => syncedCollections.has(c.reference_no || ''))
+                            ? 'All synced'
+                            : 'Sync all to database'
+                        }
                       >
-                        <Printer className="h-4 w-4" />
-                        {isPrinting === receipt.farmerId ? 'Printing...' : 'Reprint'}
+                        {receipt.collections.every(c => syncedCollections.has(c.reference_no || '')) ? (
+                          <Check className="h-4 w-4" />
+                        ) : syncingCollections.size > 0 && receipt.collections.some(c => syncingCollections.has(c.reference_no || '')) ? (
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4" />
+                        )}
                       </button>
-                      {/* Sync All button - only for milk receipts */}
-                      {(!receipt.type || receipt.type === 'milk') && receipt.collections && (
-                        <button
-                          onClick={() => handleSyncAllCollections(receipt)}
-                          disabled={isPrinting !== null || syncingCollections.size > 0}
-                          className={`py-3 sm:py-2 px-3 rounded-md font-medium 
-                                   transition-colors flex items-center justify-center gap-2 min-h-[44px]
-                                   disabled:opacity-50 disabled:cursor-not-allowed ${
-                                     receipt.collections.every(c => syncedCollections.has(c.reference_no || ''))
-                                       ? 'bg-green-500 text-white'
-                                       : receipt.collections.some(c => failedCollections.has(c.reference_no || ''))
-                                       ? 'bg-red-500 text-white hover:bg-red-600'
-                                       : 'bg-amber-500 text-white hover:bg-amber-600'
-                                   }`}
-                          title={
-                            receipt.collections.every(c => syncedCollections.has(c.reference_no || ''))
-                              ? 'All synced'
-                              : 'Sync all to database'
-                          }
-                        >
-                          {receipt.collections.every(c => syncedCollections.has(c.reference_no || '')) ? (
-                            <Check className="h-4 w-4" />
-                          ) : syncingCollections.size > 0 && receipt.collections.some(c => syncingCollections.has(c.reference_no || '')) ? (
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <RefreshCw className="h-4 w-4" />
-                          )}
-                        </button>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               );
             })
@@ -792,51 +736,103 @@ export const ReprintModal = ({
           </div>
         </Tabs>
 
-        {/* Pagination Controls */}
+        {/* Enhanced Fast Pagination Controls */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between pt-3 border-t flex-shrink-0">
-            <button
-              onClick={() => goToPage(currentPage - 1)}
-              disabled={currentPage === 1}
-              className="p-3 rounded-md hover:bg-accent active:bg-accent/80 
-                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors
-                       min-w-[44px] min-h-[44px] flex items-center justify-center"
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </button>
-            
-            <div className="flex items-center gap-1">
-              {totalPages <= 5 ? (
-                Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                  <button
-                    key={page}
-                    onClick={() => goToPage(page)}
-                    className={`min-w-[36px] min-h-[36px] rounded-md text-sm font-medium transition-colors
-                              flex items-center justify-center ${
-                      page === currentPage
-                        ? 'bg-primary text-primary-foreground'
-                        : 'hover:bg-accent active:bg-accent/80'
-                    }`}
-                  >
-                    {page}
-                  </button>
-                ))
-              ) : (
-                <span className="text-sm font-medium px-2">
-                  {currentPage} / {totalPages}
-                </span>
-              )}
+          <div className="pt-3 border-t flex flex-col gap-2 flex-shrink-0">
+            <div className="flex items-center justify-between">
+              {/* First Page Button */}
+              <button
+                onClick={() => goToPage(1)}
+                disabled={currentPage === 1}
+                title="First Page"
+                className="p-2 rounded-md hover:bg-accent active:bg-accent/80
+                         disabled:opacity-50 disabled:cursor-not-allowed transition-colors
+                         min-w-[36px] min-h-[36px] flex items-center justify-center text-xs font-semibold"
+              >
+                <ChevronsLeft className="h-4 w-4" />
+              </button>
+
+              {/* Prev Page Button */}
+              <button
+                onClick={() => goToPage(currentPage - 1)}
+                disabled={currentPage === 1}
+                title="Previous Page"
+                className="p-2 rounded-md hover:bg-accent active:bg-accent/80
+                         disabled:opacity-50 disabled:cursor-not-allowed transition-colors
+                         min-w-[36px] min-h-[36px] flex items-center justify-center"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+
+              <div className="flex items-center gap-1">
+                {totalPages <= 5 ? (
+                  Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                    <button
+                      key={page}
+                      onClick={() => goToPage(page)}
+                      className={`min-w-[32px] min-h-[32px] rounded-md text-xs font-medium transition-colors
+                                flex items-center justify-center ${
+                        page === currentPage
+                          ? 'bg-primary text-primary-foreground'
+                          : 'hover:bg-accent active:bg-accent/80'
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  ))
+                ) : (
+                  <span className="text-xs font-semibold px-2">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                )}
+              </div>
+
+              {/* Next Page Button */}
+              <button
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                title="Next Page"
+                className="p-2 rounded-md hover:bg-accent active:bg-accent/80
+                         disabled:opacity-50 disabled:cursor-not-allowed transition-colors
+                         min-w-[36px] min-h-[36px] flex items-center justify-center"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+
+              {/* Last Page Button */}
+              <button
+                onClick={() => goToPage(totalPages)}
+                disabled={currentPage === totalPages}
+                title="Last Page"
+                className="p-2 rounded-md hover:bg-accent active:bg-accent/80
+                         disabled:opacity-50 disabled:cursor-not-allowed transition-colors
+                         min-w-[36px] min-h-[36px] flex items-center justify-center text-xs font-semibold"
+              >
+                <ChevronsRight className="h-4 w-4" />
+              </button>
             </div>
-            
-            <button
-              onClick={() => goToPage(currentPage + 1)}
-              disabled={currentPage === totalPages}
-              className="p-3 rounded-md hover:bg-accent active:bg-accent/80 
-                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors
-                       min-w-[44px] min-h-[44px] flex items-center justify-center"
-            >
-              <ChevronRight className="h-5 w-5" />
-            </button>
+
+            {/* Direct Jump-to-Page Input */}
+            {totalPages > 5 && (
+              <form onSubmit={handleJumpToPage} className="flex items-center justify-center gap-2 text-xs">
+                <span className="text-muted-foreground">Jump to page:</span>
+                <input
+                  type="number"
+                  min="1"
+                  max={totalPages}
+                  value={jumpPageInput}
+                  onChange={(e) => setJumpPageInput(e.target.value)}
+                  placeholder={`1-${totalPages}`}
+                  className="w-16 px-2 py-1 text-center border rounded focus:outline-none focus:ring-1 focus:ring-primary text-xs"
+                />
+                <button
+                  type="submit"
+                  className="px-2 py-1 bg-primary text-primary-foreground rounded text-xs font-medium hover:bg-primary/90"
+                >
+                  Go
+                </button>
+              </form>
+            )}
           </div>
         )}
 
@@ -847,8 +843,7 @@ export const ReprintModal = ({
     {viewingReceipt && (() => {
       if ((viewingReceipt.type === 'store' || viewingReceipt.type === 'ai') && viewingReceipt.items) {
         const createFn = viewingReceipt.type === 'store' ? createStoreReceiptData : createAIReceiptData;
-        // Pass stored transactionDate so the top "Date" field shows original time
-        const storedDate = viewingReceipt.transactionDate 
+        const storedDate = viewingReceipt.transactionDate
           ? new Date(viewingReceipt.transactionDate) 
           : new Date(viewingReceipt.printedAt);
 
@@ -878,7 +873,6 @@ export const ReprintModal = ({
           />
         );
       } else {
-        // Milk/Coffee receipt
         const isSellProduce = viewingReceipt.collections[0]?.transtype === 2;
         const receiptData = createMilkReceiptData(
           viewingReceipt.collections,
@@ -894,7 +888,6 @@ export const ReprintModal = ({
             memberRoute: viewingReceipt.memberRoute || '',
             productName: viewingReceipt.productName || viewingReceipt.collections[0]?.product_name,
             deliveredBy: resolveMemberName(viewingReceipt.collections[0]?.delivered_by, allFarmers),
-            // Set reprintedAt to NOW for the reprint footer
             reprintedAt: new Date(),
             orgtype: settings.orgtype,
             showProductName,

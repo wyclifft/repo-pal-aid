@@ -8,6 +8,7 @@ import {
   syncNativeUsers,
   syncNativeTanks
 } from '@/services/offlineStorage';
+import { isBuyProduce } from '@/utils/transtypeUtils';
 
 // v2.10.87: DB_NAME and DB_VERSION are exported so other modules
 // (e.g. referenceGenerator) open the SAME version and never trigger
@@ -1859,10 +1860,8 @@ export const useIndexedDBStandalone = () => {
       const productWeights: Record<string, { icode: string; product_name: string; weight: number }> = {};
       for (const r of unsynced) {
         // v2.10.94 BUG 2 FIX: only BUY (transtype=1) contributes to farmer
-        // cumulative. SELL (2) and AI (3) must be excluded — they previously
-        // inflated the printed cumulative until they synced.
-        const tt = Number((r as any).transtype);
-        if (tt !== 1) continue;
+        // cumulative. SELL (2), STORE (5), and AI (6) must be excluded.
+        if (!isBuyProduce((r as any).transtype)) continue;
         const rFarmerId = (r.farmer_id || '').replace(/^#/, '').trim().toUpperCase();
         if (rFarmerId !== cleanFarmerId) continue;
         // v2.10.107: skip just-submitted refs already counted by cloud value.

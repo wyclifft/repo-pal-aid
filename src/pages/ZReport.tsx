@@ -23,22 +23,42 @@ import { ZReportReceipt } from '@/components/ZReportReceipt';
 import { DeviceZReportReceipt } from '@/components/DeviceZReportReceipt';
 import { ZReportPeriodSelector, type ZReportPeriod } from '@/components/ZReportPeriodSelector';
 import { ZReportTypeSelector, type ZReportType } from '@/components/ZReportTypeSelector';
+import { isBuyProduce, isSellProduce, isStore, isAI } from '@/utils/transtypeUtils';
 
-// Helper to classify produce transactions (buy produce or sell produce) vs store/AI transactions
+// Helper to classify produce purchase/collection (buy produce) transactions vs store/AI/sell transactions
 const isProduceTransaction = (tx: any, isCoffeeOrg?: boolean) => {
   if (!tx) return false;
-  const tt = Number(tx.transtype || tx.Transtype) || 1;
-  if (tt === 1) return true;
-  if (tt === 3) return false;
-  if (tt === 2) {
-    const code = String(tx.product_code || tx.icode || '').trim().toUpperCase();
-    const milkId = String(tx.milk_session_id || '').trim();
-    if (code === 'S0001' || milkId.length === 10 || isCoffeeOrg || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true) {
-      return true;
-    }
-    return false;
+  const tt = Number(tx.transtype || tx.Transtype || 1);
+  if (isBuyProduce(tt)) return true;
+  if (isAI(tt) || isStore(tx.transtype, tx.isMilkFormat) || isSellProduce(tx.transtype, tx.isMilkFormat)) return false;
+  const code = String(tx.product_code || tx.icode || tx.item_code || '').trim().toUpperCase();
+  const milkId = String(tx.milk_session_id || '').trim();
+  if (code === 'S0001' || milkId.length === 10 || isCoffeeOrg === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true) {
+    return true;
   }
   return false;
+};
+
+const sanitizeReportTotals = (data: any, isCoffeeOrg: boolean) => {
+  if (!data) return data;
+  const collections = data.collections || data.transactions || [];
+  if (!Array.isArray(collections) || collections.length === 0) return data;
+
+  const produceCols = collections.filter((c: any) => isProduceTransaction(c, isCoffeeOrg));
+  const totalWeight = produceCols.reduce((sum: number, c: any) => sum + Number(c.weight || c.liters || 0), 0);
+  const totalFarmers = new Set(produceCols.map((c: any) => String(c.farmer_id || c.farmerno || c.memberno || '').trim()).filter(Boolean)).size;
+  const totalEntries = produceCols.length;
+
+  return {
+    ...data,
+    totals: {
+      ...(data.totals || {}),
+      liters: Math.floor(totalWeight * 10) / 10,
+      weight: Math.floor(totalWeight * 10) / 10,
+      farmers: totalFarmers,
+      entries: totalEntries,
+    }
+  };
 };
 
 const ZReport = () => {
@@ -151,8 +171,8 @@ const ZReport = () => {
       created_at: c.created_at || c.date || c.transdate || selectedDate,
       mno: c.mno || c.farmer_id || c.farmerno || c.farmerId || c.memberno || '',
       can_no: c.can_no || c.can || '',
-      transtype: Number(c.transtype || (c.recordType === 'ai_sale' || c.type === 'ai' ? 3 : c.recordType === 'store_sale' || c.type === 'sale' ? 2 : 1)),
-      transTypeLabel: c.transTypeLabel || (Number(c.transtype) === 3 || c.recordType === 'ai_sale' || c.type === 'ai' ? 'AI' : Number(c.transtype) === 2 || c.recordType === 'store_sale' || c.type === 'sale' ? 'SELL' : 'BUY'),
+      transtype: Number(c.transtype || (c.recordType === 'ai_sale' || c.type === 'ai' ? 6 : c.recordType === 'store_sale' || c.type === 'sale' ? 5 : 1)),
+      transTypeLabel: c.transTypeLabel || (isAI(c.transtype || (c.recordType === 'ai_sale' || c.type === 'ai' ? 6 : 0)) ? 'AI' : isStore(c.transtype || (c.recordType === 'store_sale' || c.type === 'sale' ? 5 : 0)) ? 'STORE' : isSellProduce(c.transtype) ? 'SELL' : 'BUY'),
       product_code: c.icode || c.product_code || c.itemCode || '',
       product_name: c.product_name || c.itemName || '',
       route: c.route || '',
@@ -201,12 +221,29 @@ const ZReport = () => {
       return null;
     }
 
-    const calculatedWeight = allTransactions.reduce((sum, t) => sum + Number(t.weight || 0), 0);
-    const calculatedFarmers = new Set(allTransactions.map(t => String(t.farmer_id || '').trim()).filter(Boolean)).size;
+    const produceTransactions = allTransactions.filter(t => isProduceTransaction(t, isCoffee));
+    const calculatedWeight = produceTransactions.reduce((sum, t) => sum + Number(t.weight || 0), 0);
+    const calculatedFarmers = new Set(produceTransactions.map(t => String(t.farmer_id || '').trim()).filter(Boolean)).size;
+    const calculatedEntries = produceTransactions.length;
 
-    const totalWeight = calculatedWeight > 0 ? calculatedWeight : (deviceReportData?.totals?.weight || (reportData?.date === selectedDate ? reportData?.totals?.liters : 0) || 0);
-    const totalFarmers = calculatedFarmers > 0 ? calculatedFarmers : (deviceReportData?.totals?.farmers || (reportData?.date === selectedDate ? reportData?.totals?.farmers : 0) || 0);
-    const totalEntries = allTransactions.length || deviceReportData?.totals?.entries || (reportData?.date === selectedDate ? reportData?.totals?.entries : 0) || 0;
+    const rawServerWeight = deviceReportData?.totals?.weight || (reportData?.date === selectedDate ? reportData?.totals?.liters : 0) || 0;
+    const rawServerFarmers = deviceReportData?.totals?.farmers || (reportData?.date === selectedDate ? reportData?.totals?.farmers : 0) || 0;
+    const rawServerEntries = deviceReportData?.totals?.entries || (reportData?.date === selectedDate ? reportData?.totals?.entries : 0) || 0;
+
+    let serverProduceWeight = rawServerWeight;
+    let serverProduceFarmers = rawServerFarmers;
+    let serverProduceEntries = rawServerEntries;
+
+    if (deviceReportData?.transactions && deviceReportData.transactions.length > 0) {
+      const serverProduceTxs = deviceReportData.transactions.filter(t => isProduceTransaction(t, isCoffee));
+      serverProduceWeight = serverProduceTxs.reduce((sum, t) => sum + Number(t.weight || 0), 0);
+      serverProduceFarmers = new Set(serverProduceTxs.map(t => String(t.farmer_id || '').trim()).filter(Boolean)).size;
+      serverProduceEntries = serverProduceTxs.length;
+    }
+
+    const totalWeight = calculatedWeight > 0 ? calculatedWeight : serverProduceWeight;
+    const totalFarmers = calculatedFarmers > 0 ? calculatedFarmers : serverProduceFarmers;
+    const totalEntries = calculatedEntries > 0 ? calculatedEntries : serverProduceEntries;
 
     return {
       date: selectedDate,
@@ -346,42 +383,60 @@ const ZReport = () => {
       });
     }
 
-    // 3. Store & AI Transactions row (merchandise sales & AI services)
-    const storeAndAiTxs = txs.filter((t: any) => !isProduceTransaction(t, isCoffee));
-
-    if (storeAndAiTxs.length > 0) {
-      const storeFarmers = new Set(
-        storeAndAiTxs
-          .map((t: any) => String(t.farmer_id || t.farmerno || t.memberno || '').trim())
-          .filter(Boolean)
+    // 3. Sell Produce row (transtype 2)
+    const sellProduceTxs = txs.filter((t: any) => isSellProduce(t.transtype || t.Transtype, t.isMilkFormat) || (Number(t.transtype) === 2 && isProduceTransaction(t, isCoffee)));
+    if (sellProduceTxs.length > 0) {
+      const sellFarmers = new Set(
+        sellProduceTxs.map((t: any) => String(t.farmer_id || t.farmerno || t.memberno || '').trim()).filter(Boolean)
       ).size;
-      const storeItemsOrWeight = storeAndAiTxs.reduce(
-        (sum: number, t: any) => sum + Number(t.weight || t.quantity || t.totalQuantity || 0),
-        0
-      );
-      const storeTotalAmount = storeAndAiTxs.reduce(
-        (sum: number, t: any) => sum + Number(t.amount || t.totalAmount || 0),
-        0
-      );
-
-      const hasStoreSales = storeAndAiTxs.some((t: any) => (Number(t.transtype) || 2) === 2);
-      const hasAiSales = storeAndAiTxs.some((t: any) => (Number(t.transtype) || 2) === 3);
-
-      let storeLabel = 'Store Z';
-      if (hasStoreSales && hasAiSales) {
-        storeLabel = 'Store & AI Z';
-      } else if (!hasStoreSales && hasAiSales) {
-        storeLabel = 'AI Services Z';
-      }
-
+      const sellWeight = sellProduceTxs.reduce((sum: number, t: any) => sum + Number(t.weight || t.quantity || 0), 0);
+      const sellAmount = sellProduceTxs.reduce((sum: number, t: any) => sum + Number(t.amount || t.totalAmount || 0), 0);
       list.push({
-        id: 'STORE_Z',
-        label: storeLabel,
+        id: 'SELL_PRODUCE_Z',
+        label: 'Sell Produce Z',
+        period: 'all',
+        farmers: sellFarmers,
+        weight: sellWeight,
+        amount: sellAmount,
+        reportType: 'sell_produce',
+      });
+    }
+
+    // 4. Store Sales row (transtype 5)
+    const storeTxs = txs.filter((t: any) => isStore(t.transtype || t.Transtype, t.isMilkFormat));
+    if (storeTxs.length > 0) {
+      const storeFarmers = new Set(
+        storeTxs.map((t: any) => String(t.farmer_id || t.farmerno || t.memberno || '').trim()).filter(Boolean)
+      ).size;
+      const storeItems = storeTxs.reduce((sum: number, t: any) => sum + Number(t.weight || t.quantity || t.totalQuantity || 0), 0);
+      const storeAmount = storeTxs.reduce((sum: number, t: any) => sum + Number(t.amount || t.totalAmount || 0), 0);
+      list.push({
+        id: 'STORE_SALES_Z',
+        label: 'Store Sales Z',
         period: 'all',
         farmers: storeFarmers,
-        weight: storeItemsOrWeight,
-        amount: storeTotalAmount,
+        weight: storeItems,
+        amount: storeAmount,
         reportType: 'store',
+      });
+    }
+
+    // 5. AI Services row (transtype 6)
+    const aiTxs = txs.filter((t: any) => isAI(t.transtype || t.Transtype));
+    if (aiTxs.length > 0) {
+      const aiFarmers = new Set(
+        aiTxs.map((t: any) => String(t.farmer_id || t.farmerno || t.memberno || '').trim()).filter(Boolean)
+      ).size;
+      const aiServicesCount = aiTxs.reduce((sum: number, t: any) => sum + Number(t.quantity || t.weight || 1), 0);
+      const aiAmount = aiTxs.reduce((sum: number, t: any) => sum + Number(t.amount || t.totalAmount || 0), 0);
+      list.push({
+        id: 'AI_SERVICES_Z',
+        label: 'AI Services Z',
+        period: 'all',
+        farmers: aiFarmers,
+        weight: aiServicesCount,
+        amount: aiAmount,
+        reportType: 'ai',
       });
     }
 
@@ -396,6 +451,7 @@ const ZReport = () => {
         period: 'all',
         farmers: overallFarmers,
         weight: overallWeight,
+        reportType: 'all' as any,
       });
     }
 
@@ -443,7 +499,7 @@ const ZReport = () => {
     return () => { cancelled = true; };
   }, [isReady]);
 
-  // Check for pending syncs (for sessprint enforcement)
+  // Check for pending syncs & guard against opening Z Report when offline or with pending transactions
   useEffect(() => {
     const checkPendingSync = async () => {
       if (!isReady) return;
@@ -452,6 +508,12 @@ const ZReport = () => {
         const receiptsOnly = unsynced.filter((r: any) => r.type !== 'sale');
         setPendingSyncCount(receiptsOnly.length);
         setIsSyncComplete(receiptsOnly.length === 0);
+
+        const hasPending = receiptsOnly.length > 0 || totalPendingCount > 0;
+        if (!navigator.onLine || isOffline || hasPending) {
+          toast.error('Cannot open Z-Report while offline or with pending transactions.');
+          navigate('/', { replace: true });
+        }
       } catch (err) {
         console.error('Failed to check pending sync:', err);
       }
@@ -464,7 +526,15 @@ const ZReport = () => {
     window.addEventListener('syncComplete', handleSyncComplete);
     
     return () => window.removeEventListener('syncComplete', handleSyncComplete);
-  }, [isReady]);
+  }, [isReady, isOffline, totalPendingCount, navigate, getUnsyncedReceipts]);
+
+  // Guard rule: WHEN OFFLINE OR HAVE PENDING TRANSACTIONS DO NOT OPEN THE Z REPORT
+  useEffect(() => {
+    if (!navigator.onLine || isOffline || totalPendingCount > 0) {
+      toast.error('Cannot open Z-Report while offline or with pending transactions.');
+      navigate('/', { replace: true });
+    }
+  }, [isOffline, totalPendingCount, navigate]);
 
   useEffect(() => {
     const initDevice = async () => {
@@ -641,15 +711,15 @@ const ZReport = () => {
 
       // ATOMIC STATE BATCH UPDATE - ALL SETTERS CALLED TOGETHER
       setLocalDeviceTx(fetchedLocalTx);
-      setDeviceReportData(fetchedDeviceReportData);
-      setReportData(fetchedReportData);
+      setDeviceReportData(fetchedDeviceReportData ? sanitizeReportTotals(fetchedDeviceReportData, isCoffee) : null);
+      setReportData(fetchedReportData ? sanitizeReportTotals(fetchedReportData, isCoffee) : null);
     } catch (err) {
       console.error('[Z-REPORT] Error in atomic data load:', err);
     } finally {
       setLoading(false);
       setIsDataLoading(false);
     }
-  }, [getRecentReceipts, getUnsyncedReceipts, getUnsyncedSales, getZReport, currentCcode, saveZReport, currentUser?.username]);
+  }, [getRecentReceipts, getUnsyncedReceipts, getUnsyncedSales, getZReport, currentCcode, saveZReport, currentUser?.username, isCoffee]);
 
   // Fetch device-specific Z Report for period selection or receipt view
   const fetchDeviceReport = useCallback(async (period?: ZReportPeriod) => {
@@ -662,14 +732,14 @@ const ZReport = () => {
         if (!data.clerkName || data.clerkName === 'Unknown') {
           data.clerkName = currentUser?.username || 'Clerk';
         }
-        setDeviceReportData(data);
+        setDeviceReportData(sanitizeReportTotals(data, isCoffee));
       }
     } catch (err) {
       console.error('[Z-REPORT] Failed to fetch device report:', err);
     } finally {
       setIsDeviceLoading(false);
     }
-  }, [selectedDate, deviceFingerprint, currentUser?.username]);
+  }, [selectedDate, deviceFingerprint, currentUser?.username, isCoffee]);
 
   useEffect(() => {
     if (!deviceFingerprint || !isReady) return;
@@ -871,9 +941,15 @@ const ZReport = () => {
       }
       return;
     }
-    console.log('🖨️ Triggering window.print()');
-    window.print();
-    setHasPrinted(true);
+    if (Capacitor.isNativePlatform()) {
+      toast.error('No printer connected. Please connect a Bluetooth or internal printer in Settings.');
+    } else if (typeof window.print === 'function') {
+      console.log('🖨️ Triggering window.print()');
+      window.print();
+      setHasPrinted(true);
+    } else {
+      toast.error('Printing is not supported on this browser.');
+    }
   };
 
   const handleDownloadPDF = async () => {
@@ -1316,7 +1392,7 @@ const ZReport = () => {
                             {item.farmers}
                           </TableCell>
                           <TableCell className="text-right font-bold text-[#667eea]">
-                            {item.reportType === 'store' && item.amount && item.amount > 0
+                            {(item.reportType === 'store' || item.reportType === 'ai') && item.amount && item.amount > 0
                               ? `KSh ${item.amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
                               : `${formatWeight(item.weight)} ${weightUnit}`}
                           </TableCell>

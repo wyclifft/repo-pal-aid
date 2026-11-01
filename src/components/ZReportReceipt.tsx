@@ -133,10 +133,15 @@ export const ZReportReceipt = ({
           toast.error(result.error || 'Failed to print Z-report');
         }
       } else {
-        // No Bluetooth printer - use browser print dialog
-        window.print();
-        toast.info('Opened print dialog (no Bluetooth printer connected)');
-        onPrint?.();
+        if (Capacitor.isNativePlatform()) {
+          toast.error('No printer connected. Connect a Bluetooth or internal printer in Settings.');
+        } else if (typeof window.print === 'function') {
+          window.print();
+          toast.info('Opened print dialog (no Bluetooth printer connected)');
+          onPrint?.();
+        } else {
+          toast.error('Printing is not supported on this browser.');
+        }
       }
     } catch (err) {
       console.error('Print failed:', err);

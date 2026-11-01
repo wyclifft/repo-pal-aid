@@ -1,6 +1,7 @@
 import { type Farmer } from '@/lib/supabase';
 import { resolveMemberName } from '@/utils/farmerUtils';
 import { formatWeight, roundWeight } from '@/utils/weightUtils';
+import { isBuyProduce, isSellProduce, isStore, isAI, getTransTypeLabel } from '@/utils/transtypeUtils';
 import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetooth-le';
 import { Capacitor } from '@capacitor/core';
 import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
@@ -1995,11 +1996,11 @@ export const quickReconnectPrinter = async (deviceId: string, retries: number = 
   return { success: false, error: lastError?.message || 'Failed to reconnect after multiple attempts' };
 };
 
-// Check if printer is currently connected (BLE or Classic SPP)
+// Check if printer is currently connected (BLE, Classic SPP, or POS Internal)
 export const isPrinterConnected = (): boolean => {
   // Check BLE connection first
   const bleConnected = printer.isConnected && printer.deviceId !== null;
-  // Also check Classic SPP connection
+  // Check Classic SPP or Internal Printer connection
   const classicConnected = isClassicPrinterConnected();
   return bleConnected || classicConnected;
 };
@@ -2611,7 +2612,7 @@ export const printZReport = async (data: {
   milkSessionId?: string; // Explicit 10-digit Milk Session ID if selected
   // v2.10.98: 'store' renders a stock-only Z report — no SUMMARY/SEASON/PRODUCE
   // metadata, item names left-aligned full-width, items+KSh totals only.
-  reportType?: 'produce' | 'store';
+  reportType?: 'produce' | 'sell_produce' | 'store' | 'ai';
 }): Promise<{ success: boolean; error?: string }> => {
   // 58mm thermal paper = 32 characters per line
   const W = 32;
@@ -2620,15 +2621,13 @@ export const printZReport = async (data: {
   // Helper to determine if a transaction represents produce (weight in KGS) vs store merchandise
   const isProduceTx = (tx: { product_code?: string; milk_session_id?: string; transtype?: number; recordType?: string; type?: string; isMilkFormat?: boolean }) => {
     if (!tx) return false;
-    const tt = Number(tx.transtype) || 1;
-    if (tt === 1) return true;
-    if (tt === 3) return false;
-    if (tt === 2) {
-      const code = (tx.product_code || '').trim().toUpperCase();
-      const milkId = String((tx as any).milk_session_id || '').trim();
-      return code === 'S0001' || milkId.length === 10 || data.isCoffee === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true;
-    }
-    return false;
+    if (isBuyProduce(tx.transtype)) return true;
+    if (isAI(tx.transtype)) return false;
+    if (isStore(tx.transtype, tx.isMilkFormat)) return false;
+    if (isSellProduce(tx.transtype, tx.isMilkFormat)) return true;
+    const code = (tx.product_code || '').trim().toUpperCase();
+    const milkId = String((tx as any).milk_session_id || '').trim();
+    return code === 'S0001' || milkId.length === 10 || data.isCoffee === true || tx.recordType === 'produce_sale' || tx.type === 'produce' || tx.isMilkFormat === true;
   };
 
   // Format date as DD/MM/YYYY
@@ -2675,7 +2674,7 @@ export const printZReport = async (data: {
     const route = tx.route || 'OTHER';
     const routeName = tx.route_name || route;
     const transtype = tx.transtype || 1;
-    const typeLabel = tx.transTypeLabel || (transtype === 2 ? 'SELL' : transtype === 3 ? 'AI' : 'BUY');
+    const typeLabel = tx.transTypeLabel || getTransTypeLabel(transtype, tx.isMilkFormat);
 
     if (!storeGroupsMap.has(route)) {
       storeGroupsMap.set(route, { route, routeName, typeGroups: new Map() });
@@ -2707,21 +2706,29 @@ export const printZReport = async (data: {
     return left + ' '.repeat(space) + right;
   };
 
-  const isStore = data.reportType === 'store';
+  const isStoreReport = data.reportType === 'store' || data.reportType === 'ai';
+  const reportIsStore = data.reportType === 'store';
+  const isAi = data.reportType === 'ai';
+  const isSellProduceReport = data.reportType === 'sell_produce';
+  const isAllDayZ = data.period === 'all' || data.selectedPeriod === 'all' || data.periodLabel === 'All Z';
   let receipt = '';
 
   // Header — Company Name (centered, intentional)
   receipt += centerText(data.companyName, W) + '\n';
-  if (isStore) {
+  if (reportIsStore) {
     receipt += centerText('STORE Z REPORT', W) + '\n';
+  } else if (isAi) {
+    receipt += centerText('AI SERVICES Z REPORT', W) + '\n';
+  } else if (isSellProduceReport) {
+    receipt += centerText('SELL PRODUCE Z REPORT', W) + '\n';
   } else {
-    receipt += centerText('Z REPORT', W) + '\n';
+    receipt += centerText(data.produceLabel ? `${data.produceLabel.toUpperCase()} BUY Z REPORT` : 'Z REPORT', W) + '\n';
   }
   receipt += sep + '\n';
 
-  // Metadata block — store mode emits only DATE + CENTER, no produce fields.
+  // Metadata block — store/ai mode emits only DATE + CENTER, no produce fields.
   const milkSessionId = data.milkSessionId && String(data.milkSessionId).trim().length === 10 ? data.milkSessionId : null;
-  if (!isStore) {
+  if (!isStoreReport) {
     receipt += `* ${data.produceLabel.toUpperCase()} SUMMARY\n`;
     receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
     if (milkSessionId) {
@@ -2741,7 +2748,7 @@ export const printZReport = async (data: {
     receipt += `* ${routeLabel}: ${displayFactoryName.trim()}\n`;
   }
 
-  if (!isStore && data.produceName) {
+  if (!isStoreReport && data.produceName) {
     receipt += `* PRODUCE: ${data.produceName}\n`;
   }
   receipt += sep + '\n';
@@ -2767,7 +2774,7 @@ export const printZReport = async (data: {
       if (tIdx > 0) receipt += '\n';
 
       const transtype = typeGroup.transtype;
-      const showMoney = transtype !== 1;
+      const showMoney = !isBuyProduce(transtype) && !isSellProduce(transtype, true);
 
       receipt += `== ${typeGroup.typeLabel} ==\n`;
 
@@ -2792,7 +2799,7 @@ export const printZReport = async (data: {
         const currentProduct = tx.product_code || '';
         if (showProductDividers && prevProductCode !== currentProduct) {
           const produceName = (tx.product_name || tx.product_code || 'OTHER').trim();
-          if (isStore) {
+          if (isStoreReport) {
             receipt += produceName + '\n';
           } else {
             receipt += centerText(`-- ${produceName} --`, W) + '\n';
@@ -2800,9 +2807,24 @@ export const printZReport = async (data: {
         }
         prevProductCode = currentProduct;
 
-        const shortRef = (tx.refno || '').slice(-6);
-        const rawTime = tx.time || tx.created_at;
-        const time = rawTime ? String(rawTime).includes('T') ? String(rawTime).split('T')[1].substring(0, 5) : String(rawTime).substring(0, 5) : '--:--';
+        const fullRef = String(tx.transrefno || tx.refno || '').trim();
+        const shortRef = tx.refno || (fullRef.length >= 5 ? fullRef.slice(-5) : fullRef);
+        const displayRef = shortRef.slice(-5);
+        const rawTime = (tx as any).transtime || tx.time || tx.created_at;
+        let time = '--:--';
+        if (rawTime) {
+          const s = String(rawTime).trim();
+          if (s.toUpperCase() === 'AM' || s.toUpperCase() === 'PM') {
+            time = s;
+          } else if (s.includes(':')) {
+            const p = s.split(' ').find(x => x.includes(':')) || s;
+            time = p.substring(0, 5);
+          } else if (s.includes('T')) {
+            time = s.split('T')[1].substring(0, 5);
+          } else {
+            time = s.substring(0, 5);
+          }
+        }
 
         if (showMoney) {
           const rawQty = Number(tx.weight || 0);
@@ -2821,9 +2843,23 @@ export const printZReport = async (data: {
           const tim = padR(time, 6);
           receipt += `${mno} ${ref} ${qty} ${tim}\n`;
         }
+
+        if (isAI(transtype) && ((tx as any).cow_name || (tx as any).cowname || (tx as any).bullname || (tx as any).bull_name || (tx as any).straw_no)) {
+          const cName = (tx as any).cow_name || (tx as any).cowname;
+          const bName = (tx as any).bullname || (tx as any).bull_name;
+          const sNo = (tx as any).straw_no;
+          if (cName) {
+            receipt += `  Cow: ${cName}${((tx as any).cow_breed ? ` (${(tx as any).cow_breed})` : '')}\n`;
+          }
+          if (bName) {
+            receipt += `  Bull: ${bName}${sNo ? ` (Straw: ${sNo})` : ''}\n`;
+          } else if (sNo && !bName) {
+            receipt += `  Straw: ${sNo}\n`;
+          }
+        }
       }
 
-      const isProduceGroup = !isStore && (transtype === 1 || typeGroup.transactions.every(t => isProduceTx(t)));
+      const isProduceGroup = !isStoreReport && (transtype === 1 || typeGroup.transactions.every(t => isProduceTx(t)));
       if (showMoney) {
         const qtyStr = formatWeight(sellAiItemCount);
         const unitLabel = isProduceGroup ? weightUnit : (sellAiItemCount === 1 ? 'item' : 'items');
@@ -2842,39 +2878,65 @@ export const printZReport = async (data: {
   //   TOTAL BUY <kg> KGS          → BUY produce (weight)
   //   TOTAL SELL PRODUCE <kg> KGS  → SELL produce (weight)
   //   TOTAL STORE ITEMS <n> items  → Store merchandise
-  //   TOTAL VALUE KSh n            → Monetary amount
+  //   TOTAL AI SERVICES <n> services KSh n → AI services
   let buyWeight = 0;
   let sellProduceWeight = 0;
   let storeItemsCount = 0;
-  let sellAiAmount = 0;
+  let storeAmount = 0;
+  let aiServicesCount = 0;
+  let aiAmount = 0;
+  let sellProduceAmount = 0;
 
   for (const tx of data.transactions) {
     const tt = tx.transtype || 1;
-    if (tt === 1) {
+    const amt = Number(tx.amount || 0);
+    if (isBuyProduce(tt)) {
       buyWeight += tx.weight;
+    } else if (isSellProduce(tt, tx.isMilkFormat) || isProduceTx(tx)) {
+      sellProduceWeight += tx.weight;
+      sellProduceAmount += amt;
+    } else if (isAI(tt)) {
+      aiServicesCount += Number(tx.weight || (tx as any).quantity || 1);
+      aiAmount += amt;
     } else {
-      sellAiAmount += Number(tx.amount || 0);
-      if (isProduceTx(tx)) {
-        sellProduceWeight += tx.weight;
-      } else {
-        storeItemsCount += Math.max(0, Math.round(tx.weight || 0));
-      }
+      storeItemsCount += Math.max(0, Math.round(tx.weight || (tx as any).quantity || 1));
+      storeAmount += amt;
     }
   }
+  const totalMoneyAmount = storeAmount + aiAmount + sellProduceAmount;
 
-  if (!isStore && buyWeight > 0) {
+  if (!reportIsStore && buyWeight > 0) {
     receipt += lr('TOTAL BUY', `${formatWeight(buyWeight)} ${weightUnit}`) + '\n';
   }
-  if (!isStore && sellProduceWeight > 0) {
+  if (!reportIsStore && sellProduceWeight > 0) {
     receipt += lr('TOTAL SELL PRODUCE', `${formatWeight(sellProduceWeight)} ${weightUnit}`) + '\n';
   }
   if (storeItemsCount > 0) {
     const qtyStr = formatWeight(storeItemsCount);
     const itemsLabel = storeItemsCount === 1 ? 'item' : 'items';
-    receipt += lr('TOTAL STORE ITEMS', `${qtyStr} ${itemsLabel}`) + '\n';
+    const right = `${qtyStr} ${itemsLabel} (KSh ${storeAmount.toFixed(0)})`;
+    const line = lr('TOTAL STORE ITEMS', right);
+    if (line.length > W) {
+      receipt += `TOTAL STORE ITEMS\n`;
+      receipt += `  ${right}\n`;
+    } else {
+      receipt += line + '\n';
+    }
   }
-  if (sellAiAmount > 0) {
-    receipt += lr('TOTAL VALUE', `KSh ${sellAiAmount.toFixed(0)}`) + '\n';
+  if (aiServicesCount > 0) {
+    const qtyStr = formatWeight(aiServicesCount);
+    const servicesLabel = aiServicesCount === 1 ? 'service' : 'services';
+    const right = `${qtyStr} ${servicesLabel} (KSh ${aiAmount.toFixed(0)})`;
+    const line = lr('TOTAL AI SERVICES', right);
+    if (line.length > W) {
+      receipt += `TOTAL AI SERVICES\n`;
+      receipt += `  ${right}\n`;
+    } else {
+      receipt += line + '\n';
+    }
+  }
+  if (totalMoneyAmount > 0) {
+    receipt += lr('GRAND TOTAL KSh', `${totalMoneyAmount.toFixed(0)}`) + '\n';
   }
   receipt += sep + '\n';
 

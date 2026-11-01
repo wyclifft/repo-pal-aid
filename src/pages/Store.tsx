@@ -31,6 +31,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar } from '@/components/ui/calendar';
 
 import { isMemberServedToday, markMemberAsServed, checkMemberServedToday, getServedMemberLocalDetails } from '@/utils/servedMemberTracker';
+import { TRANSTYPE_STORE, isStore } from '@/utils/transtypeUtils';
 
 interface CartItem {
   item: Item;
@@ -102,7 +103,7 @@ const Store = () => {
   // v2.12.20: Resolve the active route (store/center) selected on the Dashboard.
   const routeName = useMemo(() => resolveDashboardActiveRoute()?.descript || '', []);
 
-  // clientFetch from route data (2=Store, 3=AI) - initialize eagerly from cache to never block offline use
+  // clientFetch from route data (5=Store) - initialize eagerly from cache to never block offline use
   const [clientFetch, setClientFetch] = useState<number>(() => {
     const cached = localStorage.getItem('store_clientFetch') || localStorage.getItem('active_session_data');
     if (cached) {
@@ -114,7 +115,7 @@ const Store = () => {
         if (!isNaN(num)) return num;
       }
     }
-    return 2; // Default fallback matching route L002
+    return 5; // Default fallback for Store (5)
   });
 
   // Scale weight state
@@ -154,8 +155,7 @@ const Store = () => {
     try {
       const sales = await getUnsyncedSales() || [];
       const storeSales = sales.filter((r: any) => {
-        const tt = Number(r.transtype || 2);
-        return tt === 2 && r.type !== 'ai';
+        return isStore(r.transtype, false) && r.type !== 'ai';
       });
       setPendingSalesCount(storeSales.length);
 
@@ -864,7 +864,9 @@ const Store = () => {
       // Build batch request - submit transaction immediately, photo uploads in background
       const batchRequest: BatchSaleRequest = {
         uploadrefno: refs.uploadrefno,
-        transtype: 2, // Store transaction
+        transtype: TRANSTYPE_STORE, // Store transaction (5)
+        Transtype: TRANSTYPE_STORE,
+        trans_type: TRANSTYPE_STORE,
         farmer_id: selectedFarmer.farmer_id,
         farmer_name: selectedFarmer.name,
         route: selectedRouteTcode || routeName || '', // Use Dashboard-selected tcode as primary route
@@ -874,7 +876,12 @@ const Store = () => {
         device_fingerprint: deviceFingerprint,
         transdate: currentTransdate,
         transtime: currentTranstime,
-        items: batchItems,
+        items: batchItems.map(item => ({
+          ...item,
+          transtype: TRANSTYPE_STORE,
+          Transtype: TRANSTYPE_STORE,
+          trans_type: TRANSTYPE_STORE,
+        })),
         season: sessionMeta.season, // Session SCODE → DB: CAN column (offline-safe)
         session_label: sessionMeta.backend_session, // → DB: session column. Coffee=SCODE, Dairy=descript
         // delivered_by not used in Store transactions
@@ -888,7 +895,9 @@ const Store = () => {
           const sale: Sale = {
             transrefno: item.transrefno,
             uploadrefno: refs.uploadrefno,
-            transtype: 2,
+            transtype: TRANSTYPE_STORE,
+            Transtype: TRANSTYPE_STORE,
+            trans_type: TRANSTYPE_STORE,
             farmer_id: selectedFarmer.farmer_id,
             farmer_name: selectedFarmer.name,
             route: selectedRouteTcode || routeName || '',

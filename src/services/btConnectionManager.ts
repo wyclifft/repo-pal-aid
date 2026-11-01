@@ -356,10 +356,21 @@ async function ensureConnected(role: BtRole): Promise<void> {
     return;
   }
 
-  // Already healthy? Sync state and exit.
+  // Already healthy? Verify native socket state and exit, or proceed to reconnect if stale.
   if (isLowLevelConnected(role)) {
-    setStatus(role, "connected", { deviceName: saved.deviceName, lastError: null, retryAt: null, attempt: 0 });
-    return;
+    if (Capacitor.isNativePlatform()) {
+      const verifier = role === "scale" ? verifyScaleConnection : verifyPrinterConnection;
+      const healthy = await verifier().catch(() => false);
+      if (!healthy) {
+        btlog("warn", role, "ensureConnected: low-level reported connected but native verifier failed — clearing stale state & reconnecting");
+      } else {
+        setStatus(role, "connected", { deviceName: saved.deviceName, lastError: null, retryAt: null, attempt: 0 });
+        return;
+      }
+    } else {
+      setStatus(role, "connected", { deviceName: saved.deviceName, lastError: null, retryAt: null, attempt: 0 });
+      return;
+    }
   }
 
   setStatus(role, s.attempt > 0 ? "reconnecting" : "connecting", {

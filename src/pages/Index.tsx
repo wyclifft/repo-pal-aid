@@ -40,6 +40,7 @@ import { cumulativeMonitor, logPrintFinal } from '@/utils/cumulativeMonitor';
 import { generateReferenceWithUploadRef, generateTransRefOnly } from '@/utils/referenceGenerator';
 import { printMilkReceiptDirect } from '@/hooks/useDirectPrint';
 import { saveToLocalDB, markNativeRecordSynced } from '@/services/offlineStorage';
+import { TRANSTYPE_BUY_PRODUCE, TRANSTYPE_SELL_PRODUCE, isSellProduce } from '@/utils/transtypeUtils';
 import { plog } from '@/utils/persistentLogger';
 import { addRegressionPin, clearRegressionPin, takeRegressionPinsForReplay } from '@/utils/cumulativeRegressionPins';
 import { toast } from 'sonner';
@@ -1522,10 +1523,12 @@ const Index = () => {
       );
     });
     
+    const fetchCodeToUse = collectionMode === 'sell' ? 2 : (selectedRouteClientFetch || 1);
+
     if (existingFarmerCapture && existingFarmerCapture.uploadrefno) {
       // Reuse existing uploadrefno, generate only new transrefno
       uploadRefNo = existingFarmerCapture.uploadrefno;
-      referenceNo = await generateTransRefOnly(selectedRouteClientFetch) || '';
+      referenceNo = await generateTransRefOnly(fetchCodeToUse) || '';
       if (!referenceNo) {
         toast.error('Failed to generate reference number.');
         return;
@@ -1533,7 +1536,7 @@ const Index = () => {
       console.log(`⚡ Reusing uploadrefno=${uploadRefNo}, new transrefno=${referenceNo}`);
     } else {
       // First capture for this farmer - generate both transrefno and uploadrefno
-      const refResult = await generateReferenceWithUploadRef('milk', selectedRouteClientFetch);
+      const refResult = await generateReferenceWithUploadRef('milk', fetchCodeToUse);
       if (refResult) {
         referenceNo = refResult.transrefno;
         uploadRefNo = refResult.uploadrefno;
@@ -1589,7 +1592,9 @@ const Index = () => {
       // 10-digit unique milk_session_id for Dairy Buy/Sell (ensure it falls back properly)
       milk_session_id: resolveDashboardMilkSessionId() || (isCoffee ? undefined : '0'),
       // Transaction type: 1 = Buy Produce (from farmers), 2 = Sell Produce (to farmers/debtors)
-      transtype: collectionMode === 'sell' ? 2 : 1,
+      transtype: collectionMode === 'sell' ? TRANSTYPE_SELL_PRODUCE : TRANSTYPE_BUY_PRODUCE,
+      Transtype: collectionMode === 'sell' ? TRANSTYPE_SELL_PRODUCE : TRANSTYPE_BUY_PRODUCE,
+      trans_type: collectionMode === 'sell' ? TRANSTYPE_SELL_PRODUCE : TRANSTYPE_BUY_PRODUCE,
       // Delivery tracking: save Member ID if a member was searched/selected, otherwise manual name
       delivered_by: selectedDeliverer ? selectedDeliverer.farmer_id : (deliveredBy || 'owner'),
       // Coffee sack weighing - gross/tare/net (orgtype C only)
@@ -1652,7 +1657,7 @@ const Index = () => {
     
     // Pre-submit validation for multOpt=0 (instant check)
     for (const capture of capturedCollections) {
-      if (capture.transtype === 2) continue;
+      if (isSellProduce(capture.transtype, true)) continue;
       
       if (capture.multOpt === 0) {
         const cleanFarmerId = capture.farmer_id.replace(/^#/, '').trim();
@@ -1708,7 +1713,7 @@ const Index = () => {
     // Update blacklist & session tracking immediately
     const newlySubmittedFarmers = new Set<string>();
     capturedCollections.forEach(capture => {
-      if (capture.transtype !== 2 && capture.multOpt === 0) {
+      if (!isSellProduce(capture.transtype, true) && capture.multOpt === 0) {
         const cleanId = capture.farmer_id.replace(/^#/, '').trim();
         addToBlacklist(cleanId);
         newlySubmittedFarmers.add(cleanId);
@@ -1830,6 +1835,8 @@ const Index = () => {
             milk_session_id: capture.milk_session_id,
             session_descript: capture.session_descript,
             transtype: capture.transtype,
+            Transtype: capture.transtype,
+            trans_type: capture.transtype,
             delivered_by: capture.delivered_by,
           } as any);
 
@@ -2122,9 +2129,6 @@ const Index = () => {
           routeLabel={routeLabel}
           periodLabel={periodLabel}
           locationName={routeName}
-          onDeleteReceipts={(indices) => {
-            deleteReceipts(indices);
-          }}
         />
       </>
     );
@@ -2383,9 +2387,6 @@ const Index = () => {
         routeLabel={routeLabel}
         periodLabel={periodLabel}
         locationName={routeName}
-        onDeleteReceipts={(indices) => {
-          deleteReceipts(indices);
-        }}
       />
 
       {/* Session Expired Dialog - App-wide global blocker (shown when no pending captures exist) */}

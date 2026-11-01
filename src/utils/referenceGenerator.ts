@@ -329,12 +329,18 @@ const getNextTrnId = async (): Promise<number> => {
  * CRITICAL: Uses mutex lock to prevent race conditions when multiple
  * references are generated simultaneously (e.g., rapid button taps)
  */
-export const generateOfflineReference = async (clientFetch?: number): Promise<string | null> => {
+export const generateOfflineReference = async (clientFetch?: number, transactionType?: TransactionType): Promise<string | null> => {
   return withLock(async () => {
     const devcode = localStorage.getItem('devcode');
 
     // Robust cache-first resolution for clientFetch (non-blocking, offline-safe):
     let effectiveClientFetch = clientFetch;
+    if (transactionType === 'ai' && (!effectiveClientFetch || effectiveClientFetch === 3)) {
+      effectiveClientFetch = 6;
+    } else if (transactionType === 'store' && (!effectiveClientFetch || effectiveClientFetch === 2)) {
+      effectiveClientFetch = 5;
+    }
+
     if (effectiveClientFetch === undefined || effectiveClientFetch === null) {
       try {
         const activeSessionData = localStorage.getItem('active_session_data') || localStorage.getItem('delicoop_session_data');
@@ -355,7 +361,7 @@ export const generateOfflineReference = async (clientFetch?: number): Promise<st
 
       // Final non-blocking fallback (prevents ever blocking offline users)
       if (effectiveClientFetch === undefined || effectiveClientFetch === null) {
-        effectiveClientFetch = 2; // Matches route L002 persistent clientFetch cache
+        effectiveClientFetch = 1;
       }
     }
 
@@ -548,10 +554,18 @@ export const generateFormattedUploadRef = async (transactionType: TransactionTyp
   const nextId = await getNextTypeId(transactionType);
   const code = devcode || (await getDeviceConfig())?.devcode || '';
   
-  const effectiveClientFetch = clientFetch !== undefined && clientFetch !== null ? clientFetch : 1;
+  let effectiveClientFetch = clientFetch;
+  if (transactionType === 'ai' && (!effectiveClientFetch || effectiveClientFetch === 3)) {
+    effectiveClientFetch = 6;
+  } else if (transactionType === 'store' && (!effectiveClientFetch || effectiveClientFetch === 2)) {
+    effectiveClientFetch = 5;
+  } else if (!effectiveClientFetch) {
+    effectiveClientFetch = 1;
+  }
+
   const formatted = `${code}${effectiveClientFetch}${String(nextId).padStart(8, '0')}`;
   
-  console.log(`⚡ Formatted uploadrefno: ${formatted} (${transactionType}Id: ${nextId}, clientFetch: ${clientFetch || 'none'})`);
+  console.log(`⚡ Formatted uploadrefno: ${formatted} (${transactionType}Id: ${nextId}, clientFetch: ${effectiveClientFetch})`);
   return formatted;
 };
 
@@ -582,14 +596,20 @@ export const generateReferenceWithUploadRef = async (transactionType: Transactio
   transrefno: string;
   uploadrefno: string;
 } | null> => {
-  // v2.12.33: transrefno and uploadrefno both include clientFetch
-  const transrefno = await generateOfflineReference(clientFetch);
+  let effectiveClientFetch = clientFetch;
+  if (transactionType === 'ai' && (!effectiveClientFetch || effectiveClientFetch === 3)) {
+    effectiveClientFetch = 6;
+  } else if (transactionType === 'store' && (!effectiveClientFetch || effectiveClientFetch === 2)) {
+    effectiveClientFetch = 5;
+  }
+
+  const transrefno = await generateOfflineReference(effectiveClientFetch, transactionType);
   if (!transrefno) return null;
   
-  const uploadrefno = await generateFormattedUploadRef(transactionType, clientFetch);
+  const uploadrefno = await generateFormattedUploadRef(transactionType, effectiveClientFetch);
   if (!uploadrefno) return null;
   
-  console.log(`⚡ Generated: transrefno=${transrefno}, uploadrefno=${uploadrefno} (type=${transactionType}, clientFetch=${clientFetch || 'none'})`);
+  console.log(`⚡ Generated: transrefno=${transrefno}, uploadrefno=${uploadrefno} (type=${transactionType}, clientFetch=${effectiveClientFetch})`);
   
   return { transrefno, uploadrefno };
 };

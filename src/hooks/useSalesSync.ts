@@ -2,6 +2,7 @@ import { useCallback, useRef, useEffect } from 'react';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 import { useSyncManager } from '@/hooks/useSyncManager';
 import { syncSalesFromDB } from '@/utils/salesSyncEngine';
+import { isAI } from '@/utils/transtypeUtils';
 import { toast } from 'sonner';
 
 import type { Sale } from '@/services/mysqlApi';
@@ -31,9 +32,9 @@ export const useSalesSync = () => {
       await saveSale({
         ...sale,
         synced: false,
-        type: (sale as AITransaction).transtype === 3 ? 'ai' : 'sale',
+        type: isAI((sale as any).transtype) ? 'ai' : 'sale',
       });
-      console.log(`[OFFLINE] Saved offline ${(sale as AITransaction).transtype === 3 ? 'AI' : 'store'} sale`);
+      console.log(`[OFFLINE] Saved offline ${isAI((sale as any).transtype) ? 'AI' : 'store'} sale`);
       return true;
     } catch (error) {
       console.error('[OFFLINE] Failed to save offline sale:', error);

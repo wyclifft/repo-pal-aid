@@ -3014,7 +3014,7 @@ const handleRequest = async (req, res) => {
         FROM transactions t
         LEFT JOIN fm_items i ON t.icode = i.icode AND i.ccode = ?
         LEFT JOIN fm_tanks r ON (TRIM(t.route) = TRIM(r.tcode) OR TRIM(t.route) = TRIM(r.descript)) AND r.ccode = ?
-        WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND ${deviceSerialCondition} AND t.ccode = ?
+        WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3, 5, 6) AND ${deviceSerialCondition} AND t.ccode = ?
       `;
 
       // Add milk_session_id filter if explicitly requested
@@ -3047,7 +3047,7 @@ const handleRequest = async (req, res) => {
       const [distinctSessionRows] = await pool.query(
         `SELECT t.milk_session_id, t.session, t.CAN as season_code, COUNT(*) as count, COUNT(DISTINCT t.memberno) as farmers, SUM(t.weight) as weight
          FROM transactions t
-         WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3) AND ${sessionDeviceCondition} AND t.ccode = ? AND t.milk_session_id IS NOT NULL AND TRIM(t.milk_session_id) != '' AND TRIM(t.milk_session_id) != '0' AND CHAR_LENGTH(TRIM(t.milk_session_id)) = 10
+         WHERE t.transdate = ? AND t.Transtype IN (1, 2, 3, 5, 6) AND ${sessionDeviceCondition} AND t.ccode = ? AND t.milk_session_id IS NOT NULL AND TRIM(t.milk_session_id) != '' AND TRIM(t.milk_session_id) != '0' AND CHAR_LENGTH(TRIM(t.milk_session_id)) = 10
          GROUP BY t.milk_session_id, t.session, t.CAN`,
         sessionQueryParams
       );
@@ -3102,7 +3102,9 @@ const handleRequest = async (req, res) => {
         const transtype = parseInt(c.transtype) || 1;
         if (transtype === 2) {
           transTypeLabel = 'SELL';
-        } else if (transtype === 3) {
+        } else if (transtype === 5) {
+          transTypeLabel = 'STORE';
+        } else if (transtype === 6 || transtype === 3) {
           transTypeLabel = 'AI';
         }
 
@@ -3219,8 +3221,14 @@ if (path === '/api/sales' && method === 'POST') {
         const transrefno = body.transrefno || body.sale_ref || `SALE-${Date.now()}`;
         const uploadrefno = body.uploadrefno || '';
         
-        // Determine transtype: 2 = Store, 3 = AI (default to Store for backward compat)
-        const transtype = body.transtype === 3 ? 3 : 2;
+        // Determine transtype: 5 = Store, 6 = AI
+        const rawTt = Number(body.transtype || body.Transtype || body.trans_type || 5);
+        let transtype = 5;
+        if (rawTt === 6 || rawTt === 3 || String(body.recordType || '').toLowerCase().includes('ai')) {
+          transtype = 6;
+        } else if (rawTt === 5 || rawTt === 2 || String(body.recordType || '').toLowerCase().includes('store')) {
+          transtype = 5;
+        }
         
         // Get current date and time
         const now = new Date();
@@ -3283,18 +3291,18 @@ if (path === '/api/sales' && method === 'POST') {
         }
         
         // ENFORCE clientFetch based on transtype
-        const requiredClientFetch = transtype;
+        const requiredClientFetch = (transtype === 6) ? 3 : 2;
         const [allowedRoutes] = await conn.query(
           'SELECT tcode FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
           [ccode, requiredClientFetch]
         );
         
         if (allowedRoutes.length === 0) {
-          const serviceName = transtype === 3 ? 'AI Services' : 'Store';
+          const serviceName = transtype === 6 ? 'AI Services' : 'Store';
           console.log(`❌ clientFetch enforcement: ${serviceName} disabled for company ${ccode}`);
           return sendJSON(res, { 
             success: false, 
-            error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
+            error: transtype === 6 ? 'AI_DISABLED' : 'STORE_DISABLED',
             message: `${serviceName} operations are not enabled for this company.`
           }, 403);
         }
@@ -3329,7 +3337,7 @@ if (path === '/api/sales' && method === 'POST') {
           }, 200);
         }
         
-        console.log(`🟢 BACKEND: Creating ${transtype === 3 ? 'AI' : 'Store'} transaction`);
+        console.log(`🟢 BACKEND: Creating ${transtype === 6 ? 'AI' : 'Store'} transaction`);
 
         // Photo upload logic ...
         let photoFilename = null;
@@ -3473,7 +3481,7 @@ if (path === '/api/sales' && method === 'POST') {
             toCleanString(salesSessionVal),
             transdate,
             transtime,
-            toIntOrNull(transtype, 2),
+            toIntOrNull(transtype, 5),
             0, 0, ccode, 0,
             toNumOrZero(body.price),
             toNumOrZero(amount),
@@ -3500,7 +3508,7 @@ if (path === '/api/sales' && method === 'POST') {
           try {
             const insertedTrnId = parseInt(transrefno.slice(-8), 10);
             const typeId = uploadrefno ? parseInt(String(uploadrefno).slice(-8), 10) : 0;
-            const counterField = transtype === 3 ? 'aiid' : 'storeid';
+            const counterField = transtype === 6 ? 'aiid' : 'storeid';
             if (!isNaN(insertedTrnId)) {
               await conn.query(
                 `UPDATE devSettings SET 
@@ -3533,7 +3541,13 @@ if (path === '/api/sales' && method === 'POST') {
         }
         
         const uploadrefno = body.uploadrefno || '';
-        const transtype = body.transtype === 3 ? 3 : 2;
+        const rawTt = Number(body.transtype || body.Transtype || body.trans_type || 5);
+        let transtype = 5;
+        if (rawTt === 6 || rawTt === 3 || String(body.recordType || '').toLowerCase().includes('ai')) {
+          transtype = 6;
+        } else if (rawTt === 5 || rawTt === 2 || String(body.recordType || '').toLowerCase().includes('store')) {
+          transtype = 5;
+        }
         
         const now = new Date();
         const pad2 = (n) => String(n).padStart(2, '0');
@@ -3585,17 +3599,17 @@ if (path === '/api/sales' && method === 'POST') {
           }, 403);
         }
         
-        const requiredClientFetch = transtype;
+        const requiredClientFetch = (transtype === 6) ? 3 : 2;
         const [allowedRoutes] = await conn.query(
           'SELECT tcode FROM fm_tanks WHERE ccode = ? AND IFNULL(clientFetch, 1) = ? LIMIT 1',
           [ccode, requiredClientFetch]
         );
         
         if (allowedRoutes.length === 0) {
-          const serviceName = transtype === 3 ? 'AI Services' : 'Store';
+          const serviceName = transtype === 6 ? 'AI Services' : 'Store';
           return sendJSON(res, {
             success: false, 
-            error: transtype === 3 ? 'AI_DISABLED' : 'STORE_DISABLED',
+            error: transtype === 6 ? 'AI_DISABLED' : 'STORE_DISABLED',
             message: `${serviceName} operations are not enabled for this company.` 
           }, 403);
         }
@@ -3763,7 +3777,7 @@ if (path === '/api/sales' && method === 'POST') {
                 toNumOrZero(item.quantity),
                 toCleanString(batchSessionVal),
                 itemTransdate, itemTranstime,
-                toIntOrNull(transtype, 2),
+                toIntOrNull(transtype, 5),
                 0, 0, ccode, 0,
                 toNumOrZero(item.price),
                 toNumOrZero(amount),
@@ -3797,7 +3811,7 @@ if (path === '/api/sales' && method === 'POST') {
           try {
             const maxTrnId = Math.max(...insertedRefs.map(ref => parseInt(ref.slice(-8), 10)));
             const typeId = uploadrefno ? parseInt(String(uploadrefno).slice(-8), 10) : 0;
-            const counterField = transtype === 3 ? 'aiid' : 'storeid';
+            const counterField = transtype === 6 ? 'aiid' : 'storeid';
             if (!isNaN(maxTrnId)) {
               await conn.query(
                 `UPDATE devSettings SET 
@@ -3920,14 +3934,16 @@ if (path === '/api/sales' && method === 'POST') {
         }
       }
       
-      // Support filtering by transtype: 2 = Store, 3 = AI, or both (default)
-      let query = 'SELECT * FROM transactions WHERE Transtype IN (2, 3)';
+      // Support filtering by transtype: 2 = Store, 3 = AI, 5 = Store, 6 = AI, or all
+      let query = 'SELECT * FROM transactions WHERE Transtype IN (2, 3, 5, 6)';
       let params = [];
       
       if (transtype === '2') {
         query = 'SELECT * FROM transactions WHERE Transtype = 2';
-      } else if (transtype === '3') {
-        query = 'SELECT * FROM transactions WHERE Transtype = 3';
+      } else if (transtype === '3' || transtype === '6') {
+        query = 'SELECT * FROM transactions WHERE Transtype IN (3, 6)';
+      } else if (transtype === '5') {
+        query = 'SELECT * FROM transactions WHERE Transtype = 5';
       }
       
       if (ccode !== null) { query += ' AND ccode = ?'; params.push(ccode); }
@@ -4028,7 +4044,7 @@ if (path === '/api/sales' && method === 'POST') {
             FROM transactions
             WHERE ccode = ?
               AND (memberno = ? OR memberno = ? OR memberno = ?)
-              AND Transtype IN (2, 3)
+              AND Transtype IN (2, 3, 5, 6)
               AND transdate >= ? AND transdate < ?
             ORDER BY ID DESC
             LIMIT 1
