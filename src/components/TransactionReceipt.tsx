@@ -413,10 +413,14 @@ export const TransactionReceipt = ({
       transrefno: item.reference_no || transrefno
     }));
 
-        for (let copy = 0; copy < printCopies; copy++) {
+    const isStoreOrAI = isStore(transtype, data.isMilkFormat) || isAI(transtype);
+    // When reprinting a recent receipt for Store/AI, limit to 1 copy regardless of store_print_copies > 1
+    const effectivePrintCopies = (reprintedAt && isStoreOrAI) ? 1 : printCopies;
+
+    for (let copy = 0; copy < effectivePrintCopies; copy++) {
       let result: { success: boolean; error?: string };
 
-      if (isStore(transtype, data.isMilkFormat) || isAI(transtype)) {
+      if (isStoreOrAI) {
         // Store/AI receipts — use printStoreAIReceipt with full item details
         result = await printStoreAIReceipt({
           companyName,
@@ -477,11 +481,11 @@ export const TransactionReceipt = ({
           toast.error(result.error || 'Failed to print receipt');
           break;
         }
-      } else if (copy === printCopies - 1) {
-        toast.success(`Receipt printed (${printCopies} ${printCopies === 1 ? 'copy' : 'copies'})`);
+      } else if (copy === effectivePrintCopies - 1) {
+        toast.success(`Receipt printed (${effectivePrintCopies} ${effectivePrintCopies === 1 ? 'copy' : 'copies'})`);
       }
       
-      if (copy < printCopies - 1) {
+      if (copy < effectivePrintCopies - 1) {
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
     }

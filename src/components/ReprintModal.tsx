@@ -95,7 +95,7 @@ export const ReprintModal = ({
   const [viewingReceipt, setViewingReceipt] = useState<PrintedReceipt | null>(null);
   
   const { getFarmers, isReady } = useIndexedDB();
-  const { settings, showProductName } = useAppSettings();
+  const { settings, showProductName, storePrintCopies } = useAppSettings();
   const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
 
   // Load all farmers for name resolution
@@ -192,7 +192,10 @@ export const ReprintModal = ({
           ? new Date(receipt.transactionDate) 
           : new Date(receipt.printedAt);
         
-        for (let copy = 0; copy < printCopies; copy++) {
+        // Recent receipt reprinting for Store/AI prints 1 copy regardless of store_print_copies > 1
+        const effectiveCopies = 1;
+
+        for (let copy = 0; copy < effectiveCopies; copy++) {
           const result = await printStoreAIReceipt({
             companyName: companyName,
             memberName: receipt.farmerName,
@@ -217,11 +220,11 @@ export const ReprintModal = ({
               toast.error(result.error || 'Failed to reprint receipt');
               break;
             }
-          } else if (copy === printCopies - 1) {
-            toast.success(`Receipt reprinted (${printCopies} ${printCopies === 1 ? 'copy' : 'copies'})`);
+          } else if (copy === effectiveCopies - 1) {
+            toast.success(`Receipt reprinted (${effectiveCopies} ${effectiveCopies === 1 ? 'copy' : 'copies'})`);
           }
           
-          if (copy < printCopies - 1) {
+          if (copy < effectiveCopies - 1) {
             await new Promise(resolve => setTimeout(resolve, 1500));
           }
         }

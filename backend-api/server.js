@@ -3114,6 +3114,7 @@ const handleRequest = async (req, res) => {
           farmer_id: c.farmer_id,
           weight: parseFloat(c.weight || 0),
           time: timeStr,
+          transtime: c.transtime || '',
           session: c.session,
           season_code: c.season_code || '',
           milk_session_id: c.milk_session_id || '',

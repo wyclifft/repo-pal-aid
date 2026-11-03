@@ -44,7 +44,7 @@ interface ParsedCredit {
 const AIPage = () => {
   const navigate = useNavigate();
   const { isAuthenticated, currentUser } = useAuth();
-  const { settings: psettings } = useAppSettings();
+  const { settings: psettings, storePrintCopies } = useAppSettings();
   const [items, setItems] = useState<Item[]>([]);
   const [hasRoutes, setHasRoutes] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
@@ -685,6 +685,8 @@ const AIPage = () => {
         { transrefno: refs.transrefno, uploadrefno: refs.uploadrefno, clerkName },
         companyName
       );
+      // Apply printCopies from useAppSettings (includes store_print_copies logic)
+      receipt.printCopies = storePrintCopies;
       setReceiptData(receipt);
       setShowReceipt(true);
 

@@ -1412,14 +1412,14 @@
 //   - Added centralized normalization and backward compatibility helpers for robust handling of legacy transaction records.
 //
 //
-// v2.12.107: Z-REPORT PRINT CRASH FIX (ReferenceError: sellAiAmount is not defined).
+// v2.12.106: Z-REPORT PRINT CRASH FIX (ReferenceError: sellAiAmount is not defined).
 //   printZReport() in src/services/bluetooth.ts logged an undefined variable
 //   (sellAiAmount) before handing the receipt to any printer, so the whole
 //   print call threw and Z Reports never printed — on Classic Bluetooth, BLE,
 //   and CS10/POS internal printers alike. Replaced with the in-scope SELL/AI
 //   money totals (sellProduceAmount + aiAmount). No layout or data changes.
 //
-export const APP_VERSION = '2.12.107';
+export const APP_VERSION = '2.12.106';
 export const APP_VERSION_CODE = 257;
 
 

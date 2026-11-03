@@ -2,6 +2,7 @@ import { type Farmer } from '@/lib/supabase';
 import { resolveMemberName } from '@/utils/farmerUtils';
 import { formatWeight, roundWeight } from '@/utils/weightUtils';
 import { isBuyProduce, isSellProduce, isStore, isAI, getTransTypeLabel } from '@/utils/transtypeUtils';
+import { format24HourTime } from '@/components/DeviceZReportReceipt';
 import { BleClient, BleDevice, numberToUUID } from '@capacitor-community/bluetooth-le';
 import { Capacitor } from '@capacitor/core';
 import { logConnectionTips } from '@/utils/bluetoothDiagnostics';
@@ -2710,25 +2711,46 @@ export const printZReport = async (data: {
   const reportIsStore = data.reportType === 'store';
   const isAi = data.reportType === 'ai';
   const isSellProduceReport = data.reportType === 'sell_produce';
-  const isAllDayZ = data.period === 'all' || data.selectedPeriod === 'all' || data.periodLabel === 'All Z';
+
+  const hasProduceTx = data.transactions.some(tx => isBuyProduce(tx.transtype) || isSellProduce(tx.transtype, tx.isMilkFormat));
+  const hasStoreOrAiTx = data.transactions.some(tx => isStore(tx.transtype, tx.isMilkFormat) || isAI(tx.transtype));
+  const isMixedData = hasProduceTx && hasStoreOrAiTx;
+
+  const isAllDayZ =
+    isMixedData ||
+    data.period === 'all' ||
+    data.selectedPeriod === 'all' ||
+    data.periodLabel === 'All Z' ||
+    data.periodLabel === 'All Day Z' ||
+    data.periodFilter === 'All Z' ||
+    data.periodFilter === 'All Day Z' ||
+    data.seasonName === 'ALL Z' ||
+    data.seasonName === 'ALL DAY Z';
   let receipt = '';
 
   // Header — Company Name (centered, intentional)
   receipt += centerText(data.companyName, W) + '\n';
   if (reportIsStore) {
-    receipt += centerText('STORE Z REPORT', W) + '\n';
+    receipt += centerText('STORE SALES Z REPORT', W) + '\n';
   } else if (isAi) {
     receipt += centerText('AI SERVICES Z REPORT', W) + '\n';
   } else if (isSellProduceReport) {
     receipt += centerText('SELL PRODUCE Z REPORT', W) + '\n';
+  } else if (isAllDayZ) {
+    receipt += centerText('ALL DAY Z REPORT', W) + '\n';
   } else {
-    receipt += centerText(data.produceLabel ? `${data.produceLabel.toUpperCase()} BUY Z REPORT` : 'Z REPORT', W) + '\n';
+    receipt += centerText('BUY PRODUCE Z REPORT', W) + '\n';
   }
   receipt += sep + '\n';
 
-  // Metadata block — store/ai mode emits only DATE + CENTER, no produce fields.
+  // Metadata block — store/ai/all-day-z mode suppresses single produce fields.
   const milkSessionId = data.milkSessionId && String(data.milkSessionId).trim().length === 10 ? data.milkSessionId : null;
-  if (!isStoreReport) {
+  if (isAllDayZ) {
+    receipt += `* SESSION: ALL DAY Z\n`;
+    if (milkSessionId) {
+      receipt += `* SESSION ID: ${milkSessionId}\n`;
+    }
+  } else if (!isStoreReport) {
     receipt += `* ${data.produceLabel.toUpperCase()} SUMMARY\n`;
     receipt += `* ${data.periodLabel.toUpperCase()}: ${data.seasonName}\n`;
     if (milkSessionId) {
@@ -2748,7 +2770,7 @@ export const printZReport = async (data: {
     receipt += `* ${routeLabel}: ${displayFactoryName.trim()}\n`;
   }
 
-  if (!isStoreReport && data.produceName) {
+  if (!isStoreReport && !isAllDayZ && data.produceName) {
     receipt += `* PRODUCE: ${data.produceName}\n`;
   }
   receipt += sep + '\n';
@@ -2810,21 +2832,7 @@ export const printZReport = async (data: {
         const fullRef = String(tx.transrefno || tx.refno || '').trim();
         const shortRef = tx.refno || (fullRef.length >= 5 ? fullRef.slice(-5) : fullRef);
         const displayRef = shortRef.slice(-5);
-        const rawTime = (tx as any).transtime || tx.time || tx.created_at;
-        let time = '--:--';
-        if (rawTime) {
-          const s = String(rawTime).trim();
-          if (s.toUpperCase() === 'AM' || s.toUpperCase() === 'PM') {
-            time = s;
-          } else if (s.includes(':')) {
-            const p = s.split(' ').find(x => x.includes(':')) || s;
-            time = p.substring(0, 5);
-          } else if (s.includes('T')) {
-            time = s.split('T')[1].substring(0, 5);
-          } else {
-            time = s.substring(0, 5);
-          }
-        }
+        const time = format24HourTime(tx);
 
         if (showMoney) {
           const rawQty = Number(tx.weight || 0);
@@ -2950,7 +2958,7 @@ export const printZReport = async (data: {
   console.log('[ZREPORT] Data:', {
     transactions: data.transactions.length,
     total: data.totalWeight,
-    // v2.12.107: sellAiAmount was never defined in this scope — ReferenceError
+    // v2.12.106: sellAiAmount was never defined in this scope — ReferenceError
     // aborted printing on every printer type. Use the SELL/AI money totals
     // computed in the grand-total block above.
     totalAmount: sellProduceAmount + aiAmount,

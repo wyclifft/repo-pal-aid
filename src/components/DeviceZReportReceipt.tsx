@@ -37,6 +37,74 @@ import { TRANSTYPE_BUY_PRODUCE, TRANSTYPE_SELL_PRODUCE, TRANSTYPE_STORE, TRANSTY
 import { filterTransactionsByPeriod, type ZReportPeriod, getPeriodDisplayLabel } from './ZReportPeriodSelector';
 import { useIndexedDB } from '@/hooks/useIndexedDB';
 
+export const format24HourTime = (tx: any): string => {
+  if (!tx) return '00:00';
+
+  const fields = [
+    tx.transtime,
+    tx.time,
+    tx.created_at,
+    tx.transdate,
+    tx.timestamp,
+    tx.date,
+    tx.created
+  ];
+
+  for (const val of fields) {
+    if (val === undefined || val === null) continue;
+    const str = String(val).trim();
+    if (!str || str.toUpperCase() === 'AM' || str.toUpperCase() === 'PM') continue;
+
+    // Check for 12-hour AM/PM string (e.g., "3:56 PM" or "03:56:03 PM")
+    const ampmMatch = str.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
+    if (ampmMatch) {
+      let hours = parseInt(ampmMatch[1], 10);
+      const minutes = ampmMatch[2];
+      const period = ampmMatch[3].toUpperCase();
+      if (period === 'PM' && hours < 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+      return `${String(hours).padStart(2, '0')}:${minutes}`;
+    }
+
+    // Check for 24-hour time or time with seconds (e.g. "15:56:03", "15:56", "9:56:03", "9:56")
+    if (str.includes(':')) {
+      const parts = str.split(' ');
+      const timePart = parts.find(p => p.includes(':')) || str;
+      const cleanTime = timePart.includes('T') ? timePart.split('T')[1] : timePart;
+      const timeMatch = cleanTime.match(/^(\d{1,2}):(\d{2})/);
+      if (timeMatch) {
+        const hh = String(parseInt(timeMatch[1], 10)).padStart(2, '0');
+        const mm = timeMatch[2];
+        return `${hh}:${mm}`;
+      }
+    }
+
+    // Unix numeric timestamp
+    const num = Number(str);
+    if (!isNaN(num) && num > 1000000000) {
+      const d = new Date(num);
+      if (!isNaN(d.getTime())) {
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return `${hh}:${mm}`;
+      }
+    }
+  }
+
+  const rawDateStr = String(tx.transdate || tx.date || '').trim();
+  if (rawDateStr.includes(' ')) {
+    const timePart = rawDateStr.split(' ')[1];
+    if (timePart && timePart.includes(':')) {
+      const match = timePart.match(/^(\d{1,2}):(\d{2})/);
+      if (match) {
+        return `${String(parseInt(match[1], 10)).padStart(2, '0')}:${match[2]}`;
+      }
+    }
+  }
+
+  return '00:00';
+};
+
 interface DeviceZReportReceiptProps {
   data: DeviceZReportData | null;
   open: boolean;
@@ -336,11 +404,18 @@ export const DeviceZReportReceipt = ({
       const printerConnected = isPrinterConnected();
       
       if (printerConnected) {
+        const hasProduceTx = filteredTransactions.some(tx => isBuyProduce(tx.transtype) || isSellProduce(tx.transtype, tx.isMilkFormat));
+        const hasStoreOrAiTx = filteredTransactions.some(tx => isStore(tx.transtype, tx.isMilkFormat) || isAI(tx.transtype));
+        const isMixedData = hasProduceTx && hasStoreOrAiTx;
+        const isAllDayZ = isMixedData || selectedPeriod === 'all' || activeSessionName === 'ALL DAY Z' || activeSessionName === 'ALL Z';
+
         // Send Z Report data to thermal printer - use filtered transactions
         const result = await printZReport({
           companyName: data.companyName,
           produceLabel: data.produceLabel,
-          periodLabel: data.periodLabel,
+          periodLabel: isAllDayZ ? 'All Day Z' : data.periodLabel,
+          selectedPeriod: selectedPeriod,
+          period: selectedPeriod,
           seasonName: activeSessionName,
           date: data.date,
           factoryName: centerName || routeName || data.routeLabel || 'FACTORY',
@@ -350,11 +425,17 @@ export const DeviceZReportReceipt = ({
             const fullRef = String(tx.transrefno || (tx as any).referenceNo || (tx as any).uploadrefno || tx.refno || '').trim();
             const shortRef = tx.refno || (fullRef.length >= 5 ? fullRef.slice(-5) : fullRef);
             return {
+              ...tx,
               farmer_id: tx.farmer_id,
               refno: shortRef,
               transrefno: fullRef || shortRef,
               weight: tx.weight,
-              time: tx.time,
+              transtime: (tx as any).transtime || tx.time,
+              time: format24HourTime(tx),
+              created_at: (tx as any).created_at,
+              transdate: (tx as any).transdate,
+              timestamp: (tx as any).timestamp,
+              date: (tx as any).date,
               route: tx.route,
               route_name: tx.route_name,
               product_code: tx.product_code,
@@ -373,7 +454,7 @@ export const DeviceZReportReceipt = ({
           deviceCode: data.deviceCode,
           isCoffee: data.isCoffee,
           activeRouteCode, // v2.12.21: pass active store context to printer
-          periodFilter: periodDisplayLabel, // Pass period label for display on receipt
+          periodFilter: isAllDayZ ? 'All Day Z' : periodDisplayLabel, // Pass period label for display on receipt
           milkSessionId: activeMilkSessionId || undefined,
           reportType, // v2.10.98: store mode strips produce metadata in print
         });
@@ -516,17 +597,7 @@ export const DeviceZReportReceipt = ({
                     <span className="text-right tabular-nums">{Number(tx.amount || 0).toFixed(0)}</span>
                   )}
                   <span className="text-right tabular-nums">
-                    {(() => {
-                      const t = (tx as any).transtime || tx.time || tx.created_at;
-                      if (!t) return '--:--';
-                      const str = String(t).trim();
-                      if (str.toUpperCase() === 'AM' || str.toUpperCase() === 'PM') {
-                        return str;
-                      }
-                      if (str.includes('T')) return str.split('T')[1].substring(0, 5);
-                      if (str.includes(' ')) return str.split(' ')[1].substring(0, 5);
-                      return str.substring(0, 5);
-                    })()}
+                    {format24HourTime(tx)}
                   </span>
                 </div>
                 {/* AI specific details sub-row */}
@@ -587,16 +658,16 @@ export const DeviceZReportReceipt = ({
           <div className="text-center border-b border-dashed pb-2">
             <h3 className="font-bold text-base uppercase tracking-wide">{data.companyName}</h3>
             <p className="font-bold text-sm mt-1">
-              {selectedPeriod === 'all' || activeSessionName === 'ALL DAY Z' || activeSessionName === 'ALL Z'
-                ? 'ALL DAY Z REPORT'
+              {reportType === 'store'
+                ? 'STORE SALES Z REPORT'
                 : reportType === 'sell_produce'
                 ? 'SELL PRODUCE Z REPORT'
-                : reportType === 'store'
-                ? 'STORE SALES Z REPORT'
                 : reportType === 'ai'
                 ? 'AI SERVICES Z REPORT'
+                : selectedPeriod === 'all' || activeSessionName === 'ALL DAY Z' || activeSessionName === 'ALL Z'
+                ? 'ALL DAY Z REPORT'
                 : reportType === 'produce'
-                ? `${data.produceLabel.toUpperCase()} BUY Z REPORT`
+                ? 'BUY PRODUCE Z REPORT'
                 : 'Z REPORT'}
             </p>
           </div>

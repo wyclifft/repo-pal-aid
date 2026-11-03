@@ -5,6 +5,7 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { jsPDF } from 'jspdf';
 import { isBuyProduce, isSellProduce, isStore, isAI, getTransTypeLabel } from '@/utils/transtypeUtils';
+import { format24HourTime } from '@/components/DeviceZReportReceipt';
 
 // Helper to get org settings from localStorage (for non-React contexts)
 const getOrgSettingsFromCache = (): { label: string; isCoffee: boolean; weightUnit: string; weightLabel: string } => {
@@ -380,26 +381,49 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
       const pdfMilkId = (selectedPeriod && String(selectedPeriod).trim().length === 10 && selectedPeriod !== 'all') ? selectedPeriod : null;
       lines.push(reportData.companyName.toUpperCase());
       const rType = (reportData as any).reportType;
-      const pdfTitle = rType === 'sell_produce'
-        ? 'SELL PRODUCE Z REPORT'
-        : rType === 'store'
-        ? 'STORE SALES Z REPORT'
-        : rType === 'ai'
-        ? 'AI SERVICES Z REPORT'
-        : 'Z REPORT';
+      const hasProduceTx = reportData.transactions.some((tx: any) => isBuyProduce(tx.transtype) || isSellProduce(tx.transtype, tx.isMilkFormat));
+      const hasStoreOrAiTx = reportData.transactions.some((tx: any) => isStore(tx.transtype, tx.isMilkFormat) || isAI(tx.transtype));
+      const isMixedData = hasProduceTx && hasStoreOrAiTx;
+
+      const isAllDayZ =
+        isMixedData ||
+        selectedPeriod === 'all' ||
+        (reportData as any).period === 'all' ||
+        (reportData as any).periodLabel === 'All Z' ||
+        (reportData as any).periodLabel === 'All Day Z' ||
+        (reportData as any).selectedPeriod === 'all';
+      const pdfTitle =
+        rType === 'store'
+          ? 'STORE SALES Z REPORT'
+          : rType === 'sell_produce'
+          ? 'SELL PRODUCE Z REPORT'
+          : rType === 'ai'
+          ? 'AI SERVICES Z REPORT'
+          : isAllDayZ
+          ? 'ALL DAY Z REPORT'
+          : 'BUY PRODUCE Z REPORT';
       lines.push(pdfTitle);
       lines.push('');
-      lines.push(`* ${reportData.produceLabel.toUpperCase()} SUMMARY`);
-      lines.push(`* ${reportData.periodLabel.toUpperCase()}: ${reportData.seasonName}`);
-      if (pdfMilkId) {
-        lines.push(`* SESSION ID: ${pdfMilkId}`);
+      if (isAllDayZ) {
+        lines.push(`* SESSION: ALL DAY Z`);
+        if (pdfMilkId) {
+          lines.push(`* SESSION ID: ${pdfMilkId}`);
+        }
+      } else if (rType !== 'store' && rType !== 'ai') {
+        lines.push(`* ${reportData.produceLabel.toUpperCase()} SUMMARY`);
+        lines.push(`* ${reportData.periodLabel.toUpperCase()}: ${reportData.seasonName}`);
+        if (pdfMilkId) {
+          lines.push(`* SESSION ID: ${pdfMilkId}`);
+        }
       }
       lines.push(`* DATE: ${formattedDate}`);
       lines.push('');
       lines.push(`* ${factoryName.toUpperCase().replace(' FACTORY', '')} FACTORY`);
       lines.push('');
-      lines.push(`* PRODUCE: ${reportData.produceName || reportData.produceLabel.toUpperCase()}`);
-      lines.push('');
+      if (!isAllDayZ && rType !== 'store' && rType !== 'ai') {
+        lines.push(`* PRODUCE: ${reportData.produceName || reportData.produceLabel.toUpperCase()}`);
+        lines.push('');
+      }
 
       // Group transactions by transtype (1=BUY, 2=SELL, 5=STORE, 6=AI).
       const typeGroups = new Map<number, { label: string; rows: typeof reportData.transactions; weight: number; amount: number }>();
@@ -456,7 +480,7 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
               `${padL((tx.refno || '').slice(-8), 8)} ` +
               `${padR(qtyFormatted, 6)} ` +
               `${padR(Number((tx as any).amount || 0).toFixed(0), 10)} ` +
-              `${padR((tx.time || '').substring(0, 8), 8)}`
+              `${padR(format24HourTime(tx), 8)}`
             );
           }
           if (isProduceSection) {
@@ -477,7 +501,7 @@ export const generateDeviceZReportPDF = (reportData: DeviceZReportData, routeNam
               `${padL((tx.farmer_id || '').substring(0, 10), 10)} ` +
               `${padL((tx.refno || '').slice(-8), 8)} ` +
               `${padR(formatWeight(tx.weight), 10)} ` +
-              `${padR((tx.time || '').substring(0, 8), 8)}`
+              `${padR(format24HourTime(tx), 8)}`
             );
           }
           lines.push(`${g.label} TOTAL    ${formatWeight(g.weight)} ${weightUnit}`);
