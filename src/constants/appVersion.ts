@@ -1419,8 +1419,8 @@
 //   and CS10/POS internal printers alike. Replaced with the in-scope SELL/AI
 //   money totals (sellProduceAmount + aiAmount). No layout or data changes.
 //
-export const APP_VERSION = '2.12.106';
-export const APP_VERSION_CODE = 257;
+export const APP_VERSION = '2.12.107';
+export const APP_VERSION_CODE = 258;
 
 
 // Short slug embedded in the built APK filename (see android/app/build.gradle).
