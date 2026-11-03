@@ -39,9 +39,20 @@ Three deep audits ran over `src/` (~20k lines). Build is currently clean and ver
 - Defer noncritical boot imports in `main.tsx` (version tracking, diagnostics) until after first paint; keep error/compat setup early.
 - Yield between cumulative sync batches (100-record batches currently burst).
 
+## Phase 4 — Bluetooth fixes (from the Nov 3 field log, CS10 device)
+
+Diagnosed from `scale_fails_to_auto_connect_also_the_printer_pasted.log` (5,159 lines):
+
+- **Internal CS10 printer never becomes ready** — `Sys.Lib_AppInit failed: UnsatisfiedLinkError` at 00:18:44. Verified in the repo: `libPosApi.so` is bundled in `jniLibs/armeabi-v7a` and DOES export `Java_vpos_apipackage_Sys_Lib_1AppInit`, so the failure is that `System.loadLibrary("PosApi")` itself fails on-device — and `Sys.java`'s static block catches the Throwable silently, hiding the true dlopen cause. Fix: in `PosApi.appInit`, load the library explicitly (not via the silent static block) and surface the exact load error to JS/`/debug` so the on-device cause (missing dependency, wrong-lib, or firmware restriction) is visible in the next field log.
+- **BLE scale never re-notifies after a Bluetooth off/on** — 75 × `reject: writeDescriptor | 0x2902 (CCCD) | Setting notification failed`: every reconnect connects at GATT level but the CCCD write is rejected, so no weight data flows. Fix in `bluetooth.ts` reconnect path: ensure service discovery has fully completed before `startNotifications`, then retry the notification subscribe with a short backoff (e.g. 3 attempts ~300/600/1200ms); treat GATT-not-ready as retryable; full disconnect-and-retry cycle otherwise.
+- **Reconnect loop hammers without backing off** — each low-level disconnect event resets the attempt counter to 1, producing an endless "attempt 1 / retry in 2000ms" churn (75 failures in ~2 min). Fix: keep exponential backoff across disconnect events per role; cap retries and let the health check restart the cycle.
+- **Classic printer (P502A)** fails the first attempts with `bt socket closed, read return: -1` and only recovers after Bluetooth was toggled. Fix: on that specific error, schedule one quick delayed retry (~1.5s) before the long backoff — it connected successfully on later attempts, so the transport itself is fine.
+- Note (separate, cosmetic): SQLite backup writes to `Documents/DeliCoop_Backups` hit `EACCES (Permission denied)` every session; falls back to the next location. Will confirm the fallback succeeds and log it as a warning only.
+
 ## Verification & version
 
 - Version 2.12.107 → **2.12.108** (bug-fix patch), `sw.js` cache v72→v73, `package.json` aligned, changelog comments at each fix site.
 - New small tests next to existing tests for the rules that matter: duplicate-reference verification before cleanup, printed-floor no-double-count, floor scope (route/season/product), reference-counter rollback rejection, today's-row month scoping.
+- Bluetooth verification on device (needs a field log after this build): scale notifications resume after a Bluetooth off/on; internal printer `isReady` reports the exact library-load error instead of a generic failure.
 - Regression checks before finishing: transaction creation, reference generation, receipt print, farmer/item sync, offline startup, Android back button, build clean + typecheck.
 - Deployment note: all changes are client-side; no `server.js` changes needed this pass.
