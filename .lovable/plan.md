@@ -53,5 +53,6 @@ Diagnosed from `scale_fails_to_auto_connect_also_the_printer_pasted.log` (5,159 
 
 - Version 2.12.107 → **2.12.108** (bug-fix patch), `sw.js` cache v72→v73, `package.json` aligned, changelog comments at each fix site.
 - New small tests next to existing tests for the rules that matter: duplicate-reference verification before cleanup, printed-floor no-double-count, floor scope (route/season/product), reference-counter rollback rejection, today's-row month scoping.
+- Bluetooth verification on device (needs a field log after this build): scale notifications resume after a Bluetooth off/on; internal printer `isReady` reports the exact library-load error instead of a generic failure.
 - Regression checks before finishing: transaction creation, reference generation, receipt print, farmer/item sync, offline startup, Android back button, build clean + typecheck.
 - Deployment note: all changes are client-side; no `server.js` changes needed this pass.
